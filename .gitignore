@@ -7,3 +7,5 @@ build/
 *.pdf
 *.csv
 *.png
+# ...except the bundled example chart (test data provided for this purpose)
+!examples/example-flattened-chart.png

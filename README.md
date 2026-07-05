@@ -11,14 +11,37 @@ first launch (unsigned binary): click **More info → Run anyway**.
 
 ## Use
 
-1. **Add PDFs…** — pick one or more frac chart PDFs (multi-page is fine;
-   each page is treated as one stage).
-2. **Extract All** — a CSV is written next to each PDF
+1. **Add PDFs…** — pick frac chart PDFs and/or images (PNG/JPG/TIFF).
+   Multi-page PDFs are fine; each page is treated as one stage.
+2. **Extract All** — a CSV is written next to each input file
    (`<name>-stage-<n>.csv`), and the last page is drawn in the preview pane.
 
-Everything is auto-detected from each page: UWI (from the chart title),
-stage/zone number, date, stage duration, and the axis scales for pressure,
-rate and concentration. Detection issues show up as warnings in the log.
+The app detects what it's fed and says so in the log:
+
+- **Vector chart PDF** (native MView output) — curves are read straight from
+  the PDF's line geometry. Near-lossless: validated at ≤0.5% full-scale RMSE.
+  UWI, stage, date, duration and all axis scales are auto-detected from the
+  page text.
+- **Raster input** (flattened/scanned PDF page, or a PNG/JPG image) — curves
+  are pixel-traced by color. Lower fidelity by nature. If the page has no
+  readable labels, the *raster fallback* fields in the toolbar supply the
+  duration, axis scales, UWI/stage/date.
+
+### Raster caveat — read this before trusting scanned inputs
+
+A raster chart is just pixels on a shared canvas, so information is
+genuinely missing wherever curves cross or ride on top of each other — the
+top-drawn series hides the ones beneath. Frac2CSV does not hide this: for
+every raster extraction the log lists, per channel, the exact timeframes
+that are **interpolated estimates** (curve unreadable/occluded) or **less
+reliable** (two curves overlapping within a line-width). Steep transitions
+also smear by a few seconds due to line thickness. Typical accuracy is
+1–3% of full scale on clean renders, worse where overlaps are sustained —
+use vector PDFs whenever they exist.
+
+Try it: `examples/example-flattened-chart.png` is a flattened render of the
+validation chart — extract it and compare the caveats against the same
+stage extracted from a vector PDF.
 
 ## Output format
 

@@ -66,31 +66,52 @@ def _num(s):
         return None
 
 
-def detect_meta(page, frame):
-    """Read UWI/stage/date and axis ranges from the page text."""
-    meta = PageMeta()
+def page_kind(page):
+    """'vector' if the page has stroked curves in known series colors,
+    else 'raster'."""
+    for d in page.get_drawings():
+        color = d.get("color")
+        if color is None:
+            continue
+        for c in SERIES:
+            if sum((a - b) ** 2 for a, b in zip(c, color)) < 1e-4 and len(d["items"]) > 5:
+                return "vector"
+    return "raster"
+
+
+def detect_text_meta(page, meta=None):
+    """UWI/stage/date/title from page text (works even for raster pages
+    that kept a text layer). Frame-independent."""
+    if meta is None:
+        meta = PageMeta()
     text = page.get_text()
 
     m = re.search(r"(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups())
-    else:
+    elif not meta.uwi:
         meta.warnings.append("UWI not found in page text")
 
     m = re.search(r"(?:Zone|Stage)\s+(\d+)", text)
     if m:
         meta.stage = m.group(1)
-    else:
+    elif not meta.stage:
         meta.warnings.append("stage/zone not found")
 
     m = re.search(r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", text)
     if m and m.group(1)[:3].lower() in MONTHS:
         meta.date = f"{int(m.group(3)):04d}-{MONTHS[m.group(1)[:3].lower()]:02d}-{int(m.group(2)):02d}"
-    else:
+    elif not meta.date:
         meta.warnings.append("date not found")
 
     first_line = text.strip().splitlines()[0] if text.strip() else ""
     meta.title = first_line.strip()
+    return meta
+
+
+def detect_meta(page, frame):
+    """Full metadata: text fields plus axis ranges read from tick labels."""
+    meta = detect_text_meta(page)
 
     # axis labels: numeric spans grouped by position relative to the frame
     time_vals, pressure_vals, top_vals = [], [], []
