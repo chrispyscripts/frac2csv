@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+# never commit well data
+*.pdf
+*.csv
+*.png
