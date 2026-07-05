@@ -105,12 +105,12 @@ class App:
                 label = f"{os.path.basename(path)} p{pno + 1}"
                 try:
                     meta, samples, data = fc.extract_page(doc[pno], sample_sec=interval)
+                    suffix = f"-stage-{meta.stage}" if meta.stage else f"-p{pno + 1}"
+                    out = f"{base}{suffix}.csv"
+                    n, cols = fc.write_csv(out, meta, samples, data, interval)
                 except Exception as e:
                     self.ui(lambda e=e, l=label: self.say(f"SKIP {l}: {e}"))
                     continue
-                suffix = f"-stage-{meta.stage}" if meta.stage else f"-p{pno + 1}"
-                out = f"{base}{suffix}.csv"
-                n, cols = fc.write_csv(out, meta, samples, data, interval)
                 msg = (f"OK {label}: {meta.title or 'untitled'} | UWI {meta.uwi or '?'} "
                        f"stage {meta.stage or '?'} | {meta.duration_min:g} min → "
                        f"{n} rows x {len(cols)} channels → {os.path.basename(out)}")

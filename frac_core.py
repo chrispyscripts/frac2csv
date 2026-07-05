@@ -161,7 +161,11 @@ def _resample(t_min, values, sample_min):
     uniq, inv = np.unique(t_round, return_inverse=True)
     v_uniq = np.bincount(inv, weights=values) / np.bincount(inv)
     v = np.interp(sample_min, uniq, v_uniq)
-    v[(sample_min < uniq[0]) | (sample_min > uniq[-1])] = np.nan
+    # MView export convention: hold the first value back to t=0 (charts omit
+    # the leading flatline), but leave samples after the data ends blank
+    tol = sample_min[1] - sample_min[0] if len(sample_min) > 1 else 0.0
+    v[sample_min < uniq[0]] = v_uniq[0]
+    v[sample_min > uniq[-1] + tol] = np.nan
     return v
 
 
@@ -199,7 +203,8 @@ def extract_page(page, meta=None, sample_sec=1.0):
 
 
 def write_csv(path, meta, samples, data, sample_sec=1.0):
-    start = datetime.strptime(f"{meta.date or '1970-01-01'} {meta.start_time}",
+    # fallback well past the epoch: pre-1970 local times crash .timestamp() on Windows
+    start = datetime.strptime(f"{meta.date or '2000-01-01'} {meta.start_time}",
                               "%Y-%m-%d %H:%M:%S")
     epoch0 = start.timestamp()  # local-time epoch, matches MView exports
     cols = [c for c in COLUMNS if c in data]
