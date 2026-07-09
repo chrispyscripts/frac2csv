@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frac2CSV — drop a chart, get the data</title>
+<style>
+  :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
+          --acc:#1d5bd8; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14.5px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:1100px; margin:0 auto; padding:28px 18px 70px; }
+  h1 { font-size:24px; margin:0 0 4px; letter-spacing:-0.01em; }
+  .sub { color:var(--mut); margin-bottom:16px; max-width:70ch; }
+  .drop { border:2px dashed #b9c6d2; border-radius:10px; background:var(--card);
+          padding:34px 20px; text-align:center; cursor:pointer; transition:border-color .15s, background .15s; }
+  .drop.hot { border-color:var(--acc); background:#eef3fd; }
+  .drop b { color:var(--acc); }
+  .drop .small { color:var(--mut); font-size:12.5px; margin-top:6px; }
+  .settings { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center;
+              margin:12px 0 4px; font-size:12.5px; color:var(--mut); }
+  .settings label { display:flex; align-items:center; gap:5px; }
+  .settings input { font:inherit; font-family:var(--mono); font-size:12.5px; width:64px;
+                    border:1px solid var(--line); border-radius:4px; padding:3px 6px; background:var(--card); color:var(--ink); }
+  .settings input.wide { width:130px; }
+  .status { font-family:var(--mono); font-size:12.5px; margin:14px 0; color:var(--mut); white-space:pre-wrap; }
+  .status .err { color:#b03a2e; }
+  .stage { background:var(--card); border:1px solid var(--line); border-radius:8px;
+           padding:16px 18px; margin-top:18px; }
+  .stage h2 { font-size:17px; margin:0 0 2px; }
+  .stage .sub2 { color:var(--mut); font-size:13px; margin-bottom:8px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .chip { font-family:var(--mono); font-size:11.5px; background:var(--bg);
+          border:1px solid var(--line); border-radius:4px; padding:3px 9px; color:var(--mut); }
+  .chip b { color:var(--ink); }
+  .chip.warn { border-color:#ecd9b6; background:#fdf6ec; color:#8a5a14; }
+  .hint { color:var(--mut); font-size:12px; margin:6px 0 8px; }
+  .readout { position:sticky; top:0; z-index:5; background:var(--card); border:1px solid var(--line);
+             border-radius:6px; padding:7px 12px; font-family:var(--mono); font-size:12px;
+             display:flex; flex-wrap:wrap; gap:3px 18px; min-height:32px; align-items:center; }
+  .readout .t { font-weight:700; }
+  .readout .pin { color:var(--mut); }
+  .chart { border:1px solid var(--line); border-radius:6px; margin-top:10px; padding:8px 10px 4px; }
+  .chart .head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px; }
+  .chart .name { font-weight:600; font-size:13px; }
+  .chart .cav { font-size:11.5px; color:#8a5a14; }
+  canvas { width:100%; display:block; cursor:crosshair; touch-action:none; }
+  button, .btn { font:inherit; font-size:12.5px; border:1px solid var(--line); background:var(--card);
+           border-radius:5px; padding:4px 12px; cursor:pointer; color:var(--ink); text-decoration:none; }
+  button:hover, .btn:hover { border-color:var(--acc); color:var(--acc); }
+  button:focus-visible { outline:2px solid var(--acc); outline-offset:1px; }
+  .btn.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  .legendbar { display:flex; gap:16px; align-items:center; margin-top:8px; font-size:11.5px; color:var(--mut); }
+  .sw { display:inline-block; width:13px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px; }
+  .foot { margin-top:40px; padding-top:12px; border-top:1px solid var(--line); font-size:12.5px; color:var(--mut); }
+  .spin { display:inline-block; width:12px; height:12px; border:2px solid var(--line);
+          border-top-color:var(--acc); border-radius:50%; animation:sp 0.8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Frac2CSV</h1>
+  <div class="sub">Drop a frac-stage chart — vector PDF, flattened/scanned PDF, or PNG/JPG image —
+  and get the time series back: interactive charts down to the second, plus the CSV.
+  Files are processed in memory on the server and never stored.</div>
+
+  <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload a chart file">
+    <div><b>Drop a chart here</b> or click to choose</div>
+    <div class="small">PDF · PNG · JPG · TIFF — up to 3 MB, 8 pages per document.
+    Vector PDFs are auto-detected and extracted losslessly; images are pixel-traced.</div>
+    <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff" hidden multiple>
+  </div>
+
+  <div class="settings">
+    <span>Raster fallback (used only when a scan/image has no readable labels):</span>
+    <label>Duration min <input id="fb-duration" value="80"></label>
+    <label>Press max <input id="fb-pmax" value="90"></label>
+    <label>Rate max <input id="fb-ratemax" value="18"></label>
+    <label>Conc max <input id="fb-concmax" value="900"></label>
+    <label>UWI <input id="fb-uwi" class="wide" placeholder="optional"></label>
+    <label>Stage <input id="fb-stage" style="width:44px" placeholder="—"></label>
+    <label>Date <input id="fb-date" class="wide" placeholder="YYYY-MM-DD"></label>
+  </div>
+
+  <div class="status" id="status"></div>
+  <div id="stages"></div>
+
+  <div class="foot">Vector extraction validated at ≤0.56% full-scale RMSE against known-good exports.
+  Raster inputs are estimates: flagged spans (amber = interpolated, hatched = overlapping curves) are drawn
+  on the charts. Extraction engine: <a href="https://github.com/chrispyscripts/frac2csv">github.com/chrispyscripts/frac2csv</a></div>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const fmt = s => {
+  const m = Math.floor(s / 60), ss = s % 60;
+  return String(m).padStart(2, "0") + ":" + (ss < 10 ? "0" : "") +
+         (Number.isInteger(ss) ? ss : ss.toFixed(1));
+};
+const fmtv = v => v == null ? "—" : (Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3));
+
+function hatch(color) {
+  const c = document.createElement("canvas"); c.width = c.height = 8;
+  const g = c.getContext("2d");
+  g.strokeStyle = color; g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.stroke();
+  return c;
+}
+const hatchTile = hatch("rgba(122,59,155,.55)");
+
+// ---------- upload ----------
+const drop = $("drop"), fileInput = $("file"), statusEl = $("status");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+
+function say(msg, err) {
+  statusEl.innerHTML += (err ? '<span class="err">' + msg + "</span>" : msg) + "\n";
+}
+
+async function handleFiles(files) {
+  for (const f of files) {
+    if (f.size > 3 * 1024 * 1024) { say(`✗ ${f.name}: over the 3 MB limit`, true); continue; }
+    statusEl.innerHTML += `<span class="spin"></span>extracting ${f.name}…\n`;
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]); r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      const fallback = {};
+      for (const k of ["duration", "pmax", "ratemax", "concmax", "uwi", "stage", "date"])
+        fallback[k] = $("fb-" + k).value.trim();
+      const resp = await fetch("/api/extract", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: f.name, data: b64, fallback, sample_sec: 1.0 }),
+      });
+      const out = await resp.json();
+      statusEl.querySelector(".spin")?.parentElement && (statusEl.innerHTML = statusEl.innerHTML.replace(/<span class="spin"><\/span>[^\n]*\n/, ""));
+      if (!resp.ok) { say(`✗ ${f.name}: ${out.error || resp.status}`, true); (out.notes || []).forEach(n => say("  " + n)); continue; }
+      (out.notes || []).forEach(n => say(`• ${f.name}: ${n}`));
+      out.stages.forEach(st => renderStage(st, f.name));
+    } catch (e) {
+      say(`✗ ${f.name}: ${e.message}`, true);
+    }
+  }
+  fileInput.value = "";
+}
+
+// ---------- CSV ----------
+function toCSV(st) {
+  const cols = st.channels.map(c => c.key);
+  const units = { "Tr Press": "MPa", "Slurry Rate": "m3/Min", "WH Prop Conc": "Kg/m3", "BH Prop Conc": "Kg/m3" };
+  const date = st.meta.date || "2000-01-01";
+  const t0 = new Date(date + "T00:00:00");   // local time, like the desktop app
+  const rows = [
+    ["UWI", "STAGE", "DATETIME", "ELAPSED", "TIMESTAMP", "LABEL", ...cols].join(","),
+    ["Units", "", "YYYY-mm-dd HH:MM:SS", "secs", "secs", "", ...cols.map(c => units[c] || "")].join(","),
+  ];
+  const pad = n => String(n).padStart(2, "0");
+  for (let i = 0; i < st.n; i++) {
+    const s = i * st.sample_sec;
+    const d = new Date(t0.getTime() + s * 1000);
+    const dt = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    rows.push([st.meta.uwi, st.meta.stage, dt, s.toFixed(5), (t0.getTime() / 1000 + s).toFixed(5),
+               st.meta.stage, ...st.channels.map(c => c.values[i] == null ? "" : c.values[i].toFixed(5))].join(","));
+  }
+  return rows.join("\n");
+}
+
+// ---------- interactive stage viewer ----------
+const PADL = 56, PADR = 12, PADT = 8, PADB = 20, CH = 150;
+function niceTicks(max) {
+  const raw = max / 4, pow = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const step = [1, 2, 2.5, 5, 10].map(k => k * pow).find(s => max / s <= 5) || pow * 10;
+  const out = []; for (let v = 0; v <= max * 1.0001; v += step) out.push(v);
+  return out;
+}
+
+function renderStage(st, fname) {
+  const N = st.n, DT = st.sample_sec, tOf = i => i * DT;
+  let w0 = 0, w1 = N - 1, hover = null, pins = [];
+  const charts = [];
+  const M = st.meta;
+
+  const box = document.createElement("div"); box.className = "stage";
+  const csvName = (fname.replace(/\.[^.]+$/, "")) + (M.stage ? `-stage-${M.stage}` : "-extracted") + ".csv";
+  box.innerHTML = `
+    <h2>${M.title || fname}</h2>
+    <div class="sub2">${[M.uwi && "UWI " + M.uwi, M.stage && "stage " + M.stage, M.date,
+                         M.duration_min + " min", N.toLocaleString() + " samples"].filter(Boolean).join(" · ")}</div>
+    <div class="chips"></div>
+    <div class="hint">Drag to zoom · double-click to reset · hover for per-second values · click to pin (two pins show Δ)
+      <button class="rz">Reset zoom</button> <button class="dl btn primary">Download CSV</button></div>
+    <div class="readout"><span class="pin">Hover a chart…</span></div>
+    <div class="charts"></div>
+    <div class="legendbar" hidden>
+      <span><span class="sw" style="background:rgba(232,179,75,.45)"></span>interpolated estimate</span>
+      <span><span class="sw hsw"></span>overlapping curves — less reliable</span>
+    </div>`;
+  $("stages").appendChild(box);
+  const chipsEl = box.querySelector(".chips");
+  const addChip = (html, cls) => {
+    const el = document.createElement("span");
+    el.className = "chip" + (cls ? " " + cls : ""); el.innerHTML = html; chipsEl.appendChild(el);
+  };
+  addChip(st.kind === "vector" ? "input: <b>vector PDF</b> — near-lossless"
+          : "input: <b>raster</b> — pixel-traced estimates", st.kind === "vector" ? "" : "warn");
+  (M.warnings || []).forEach(w => addChip("⚠ " + w, "warn"));
+  const hsw = box.querySelector(".hsw"); hsw.style.background = "url(" + hatchTile.toDataURL() + ")";
+  if (st.channels.some(ch => ch.gaps.length || ch.overlaps.length))
+    box.querySelector(".legendbar").hidden = false;
+
+  box.querySelector(".dl").addEventListener("click", () => {
+    const blob = new Blob([toCSV(st)], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = csvName; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  box.querySelector(".rz").addEventListener("click", () => { w0 = 0; w1 = N - 1; drawAll(); });
+
+  const readoutEl = box.querySelector(".readout");
+  function xToIdx(x, W) {
+    const f = (x - PADL) / (W - PADL - PADR);
+    if (f < 0 || f > 1) return null;
+    return Math.max(w0, Math.min(w1, Math.round(w0 + f * (w1 - w0))));
+  }
+
+  for (const ch of st.channels) {
+    const wrap = document.createElement("div"); wrap.className = "chart";
+    wrap.innerHTML = `<div class="head"><span class="name" style="color:${ch.color}">${ch.label} (${ch.unit})</span>` +
+      (ch.caveats.length ? `<span class="cav">⚠ ${ch.caveats.join(" · ")}</span>` : "") + `</div>`;
+    const cv = document.createElement("canvas"); cv.height = CH;
+    cv.setAttribute("role", "img"); cv.setAttribute("aria-label", ch.label);
+    wrap.appendChild(cv);
+    box.querySelector(".charts").appendChild(wrap);
+    const o = { ch, cv, drag: null, dragEnd: null };
+    charts.push(o);
+
+    cv.addEventListener("mousemove", ev => {
+      const r = cv.getBoundingClientRect(), x = ev.clientX - r.left;
+      if (o.drag != null) { o.dragEnd = x; drawAll(); return; }
+      hover = xToIdx(x, r.width); drawAll();
+    });
+    cv.addEventListener("mouseleave", () => { hover = null; drawAll(); });
+    cv.addEventListener("mousedown", ev => {
+      const r = cv.getBoundingClientRect(); o.drag = ev.clientX - r.left; o.dragEnd = null;
+    });
+    window.addEventListener("mouseup", ev => {
+      if (o.drag == null) return;
+      const r = cv.getBoundingClientRect(), x = ev.clientX - r.left;
+      const a = o.drag, b = x; o.drag = null; o.dragEnd = null;
+      if (Math.abs(b - a) > 6) {
+        const i0 = xToIdx(Math.min(a, b), r.width), i1 = xToIdx(Math.max(a, b), r.width);
+        if (i0 != null && i1 != null && i1 - i0 >= 4) { w0 = i0; w1 = i1; hover = null; }
+      } else {
+        const i = xToIdx(x, r.width);
+        if (i != null) pins = pins.includes(i) ? pins.filter(p => p !== i) : [...pins, i].slice(-2);
+      }
+      drawAll();
+    });
+    cv.addEventListener("dblclick", () => { w0 = 0; w1 = N - 1; drawAll(); });
+  }
+
+  function drawChart(o) {
+    const { ch, cv } = o;
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = CH;
+    if (!W) return;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext("2d"); g.scale(dpr, dpr);
+    const plotW = W - PADL - PADR, plotH = H - PADT - PADB;
+    const xOf = i => PADL + (i - w0) / (w1 - w0) * plotW;
+    let vmax = 0;
+    for (let i = w0; i <= w1; i++) { const v = ch.values[i]; if (v != null && v > vmax) vmax = v; }
+    vmax = vmax > 0 ? vmax * 1.08 : 1;
+    const yOf = v => PADT + (1 - v / vmax) * plotH;
+    const spanX = s => PADL + (s / DT - w0) / (w1 - w0) * plotW;
+    const clip = x => Math.max(PADL, Math.min(W - PADR, x));
+
+    for (const [a, b] of ch.gaps) {
+      const x1 = clip(spanX(a)), x2 = clip(spanX(b));
+      if (x2 > x1) { g.fillStyle = "rgba(232,179,75,.28)"; g.fillRect(x1, PADT, x2 - x1, plotH); }
+    }
+    const pat = g.createPattern(hatchTile, "repeat");
+    for (const [a, b] of ch.overlaps) {
+      const x1 = clip(spanX(a)), x2 = clip(spanX(b));
+      if (x2 > x1) { g.fillStyle = pat; g.globalAlpha = .5; g.fillRect(x1, PADT, x2 - x1, plotH); g.globalAlpha = 1; }
+    }
+
+    g.font = "10px ui-monospace, Menlo, monospace";
+    g.fillStyle = "#5b6b7b"; g.strokeStyle = "#eceff3"; g.textAlign = "right"; g.textBaseline = "middle";
+    for (const v of niceTicks(vmax / 1.08)) {
+      const y = yOf(v);
+      g.beginPath(); g.moveTo(PADL, y); g.lineTo(W - PADR, y); g.stroke();
+      g.fillText(v >= 1000 ? (v / 1000) + "k" : String(Math.round(v * 100) / 100), PADL - 6, y);
+    }
+    g.textAlign = "center"; g.textBaseline = "top";
+    const secs = (w1 - w0) * DT;
+    const xstep = secs > 3000 ? 600 : secs > 1200 ? 300 : secs > 300 ? 60 : secs > 60 ? 15 : 5;
+    for (let s = Math.ceil(tOf(w0) / xstep) * xstep; s <= tOf(w1); s += xstep)
+      g.fillText(fmt(s), spanX(s), H - PADB + 4);
+
+    const perPx = (w1 - w0) / plotW;
+    g.strokeStyle = ch.color; g.fillStyle = ch.color;
+    if (perPx > 2) {
+      g.globalAlpha = .85;
+      for (let px = 0; px < plotW; px++) {
+        const i0 = Math.floor(w0 + px * perPx), i1 = Math.min(w1, Math.floor(w0 + (px + 1) * perPx));
+        let lo = Infinity, hi = -Infinity;
+        for (let i = i0; i <= i1; i++) { const v = ch.values[i]; if (v == null) continue;
+          if (v < lo) lo = v; if (v > hi) hi = v; }
+        if (lo <= hi) g.fillRect(PADL + px, yOf(hi), 1, Math.max(1, yOf(lo) - yOf(hi)));
+      }
+      g.globalAlpha = 1;
+    } else {
+      g.lineWidth = perPx < .12 ? 2 : 1.4; g.beginPath();
+      let pen = false;
+      for (let i = w0; i <= w1; i++) {
+        const v = ch.values[i];
+        if (v == null) { pen = false; continue; }
+        const x = xOf(i), y = yOf(v);
+        pen ? g.lineTo(x, y) : g.moveTo(x, y); pen = true;
+      }
+      g.stroke();
+      if (perPx < .12) for (let i = w0; i <= w1; i++) {
+        const v = ch.values[i]; if (v == null) continue;
+        g.beginPath(); g.arc(xOf(i), yOf(v), 2.4, 0, 7); g.fill();
+      }
+    }
+
+    const drawCursor = (i, color, dash) => {
+      if (i == null || i < w0 || i > w1) return;
+      g.strokeStyle = color; g.lineWidth = 1; g.setLineDash(dash);
+      g.beginPath(); g.moveTo(xOf(i), PADT); g.lineTo(xOf(i), H - PADB); g.stroke(); g.setLineDash([]);
+      const v = ch.values[i];
+      if (v != null) { g.fillStyle = color; g.beginPath(); g.arc(xOf(i), yOf(v), 3, 0, 7); g.fill(); }
+    };
+    pins.forEach((p, k) => drawCursor(p, k ? "#7a3b9b" : "#1d5bd8", []));
+    drawCursor(hover, "#5b6b7b", [3, 3]);
+
+    if (o.drag != null && o.dragEnd != null) {
+      g.fillStyle = "rgba(29,91,216,.12)";
+      g.fillRect(Math.min(o.drag, o.dragEnd), PADT, Math.abs(o.dragEnd - o.drag), plotH);
+    }
+  }
+
+  function readout() {
+    const row = i => st.channels.map(ch =>
+      `<span style="color:${ch.color}">${ch.key} <b>${fmtv(ch.values[i])}</b></span>`).join("");
+    let html = "";
+    if (hover != null) html += `<span class="t">t ${fmt(tOf(hover))}</span>` + row(hover);
+    pins.forEach((p, k) => {
+      html += `<span class="pin">| pin${k + 1}</span><span class="t">${fmt(tOf(p))}</span>` + row(p);
+    });
+    if (pins.length === 2) {
+      const [a, b] = [...pins].sort((x, y) => x - y);
+      html += `<span class="pin">| Δt ${fmt(tOf(b) - tOf(a))}</span>` +
+        st.channels.map(ch => {
+          const va = ch.values[a], vb = ch.values[b];
+          return `<span style="color:${ch.color}">Δ <b>${va == null || vb == null ? "—" : fmtv(vb - va)}</b></span>`;
+        }).join("");
+    }
+    readoutEl.innerHTML = html || '<span class="pin">Hover a chart…</span>';
+  }
+
+  function drawAll() { charts.forEach(drawChart); readout(); }
+  window.addEventListener("resize", drawAll);
+  drawAll();
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+</script>
+</body>
+</html>
