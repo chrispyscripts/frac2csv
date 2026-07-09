@@ -14,6 +14,7 @@ import numpy as np
 
 import frac_core as fc
 import raster_core as rc
+import report as rp
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
@@ -43,7 +44,11 @@ class App:
         self.interval = tk.StringVar(value="1.0")
         tk.Entry(top, textvariable=self.interval, width=6, bg=PANEL, fg=FG,
                  insertbackground=FG, relief="flat").pack(side="left")
-        tk.Label(top, text="CSVs are saved next to each input file.", bg=BG, fg=MUT).pack(side="right")
+        self.report_on = tk.BooleanVar(value=True)
+        tk.Checkbutton(top, text="Interactive HTML report", variable=self.report_on,
+                       bg=BG, fg=MUT, selectcolor=PANEL, activebackground=BG,
+                       activeforeground=FG).pack(side="left", padx=(14, 0))
+        tk.Label(top, text="Outputs are saved next to each input file.", bg=BG, fg=MUT).pack(side="right")
 
         # fallback settings for raster inputs with no readable metadata
         fb = tk.Frame(root, bg=BG)
@@ -137,6 +142,10 @@ class App:
         suffix = f"-stage-{meta.stage}" if meta.stage else ""
         out = f"{base}{suffix or '-extracted'}.csv"
         n, cols = fc.write_csv(out, meta, samples, data, interval)
+        if self.report_on.get():
+            rep = rp.write_report(out[:-4] + ".html", meta, samples, data,
+                                  interval, kind="raster", quality=quality)
+            self.ui(lambda r=rep: self.say(f"   report → {os.path.basename(r)} (open in a browser)"))
         self.ui(lambda: self.say(
             f"OK {page_note}: RASTER input — pixel tracing (reduced fidelity vs vector). "
             f"{meta.duration_min:g} min → {n} rows x {len(cols)} channels → {os.path.basename(out)}"))
@@ -184,6 +193,11 @@ class App:
                         suffix = f"-stage-{meta.stage}" if meta.stage else f"-p{pno + 1}"
                         out = f"{base}{suffix}.csv"
                         n, cols = fc.write_csv(out, meta, samples, data, interval)
+                        if self.report_on.get():
+                            rep = rp.write_report(out[:-4] + ".html", meta, samples,
+                                                  data, interval, kind="vector")
+                            self.ui(lambda r=rep: self.say(
+                                f"   report → {os.path.basename(r)} (open in a browser)"))
                         msg = (f"OK {label}: detected input type = VECTOR chart (lossless "
                                f"geometry) | {meta.title or 'untitled'} | UWI {meta.uwi or '?'} "
                                f"stage {meta.stage or '?'} | {meta.duration_min:g} min → "

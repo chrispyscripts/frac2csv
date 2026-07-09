@@ -43,6 +43,21 @@ Try it: `examples/example-flattened-chart.png` is a flattened render of the
 validation chart — extract it and compare the caveats against the same
 stage extracted from a vector PDF.
 
+
+## Interactive HTML report
+
+Alongside each CSV, the app writes a self-contained `<name>-stage-<n>.html`
+report (toggle in the toolbar). Open it in any browser — no install, no
+network — and explore the data down to the second:
+
+- **Envelope rendering** — zoomed out, each pixel shows the min–max band of
+  the seconds it covers, so 1-second spikes stay visible.
+- **Drag to zoom** (double-click to reset) down to individual samples.
+- **Crosshair readout** — hover for all four channel values at any second.
+- **Pinned cursors** — click to pin; two pins show Δt and per-channel Δ.
+- **Quality shading** (raster inputs) — interpolated spans are shaded amber,
+  overlapping-curve spans are hatched, right on the charts.
+
 ## Output format
 
 ```
