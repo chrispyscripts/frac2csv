@@ -63,15 +63,16 @@
 <body>
 <div class="wrap">
   <h1>Frac2CSV</h1>
-  <div class="sub">Drop a frac-stage chart — vector PDF, flattened/scanned PDF, or PNG/JPG image —
-  and get the time series back: interactive charts down to the second, plus the CSV.
-  Files are processed in memory on the server and never stored.</div>
+  <div class="sub">Drop a frac-stage chart — vector PDF, flattened/scanned PDF, PNG/JPG image, or an
+  existing CSV export — and explore the time series down to the second, then download the CSV.
+  Charts are processed in memory on the server and never stored; CSVs never leave your browser.</div>
 
-  <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload a chart file">
-    <div><b>Drop a chart here</b> or click to choose</div>
-    <div class="small">PDF · PNG · JPG · TIFF — up to 3 MB, 8 pages per document.
-    Vector PDFs are auto-detected and extracted losslessly; images are pixel-traced.</div>
-    <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff" hidden multiple>
+  <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload a chart or CSV file">
+    <div><b>Drop a chart or CSV here</b> or click to choose</div>
+    <div class="small">PDF · PNG · JPG · TIFF — up to 3 MB, 8 pages per document; vector PDFs extract
+    losslessly, images are pixel-traced. CSV — standard export format
+    (UWI, STAGE, DATETIME, ELAPSED, …) opens straight into the viewer, parsed locally.</div>
+    <input type="file" id="file" accept=".pdf,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.csv" hidden multiple>
   </div>
 
   <div class="settings">
@@ -124,8 +125,75 @@ function say(msg, err) {
   statusEl.innerHTML += (err ? '<span class="err">' + msg + "</span>" : msg) + "\n";
 }
 
+// ---------- CSV input: parsed entirely in the browser ----------
+const KNOWN_STYLE = {
+  "Tr Press": ["Treating Pressure", "MPa", "#1d5bd8"],
+  "Slurry Rate": ["Slurry Rate", "m3/min", "#c8372d"],
+  "WH Prop Conc": ["Prop Conc @ Blender (WH)", "kg/m3", "#1e7a34"],
+  "BH Prop Conc": ["Prop Conc @ Formation (BH)", "kg/m3", "#7a3b9b"],
+};
+const EXTRA_COLORS = ["#c07f16", "#0f8f8f", "#94261f", "#4a5f9e"];
+
+function parseCSVStage(text, fname) {
+  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim());
+  if (lines.length < 3) throw new Error("CSV too short — expected header, units row and data rows");
+  const head = lines[0].split(",").map(s => s.trim());
+  const need = ["UWI", "STAGE", "DATETIME", "ELAPSED"];
+  if (!need.every(c => head.includes(c)))
+    throw new Error("not the standard export format (need UWI, STAGE, DATETIME, ELAPSED columns)");
+  const units = lines[1].split(",").map(s => s.trim());
+  const hasUnitsRow = units[0].toLowerCase() === "units";
+  const firstRow = (hasUnitsRow ? lines[2] : lines[1]).split(",");
+  const col = name => head.indexOf(name);
+  const dataLines = lines.slice(hasUnitsRow ? 2 : 1);
+
+  // channel columns = everything after the 6 standard leading columns
+  const leading = new Set(["UWI", "STAGE", "DATETIME", "ELAPSED", "TIMESTAMP", "LABEL"]);
+  const chanCols = head.map((h, i) => ({ h, i })).filter(c => !leading.has(c.h));
+  if (!chanCols.length) throw new Error("no data channels found after the standard columns");
+
+  const n = dataLines.length;
+  const elapsed0 = parseFloat(dataLines[0].split(",")[col("ELAPSED")]);
+  const elapsed1 = n > 1 ? parseFloat(dataLines[1].split(",")[col("ELAPSED")]) : elapsed0 + 1;
+  const sampleSec = Math.max(elapsed1 - elapsed0, 0.001) || 1;
+
+  const channels = chanCols.map((c, k) => {
+    const [label, unit, color] = KNOWN_STYLE[c.h] ||
+      [c.h, hasUnitsRow ? (units[c.i] || "") : "", EXTRA_COLORS[k % EXTRA_COLORS.length]];
+    return { key: c.h, label, unit, color, values: new Array(n), gaps: [], overlaps: [], caveats: [] };
+  });
+  for (let r = 0; r < n; r++) {
+    const parts = dataLines[r].split(",");
+    for (let k = 0; k < channels.length; k++) {
+      const raw = parts[chanCols[k].i];
+      const v = raw === "" || raw == null ? NaN : parseFloat(raw);
+      channels[k].values[r] = Number.isNaN(v) ? null : v;
+    }
+  }
+  const dt = (firstRow[col("DATETIME")] || "").trim();
+  return {
+    kind: "csv",
+    meta: {
+      title: "", uwi: firstRow[col("UWI")] || "", stage: firstRow[col("STAGE")] || "",
+      date: dt.split(" ")[0] || "", start: dt.split(" ")[1] || "00:00:00",
+      duration_min: Math.round(n * sampleSec / 60 * 100) / 100, warnings: [],
+    },
+    n, sample_sec: sampleSec, channels,
+  };
+}
+
 async function handleFiles(files) {
   for (const f of files) {
+    if (f.name.toLowerCase().endsWith(".csv")) {
+      try {
+        const st = parseCSVStage(await f.text(), f.name);
+        say(`• ${f.name}: CSV export — opened directly in the viewer (nothing uploaded).`);
+        renderStage(st, f.name);
+      } catch (e) {
+        say(`✗ ${f.name}: ${e.message}`, true);
+      }
+      continue;
+    }
     if (f.size > 3 * 1024 * 1024) { say(`✗ ${f.name}: over the 3 MB limit`, true); continue; }
     statusEl.innerHTML += `<span class="spin"></span>extracting ${f.name}…\n`;
     try {
@@ -157,8 +225,9 @@ async function handleFiles(files) {
 function toCSV(st) {
   const cols = st.channels.map(c => c.key);
   const units = { "Tr Press": "MPa", "Slurry Rate": "m3/Min", "WH Prop Conc": "Kg/m3", "BH Prop Conc": "Kg/m3" };
+  st.channels.forEach(c => { if (!(c.key in units)) units[c.key] = c.unit || ""; });
   const date = st.meta.date || "2000-01-01";
-  const t0 = new Date(date + "T00:00:00");   // local time, like the desktop app
+  const t0 = new Date(date + "T" + (st.meta.start || "00:00:00"));   // local time, like the desktop app
   const rows = [
     ["UWI", "STAGE", "DATETIME", "ELAPSED", "TIMESTAMP", "LABEL", ...cols].join(","),
     ["Units", "", "YYYY-mm-dd HH:MM:SS", "secs", "secs", "", ...cols.map(c => units[c] || "")].join(","),
@@ -211,7 +280,8 @@ function renderStage(st, fname) {
     el.className = "chip" + (cls ? " " + cls : ""); el.innerHTML = html; chipsEl.appendChild(el);
   };
   addChip(st.kind === "vector" ? "input: <b>vector PDF</b> — near-lossless"
-          : "input: <b>raster</b> — pixel-traced estimates", st.kind === "vector" ? "" : "warn");
+          : st.kind === "csv" ? "input: <b>CSV export</b> — viewing existing data"
+          : "input: <b>raster</b> — pixel-traced estimates", st.kind === "raster" ? "warn" : "");
   (M.warnings || []).forEach(w => addChip("⚠ " + w, "warn"));
   const hsw = box.querySelector(".hsw"); hsw.style.background = "url(" + hatchTile.toDataURL() + ")";
   if (st.channels.some(ch => ch.gaps.length || ch.overlaps.length))
