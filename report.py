@@ -80,6 +80,7 @@ _TEMPLATE = r"""<!doctype html>
   .chart .cav { font-size:12px; color:#8a5a14; }
   canvas { width:100%; display:block; cursor:crosshair; touch-action:none; }
   .legendbar { display:flex; gap:18px; align-items:center; margin:10px 2px 0; font-size:12px; color:var(--mut); }
+  [hidden] { display:none !important; }
   .sw { display:inline-block; width:14px; height:10px; border-radius:2px; vertical-align:-1px; margin-right:5px; }
   button { font:inherit; font-size:12.5px; border:1px solid var(--line); background:var(--card);
            border-radius:5px; padding:4px 12px; cursor:pointer; color:var(--ink); }
