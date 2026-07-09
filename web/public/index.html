@@ -185,7 +185,10 @@ function parseCSVStage(text, fname) {
 
 async function handleFiles(files) {
   for (const f of files) {
-    if (f.name.toLowerCase().endsWith(".csv")) {
+    // content check beats extension: a misnamed CSV still opens in the viewer
+    const isCSV = f.name.toLowerCase().endsWith(".csv") ||
+                  /^UWI\s*,/.test(await f.slice(0, 32).text());
+    if (isCSV) {
       try {
         const st = parseCSVStage(await f.text(), f.name);
         say(`• ${f.name}: CSV export — opened directly in the viewer (nothing uploaded).`);

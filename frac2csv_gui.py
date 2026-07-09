@@ -18,6 +18,18 @@ import report as rp
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
+
+def sniff_kind(path):
+    """'pdf' | 'image' | None, by file content (magic bytes), not extension."""
+    with open(path, "rb") as fh:
+        head = fh.read(8)
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if (head.startswith(b"\x89PNG\r\n\x1a\n") or head[:2] == b"\xff\xd8"
+            or head[:4] in (b"II*\x00", b"MM\x00*") or head[:2] == b"BM"):
+        return "image"
+    return None
+
 APP_TITLE = "Frac2CSV  —  frac chart PDF → 1-sec CSV"
 BG, PANEL, FG, MUT, ACC = "#0d1117", "#161b22", "#e6edf3", "#8b949e", "#58a6ff"
 SERIES_COLORS = {"Tr Press": "#4f8ff7", "Slurry Rate": "#f0555a",
@@ -167,7 +179,21 @@ class App:
             base = os.path.splitext(path)[0]
             ext = os.path.splitext(path)[1].lower()
 
-            if ext in IMAGE_EXTS:
+            try:
+                kind = sniff_kind(path)
+            except OSError as e:
+                self.ui(lambda e=e, n=name: self.say(f"ERROR reading {n}: {e}"))
+                continue
+            if kind is None:
+                kind = "image" if ext in IMAGE_EXTS else "pdf"
+                self.ui(lambda n=name: self.say(
+                    f"{n}: unrecognized file signature — guessing from extension"))
+            elif (kind == "pdf") != (ext == ".pdf"):
+                self.ui(lambda n=name, k=kind: self.say(
+                    f"{n}: file content is {k.upper()} despite the {ext or 'missing'} "
+                    f"extension — processing as {k.upper()}"))
+
+            if kind == "image":
                 try:
                     img = rc.pixmap_to_array(fitz.Pixmap(path))
                     meta = self._fallback_meta()

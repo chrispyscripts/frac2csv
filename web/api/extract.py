@@ -79,17 +79,41 @@ def _extract_raster_img(img, meta, sample_sec):
     return _stage_payload("raster", meta, samples, data, sample_sec, quality)
 
 
+def sniff_type(data, filename):
+    """Identify the file by content (magic bytes), not extension."""
+    if data[:5] == b"%PDF-":
+        return "pdf"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:2] == b"\xff\xd8":
+        return "jpeg"
+    if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return "tiff"
+    if data[:2] == b"BM":
+        return "bmp"
+    return None
+
+
 def extract_bytes(data, filename, fallback, sample_sec=1.0):
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     stages, notes = [], []
 
-    if ext in IMAGE_TYPES:
+    real = sniff_type(data, filename)
+    if real is None:
+        raise ValueError("unrecognized file content — expected a PDF or a "
+                         "PNG/JPG/TIFF/BMP image")
+    expected = "pdf" if ext == "pdf" else ("jpeg" if ext in ("jpg", "jpeg") else ext)
+    if ext and expected != real:
+        notes.append(f"Note: file is named .{ext} but its content is "
+                     f"{real.upper()} — processing as {real.upper()}.")
+    if real != "pdf":
         # Pixmap(stream) decodes at native pixel size; get_pixmap() on an
         # image document would downscale DPI-tagged files (e.g. 300-dpi
         # scans render at 24% resolution and the trace quality collapses)
         img = rc.pixmap_to_array(fitz.Pixmap(data))
         meta = _fallback_meta(fallback)
-        notes.append("Detected input type: raster IMAGE — pixel tracing "
+        notes.append(f"Detected input type: raster {real.upper()} image "
+                     f"({img.shape[1]}x{img.shape[0]} px) — pixel tracing "
                      "(axis scales from the fallback settings).")
         stages.append(_extract_raster_img(img, meta, sample_sec))
         return stages, notes
@@ -103,8 +127,11 @@ def extract_bytes(data, filename, fallback, sample_sec=1.0):
         page = doc[pno]
         try:
             if fc.page_kind(page) == "vector":
+                n_seg = sum(len(d["items"]) for d in page.get_drawings()
+                            if d.get("color") in fc.SERIES)
                 meta, samples, chans = fc.extract_page(page, sample_sec=sample_sec)
-                notes.append(f"Page {pno + 1}: VECTOR chart — lossless geometry.")
+                notes.append(f"Page {pno + 1}: VECTOR chart — {n_seg:,} curve "
+                             f"segments in series colors; lossless geometry.")
                 stages.append(_stage_payload("vector", meta, samples, chans, sample_sec))
             else:
                 if raster_done >= MAX_RASTER_PAGES:
@@ -114,7 +141,8 @@ def extract_bytes(data, filename, fallback, sample_sec=1.0):
                 raster_done += 1
                 meta = _fallback_meta(fallback)
                 meta = fc.detect_text_meta(page, meta)
-                notes.append(f"Page {pno + 1}: raster/flattened page — pixel tracing "
+                notes.append(f"Page {pno + 1}: no vector curve geometry on this page "
+                             f"— raster/flattened PDF, pixel tracing "
                              f"(reduced fidelity; see flagged spans).")
                 img = rc.pixmap_to_array(page.get_pixmap(dpi=300))
                 stages.append(_extract_raster_img(img, meta, sample_sec))
