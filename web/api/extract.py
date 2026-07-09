@@ -9,13 +9,16 @@ Files are processed entirely in memory and never written to disk.
 """
 import base64
 import json
+import os
+import sys
 from http.server import BaseHTTPRequestHandler
 
 import fitz
 import numpy as np
 
-import frac_core as fc
-import raster_core as rc
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import frac_core as fc          # noqa: E402
+import raster_core as rc        # noqa: E402
 
 MAX_PAGES = 8          # per request
 MAX_RASTER_PAGES = 4   # pixel tracing is the slow path
@@ -121,6 +124,12 @@ def extract_bytes(data, filename, fallback, sample_sec=1.0):
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # the catch-all function route swallows "/" — send it to the static page
+        self.send_response(307)
+        self.send_header("Location", "/index.html")
+        self.end_headers()
+
     def _send(self, code, obj):
         body = json.dumps(obj, separators=(",", ":")).encode()
         self.send_response(code)
