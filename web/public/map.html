@@ -47,6 +47,29 @@
   .pop .fh { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--good); margin-bottom:3px; }
   .pop a.btn { display:inline-block; margin-top:9px; background:var(--acc); color:#fff; text-decoration:none;
         font-size:12px; font-weight:600; padding:5px 11px; border-radius:5px; }
+  .pop .actions { display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+  .pop .favbtn { background:none; border:1px solid var(--line); border-radius:5px; color:var(--mut);
+        font-size:13px; padding:3px 9px; cursor:pointer; }
+  .pop .favbtn.on { color:#f1c40f; border-color:#f1c40f; }
+  .pop .tagrow { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; align-items:center; }
+  .pop .tag { background:#233042; border:1px solid var(--line); border-radius:999px; font-size:11px;
+        font-family:var(--mono); padding:2px 8px; color:var(--ink); cursor:pointer; }
+  .pop .tag:hover { border-color:#b03a2e; text-decoration:line-through; }
+  .pop .taginput { background:var(--bg); border:1px solid var(--line); border-radius:5px; color:var(--ink);
+        font-size:11.5px; padding:3px 7px; width:110px; }
+  .mytabs { display:flex; gap:4px; margin-bottom:6px; }
+  .mytabs button { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:5px;
+        color:var(--mut); font-size:11.5px; padding:4px 2px; cursor:pointer; }
+  .mytabs button.on { color:var(--ink); border-color:var(--acc); }
+  .mylist { max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
+  .myitem { display:flex; justify-content:space-between; gap:6px; font-size:12px; cursor:pointer;
+        padding:3px 6px; border-radius:5px; border:1px solid transparent; }
+  .myitem:hover { border-color:var(--line); background:var(--bg); }
+  .myitem .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .myitem .mt { font-family:var(--mono); font-size:10.5px; color:var(--mut); flex-shrink:0; }
+  .myfoot { display:flex; gap:6px; margin-top:6px; }
+  .myfoot button, .myfoot label { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:5px;
+        color:var(--mut); font-size:11px; padding:3px 4px; cursor:pointer; text-align:center; }
   .loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
         z-index:5; background:var(--bg); font-family:var(--mono); color:var(--mut); }
   .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc);
@@ -92,6 +115,23 @@
       <div class="slid"><label>Max proppant intensity <span class="stat" id="pi-val">any</span> <span class="stat">(BC)</span></label>
         <input type="range" id="pi-max" min="0" max="30" step="1" value="30"></div>
       <input type="text" id="op-filter" placeholder="Operator / name contains…" autocomplete="off">
+    </div>
+
+    <div class="sec">
+      <div class="sechead">My wells <span class="stat">(saved in this browser)</span></div>
+      <div class="mytabs">
+        <button id="tab-fav" class="on">★ Favs <span id="n-fav">0</span></button>
+        <button id="tab-tag">🏷 Tagged <span id="n-tag">0</span></button>
+        <button id="tab-rec">🕐 Recent <span id="n-rec">0</span></button>
+      </div>
+      <div class="mylist" id="mylist"><span class="stat">Nothing yet — click a well, then ★ or tag it.</span></div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut);margin-top:7px;cursor:pointer">
+        <input type="checkbox" id="mine-only"> Show my wells only</label>
+      <div class="myfoot">
+        <button id="my-export">Export</button>
+        <label for="my-import-file">Import<input type="file" id="my-import-file" accept=".json" hidden></label>
+        <button id="my-clear">Clear</button>
+      </div>
     </div>
 
     <div class="sec">
@@ -161,6 +201,63 @@ map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 
 const loaded = [];
 
+// ---------- per-user well lists (localStorage) ----------
+const STORE_KEY = "frac2csv-mywells-v1";
+let MY = { items: {} };   // id -> {n, prov, la, lo, fav, tags:[], seen}
+try { MY = JSON.parse(localStorage.getItem(STORE_KEY)) || MY; } catch {}
+if (!MY.items) MY.items = {};
+const saveMY = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(MY)); } catch {} };
+const wellId = p => p.prov + ":" + (p.wa || (p.u || "").split(" ")[0] || p.n);
+function myRec(p) {
+  const id = wellId(p);
+  if (!MY.items[id]) MY.items[id] = { n: p.n || "(unnamed)", prov: p.prov,
+    la: p._la, lo: p._lo, fav: false, tags: [], seen: 0 };
+  return MY.items[id];
+}
+function prune(id) {   // drop untouched records so recents don't grow forever
+  const r = MY.items[id];
+  if (r && !r.fav && !r.tags.length && !r.seen) delete MY.items[id];
+}
+let myTab = "fav";
+function renderMy() {
+  const items = Object.entries(MY.items);
+  const favs = items.filter(([, r]) => r.fav);
+  const tagged = items.filter(([, r]) => r.tags.length);
+  const recent = items.filter(([, r]) => r.seen)
+    .sort((a, b) => b[1].seen - a[1].seen).slice(0, 50);
+  document.getElementById("n-fav").textContent = favs.length;
+  document.getElementById("n-tag").textContent = tagged.length;
+  document.getElementById("n-rec").textContent = recent.length;
+  for (const t of ["fav", "tag", "rec"])
+    document.getElementById("tab-" + t).classList.toggle("on", t === myTab);
+  const list = { fav: favs, tag: tagged, rec: recent }[myTab];
+  const el = document.getElementById("mylist");
+  if (!list.length) {
+    el.innerHTML = '<span class="stat">Nothing yet — click a well, then ★ or tag it.</span>';
+    return;
+  }
+  el.innerHTML = list.map(([id, r]) =>
+    `<div class="myitem" data-id="${id}">
+       <span class="nm">${r.fav ? "★ " : ""}${r.n}</span>
+       <span class="mt">${r.tags.slice(0, 2).join(",") || r.prov.toUpperCase()}</span></div>`).join("");
+  el.querySelectorAll(".myitem").forEach(item => item.addEventListener("click", () => {
+    const r = MY.items[item.dataset.id];
+    if (r && r.la !== undefined) {
+      map.flyTo({ center: [r.lo, r.la], zoom: 12 });
+      const prov = loaded.find(p => p.code === r.prov);
+      const w = prov && prov.wells.find(w => wellId({ prov: r.prov, wa: w.wa, u: (w.u||[]).join(" "), n: w.n }) === item.dataset.id);
+      if (w) {
+        const fc = toFeatures([w]);
+        openWellPopup([w.lo, w.la], fc.pts.features[0].properties);
+      }
+    }
+  }));
+}
+function isMine(w, code) {
+  const r = MY.items[code + ":" + (w.wa || (w.u || [])[0] || w.n)];
+  return r && (r.fav || r.tags.length);
+}
+
 function toFeatures(wells) {
   const pts = [], lines = [];
   for (const w of wells) {
@@ -183,7 +280,8 @@ function provEnabled(code) {
   return cb ? cb.checked : true;
 }
 
-function passes(w, f) {
+function passes(w, f, code) {
+  if (f.mine && !isMine(w, code)) return false;
   if (f.horiz && !("bla" in w)) return false;
   if (f.yr > 1950 && (w.yr || 0) < f.yr) return false;
   if (f.ll > 0 && (w.ll || 0) < f.ll) return false;
@@ -203,6 +301,7 @@ function currentFilters() {
     st: +document.getElementById("st-min").value,
     pi: +document.getElementById("pi-max").value,
     op: document.getElementById("op-filter").value.trim().toLowerCase(),
+    mine: document.getElementById("mine-only").checked,
   };
 }
 
@@ -216,7 +315,7 @@ function applyFilter() {
       map.getSource("lat-" + p.code).setData({ type: "FeatureCollection", features: [] });
       continue;
     }
-    const filt = p.wells.filter(w => passes(w, f));
+    const filt = p.wells.filter(w => passes(w, f, p.code));
     shown += filt.length;
     const fc = toFeatures(filt);
     map.getSource("wells-" + p.code).setData(fc.pts);
@@ -262,21 +361,73 @@ function popupHTML(p) {
       <div class="row">${items.join(" · ")}</div></div>`;
   }
   const uwis = (p.u || "").trim();
+  const r = MY.items[wellId(p)];
+  const isFav = r && r.fav;
+  const tags = (r && r.tags) || [];
   return `<div class="pop"><h3>${p.n || "(unnamed well)"}</h3>${rows.join("")}
     ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
-    <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}">Extract this well's charts →</a></div>`;
+    <div class="actions">
+      <button class="favbtn${isFav ? " on" : ""}">${isFav ? "★ favourited" : "☆ favourite"}</button>
+      <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}">Extract charts →</a>
+    </div>
+    <div class="tagrow">${tags.map(t => `<span class="tag" data-t="${t}" title="click to remove">${t}</span>`).join("")}
+      <input class="taginput" placeholder="+ tag, Enter" maxlength="24"></div></div>`;
+}
+
+function openWellPopup(lngLat, props) {
+  props._la = lngLat[1] !== undefined ? lngLat[1] : lngLat.lat;
+  props._lo = lngLat[0] !== undefined ? lngLat[0] : lngLat.lng;
+  const rec = myRec(props);
+  rec.seen = Date.now();
+  rec.la = props._la; rec.lo = props._lo;
+  saveMY(); renderMy();
+  const popup = new maplibregl.Popup({ closeButton: true })
+    .setLngLat(lngLat).setHTML(popupHTML(props)).addTo(map);
+  wirePopupActions(popup, props);
+  return popup;
+}
+
+function wirePopupActions(popup, props) {
+  const el = popup.getElement();
+  const id = wellId(props);
+  const fav = el.querySelector(".favbtn");
+  if (fav) fav.addEventListener("click", () => {
+    const r = myRec(props);
+    r.fav = !r.fav;
+    fav.classList.toggle("on", r.fav);
+    fav.textContent = r.fav ? "★ favourited" : "☆ favourite";
+    prune(id); saveMY(); renderMy();
+    if (document.getElementById("mine-only").checked) applyFilter();
+  });
+  const input = el.querySelector(".taginput");
+  if (input) input.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter") return;
+    const t = input.value.trim().toLowerCase().slice(0, 24);
+    if (!t) return;
+    const r = myRec(props);
+    if (!r.tags.includes(t)) r.tags.push(t);
+    saveMY(); renderMy();
+    popup.setHTML(popupHTML(props)); wirePopupActions(popup, props);
+    if (document.getElementById("mine-only").checked) applyFilter();
+  });
+  el.querySelectorAll(".tag").forEach(tag => tag.addEventListener("click", () => {
+    const r = myRec(props);
+    r.tags = r.tags.filter(x => x !== tag.dataset.t);
+    prune(id); saveMY(); renderMy();
+    popup.setHTML(popupHTML(props)); wirePopupActions(popup, props);
+    if (document.getElementById("mine-only").checked) applyFilter();
+  }));
 }
 
 function wireWellLayer(code) {
   map.on("click", "wells-" + code, e => {
-    new maplibregl.Popup({ closeButton: true })
-      .setLngLat(e.lngLat).setHTML(popupHTML(e.features[0].properties)).addTo(map);
+    openWellPopup(e.lngLat, e.features[0].properties);
   });
   map.on("mouseenter", "wells-" + code, () => map.getCanvas().style.cursor = "pointer");
   map.on("mouseleave", "wells-" + code, () => map.getCanvas().style.cursor = "");
 }
 
-map.on("load", async () => {
+async function initWells() {
   const provDiv = document.getElementById("prov");
   const srcNames = [];
   const bounds = new maplibregl.LngLatBounds();
@@ -342,6 +493,45 @@ map.on("load", async () => {
   const op = document.getElementById("op-filter");
   op.addEventListener("input", () => { clearTimeout(op._t); op._t = setTimeout(applyFilter, 250); });
 
+  // my-wells panel
+  renderMy();
+  for (const t of ["fav", "tag", "rec"])
+    document.getElementById("tab-" + t).addEventListener("click", () => { myTab = t; renderMy(); });
+  document.getElementById("mine-only").addEventListener("change", applyFilter);
+  document.getElementById("my-export").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(MY, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "frac2csv-my-wells.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  });
+  document.getElementById("my-import-file").addEventListener("change", async ev => {
+    const f = ev.target.files[0];
+    if (!f) return;
+    try {
+      const inc = JSON.parse(await f.text());
+      let merged = 0;
+      for (const [id, r] of Object.entries(inc.items || {})) {
+        const cur = MY.items[id];
+        if (!cur) { MY.items[id] = r; merged++; }
+        else {
+          cur.fav = cur.fav || r.fav;
+          cur.tags = [...new Set([...(cur.tags || []), ...(r.tags || [])])];
+          merged++;
+        }
+      }
+      saveMY(); renderMy(); applyFilter();
+      alert(`Imported/merged ${merged} wells.`);
+    } catch (e) { alert("Import failed: " + e.message); }
+    ev.target.value = "";
+  });
+  document.getElementById("my-clear").addEventListener("click", () => {
+    if (!confirm("Clear all favourites, tags and recents saved in this browser?")) return;
+    MY = { items: {} };
+    saveMY(); renderMy(); applyFilter();
+  });
+
   // search: zoom to first match
   const search = document.getElementById("search");
   search.addEventListener("keydown", ev => {
@@ -360,14 +550,17 @@ map.on("load", async () => {
     if (hit) {
       map.flyTo({ center: [hit.lo, hit.la], zoom: 12 });
       const fc = toFeatures([hit]);
-      new maplibregl.Popup().setLngLat([hit.lo, hit.la])
-        .setHTML(popupHTML(fc.pts.features[0].properties)).addTo(map);
+      openWellPopup([hit.lo, hit.la], fc.pts.features[0].properties);
     } else {
       search.style.borderColor = "#b03a2e";
       setTimeout(() => search.style.borderColor = "", 1000);
     }
   });
-});
+}
+
+// race-proof init: the style may already be loaded by the time we get here
+if (map.isStyleLoaded()) initWells();
+else map.once("styledata", initWells);
 </script>
 </body>
 </html>
