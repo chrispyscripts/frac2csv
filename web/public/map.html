@@ -14,30 +14,37 @@
                font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
   #map { position:absolute; inset:0; }
   .overlay { position:absolute; z-index:2; }
-  .top { top:12px; left:12px; display:flex; gap:10px; align-items:flex-start; pointer-events:none; }
-  .card { background:rgba(24,34,47,.94); border:1px solid var(--line); border-radius:8px;
-          padding:12px 14px; pointer-events:auto; backdrop-filter:blur(6px); max-width:270px; }
+  .top { top:12px; left:12px; bottom:12px; display:flex; pointer-events:none; }
+  .card { background:rgba(24,34,47,.95); border:1px solid var(--line); border-radius:8px;
+          padding:12px 14px; pointer-events:auto; backdrop-filter:blur(6px); width:272px;
+          overflow-y:auto; max-height:100%; }
   .title { font-size:15px; font-weight:600; }
   .title a { color:var(--acc); text-decoration:none; }
   .sub { color:var(--mut); font-size:12px; margin-top:2px; }
-  .controls { display:flex; flex-direction:column; gap:7px; margin-top:10px; }
+  .sec { margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
+  .sechead { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); margin-bottom:6px; }
+  .controls { display:flex; flex-direction:column; gap:7px; }
   .controls label { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--mut); cursor:pointer; }
-  .controls input[type=range] { width:100%; }
-  .prov { display:flex; flex-direction:column; gap:5px; margin-top:9px; padding-top:9px; border-top:1px solid var(--line); }
-  .prov .phead { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); }
+  .controls .slid { display:flex; flex-direction:column; gap:2px; }
+  .controls input[type=range] { width:100%; margin:0; }
+  select, input[type=text] { width:100%; background:var(--bg); border:1px solid var(--line);
+        border-radius:5px; color:var(--ink); font:inherit; font-size:12.5px; padding:5px 8px; }
   .stat { font-family:var(--mono); font-size:11.5px; color:var(--mut); }
   .stat b { color:var(--ink); }
-  .legend { margin-top:8px; display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--mut); }
+  .legend { margin-top:6px; display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--mut); }
   .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
-  .ln  { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:5px; vertical-align:3px; }
+  .grad { height:8px; border-radius:4px; margin:3px 0 1px; }
+  .gradlbl { display:flex; justify-content:space-between; font-size:10.5px; font-family:var(--mono); }
   .maplibregl-popup-content { background:var(--panel); color:var(--ink); border:1px solid var(--line);
-        border-radius:8px; padding:12px 14px; font:13px/1.5 -apple-system,system-ui,sans-serif; max-width:280px; }
+        border-radius:8px; padding:12px 14px; font:13px/1.5 -apple-system,system-ui,sans-serif; max-width:300px; }
   .maplibregl-popup-tip { border-top-color:var(--panel) !important; border-bottom-color:var(--panel) !important; }
   .maplibregl-popup-close-button { color:var(--mut); font-size:17px; }
-  .pop h3 { margin:0 0 6px; font-size:14px; }
+  .pop h3 { margin:0 0 6px; font-size:13.5px; }
   .pop .row { font-family:var(--mono); font-size:12px; color:var(--mut); }
   .pop .row b { color:var(--ink); }
   .pop .uwi { font-family:var(--mono); font-size:11.5px; color:var(--acc); word-break:break-all; margin-top:4px; }
+  .pop .fracs { margin-top:7px; padding-top:7px; border-top:1px solid var(--line); }
+  .pop .fh { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--good); margin-bottom:3px; }
   .pop a.btn { display:inline-block; margin-top:9px; background:var(--acc); color:#fff; text-decoration:none;
         font-size:12px; font-weight:600; padding:5px 11px; border-radius:5px; }
   .loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
@@ -45,9 +52,6 @@
   .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc);
         border-radius:50%; animation:sp .8s linear infinite; margin-right:8px; }
   @keyframes sp { to { transform:rotate(360deg); } }
-  .searchbox { margin-top:9px; }
-  .searchbox input { width:100%; background:var(--bg); border:1px solid var(--line); border-radius:5px;
-        color:var(--ink); font:inherit; font-size:12.5px; padding:5px 8px; }
 </style>
 </head>
 <body>
@@ -56,64 +60,119 @@
 <div class="overlay top">
   <div class="card">
     <div class="title"><a href="/">Frac2CSV</a> · WCSB Well Map</div>
-    <div class="sub">Licensed wells · click one for UWI &amp; depth</div>
-    <div class="searchbox"><input id="search" placeholder="Find by UWI or name…" autocomplete="off"></div>
-    <div class="controls">
-      <label><input type="checkbox" id="horiz-only"> Horizontals only (has a lateral)</label>
-      <label>Min total depth: <span class="stat" id="td-val">0 m</span></label>
-      <input type="range" id="td-min" min="0" max="5000" step="100" value="0">
+    <div class="sub">Screen wells like a buyer: vintage, lateral, intensity</div>
+
+    <div class="sec">
+      <input type="text" id="search" placeholder="Find by UWI / name / operator…" autocomplete="off">
     </div>
-    <div class="prov" id="prov"><div class="phead">Provinces</div></div>
-    <div class="stat" id="count" style="margin-top:8px">—</div>
-    <div class="legend">
-      <span><span class="dot" style="background:#3fb950"></span>vertical / surface point</span>
-      <span><span class="dot" style="background:#3d7dff"></span>horizontal (drawn to bottomhole)</span>
-      <span><span class="ln" style="border-color:#3d7dff"></span>wellbore lateral</span>
+
+    <div class="sec">
+      <div class="sechead">Color wells by</div>
+      <select id="colorby">
+        <option value="type">Well type (vertical / horizontal)</option>
+        <option value="yr">Completion vintage (refrac screening)</option>
+        <option value="ll">Lateral length</option>
+        <option value="pi">Proppant intensity t/m (BC)</option>
+        <option value="td">Total depth</option>
+      </select>
+      <div id="colorlegend" class="legend"></div>
     </div>
-    <div class="sub" style="margin-top:8px" id="sources">Source: provincial energy regulators (open data)</div>
+
+    <div class="sec controls">
+      <div class="sechead">Filters</div>
+      <label><input type="checkbox" id="horiz-only"> Horizontals only</label>
+      <div class="slid"><label>Completed / drilled ≥ <span class="stat" id="yr-val">any year</span></label>
+        <input type="range" id="yr-min" min="1950" max="2026" step="1" value="1950"></div>
+      <div class="slid"><label>Min lateral length <span class="stat" id="ll-val">0 m</span></label>
+        <input type="range" id="ll-min" min="0" max="4000" step="100" value="0"></div>
+      <div class="slid"><label>Min total depth <span class="stat" id="td-val">0 m</span></label>
+        <input type="range" id="td-min" min="0" max="6000" step="100" value="0"></div>
+      <div class="slid"><label>Min frac stages <span class="stat" id="st-val">0</span> <span class="stat">(BC data)</span></label>
+        <input type="range" id="st-min" min="0" max="40" step="1" value="0"></div>
+      <div class="slid"><label>Max proppant intensity <span class="stat" id="pi-val">any</span> <span class="stat">(BC)</span></label>
+        <input type="range" id="pi-max" min="0" max="30" step="1" value="30"></div>
+      <input type="text" id="op-filter" placeholder="Operator / name contains…" autocomplete="off">
+    </div>
+
+    <div class="sec">
+      <div class="sechead">Provinces</div>
+      <div class="controls" id="prov"></div>
+    </div>
+
+    <div class="stat" id="count" style="margin-top:9px">—</div>
+    <div class="sub" style="margin-top:7px" id="sources">Sources: provincial energy regulators (open data)</div>
   </div>
 </div>
 <script>
 "use strict";
-// Add a province here and drop its /data/<code>-wells.json in place; the map
-// loads whatever exists and skips the rest.
 const PROVINCES = [
   { code: "bc", name: "British Columbia", file: "/data/bc-wells.json" },
   { code: "ab", name: "Alberta",         file: "/data/ab-wells.json" },
 ];
 
+const COLOR_MODES = {
+  type: { expr: ["case", ["==", ["get", "horiz"], 1], "#3d7dff", "#3fb950"],
+          legend: [["#3fb950", "vertical / surface point"], ["#3d7dff", "horizontal"]] },
+  yr:   { prop: "yr", stops: [[1990, "#c0392b"], [2008, "#e67e22"], [2015, "#f1c40f"], [2020, "#2ecc71"], [2026, "#00e5ff"]],
+          label: ["1990", "2026"], desc: "old = refrac candidates" },
+  ll:   { prop: "ll", stops: [[200, "#4a5f9e"], [1500, "#3d7dff"], [3000, "#00e5ff"], [4200, "#aef7ff"]],
+          label: ["0 m", "4,000+ m"], desc: "lateral length" },
+  pi:   { prop: "pi", stops: [[0.2, "#2ecc71"], [1, "#f1c40f"], [2, "#e67e22"], [3.5, "#e74c3c"]],
+          label: ["0 t/m", "3.5+ t/m"], desc: "proppant per lateral meter" },
+  td:   { prop: "td", stops: [[500, "#4a5f9e"], [2500, "#3d7dff"], [4500, "#00e5ff"], [6500, "#aef7ff"]],
+          label: ["0 m", "6,500+ m"], desc: "measured depth" },
+};
+
+function colorExpr(mode) {
+  const m = COLOR_MODES[mode];
+  if (m.expr) return m.expr;
+  const ramp = ["interpolate", ["linear"], ["coalesce", ["get", m.prop], -1]];
+  ramp.push(-1, "#5b6470", 0, m.stops[0][1]);
+  for (const [v, c] of m.stops) ramp.push(v, c);
+  return ["case", ["==", ["coalesce", ["get", m.prop], -1], -1], "#5b6470", ramp];
+}
+
+function renderLegend(mode) {
+  const el = document.getElementById("colorlegend");
+  const m = COLOR_MODES[mode];
+  if (m.legend) {
+    el.innerHTML = m.legend.map(([c, t]) => `<span><span class="dot" style="background:${c}"></span>${t}</span>`).join("");
+    return;
+  }
+  const grad = `linear-gradient(90deg, ${m.stops.map(s => s[1]).join(",")})`;
+  el.innerHTML = `<div class="grad" style="background:${grad}"></div>
+    <div class="gradlbl"><span>${m.label[0]}</span><span>${m.label[1]}</span></div>
+    <span>${m.desc} · <span class="dot" style="background:#5b6470"></span>no data</span>`;
+}
+
 const map = new maplibregl.Map({
   container: "map",
-  style: {
-    version: 8,
-    sources: { carto: {
-      type: "raster",
+  style: { version: 8,
+    sources: { carto: { type: "raster",
       tiles: ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
               "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "© OpenStreetMap © CARTO · Wells: provincial energy regulators"
-    } },
-    layers: [{ id: "bg", type: "raster", source: "carto" }]
-  },
+      attribution: "© OpenStreetMap © CARTO · Wells: provincial energy regulators" } },
+    layers: [{ id: "bg", type: "raster", source: "carto" }] },
   center: [-118, 55.5], zoom: 5
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 
-const loaded = [];   // { code, name, wells:[] }
+const loaded = [];
 
 function toFeatures(wells) {
   const pts = [], lines = [];
   for (const w of wells) {
     const horiz = ("bla" in w);
-    pts.push({ type: "Feature",
-      geometry: { type: "Point", coordinates: [w.lo, w.la] },
-      properties: { wa: w.wa || "", n: w.n || "", td: w.td || 0, tvd: w.tvd || 0,
-                    u: (w.u || []).join(" "), horiz: horiz ? 1 : 0, prov: w._p } });
-    if (horiz)
-      lines.push({ type: "Feature",
-        geometry: { type: "LineString", coordinates: [[w.lo, w.la], [w.blo, w.bla]] },
-        properties: {} });
+    const p = { wa: w.wa || "", n: w.n || "", td: w.td, tvd: w.tvd, yr: w.yr,
+                ll: w.ll, st: w.st, pt: w.pt, pi: w.pi, fl: w.fl, isip: w.isip,
+                bd: w.bd, fg: w.fg, op: w.op || "", u: (w.u || []).join(" "),
+                horiz: horiz ? 1 : 0, prov: w._p };
+    for (const k in p) if (p[k] === undefined) delete p[k];
+    pts.push({ type: "Feature", geometry: { type: "Point", coordinates: [w.lo, w.la] }, properties: p });
+    if (horiz) lines.push({ type: "Feature",
+      geometry: { type: "LineString", coordinates: [[w.lo, w.la], [w.blo, w.bla]] }, properties: {} });
   }
   return { pts: { type: "FeatureCollection", features: pts },
            lines: { type: "FeatureCollection", features: lines } };
@@ -124,9 +183,31 @@ function provEnabled(code) {
   return cb ? cb.checked : true;
 }
 
+function passes(w, f) {
+  if (f.horiz && !("bla" in w)) return false;
+  if (f.yr > 1950 && (w.yr || 0) < f.yr) return false;
+  if (f.ll > 0 && (w.ll || 0) < f.ll) return false;
+  if (f.td > 0 && (w.td || 0) < f.td) return false;
+  if (f.st > 0 && (w.st || 0) < f.st) return false;
+  if (f.pi < 30 && (w.pi === undefined || w.pi > f.pi)) return false;
+  if (f.op && !(((w.op || "") + " " + (w.n || "")).toLowerCase().includes(f.op))) return false;
+  return true;
+}
+
+function currentFilters() {
+  return {
+    horiz: document.getElementById("horiz-only").checked,
+    yr: +document.getElementById("yr-min").value,
+    ll: +document.getElementById("ll-min").value,
+    td: +document.getElementById("td-min").value,
+    st: +document.getElementById("st-min").value,
+    pi: +document.getElementById("pi-max").value,
+    op: document.getElementById("op-filter").value.trim().toLowerCase(),
+  };
+}
+
 function applyFilter() {
-  const horizOnly = document.getElementById("horiz-only").checked;
-  const tdMin = +document.getElementById("td-min").value;
+  const f = currentFilters();
   let total = 0, shown = 0;
   for (const p of loaded) {
     total += p.wells.length;
@@ -135,26 +216,61 @@ function applyFilter() {
       map.getSource("lat-" + p.code).setData({ type: "FeatureCollection", features: [] });
       continue;
     }
-    const filt = p.wells.filter(w => (!horizOnly || "bla" in w) && (w.td || 0) >= tdMin);
+    const filt = p.wells.filter(w => passes(w, f));
     shown += filt.length;
     const fc = toFeatures(filt);
     map.getSource("wells-" + p.code).setData(fc.pts);
     map.getSource("lat-" + p.code).setData(fc.lines);
   }
   document.getElementById("count").innerHTML =
-    `<b>${shown.toLocaleString()}</b> of ${total.toLocaleString()} wells shown`;
+    `<b>${shown.toLocaleString()}</b> of ${total.toLocaleString()} wells match`;
+}
+
+function applyColor() {
+  const mode = document.getElementById("colorby").value;
+  renderLegend(mode);
+  for (const p of loaded)
+    map.setPaintProperty("wells-" + p.code, "circle-color", colorExpr(mode));
+}
+
+function popupHTML(p) {
+  const fmt = (v, unit, dp) => v === undefined ? null :
+    `<b>${(+v).toLocaleString(undefined, {maximumFractionDigits: dp === undefined ? 1 : dp})}${unit}</b>`;
+  const rows = [];
+  const line1 = [p.wa ? `Lic <b>${p.wa}</b>` : null, p.horiz ? "<b>horizontal</b>" : "vertical",
+                 p.prov.toUpperCase()].filter(Boolean).join(" · ");
+  rows.push(`<div class="row">${line1}</div>`);
+  const depth = [p.td !== undefined ? "MD " + fmt(p.td, " m", 0) : null,
+                 p.tvd !== undefined ? "TVD " + fmt(p.tvd, " m", 0) : null,
+                 p.ll !== undefined ? "lateral ~" + fmt(p.ll, " m", 0) : null].filter(Boolean).join(" · ");
+  if (depth) rows.push(`<div class="row">${depth}</div>`);
+  const who = [p.op ? `op <b>${p.op}</b>` : null, p.yr ? `vintage <b>${p.yr}</b>` : null]
+    .filter(Boolean).join(" · ");
+  if (who) rows.push(`<div class="row">${who}</div>`);
+  let fracs = "";
+  if (p.st !== undefined) {
+    const items = [
+      `stages ${fmt(p.st, "", 0)}`,
+      p.pt !== undefined ? `proppant ${fmt(p.pt, " t", 0)}` : null,
+      p.pi !== undefined ? `intensity ${fmt(p.pi, " t/m", 2)}` : null,
+      p.fl !== undefined ? `fluid ${fmt(p.fl, " m³", 0)}` : null,
+      p.isip !== undefined ? `avg ISIP ${fmt(p.isip, " MPa")}` : null,
+      p.bd !== undefined ? `avg breakdown ${fmt(p.bd, " MPa")}` : null,
+      p.fg !== undefined ? `frac grad ${fmt(p.fg, " kPa/m", 0)}` : null,
+    ].filter(Boolean);
+    fracs = `<div class="fracs"><div class="fh">Completion record (BCER per-stage data)</div>
+      <div class="row">${items.join(" · ")}</div></div>`;
+  }
+  const uwis = (p.u || "").trim();
+  return `<div class="pop"><h3>${p.n || "(unnamed well)"}</h3>${rows.join("")}
+    ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
+    <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}">Extract this well's charts →</a></div>`;
 }
 
 function wireWellLayer(code) {
   map.on("click", "wells-" + code, e => {
-    const p = e.features[0].properties;
-    const uwis = (p.u || "").trim();
-    const html = `<div class="pop"><h3>${p.n || "(unnamed well)"}</h3>
-      <div class="row">${p.wa ? "Lic <b>" + p.wa + "</b>" : ""}${p.horiz ? " · <b>horizontal</b>" : ""} · ${p.prov.toUpperCase()}</div>
-      ${(p.td || p.tvd) ? `<div class="row">${p.td ? "MD (actual) <b>" + (+p.td).toLocaleString() + " m</b>" : ""}${p.tvd ? " · TVD (vertical) <b>" + (+p.tvd).toLocaleString() + " m</b>" : ""}</div>` : ""}
-      ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}
-      <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u||"").split(" ")[0] || "")}">Extract this well's charts →</a></div>`;
-    new maplibregl.Popup({ closeButton: true }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+    new maplibregl.Popup({ closeButton: true })
+      .setLngLat(e.lngLat).setHTML(popupHTML(e.features[0].properties)).addTo(map);
   });
   map.on("mouseenter", "wells-" + code, () => map.getCanvas().style.cursor = "pointer");
   map.on("mouseleave", "wells-" + code, () => map.getCanvas().style.cursor = "");
@@ -179,23 +295,21 @@ map.on("load", async () => {
     map.addSource("lat-" + P.code, { type: "geojson", data: fc.lines });
     map.addSource("wells-" + P.code, { type: "geojson", data: fc.pts });
     map.addLayer({ id: "lat-" + P.code, type: "line", source: "lat-" + P.code,
-      paint: { "line-color": "#3d7dff", "line-width": 1.4, "line-opacity": 0.75 } });
+      paint: { "line-color": "#3d7dff", "line-width": 1.4, "line-opacity": 0.7 } });
     map.addLayer({ id: "wells-" + P.code, type: "circle", source: "wells-" + P.code,
       paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 1.3, 9, 3, 13, 5],
-        "circle-color": ["case", ["==", ["get", "horiz"], 1], "#3d7dff", "#3fb950"],
-        "circle-opacity": 0.85,
+        "circle-color": colorExpr("type"),
+        "circle-opacity": 0.88,
         "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 9, 0, 12, 0.6],
         "circle-stroke-color": "#0f1621"
       } });
     wireWellLayer(P.code);
 
-    // province toggle
     const lbl = document.createElement("label");
     lbl.innerHTML = `<input type="checkbox" id="cb-${P.code}" checked> ${P.name} <span class="stat">(${wells.length.toLocaleString()})</span>`;
     provDiv.appendChild(lbl);
     lbl.querySelector("input").addEventListener("change", applyFilter);
-
     for (const w of wells) bounds.extend([w.lo, w.la]);
   }
 
@@ -204,19 +318,31 @@ map.on("load", async () => {
     document.getElementById("count").textContent = "No well data available.";
     return;
   }
-  document.getElementById("sources").textContent = "Source: " + [...new Set(srcNames)].join(" · ");
+  document.getElementById("sources").textContent = "Sources: " + [...new Set(srcNames)].join(" · ");
   document.getElementById("count").innerHTML =
     `<b>${loaded.reduce((s, p) => s + p.wells.length, 0).toLocaleString()}</b> wells`;
   if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 0 });
+  renderLegend("type");
 
+  // controls
+  document.getElementById("colorby").addEventListener("change", applyColor);
   document.getElementById("horiz-only").addEventListener("change", applyFilter);
-  const tdSlider = document.getElementById("td-min");
-  tdSlider.addEventListener("input", () => {
-    document.getElementById("td-val").textContent = (+tdSlider.value).toLocaleString() + " m";
-    applyFilter();
-  });
+  const bind = (id, lbl, fmt) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", () => {
+      document.getElementById(lbl).textContent = fmt(+el.value);
+      clearTimeout(el._t); el._t = setTimeout(applyFilter, 120);
+    });
+  };
+  bind("yr-min", "yr-val", v => v <= 1950 ? "any year" : "" + v);
+  bind("ll-min", "ll-val", v => v.toLocaleString() + " m");
+  bind("td-min", "td-val", v => v.toLocaleString() + " m");
+  bind("st-min", "st-val", v => "" + v);
+  bind("pi-max", "pi-val", v => v >= 30 ? "any" : v + " t/m");
+  const op = document.getElementById("op-filter");
+  op.addEventListener("input", () => { clearTimeout(op._t); op._t = setTimeout(applyFilter, 250); });
 
-  // search across all provinces by UWI, name or WA
+  // search: zoom to first match
   const search = document.getElementById("search");
   search.addEventListener("keydown", ev => {
     if (ev.key !== "Enter") return;
@@ -226,15 +352,16 @@ map.on("load", async () => {
     for (const p of loaded) {
       hit = p.wells.find(w =>
         (w.n || "").toLowerCase().includes(q) ||
+        (w.op || "").toLowerCase().includes(q) ||
         (w.u || []).some(u => u.toLowerCase().includes(q)) ||
         (w.wa || "").toLowerCase() === q);
       if (hit) break;
     }
     if (hit) {
       map.flyTo({ center: [hit.lo, hit.la], zoom: 12 });
+      const fc = toFeatures([hit]);
       new maplibregl.Popup().setLngLat([hit.lo, hit.la])
-        .setHTML(`<div class="pop"><h3>${hit.n || "(unnamed)"}</h3><div class="row">${hit.wa ? "WA <b>" + hit.wa + "</b>" : ""}${hit.td ? " · TD <b>" + hit.td + " m</b>" : ""}</div></div>`)
-        .addTo(map);
+        .setHTML(popupHTML(fc.pts.features[0].properties)).addTo(map);
     } else {
       search.style.borderColor = "#b03a2e";
       setTimeout(() => search.style.borderColor = "", 1000);

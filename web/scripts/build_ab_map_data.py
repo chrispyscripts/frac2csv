@@ -57,6 +57,7 @@ def main():
     for r in it:
         seen += 1
         uwi, lic, name = r[0], r[1], r[2]
+        drill_date, licensee = r[3], r[7]
         td, tvd, bla, blo = r[5], r[6], r[13], r[14]
         if not (isinstance(bla, (int, float)) and isinstance(blo, (int, float))):
             continue
@@ -78,6 +79,12 @@ def main():
             rec["td"] = round(float(td), 1)
         if isinstance(tvd, (int, float)) and tvd > 0:
             rec["tvd"] = round(float(tvd), 1)
+        rec["ll"] = round(disp)                       # lateral length proxy (m)
+        d = str(drill_date or "")
+        if len(d) >= 4 and d[:4].isdigit():
+            rec["yr"] = int(d[:4])                    # rig-release year (vintage)
+        if licensee:
+            rec["op"] = " ".join(str(licensee).split())[:28]
         out.append(rec)
     wb.close()
     print(f"bottom holes scanned: {seen:,} -> {len(out):,} horizontals kept")
