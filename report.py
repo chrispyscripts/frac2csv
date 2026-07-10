@@ -76,6 +76,11 @@ _TEMPLATE = r"""<!doctype html>
           border:1px solid var(--line); border-radius:4px; padding:3px 9px; color:var(--mut); }
   .chip b { color:var(--ink); }
   .chip.warn { border-color:#ecd9b6; background:#fdf6ec; color:#8a5a14; }
+  .metrics { display:flex; flex-wrap:wrap; gap:6px 8px; margin:2px 0 6px; }
+  .metric { background:#f0f5ee; border:1px solid #cfe3cc; border-radius:5px; padding:4px 10px;
+            font-family:var(--mono); font-size:11.5px; color:#2b5c33; }
+  .metric b { font-size:12.5px; color:#1e4425; display:block; }
+  .metrics-note { font-size:11.5px; color:var(--mut); margin-bottom:4px; }
   .hint { color:var(--mut); font-size:12.5px; margin:6px 0 10px; }
   .readout { position:sticky; top:0; z-index:5; background:var(--card); border:1px solid var(--line);
              border-radius:6px; padding:8px 14px; font-family:var(--mono); font-size:12.5px;
@@ -103,6 +108,7 @@ _TEMPLATE = r"""<!doctype html>
   <h1 id="title"></h1>
   <div class="sub" id="sub"></div>
   <div class="chips" id="chips"></div>
+  <div id="metrics"></div>
   <div class="hint">Drag to zoom &middot; double-click to reset &middot; hover for values at any second &middot;
     click to pin a cursor (two pins show &Delta;) &middot; <button id="reset">Reset zoom</button></div>
   <div class="readout" id="readout"><span class="pin">Hover a chart&hellip;</span></div>
@@ -138,6 +144,96 @@ const addChip = (html, cls) => {
 addChip(D.meta.kind === "vector" ? "input: <b>vector PDF</b> — near-lossless geometry"
         : "input: <b>raster</b> — pixel-traced, see flagged spans", D.meta.kind === "vector" ? "" : "warn");
 (M.warnings || []).forEach(w => addChip("&#9888; " + w, "warn"));
+
+// engineering metrics computed from the curves
+function findChannel(chs, keys, words, colorHints) {
+  for (const k of keys) { const c = chs.find(c => c.key === k); if (c) return c; }
+  for (const w of words) {
+    const c = chs.find(c => (c.key + " " + (c.label || "")).toLowerCase().includes(w));
+    if (c) return c;
+  }
+  for (const h of colorHints) { const c = chs.find(c => c.key === "series-" + h); if (c) return c; }
+  return null;
+}
+(function renderMetrics() {
+  const dt = DT, n = N, chs = D.channels;
+  const press = findChannel(chs, ["Tr Press"], ["press"], ["red"]);
+  const rate  = findChannel(chs, ["Slurry Rate"], ["rate"], ["green"]);
+  const conc  = findChannel(chs, ["WH Prop Conc", "BH Prop Conc"], ["conc", "dens"], ["magenta"]);
+  const out = [];
+  const fv = (v, dp) => (+v).toLocaleString(undefined, {maximumFractionDigits: dp});
+  const mmss = s => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+  let pumping = null, mainRun = null;
+  if (rate) {
+    const rv = rate.values;
+    let rmax = 0;
+    for (let i = 0; i < n; i++) if (rv[i] != null && rv[i] > rmax) rmax = rv[i];
+    const thr = rmax * 0.05;
+    pumping = [];
+    const runs = [];
+    let rs = null;
+    for (let i = 0; i < n; i++) {
+      const on = rv[i] != null && rv[i] > thr;
+      if (on) { pumping.push(i); if (rs === null) rs = i; }
+      else if (rs !== null) { runs.push([rs, i - 1]); rs = null; }
+    }
+    if (rs !== null) runs.push([rs, n - 1]);
+    mainRun = runs.reduce((a, b) => (!a || b[1] - b[0] > a[1] - a[0]) ? b : a, null);
+    if (pumping.length) {
+      out.push(["pump time", mmss(pumping.length * dt) + " min"]);
+      out.push(["peak rate", fv(rmax, 1) + (rate.unit ? " " + rate.unit : "")]);
+      const u = (rate.unit || "").toLowerCase();
+      if (u.includes("/min")) {
+        let vol = 0;
+        for (const i of pumping) vol += rv[i] * dt / 60;
+        out.push(["slurry volume", "\u2248" + fv(vol, 0) + " " + u.split("/")[0]]);
+      }
+    }
+  }
+  if (press) {
+    const pv = press.values, pu = press.unit ? " " + press.unit : "";
+    const idxs = pumping && pumping.length ? pumping : [...Array(n).keys()];
+    let mx = -Infinity, sum = 0, cnt = 0;
+    for (const i of idxs) if (pv[i] != null) { if (pv[i] > mx) mx = pv[i]; sum += pv[i]; cnt++; }
+    if (cnt) {
+      out.push(["max treating P", fv(mx, 1) + pu]);
+      out.push(["avg treating P", fv(sum / cnt, 1) + pu]);
+    }
+    if (mainRun) {
+      const q = mainRun[0] + Math.max(30, Math.floor((mainRun[1] - mainRun[0]) / 4));
+      let bd = -Infinity;
+      for (let i = mainRun[0]; i <= Math.min(q, mainRun[1]); i++)
+        if (pv[i] != null && pv[i] > bd) bd = pv[i];
+      if (bd > -Infinity) out.push(["breakdown\u2248", fv(bd, 1) + pu]);
+      const shut = pumping[pumping.length - 1];
+      const win = [];
+      for (let i = shut + Math.round(5 / dt); i <= shut + Math.round(30 / dt) && i < n; i++)
+        if (pv[i] != null) win.push(pv[i]);
+      if (win.length >= 3) {
+        win.sort((a, b) => a - b);
+        out.push(["ISIP\u2248", fv(win[Math.floor(win.length / 2)], 1) + pu]);
+      }
+    }
+  }
+  if (conc) {
+    const cv = conc.values, cu = (conc.unit || "").toLowerCase();
+    let cmax = 0;
+    for (let i = 0; i < n; i++) if (cv[i] != null && cv[i] > cmax) cmax = cv[i];
+    if (cmax) out.push(["peak prop conc", fv(cmax, 0) + (conc.unit ? " " + conc.unit : "")]);
+    if (rate && cu.includes("kg/m3") && (rate.unit || "").toLowerCase().includes("m3/min") && pumping) {
+      let mass = 0;
+      for (const i of pumping) if (cv[i] != null && rate.values[i] != null)
+        mass += cv[i] * rate.values[i] * dt / 60 / 1000;
+      if (mass > 0) out.push(["proppant placed", "\u2248" + fv(mass, 0) + " t"]);
+    }
+  }
+  if (out.length) {
+    document.getElementById("metrics").innerHTML =
+      '<div class="metrics">' + out.map(m => '<span class="metric">' + m[0] + '<b>' + m[1] + '</b></span>').join('') +
+      '</div><div class="metrics-note">Engineering estimates computed from the extracted curves' +
+      (D.meta.kind === "raster" ? " (raster input \u2014 treat as approximate)" : "") + '.</div>';
+  }
+})();
 
 // hatch pattern for overlap shading
 function hatch(color) {
