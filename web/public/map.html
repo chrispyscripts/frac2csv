@@ -368,7 +368,7 @@ function popupHTML(p) {
     ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
     <div class="actions">
       <button class="favbtn${isFav ? " on" : ""}">${isFav ? "★ favourited" : "☆ favourite"}</button>
-      <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}">Extract charts →</a>
+      <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}&prov=${p.prov}">Extract charts →</a>
     </div>
     <div class="tagrow">${tags.map(t => `<span class="tag" data-t="${t}" title="click to remove">${t}</span>`).join("")}
       <input class="taginput" placeholder="+ tag, Enter" maxlength="24"></div></div>`;

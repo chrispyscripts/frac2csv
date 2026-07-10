@@ -96,6 +96,12 @@
   </div>
 
   <div class="status" id="status"></div>
+  <div id="wellpanel" hidden style="background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin:14px 0">
+    <div style="font-weight:600" id="wp-title">Well</div>
+    <div class="status" id="wp-status" style="margin:6px 0"></div>
+    <div id="wp-files" style="display:flex; flex-direction:column; gap:5px"></div>
+    <div id="wp-intervals" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px"></div>
+  </div>
   <div id="stages"></div>
 
   <div class="foot">Vector extraction validated at ≤0.56% full-scale RMSE against known-good exports.
@@ -133,6 +139,118 @@ fileInput.addEventListener("change", () => handleFiles(fileInput.files));
 function say(msg, err) {
   statusEl.innerHTML += (err ? '<span class="err">' + msg + "</span>" : msg) + "\n";
 }
+
+// ---------- BC well flow: map "Extract charts" lands here with ?well= ----------
+async function initWellPanel() {
+  const params = new URLSearchParams(location.search);
+  const wa = (params.get("well") || "").trim();
+  if (!wa) return;
+  const prov = (params.get("prov") || "bc").toLowerCase();
+  const panel = document.getElementById("wellpanel");
+  const title = document.getElementById("wp-title");
+  const st = document.getElementById("wp-status");
+  panel.hidden = false;
+  if (prov !== "bc") {
+    title.textContent = `Alberta well — licence ${wa}`;
+    st.textContent = "Alberta well files aren't freely downloadable (AER sells them). " +
+      "If you have this well's completion report PDF, drop it above.";
+    return;
+  }
+  title.textContent = `BC well — WA ${wa}`;
+  st.innerHTML = `<span class="spin"></span>looking up filed documents…`;
+  let out;
+  try {
+    const r = await fetch(`/api/wellfiles?wa=${encodeURIComponent(wa)}`);
+    out = await r.json();
+    if (!r.ok) throw new Error(out.error || r.status);
+  } catch (e) {
+    st.textContent = "File lookup failed: " + e.message;
+    return;
+  }
+  const comps = out.files.filter(f => f.includes("_COMP_") && f.toUpperCase().endsWith(".PDF"));
+  const others = out.files.length - comps.length;
+  if (!comps.length) {
+    st.textContent = `No completion-report PDFs on file for WA ${out.wa} ` +
+      `(${out.files.length} other documents).`;
+    return;
+  }
+  if (!out.can_fetch) {
+    st.innerHTML = `${comps.length} completion PDF(s) on file, but this server has no ` +
+      `eLibrary credentials — fetch locally with <code>fetch_bc_wellfiles.py ${out.wa}</code> ` +
+      `and drop the PDF above.`;
+    return;
+  }
+  st.textContent = `${comps.length} completion PDF(s) on file (${others} other documents). Pick one:`;
+  const filesDiv = document.getElementById("wp-files");
+  for (const f of comps) {
+    const b = document.createElement("button");
+    b.textContent = f;
+    b.style.cssText = "text-align:left; font-family:var(--mono); font-size:12px";
+    b.addEventListener("click", () => loadIntervals(out.wa, f));
+    filesDiv.appendChild(b);
+  }
+
+  async function loadIntervals(wa, file) {
+    st.innerHTML = `<span class="spin"></span>fetching ${file} from the eLibrary and scanning for charts… (can take ~a minute)`;
+    document.getElementById("wp-intervals").innerHTML = "";
+    let res;
+    try {
+      const r = await fetch(`/api/well-intervals?wa=${wa}&file=${encodeURIComponent(file)}`);
+      res = await r.json();
+      if (!r.ok) throw new Error(res.error || r.status);
+    } catch (e) {
+      st.textContent = "Fetch failed: " + e.message;
+      return;
+    }
+    const ivs = res.intervals;
+    if (!ivs.length) {
+      st.textContent = `${file}: no extractable chart pages found — this filing is ` +
+        `text/scan based. (Raster pages can still be extracted by downloading the PDF ` +
+        `and dropping it above with Auto-calibrate.)`;
+      return;
+    }
+    st.textContent = `${file}: ${ivs.length} chart page(s). Click to extract:`;
+    const idiv = document.getElementById("wp-intervals");
+    const mk = (label, fn) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.fontSize = "12px";
+      b.addEventListener("click", fn);
+      idiv.appendChild(b);
+      return b;
+    };
+    for (const iv of ivs) {
+      mk(iv.label, async ev => {
+        ev.target.disabled = true;
+        ev.target.textContent = iv.label + " …";
+        try {
+          const r = await fetch(`/api/well-extract?wa=${wa}&file=${encodeURIComponent(file)}&page=${iv.page}`);
+          const res = await r.json();
+          if (!r.ok) throw new Error(res.error || r.status);
+          renderStage(res.stage, file);
+          ev.target.textContent = iv.label + " ✓";
+        } catch (e) {
+          ev.target.textContent = iv.label + " ✗ " + e.message;
+        }
+      });
+    }
+    if (ivs.length > 1) {
+      mk(`Extract all ${ivs.length}`, async ev => {
+        ev.target.disabled = true;
+        for (const iv of ivs) {
+          ev.target.textContent = `Extracting ${iv.label}…`;
+          try {
+            const r = await fetch(`/api/well-extract?wa=${wa}&file=${encodeURIComponent(file)}&page=${iv.page}`);
+            const res = await r.json();
+            if (r.ok) renderStage(res.stage, file);
+          } catch {}
+        }
+        ev.target.textContent = "All extracted ✓";
+      });
+    }
+  }
+}
+initWellPanel();
 
 // ---------- CSV input: parsed entirely in the browser ----------
 const KNOWN_STYLE = {
@@ -365,7 +483,7 @@ function renderStage(st, fname) {
   box.innerHTML = `
     <h2>${M.title || fname}</h2>
     <div class="sub2">${[M.uwi && "UWI " + M.uwi, M.stage && "stage " + M.stage, M.date,
-                         M.duration_min + " min", N.toLocaleString() + " samples"].filter(Boolean).join(" · ")}</div>
+                         (Math.round(M.duration_min * 10) / 10) + " min", N.toLocaleString() + " samples"].filter(Boolean).join(" · ")}</div>
     <div class="chips"></div>
     <div class="hint">Drag to zoom · double-click to reset · hover for per-second values · click to pin (two pins show Δ)
       <button class="rz">Reset zoom</button> <button class="dl btn primary">Download CSV</button></div>

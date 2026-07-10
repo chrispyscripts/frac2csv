@@ -153,6 +153,29 @@ def extract_bytes(data, filename, fallback, sample_sec=1.0):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        from urllib.parse import urlparse, parse_qs
+        u = urlparse(self.path)
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        try:
+            if u.path == "/api/wellfiles":
+                import bcer
+                wa, files = bcer.list_wellfiles(q.get("wa", ""))
+                return self._send(200, {"wa": wa, "files": files,
+                                        "can_fetch": bcer.creds_available()})
+            if u.path == "/api/well-intervals":
+                import bcer
+                path = bcer.get_pdf(q["wa"], q["file"])
+                return self._send(200, {"intervals": bcer.list_intervals(path)})
+            if u.path == "/api/well-extract":
+                import bcer
+                path = bcer.get_pdf(q["wa"], q["file"])
+                payload = bcer.extract_interval(path, int(q["page"]),
+                                                float(q.get("sample_sec", 1.0)))
+                return self._send(200, {"stage": payload})
+        except PermissionError as e:
+            return self._send(503, {"error": str(e)})
+        except Exception as e:
+            return self._send(400, {"error": f"{type(e).__name__}: {e}"})
         # the catch-all function route swallows "/" — send it to the static page
         self.send_response(307)
         self.send_header("Location", "/index.html")
