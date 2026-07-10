@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frac2CSV — BC Well Map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root { --bg:#0f1621; --panel:#18222f; --ink:#e6edf3; --mut:#8496a8; --line:#26333f;
+          --acc:#3d7dff; --good:#3fb950; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+               font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  #map { position:absolute; inset:0; }
+  .overlay { position:absolute; z-index:2; }
+  .top { top:12px; left:12px; right:12px; display:flex; gap:10px; align-items:flex-start;
+         pointer-events:none; }
+  .card { background:rgba(24,34,47,.94); border:1px solid var(--line); border-radius:8px;
+          padding:12px 14px; pointer-events:auto; backdrop-filter:blur(6px); }
+  .title { font-size:15px; font-weight:600; }
+  .title a { color:var(--acc); text-decoration:none; }
+  .sub { color:var(--mut); font-size:12px; margin-top:2px; }
+  .controls { display:flex; flex-direction:column; gap:7px; margin-top:10px; min-width:210px; }
+  .controls label { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--mut); cursor:pointer; }
+  .controls input[type=range] { width:100%; }
+  .stat { font-family:var(--mono); font-size:11.5px; color:var(--mut); }
+  .stat b { color:var(--ink); }
+  .legend { margin-top:8px; display:flex; flex-direction:column; gap:4px; font-size:11.5px; color:var(--mut); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+  .ln  { display:inline-block; width:16px; height:0; border-top:2px solid; margin-right:5px; vertical-align:3px; }
+  .maplibregl-popup-content { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+        border-radius:8px; padding:12px 14px; font:13px/1.5 -apple-system,system-ui,sans-serif; max-width:280px; }
+  .maplibregl-popup-tip { border-top-color:var(--panel) !important; border-bottom-color:var(--panel) !important; }
+  .maplibregl-popup-close-button { color:var(--mut); font-size:17px; }
+  .pop h3 { margin:0 0 6px; font-size:14px; }
+  .pop .row { font-family:var(--mono); font-size:12px; color:var(--mut); }
+  .pop .row b { color:var(--ink); }
+  .pop .uwi { font-family:var(--mono); font-size:11.5px; color:var(--acc); word-break:break-all; margin-top:4px; }
+  .pop a.btn { display:inline-block; margin-top:9px; background:var(--acc); color:#fff; text-decoration:none;
+        font-size:12px; font-weight:600; padding:5px 11px; border-radius:5px; }
+  .loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+        z-index:5; background:var(--bg); font-family:var(--mono); color:var(--mut); }
+  .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc);
+        border-radius:50%; animation:sp .8s linear infinite; margin-right:8px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .searchbox { margin-top:9px; }
+  .searchbox input { width:100%; background:var(--bg); border:1px solid var(--line); border-radius:5px;
+        color:var(--ink); font:inherit; font-size:12.5px; padding:5px 8px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="loading" id="loading"><span class="spin"></span>loading BC well data…</div>
+<div class="overlay top">
+  <div class="card">
+    <div class="title"><a href="/">Frac2CSV</a> · BC Well Map</div>
+    <div class="sub">Every licensed BC well · click one for UWI &amp; depth</div>
+    <div class="searchbox"><input id="search" placeholder="Find by UWI or name…" autocomplete="off"></div>
+    <div class="controls">
+      <label><input type="checkbox" id="horiz-only"> Horizontals only (has a lateral)</label>
+      <label>Min total depth: <span class="stat" id="td-val">0 m</span></label>
+      <input type="range" id="td-min" min="0" max="5000" step="100" value="0">
+      <div class="stat" id="count">—</div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background:#3fb950"></span>vertical / surface point</span>
+      <span><span class="dot" style="background:#3d7dff"></span>horizontal (drawn to bottomhole)</span>
+      <span><span class="ln" style="border-color:#3d7dff"></span>wellbore lateral</span>
+    </div>
+    <div class="sub" style="margin-top:8px">Source: BC Energy Regulator open data</div>
+  </div>
+</div>
+<script>
+"use strict";
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {
+      carto: {
+        type: "raster",
+        tiles: ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+                "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        attribution: "© OpenStreetMap © CARTO · Wells: BC Energy Regulator"
+      }
+    },
+    layers: [{ id: "bg", type: "raster", source: "carto" }]
+  },
+  center: [-121.8, 56.6], zoom: 6
+});
+map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+
+let WELLS = [];
+
+function toFeatures(wells) {
+  const pts = [], lines = [];
+  for (const w of wells) {
+    const horiz = ("bla" in w);
+    pts.push({ type: "Feature",
+      geometry: { type: "Point", coordinates: [w.lo, w.la] },
+      properties: { wa: w.wa, n: w.n, td: w.td || 0, u: (w.u || []).join(" "),
+                    horiz: horiz ? 1 : 0 } });
+    if (horiz) {
+      lines.push({ type: "Feature",
+        geometry: { type: "LineString", coordinates: [[w.lo, w.la], [w.blo, w.bla]] },
+        properties: {} });
+    }
+  }
+  return { pts: { type: "FeatureCollection", features: pts },
+           lines: { type: "FeatureCollection", features: lines } };
+}
+
+function applyFilter() {
+  const horizOnly = document.getElementById("horiz-only").checked;
+  const tdMin = +document.getElementById("td-min").value;
+  const filtered = WELLS.filter(w =>
+    (!horizOnly || "bla" in w) && (w.td || 0) >= tdMin);
+  const fc = toFeatures(filtered);
+  map.getSource("wells").setData(fc.pts);
+  map.getSource("laterals").setData(fc.lines);
+  document.getElementById("count").innerHTML =
+    `<b>${filtered.length.toLocaleString()}</b> of ${WELLS.length.toLocaleString()} wells shown`;
+}
+
+map.on("load", async () => {
+  const data = await (await fetch("/data/bc-wells.json")).json();
+  WELLS = data.wells;
+  const fc = toFeatures(WELLS);
+  map.addSource("laterals", { type: "geojson", data: fc.lines });
+  map.addSource("wells", { type: "geojson", data: fc.pts });
+  map.addLayer({ id: "laterals", type: "line", source: "laterals",
+    paint: { "line-color": "#3d7dff", "line-width": 1.4, "line-opacity": 0.75 } });
+  map.addLayer({ id: "wells", type: "circle", source: "wells",
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 1.4, 9, 3, 13, 5],
+      "circle-color": ["case", ["==", ["get", "horiz"], 1], "#3d7dff", "#3fb950"],
+      "circle-opacity": 0.85,
+      "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 9, 0, 12, 0.6],
+      "circle-stroke-color": "#0f1621"
+    } });
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("count").innerHTML =
+    `<b>${WELLS.length.toLocaleString()}</b> wells`;
+
+  map.on("click", "wells", e => {
+    const p = e.features[0].properties;
+    const uwis = (p.u || "").trim();
+    const html = `<div class="pop"><h3>${p.n || "(unnamed well)"}</h3>
+      <div class="row">WA <b>${p.wa}</b>${p.td ? ` · TD <b>${(+p.td).toLocaleString()} m</b>` : ""}
+        ${p.horiz ? " · <b>horizontal</b>" : ""}</div>
+      ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}
+      <a class="btn" href="/?wa=${p.wa}">Extract this well's charts →</a></div>`;
+    new maplibregl.Popup({ closeButton: true }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+  });
+  map.on("mouseenter", "wells", () => map.getCanvas().style.cursor = "pointer");
+  map.on("mouseleave", "wells", () => map.getCanvas().style.cursor = "");
+
+  document.getElementById("horiz-only").addEventListener("change", applyFilter);
+  const tdSlider = document.getElementById("td-min");
+  tdSlider.addEventListener("input", () => {
+    document.getElementById("td-val").textContent = (+tdSlider.value).toLocaleString() + " m";
+    applyFilter();
+  });
+
+  // search: zoom to first match by UWI or name
+  const search = document.getElementById("search");
+  search.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter") return;
+    const q = search.value.trim().toLowerCase();
+    if (!q) return;
+    const hit = WELLS.find(w =>
+      (w.n || "").toLowerCase().includes(q) ||
+      (w.u || []).some(u => u.toLowerCase().includes(q)) ||
+      w.wa === q);
+    if (hit) {
+      map.flyTo({ center: [hit.lo, hit.la], zoom: 12 });
+      new maplibregl.Popup().setLngLat([hit.lo, hit.la])
+        .setHTML(`<div class="pop"><h3>${hit.n}</h3><div class="row">WA <b>${hit.wa}</b>${hit.td ? ` · TD <b>${hit.td} m</b>` : ""}</div></div>`)
+        .addTo(map);
+    } else {
+      search.style.borderColor = "#b03a2e";
+      setTimeout(() => search.style.borderColor = "", 1000);
+    }
+  });
+});
+</script>
+</body>
+</html>
