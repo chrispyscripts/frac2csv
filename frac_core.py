@@ -228,12 +228,13 @@ def write_csv(path, meta, samples, data, sample_sec=1.0):
     start = datetime.strptime(f"{meta.date or '2000-01-01'} {meta.start_time}",
                               "%Y-%m-%d %H:%M:%S")
     epoch0 = start.timestamp()  # local-time epoch, matches MView exports
-    cols = [c for c in COLUMNS if c in data]
+    cols = [c for c in COLUMNS if c in data] + \
+           [c for c in data if c not in COLUMNS]   # auto-mode generic channels
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["UWI", "STAGE", "DATETIME", "ELAPSED", "TIMESTAMP", "LABEL"] + cols)
         w.writerow(["Units", "", "YYYY-mm-dd HH:MM:SS", "secs", "secs", ""] +
-                   [UNITS[c] for c in cols])
+                   [UNITS.get(c, "") for c in cols])
         for i, s in enumerate(samples):
             dt = start + timedelta(seconds=float(s))
             row = [meta.uwi, meta.stage, dt.strftime("%Y-%m-%d %H:%M:%S"),

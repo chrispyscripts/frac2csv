@@ -19,12 +19,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pymupdf numpy pyinstaller
+        run: pip install pymupdf numpy pillow pyinstaller
+
+      - name: Install tesseract (bundled for auto-calibrate mode)
+        run: choco install tesseract -y --no-progress
 
       - name: Build exe
         run: >
           pyinstaller --onefile --windowed --name Frac2CSV
           --collect-all pymupdf
+          --add-data "C:\Program Files\Tesseract-OCR;tesseract"
           frac2csv_gui.py
 
       - name: Smoke test import

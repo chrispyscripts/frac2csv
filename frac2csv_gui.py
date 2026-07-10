@@ -12,6 +12,7 @@ from tkinter import filedialog, ttk
 import fitz
 import numpy as np
 
+import auto_raster as ar
 import frac_core as fc
 import raster_core as rc
 import report as rp
@@ -33,7 +34,10 @@ def sniff_kind(path):
 APP_TITLE = "Frac2CSV  —  frac chart PDF → 1-sec CSV"
 BG, PANEL, FG, MUT, ACC = "#0d1117", "#161b22", "#e6edf3", "#8b949e", "#58a6ff"
 SERIES_COLORS = {"Tr Press": "#4f8ff7", "Slurry Rate": "#f0555a",
-                 "WH Prop Conc": "#3fb950", "BH Prop Conc": "#b87fd9"}
+                 "WH Prop Conc": "#3fb950", "BH Prop Conc": "#b87fd9",
+                 "series-red": "#f0555a", "series-green": "#3fb950",
+                 "series-blue": "#4f8ff7", "series-magenta": "#b87fd9"}
+FALLBACK_COLOR = "#e6b84b"
 
 
 class App:
@@ -65,8 +69,14 @@ class App:
         # fallback settings for raster inputs with no readable metadata
         fb = tk.Frame(root, bg=BG)
         fb.pack(fill="x", padx=14, pady=(0, 6))
-        tk.Label(fb, text="Raster fallback (used only when a scan/image has no readable labels):",
-                 bg=BG, fg=MUT).pack(side="left")
+        tk.Label(fb, text="Raster mode:", bg=BG, fg=MUT).pack(side="left")
+        self.raster_mode = tk.StringVar(value="template")
+        for label, val in (("MView template", "template"), ("Auto-calibrate (OCR)", "auto")):
+            tk.Radiobutton(fb, text=label, value=val, variable=self.raster_mode,
+                           bg=BG, fg=MUT, selectcolor=PANEL, activebackground=BG,
+                           activeforeground=FG).pack(side="left", padx=(4, 0))
+        tk.Label(fb, text="| Template fallback scales:",
+                 bg=BG, fg=MUT).pack(side="left", padx=(10, 0))
         self.fb_vars = {}
         for label, key, default, width in [
                 ("Duration min", "duration", "80", 5), ("Press max", "pmax", "90", 5),
@@ -147,6 +157,8 @@ class App:
 
     def _extract_raster(self, img, meta, interval, base, page_note):
         """Shared raster path for image files and rasterized PDF pages."""
+        if self.raster_mode.get() == "auto":
+            return self._extract_raster_auto(img, meta, interval, base, page_note)
         fullscale = {"pressure": meta.pressure_max, "rate": meta.rate_max,
                      "conc": meta.conc_max}
         samples, data, quality = rc.trace(img, meta.duration_min, fullscale,
@@ -171,6 +183,36 @@ class App:
         for name in cols:
             for cav in quality[name].caveats():
                 self.ui(lambda name=name, cav=cav: self.say(f"   ⚠ {name}: {cav}"))
+        self.ui(lambda s=samples, d=data, mt=meta: self.draw(s, d, mt))
+
+    def _extract_raster_auto(self, img, meta, interval, base, page_note):
+        """Auto-calibrating raster mode: unknown templates, needs tesseract."""
+        if not ar.available():
+            self.ui(lambda: self.say(
+                f"SKIP {page_note}: auto-calibrate needs the tesseract OCR engine "
+                f"(install it, or switch to MView template mode)"))
+            return
+        samples, channels, info = ar.extract(img, sample_sec=interval)
+        data = {c["key"]: c["values"] for c in channels}
+        style = {c["key"]: c for c in channels}
+        meta.duration_min = info["duration_s"] / 60.0
+        suffix = f"-stage-{meta.stage}" if meta.stage else ""
+        out = f"{base}{suffix or '-autocal'}.csv"
+        n, cols = fc.write_csv(out, meta, samples, data, interval)
+        if self.report_on.get():
+            rep = rp.write_report(out[:-4] + ".html", meta, samples, data,
+                                  interval, kind="raster", channel_style=style)
+            self.ui(lambda r=rep: self.say(f"   report → {os.path.basename(r)}"))
+        chdesc = ", ".join(f"{c['key']} ({c['ticks']} axis ticks, "
+                           f"{c['coverage']:.0%} coverage)" for c in channels)
+        self.ui(lambda: self.say(
+            f"OK {page_note}: AUTO-CALIBRATED raster — axes read by OCR. "
+            f"{meta.duration_min:.0f} min → {n} rows | {chdesc} → {os.path.basename(out)}"))
+        self.ui(lambda: self.say(
+            "   ⚠ Auto mode: channel names come from curve colors (units unknown — "
+            "read them off the chart); values are estimates from pixels."))
+        for note in info["notes"]:
+            self.ui(lambda m=note: self.say(f"   ⚠ {m}"))
         self.ui(lambda s=samples, d=data, mt=meta: self.draw(s, d, mt))
 
     def _work(self, files, interval):
@@ -263,19 +305,20 @@ class App:
         for name, vals in data.items():
             vmax = np.nanmax(vals) if np.isfinite(np.nanmax(vals)) else 1
             vmax = vmax * 1.08 if vmax > 0 else 1
+            color = SERIES_COLORS.get(name, FALLBACK_COLOR)
             pts = []
             step = max(1, len(samples) // (2 * W))
             for i in range(0, len(samples), step):
                 if np.isnan(vals[i]):
                     if len(pts) > 3:
-                        cv.create_line(*pts, fill=SERIES_COLORS[name], width=1)
+                        cv.create_line(*pts, fill=color, width=1)
                     pts = []
                     continue
                 x = PL + samples[i] / t_max * (W - PL - PR)
                 y = PT + (1 - vals[i] / vmax) * (H - PT - PB)
                 pts += [x, y]
             if len(pts) > 3:
-                cv.create_line(*pts, fill=SERIES_COLORS[name], width=1)
+                cv.create_line(*pts, fill=color, width=1)
         # x labels
         for frac in (0, 0.25, 0.5, 0.75, 1.0):
             x = PL + frac * (W - PL - PR)
@@ -283,12 +326,12 @@ class App:
                            font=("TkDefaultFont", 9))
         # legend
         lx = PL
-        for name, color in SERIES_COLORS.items():
-            if name in data:
-                cv.create_line(lx, PT - 5, lx + 16, PT - 5, fill=color, width=3)
-                cv.create_text(lx + 20, PT - 5, text=name, fill=MUT, anchor="w",
-                               font=("TkDefaultFont", 9))
-                lx += 20 + 8 * len(name) + 24
+        for name in data:
+            color = SERIES_COLORS.get(name, FALLBACK_COLOR)
+            cv.create_line(lx, PT - 5, lx + 16, PT - 5, fill=color, width=3)
+            cv.create_text(lx + 20, PT - 5, text=name, fill=MUT, anchor="w",
+                           font=("TkDefaultFont", 9))
+            lx += 20 + 8 * len(name) + 24
 
 
 def main():

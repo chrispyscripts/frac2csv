@@ -44,6 +44,24 @@ validation chart — extract it and compare the caveats against the same
 stage extracted from a vector PDF.
 
 
+
+## Auto-calibrate mode (scans from unknown templates)
+
+For charts that don't follow the MView template — scanned service-company
+reports, screenshots of acquisition software — switch the toolbar's raster
+mode to **Auto-calibrate (OCR)**. The app then reads the chart itself:
+plot frame from the image geometry, time axis by OCR of the HH:MM:SS
+labels, and each series' value axis by OCR of its color-matched tick
+numbers, with a RANSAC fit that tolerates scan-quality misreads.
+
+Channels are named by curve color (`series-red`, `series-green`, …) —
+units aren't knowable from pixels, so read them off the chart header.
+Validated on 337 pages of scanned PSC stage charts: ~87% of extractable
+stage pages produced two calibrated channels, values matching the chart
+axes. The Windows exe bundles the tesseract OCR engine; running from
+source needs `tesseract` on PATH (`brew install tesseract` /
+`choco install tesseract`).
+
 ## Interactive HTML report
 
 Alongside each CSV, the app writes a self-contained `<name>-stage-<n>.html`

@@ -18,10 +18,20 @@ CHANNELS = [
 ]
 
 
+GENERIC_COLORS = ["#1d5bd8", "#c8372d", "#1e7a34", "#7a3b9b", "#c07f16", "#118a8a"]
+
+
 def write_report(path, meta, samples, data, sample_sec=1.0, kind="vector",
-                 quality=None):
+                 quality=None, channel_style=None):
+    spec = list(CHANNELS)
+    known = {k for k, *_ in spec}
+    extra = [k for k in data if k not in known]
+    for i, k in enumerate(extra):     # auto-mode channels: generic styling
+        style = (channel_style or {}).get(k, {})
+        spec.append((k, style.get("label", k), style.get("unit", ""),
+                     style.get("color", GENERIC_COLORS[i % len(GENERIC_COLORS)])))
     channels = []
-    for key, label, unit, color in CHANNELS:
+    for key, label, unit, color in spec:
         if key not in data:
             continue
         vals = [None if np.isnan(v) else round(float(v), 4) for v in data[key]]
@@ -119,7 +129,7 @@ document.getElementById("title").textContent = M.title || "Frac stage extraction
 document.title = (M.uwi ? M.uwi + " stage " + M.stage : "Frac2CSV") + " — report";
 document.getElementById("sub").textContent =
   [M.uwi && "UWI " + M.uwi, M.stage && "stage " + M.stage, M.date,
-   M.duration_min + " min", N.toLocaleString() + " samples @ " + DT + " s"].filter(Boolean).join("  ·  ");
+   (Math.round(M.duration_min * 10) / 10) + " min", N.toLocaleString() + " samples @ " + DT + " s"].filter(Boolean).join("  ·  ");
 const chips = document.getElementById("chips");
 const addChip = (html, cls) => {
   const el = document.createElement("span");
@@ -162,7 +172,7 @@ function makeChart(ch) {
   const box = document.createElement("div"); box.className = "chart";
   const head = document.createElement("div"); head.className = "head";
   head.innerHTML = '<span class="name" style="color:' + ch.color + '">' + ch.label +
-                   ' (' + ch.unit + ')</span>' +
+                   (ch.unit ? ' (' + ch.unit + ')' : '') + '</span>' +
                    (ch.caveats.length ? '<span class="cav">&#9888; ' + ch.caveats.join(" · ") + '</span>' : "");
   const cv = document.createElement("canvas"); cv.height = CH;
   cv.setAttribute("role", "img");
