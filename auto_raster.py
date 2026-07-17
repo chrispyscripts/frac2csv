@@ -57,14 +57,18 @@ def hue_masks(img):
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
     sat = mx - mn
-    # exact rules validated on the scanned-chart prototype, plus blue
+    # rules validated on scanned/rendered charts; red vs orange split on the
+    # green channel (orange carries mid green, true red does not)
     families = {
-        "red":     (sat > 60) & (r > g + 40) & (r > b + 40),
+        "red":     (sat > 60) & (r > g + 40) & (r > b + 40) & (g < b + 60),
+        "orange":  (sat > 60) & (r > g + 40) & (r > b + 45) & (g > b + 60),
         "green":   (sat > 50) & (g > r + 30) & (g > b + 20),
         "magenta": (sat > 60) & (r > g + 40) & (b > g + 40),
         "blue":    (sat > 60) & (b > g + 40) & (b > r + 40),
+        "cyan":    (sat > 60) & (g > r + 40) & (b > r + 40) & (np.abs(g - b) < 35),
     }
-    min_px = max(1200, img.shape[0] * img.shape[1] // 5000)
+    families["green"] = families["green"] & ~families["cyan"]
+    min_px = max(400, img.shape[0] * img.shape[1] // 5000)
     return {k: m for k, m in families.items() if m.sum() >= min_px}
 
 
@@ -174,22 +178,24 @@ def fit_ticks(pts, min_inliers=5):
     return (float(a), float(b), int(inl.sum()))
 
 
-def ocr_left_ticks(img, masks, x_hi):
-    """OCR the tick area left of the plot; assign numbers to series by color."""
+def ocr_tick_strip(img, masks, xa, xb, out=None):
+    """OCR a vertical tick-label strip; assign numbers to series by color."""
     from PIL import Image
-    strip = img[:, :max(0, x_hi)]
+    xa = max(0, xa)
+    strip = img[:, xa:xb]
+    if out is None:
+        out = {k: [] for k in masks}
     if strip.size == 0:
-        return {}
+        return out
     SCALE = 3
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
-    out = {k: [] for k in masks}
     for text, cx, cy in words:
         t = text.replace(",", "").strip("-.")
         if not re.fullmatch(r"\d+(\.\d+)?", t):
             continue
-        px, py = int(cx / SCALE), int(cy / SCALE)
+        px, py = int(cx / SCALE) + xa, int(cy / SCALE)
         y0, y1 = max(0, py - 12), py + 13
         x0, x1 = max(0, px - 40), px + 41
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
@@ -203,15 +209,36 @@ def ocr_left_ticks(img, masks, x_hi):
     return out
 
 
+def ocr_left_ticks(img, masks, x_hi):
+    return ocr_tick_strip(img, masks, 0, x_hi)
+
+
 def fit_ticks_guarded(pts):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
     can't masquerade as another's."""
     strict = [(v, y) for v, y, s in pts if s]
-    fit = fit_ticks(strict)
+    fit = fit_ticks(strict, min_inliers=max(4, len(strict) // 2))
     if fit:
         return fit
     if len(strict) >= 4:
+        # OCR drops decimal points ("7.500" -> 7500): shrink magnitude
+        # outliers by powers of ten; a wrong repair still fails RANSAC
+        repaired = []
+        for i, (v, y) in enumerate(strict):
+            others = [abs(w) for j, (w, _) in enumerate(strict) if j != i]
+            m = float(np.median(others)) if others else 0
+            m = m or 1
+            if abs(v) > 3 * m:
+                good = [c for c in (v / 10, v / 100, v / 1000)
+                        if abs(c) <= 3 * m]
+                if good:
+                    v = max(good, key=abs)
+            repaired.append((v, y))
+        fit = fit_ticks(repaired, min_inliers=max(4, len(repaired) // 2))
+        if fit:
+            return fit
+    if len(strict) >= 2:
         fit = fit_ticks([(v, y) for v, y, _ in pts])
         if fit:
             a, b, _ = fit
@@ -220,7 +247,8 @@ def fit_ticks_guarded(pts):
             tol = max(abs(b) * 20, (vals.max() - vals.min()) * 0.02 + 1e-9)
             # a borrowed fit must still explain this family's own ticks,
             # else it's another series' axis wearing the wrong color
-            if (np.abs(a + b * ys - vals) < tol).sum() >= 3:
+            need = 3 if len(strict) >= 3 else len(strict)
+            if (np.abs(a + b * ys - vals) < tol).sum() >= need:
                 return fit
     return None
 
@@ -232,7 +260,15 @@ def time_calibration(img, x0, x1, y1):
     strip = img[min(y1 + 5, H - 1):min(y1 + 95, H), xa:xb]
     if strip.size == 0:
         return None
+    # small renders leave labels below OCR size: upscale 3x
+    from PIL import Image as _Im
+    _pil = _Im.fromarray(strip.astype(np.uint8))
+    _pil = _pil.resize((_pil.width * 3, _pil.height * 3), _Im.LANCZOS)
+    strip = np.array(_pil).astype(int)
     dark = strip.sum(axis=2) < 400
+    # drop gridline/frame rows so labels don't weld into one cluster
+    line_rows = dark.mean(axis=1) > 0.5
+    dark[line_rows, :] = False
     colhit = dark.any(axis=0)
     clusters, start, gap = [], None, 0
     for i, v in enumerate(colhit):
@@ -242,17 +278,17 @@ def time_calibration(img, x0, x1, y1):
             gap = 0
         elif start is not None:
             gap += 1
-            if gap > 10:
+            if gap > 30:
                 clusters.append((start, i - gap)); start = None
     if start is not None:
         clusters.append((start, len(colhit) - 1))
     pts_hms, pts_mms, pts_num = [], [], []
     for c0, c1 in clusters:
-        if c1 - c0 < 25:
+        if c1 - c0 < 40:
             continue
-        crop = strip[:, max(0, c0 - 4):c1 + 5]
+        crop = strip[:, max(0, c0 - 8):c1 + 9]
         for text, _, _ in ocr_words(crop, psm=7, whitelist="0123456789:."):
-            cx = (c0 + c1) / 2 + xa
+            cx = (c0 + c1) / 6.0 + xa   # cluster coords are in 3x space
             m = re.fullmatch(r"(\d{1,2}):(\d{2}):(\d{2})", text)
             if m:
                 pts_hms.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60
@@ -261,6 +297,12 @@ def time_calibration(img, x0, x1, y1):
             m = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
             if m:
                 pts_mms.append((int(m.group(1)) * 60 + int(m.group(2)), cx))
+                break
+            m = re.fullmatch(r"(\d{2})(\d{2}):(\d{2})", text)
+            if m:   # "DD HH:MM" with the space lost in OCR
+                pts_hms.append((int(m.group(1)) * 86400
+                                + int(m.group(2)) * 3600
+                                + int(m.group(3)) * 60, cx))
                 break
             t = text.strip(".")
             if re.fullmatch(r"\d+(\.\d+)?", t):
@@ -281,6 +323,19 @@ def time_calibration(img, x0, x1, y1):
                     vals[i:] += 86400
         fit = fit_ticks(list(zip(vals, coords)),
                         min_inliers=max(4, int(len(vals) * 0.5)))
+        if pts is pts_mms:
+            # "A:B" is ambiguous: MM:SS or HH:MM. Prefer the reading whose
+            # plot-wide duration is plausible for a treatment.
+            dur = fit[1] * (x1 - x0) if fit else 0
+            if not (600 <= dur <= 100000):
+                v2 = vals * 60
+                for i in range(1, len(v2)):           # unwrap midnight
+                    if v2[i] < v2[i - 1] - 20000:
+                        v2[i:] += 86400
+                fit2 = fit_ticks(list(zip(v2, coords)),
+                                 min_inliers=max(4, int(len(v2) * 0.5)))
+                if fit2 and 600 <= fit2[1] * (x1 - x0) <= 100000:
+                    fit = fit2
         if fit and fit[1] > 0:
             return fit[0], fit[1]
     return None
@@ -288,7 +343,7 @@ def time_calibration(img, x0, x1, y1):
 
 # ---------- main entry ----------
 
-def extract(img, sample_sec=1.0):
+def extract(img, sample_sec=1.0, plot=None):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -300,7 +355,7 @@ def extract(img, sample_sec=1.0):
     masks = hue_masks(img)
     if not masks:
         raise ValueError("no saturated series colors found")
-    x0, y0, x1, y1 = find_plot_area(img, masks)
+    x0, y0, x1, y1 = plot if plot is not None else find_plot_area(img, masks)
     tcal = time_calibration(img, x0, x1, y1)
     if tcal is None:
         raise ValueError("time-axis labels could not be read")
@@ -311,7 +366,10 @@ def extract(img, sample_sec=1.0):
         raise ValueError(f"implausible duration {n}s from time axis")
     samples = np.arange(int(n / sample_sec)) * sample_sec
 
-    ticks = ocr_left_ticks(img, masks, x0)
+    ticks = ocr_tick_strip(img, masks, 0, x0)
+    ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks)
+    ticks = {k: [(v, y, st) for v, y, st in pts if y0 - 25 <= y <= y1 + 25]
+             for k, pts in ticks.items()}
     channels, notes = [], []
     for key, mask in masks.items():
         cal = fit_ticks_guarded(ticks.get(key, []))
