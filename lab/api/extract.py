@@ -29,6 +29,7 @@ import canyon                  # noqa: E402
 import frac_core as fc         # noqa: E402
 import halliburton_ifs as ifs  # noqa: E402
 import leucrotta as lc         # noqa: E402
+import lib1                    # noqa: E402
 import peloton_frac as pel     # noqa: E402
 import sk_fracr as sk          # noqa: E402
 import trican2                 # noqa: E402
@@ -112,6 +113,18 @@ def process_pdf(data, filename):
                                          "Halliburton IFS chart"))
                 except Exception as e:
                     notes.append(f"p{pno + 1}: IFS chart failed — {e}")
+            continue
+        if lib1.detect(page):
+            try:
+                meta, samples, data, lunits = lib1.extract_page(page)
+                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
+                      "date": meta.date, "start_time": meta.start_time,
+                      "duration_min": meta.duration_min, "warnings": meta.warnings}
+                stages.append(_stage("vector", md, samples,
+                                     _channels_payload(data, lunits),
+                                     "Liberty chart"))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
             continue
         if canyon.detect(page):
             try:
