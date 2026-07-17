@@ -25,6 +25,7 @@ import fitz                    # noqa: E402
 import numpy as np             # noqa: E402
 
 import aliases                 # noqa: E402
+import canyon                  # noqa: E402
 import frac_core as fc         # noqa: E402
 import halliburton_ifs as ifs  # noqa: E402
 import leucrotta as lc         # noqa: E402
@@ -110,6 +111,18 @@ def process_pdf(data, filename):
                                          "Halliburton IFS chart"))
                 except Exception as e:
                     notes.append(f"p{pno + 1}: IFS chart failed — {e}")
+            continue
+        if canyon.detect(page):
+            try:
+                meta, samples, data, cunits = canyon.extract_page(page)
+                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
+                      "date": meta.date, "start_time": meta.start_time,
+                      "duration_min": meta.duration_min, "warnings": meta.warnings}
+                stages.append(_stage("vector", md, samples,
+                                     _channels_payload(data, cunits),
+                                     "Canyon chart"))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: Canyon chart failed — {e}")
             continue
         if fc.page_kind(page) == "vector":
             try:
