@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carmine's Lab — frac report data extraction</title>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
+<style>
+  :root {
+    --paper:#fbfbfa; --card:#ffffff; --ink:#14181d; --mut:#697077; --line:#e3e5e8;
+    --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--paper); color:var(--ink);
+         font:15px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:920px; margin:0 auto; padding:44px 24px 90px; }
+  header { display:flex; justify-content:space-between; align-items:baseline;
+           flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+  .wordmark { font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .tag { color:var(--mut); font-size:13.5px; }
+  .lede { color:var(--mut); max-width:64ch; margin:6px 0 26px; }
+  .drop { border:1.5px dashed #c7ccd1; border-radius:12px; background:var(--card);
+          padding:52px 24px; text-align:center; cursor:pointer;
+          transition:border-color .15s, background .15s; }
+  .drop:hover, .drop.hot { border-color:var(--carmine); background:#fdf7f8; }
+  .drop .big { font-size:17px; font-weight:600; }
+  .drop .big span { color:var(--carmine); }
+  .drop .small { color:var(--mut); font-size:13px; margin-top:8px; }
+  .queue { margin-top:18px; display:flex; flex-direction:column; gap:8px; }
+  .qitem { background:var(--card); border:1px solid var(--line); border-radius:8px;
+           padding:10px 16px; display:flex; justify-content:space-between; gap:12px;
+           align-items:center; font-size:14px; }
+  .qitem .nm { font-family:var(--mono); font-size:13px; overflow:hidden;
+               text-overflow:ellipsis; white-space:nowrap; }
+  .qitem .st { color:var(--mut); font-size:12.5px; flex-shrink:0; font-family:var(--mono); }
+  .qitem .st.ok { color:var(--ok); }
+  .qitem .st.err { color:var(--carmine); }
+  .results { margin-top:34px; }
+  .grp { margin-bottom:34px; }
+  .grp h2 { font-size:15px; font-family:var(--mono); font-weight:600; margin-bottom:10px;
+            padding-bottom:6px; border-bottom:2px solid var(--ink); }
+  table { width:100%; border-collapse:collapse; background:var(--card);
+          border:1px solid var(--line); border-radius:8px; overflow:hidden;
+          font-size:13.5px; font-variant-numeric:tabular-nums; }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+       color:var(--mut); padding:9px 12px; border-bottom:1px solid var(--line);
+       background:#f6f7f7; font-weight:600; }
+  td { padding:8px 12px; border-bottom:1px solid var(--line); }
+  tr:last-child td { border-bottom:none; }
+  td.mono { font-family:var(--mono); font-size:12.5px; }
+  .btn { display:inline-block; border:1px solid var(--line); border-radius:6px;
+         background:var(--card); color:var(--ink); font-size:12.5px; font-weight:600;
+         padding:5px 12px; cursor:pointer; text-decoration:none; }
+  .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.primary { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn.primary:hover { background:var(--carmine-dk); color:#fff; }
+  .toolbar { display:flex; justify-content:space-between; align-items:center;
+             margin:26px 0 12px; gap:10px; flex-wrap:wrap; }
+  .toolbar .count { color:var(--mut); font-size:13.5px; }
+  .notes { color:var(--mut); font-size:12.5px; font-family:var(--mono);
+           margin-top:8px; white-space:pre-wrap; }
+  .spin { display:inline-block; width:11px; height:11px; border:2px solid var(--line);
+          border-top-color:var(--carmine); border-radius:50%;
+          animation:sp .8s linear infinite; vertical-align:-1px; margin-right:6px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
+  footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--line);
+           color:var(--mut); font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="wordmark">Carmine's Lab</div>
+    <div class="tag">frac report → data</div>
+  </header>
+  <p class="lede">Drop frac report PDFs — as many as you like. The lab reads the charts and
+  tables inside, rebuilds the per-second treatment data, and hands back clean CSV files.
+  Documents are processed in memory and never stored.</p>
+
+  <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
+    <div class="big">Drop PDFs here <span>or click to choose</span></div>
+    <div class="small">Handles MView, Halliburton IFS, acquisition-system charts and
+    per-stage report tables · multiple files at once · large files are split automatically</div>
+    <input type="file" id="file" accept=".pdf" hidden multiple>
+  </div>
+
+  <div class="queue" id="queue"></div>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <span class="count" id="count"></span>
+    <button class="btn primary" id="zip">Download everything (.zip)</button>
+  </div>
+  <div class="results" id="results"></div>
+
+  <footer>Carmine's Lab · extraction engine v1 · vector charts are recovered near-losslessly;
+  scanned documents are not yet supported here.</footer>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const CHUNK_PAGES = 30;
+const MAX_BYTES = 3 * 1024 * 1024;
+const allCSVs = [];   // {name, text}
+
+// ---------- upload plumbing ----------
+const drop = $("drop"), fileInput = $("file");
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
+["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", e => enqueue([...e.dataTransfer.files]));
+fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); fileInput.value = ""; });
+
+function qadd(name) {
+  const el = document.createElement("div");
+  el.className = "qitem";
+  el.innerHTML = `<span class="nm">${name}</span><span class="st"><span class="spin"></span>queued</span>`;
+  $("queue").appendChild(el);
+  return {
+    set(msg, cls) {
+      el.querySelector(".st").innerHTML = (cls ? "" : '<span class="spin"></span>') + msg;
+      el.querySelector(".st").className = "st" + (cls ? " " + cls : "");
+    }
+  };
+}
+
+let busy = Promise.resolve();
+function enqueue(files) {
+  for (const f of files) {
+    if (!f.name.toLowerCase().endsWith(".pdf")) continue;
+    const q = qadd(f.name);
+    busy = busy.then(() => handleFile(f, q)).catch(() => {});
+  }
+}
+
+async function b64(bytes) {
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.readAsDataURL(new Blob([bytes]));
+  });
+}
+
+async function splitPdf(bytes, q) {
+  /* big files: split into page-range chunks client-side */
+  const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+  const n = src.getPageCount();
+  const chunks = [];
+  for (let start = 0; start < n; start += CHUNK_PAGES) {
+    q.set(`splitting ${start + 1}–${Math.min(start + CHUNK_PAGES, n)} of ${n}p`);
+    const out = await PDFLib.PDFDocument.create();
+    const idx = Array.from({ length: Math.min(CHUNK_PAGES, n - start) }, (_, i) => start + i);
+    const pages = await out.copyPages(src, idx);
+    pages.forEach(p => out.addPage(p));
+    chunks.push(await out.save());
+  }
+  return chunks;
+}
+
+async function handleFile(f, q) {
+  try {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    let chunks = [bytes];
+    if (bytes.length > MAX_BYTES) chunks = await splitPdf(bytes, q);
+    const stages = [], tables = [], notes = [];
+    for (let i = 0; i < chunks.length; i++) {
+      q.set(chunks.length > 1 ? `extracting ${i + 1}/${chunks.length}` : "extracting");
+      const resp = await fetch("/api/extract", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: f.name, data: await b64(chunks[i]) }),
+      });
+      const out = await resp.json();
+      if (!resp.ok) throw new Error(out.error || resp.status);
+      stages.push(...(out.stages || []));
+      tables.push(...(out.tables || []));
+      notes.push(...(out.notes || []));
+    }
+    render(f.name, stages, tables, notes);
+    const bits = [];
+    if (stages.length) bits.push(`${stages.length} stage${stages.length > 1 ? "s" : ""}`);
+    if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
+    q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data", bits.length ? "ok" : "err");
+  } catch (e) {
+    q.set("✗ " + e.message, "err");
+  }
+}
+
+// ---------- CSV building ----------
+function stageCSV(st) {
+  const cols = st.channels.map(c => c.key);
+  const units = Object.fromEntries(st.channels.map(c => [c.key, c.unit || ""]));
+  const M = st.meta;
+  const date = M.date || "2000-01-01";
+  const t0 = new Date(date + "T" + (M.start_time || "00:00:00"));
+  const pad = n => String(n).padStart(2, "0");
+  const rows = [
+    ["UWI","STAGE","DATETIME","ELAPSED","TIMESTAMP","LABEL", ...cols].join(","),
+    ["Units","","YYYY-mm-dd HH:MM:SS","secs","secs","", ...cols.map(c => units[c])].join(","),
+  ];
+  for (let i = 0; i < st.n; i++) {
+    const s = i * st.sample_sec;
+    const d = new Date(t0.getTime() + s * 1000);
+    const dt = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    rows.push([M.uwi || "", M.stage || "", dt, s.toFixed(5), (t0.getTime()/1000 + s).toFixed(5),
+               M.stage || "", ...st.channels.map(c => c.values[i] == null ? "" : c.values[i].toFixed(5))].join(","));
+  }
+  return rows.join("\n");
+}
+
+function tableCSV(t) {
+  const rows = [["well", t.well, "uwi", t.uwi, "formation", t.formation].join(","),
+                t.columns.join(",")];
+  for (const r of t.rows) rows.push(r.join(","));
+  return rows.join("\n");
+}
+
+function saveText(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function csvName(fname, st) {
+  const base = fname.replace(/\.pdf$/i, "");
+  return `${base}-stage-${st.meta.stage || "x"}.csv`;
+}
+
+// ---------- results ----------
+function render(fname, stages, tables, notes) {
+  if (!stages.length && !tables.length && !notes.length) return;
+  const grp = document.createElement("div");
+  grp.className = "grp";
+  grp.innerHTML = `<h2>${fname}</h2>`;
+  if (stages.length) {
+    const tb = document.createElement("table");
+    tb.innerHTML = `<tr><th>Stage</th><th>Well / UWI</th><th>Date</th>
+      <th>Duration</th><th>Samples</th><th>Channels</th><th>Source</th><th></th></tr>`;
+    for (const st of stages) {
+      const tr = document.createElement("tr");
+      const M = st.meta;
+      tr.innerHTML = `<td class="mono">${M.stage || "—"}</td>
+        <td class="mono">${M.uwi || "—"}</td>
+        <td class="mono">${M.date || "—"}${M.start_time ? " " + M.start_time : ""}</td>
+        <td>${(Math.round(M.duration_min * 10) / 10)} min</td>
+        <td class="mono">${st.n.toLocaleString()}</td>
+        <td>${st.channels.map(c => c.key).join(", ")}</td>
+        <td>${st.source || ""}</td><td></td>`;
+      const b = document.createElement("button");
+      b.className = "btn"; b.textContent = "CSV";
+      const name = csvName(fname, st);
+      const text = stageCSV(st);
+      allCSVs.push({ name, text });
+      b.addEventListener("click", () => saveText(name, text));
+      tr.lastElementChild.appendChild(b);
+      tb.appendChild(tr);
+    }
+    grp.appendChild(tb);
+  }
+  for (const t of tables) {
+    const cap = document.createElement("div");
+    cap.style.cssText = "margin:12px 0 6px; font-weight:600; font-size:13.5px";
+    cap.textContent = t.title;
+    const b = document.createElement("button");
+    b.className = "btn"; b.textContent = "CSV";
+    b.style.marginLeft = "10px";
+    const name = fname.replace(/\.pdf$/i, "") + "-stages-table.csv";
+    const text = tableCSV(t);
+    allCSVs.push({ name, text });
+    b.addEventListener("click", () => saveText(name, text));
+    cap.appendChild(b);
+    grp.appendChild(cap);
+    const tb = document.createElement("table");
+    tb.innerHTML = `<tr>${t.columns.slice(0, 9).map(c => `<th>${c}</th>`).join("")}</tr>` +
+      t.rows.slice(0, 30).map(r =>
+        `<tr>${r.slice(0, 9).map(v => `<td class="mono">${v}</td>`).join("")}</tr>`).join("");
+    grp.appendChild(tb);
+    if (t.rows.length > 30 || t.columns.length > 9) {
+      const more = document.createElement("div");
+      more.className = "notes";
+      more.textContent = `Preview truncated — the CSV has all ${t.rows.length} rows × ${t.columns.length} columns.`;
+      grp.appendChild(more);
+    }
+  }
+  if (notes.length) {
+    const n = document.createElement("div");
+    n.className = "notes";
+    n.textContent = notes.join("\n");
+    grp.appendChild(n);
+  }
+  $("results").prepend(grp);
+  $("toolbar").hidden = allCSVs.length === 0;
+  $("count").textContent = `${allCSVs.length} CSV file${allCSVs.length === 1 ? "" : "s"} ready`;
+}
+
+$("zip").addEventListener("click", () => {
+  const enc = new TextEncoder();
+  const files = {};
+  for (const { name, text } of allCSVs) files[name] = enc.encode(text);
+  const zipped = fflate.zipSync(files, { level: 6 });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([zipped], { type: "application/zip" }));
+  a.download = "carmines-lab-export.zip";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+});
+</script>
+</body>
+</html>
