@@ -89,7 +89,16 @@ def detect_text_meta(page, meta=None):
     m = re.search(r"(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups())
-    elif not meta.uwi:
+    else:
+        # BC NTS format, tolerant of short forms: a-82-I/94-G-1
+        m = re.search(r"\b([a-dA-D])-?(\d{2,3})-([A-L])\s*/\s*0?(\d{2,3})-([A-P])-0?(\d{1,2})\b",
+                      text)
+        if m:
+            q, unit, blk, sheet, letter, num = m.groups()
+            meta.uwi = (f"2 00{q.upper()}{int(unit):03d}{blk.upper()}"
+                        f"{int(sheet):03d}{letter.upper()}{int(num):02d}00"
+                        ).replace(" ", "")
+    if not meta.uwi:
         meta.warnings.append("UWI not found in page text")
 
     m = re.search(r"(?:Zone|Stage)\s+(\d+)", text)

@@ -89,7 +89,16 @@ def detect_text_meta(page, meta=None):
     m = re.search(r"(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups())
-    elif not meta.uwi:
+    else:
+        # BC NTS format, tolerant of short forms: a-82-I/94-G-1
+        m = re.search(r"\b([a-dA-D])-?(\d{2,3})-([A-L])\s*/\s*0?(\d{2,3})-([A-P])-0?(\d{1,2})\b",
+                      text)
+        if m:
+            q, unit, blk, sheet, letter, num = m.groups()
+            meta.uwi = (f"2 00{q.upper()}{int(unit):03d}{blk.upper()}"
+                        f"{int(sheet):03d}{letter.upper()}{int(num):02d}00"
+                        ).replace(" ", "")
+    if not meta.uwi:
         meta.warnings.append("UWI not found in page text")
 
     m = re.search(r"(?:Zone|Stage)\s+(\d+)", text)
@@ -228,12 +237,13 @@ def write_csv(path, meta, samples, data, sample_sec=1.0):
     start = datetime.strptime(f"{meta.date or '2000-01-01'} {meta.start_time}",
                               "%Y-%m-%d %H:%M:%S")
     epoch0 = start.timestamp()  # local-time epoch, matches MView exports
-    cols = [c for c in COLUMNS if c in data]
+    cols = [c for c in COLUMNS if c in data] + \
+           [c for c in data if c not in COLUMNS]   # auto-mode generic channels
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["UWI", "STAGE", "DATETIME", "ELAPSED", "TIMESTAMP", "LABEL"] + cols)
         w.writerow(["Units", "", "YYYY-mm-dd HH:MM:SS", "secs", "secs", ""] +
-                   [UNITS[c] for c in cols])
+                   [UNITS.get(c, "") for c in cols])
         for i, s in enumerate(samples):
             dt = start + timedelta(seconds=float(s))
             row = [meta.uwi, meta.stage, dt.strftime("%Y-%m-%d %H:%M:%S"),
