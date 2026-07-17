@@ -31,6 +31,7 @@ import halliburton_ifs as ifs  # noqa: E402
 import leucrotta as lc         # noqa: E402
 import peloton_frac as pel     # noqa: E402
 import sk_fracr as sk          # noqa: E402
+import trican2                 # noqa: E402
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
@@ -185,6 +186,22 @@ def process_pdf(data, filename):
             "rows": [[r.get(c, "") for c in cols] for r in sorted(prows, key=lambda r: r.get("stage", 0))],
         })
         notes.append(f"{len(prows)} stage row(s) parsed from WellView report tables.")
+
+    # --- Trican 'STAGE INFORMATION' reports
+    try:
+        th, trows = trican2.parse_document(doc)
+    except Exception:
+        th, trows = {}, []
+    if len(trows) >= 2:
+        cols = [c for c in trican2.COLUMNS if any(c in r for r in trows)]
+        tables.append({
+            "title": (th.get("well") or filename) + " — per-stage engineering data (Trican)",
+            "well": th.get("well", ""), "uwi": th.get("uwi", ""),
+            "formation": "", "columns": cols,
+            "rows": [[r.get(c, "") for c in cols] for r in trows],
+        })
+        notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports "
+                     f"(stages numbered by document order).")
 
     n_pages = len(doc)
     doc.close()
