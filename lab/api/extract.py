@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fitz                    # noqa: E402
 import numpy as np             # noqa: E402
 
+import aliases                 # noqa: E402
 import frac_core as fc         # noqa: E402
 import halliburton_ifs as ifs  # noqa: E402
 import leucrotta as lc         # noqa: E402
@@ -34,15 +35,25 @@ PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
 
 
 def _channels_payload(data, units=None, labels=None):
+    """Channels normalized through Carmine's alias table: vendor curve
+    names become his canonical columns; the raw name survives as the
+    label. Unmapped series keep their own name."""
     out = []
     known = {"Tr Press": "#1d5bd8", "Slurry Rate": "#b02e2e",
              "WH Prop Conc": "#1e7a34", "BH Prop Conc": "#7a3b9b"}
+    seen = set()
     for i, (key, vals) in enumerate(data.items()):
+        canonical = aliases.canon(key)
+        col = canonical if canonical and canonical not in seen else key
+        seen.add(col)
+        unit = (units or {}).get(key) or \
+            (aliases.canon_unit(canonical) if canonical else "") or \
+            fc.UNITS.get(col, "")
         out.append({
-            "key": key,
+            "key": col,
             "label": (labels or {}).get(key, key),
-            "unit": (units or {}).get(key, fc.UNITS.get(key, "")),
-            "color": known.get(key, PALETTE[i % len(PALETTE)]),
+            "unit": unit,
+            "color": known.get(col, PALETTE[i % len(PALETTE)]),
             "values": [None if np.isnan(v) else round(float(v), 4) for v in vals],
         })
     return out
