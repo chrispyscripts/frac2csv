@@ -28,6 +28,7 @@ import aliases                 # noqa: E402
 import frac_core as fc         # noqa: E402
 import halliburton_ifs as ifs  # noqa: E402
 import leucrotta as lc         # noqa: E402
+import peloton_frac as pel     # noqa: E402
 import sk_fracr as sk          # noqa: E402
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
@@ -150,6 +151,27 @@ def process_pdf(data, filename):
                 "rows": [[r.get(c, "") for c in used] for r in rows],
             })
             notes.append(f"{len(rows)} stage row(s) parsed from report tables.")
+
+    # --- Peloton WellView reports (Regulatory Frac Stage Details / Frac Detail)
+    try:
+        ph, preg = pel.parse_document(doc)
+    except Exception:
+        ph, preg = {}, []
+    try:
+        pfd = pel.parse_frac_detail(doc)
+    except Exception:
+        pfd = []
+    prows = preg if len(preg) >= len(pfd) else pfd
+    if len(prows) >= 2:
+        cols = sorted({k for r in prows for k in r if k != "page"},
+                      key=lambda c: (c != "stage", c))
+        tables.append({
+            "title": (ph.get("well") or filename) + " — per-stage engineering data (WellView)",
+            "well": ph.get("well", ""), "uwi": ph.get("bh_uwi", ""),
+            "formation": "", "columns": cols,
+            "rows": [[r.get(c, "") for c in cols] for r in sorted(prows, key=lambda r: r.get("stage", 0))],
+        })
+        notes.append(f"{len(prows)} stage row(s) parsed from WellView report tables.")
 
     n_pages = len(doc)
     doc.close()
