@@ -57,10 +57,10 @@ def _channels_payload(data, units=None, labels=None):
     return out
 
 
-def _stage(kind, meta_dict, samples, channels, source, page=None):
+def _stage(kind, meta_dict, samples, channels, source, page=None, geom=None):
     return {"kind": kind, "meta": meta_dict, "n": int(len(samples)),
             "sample_sec": 1.0, "channels": channels, "source": source,
-            "page": page}
+            "page": page, "geom": geom}
 
 
 def process_pdf(data, filename):
@@ -78,7 +78,8 @@ def process_pdf(data, filename):
             stages.append(_stage("vector", r["meta"], r["samples"],
                                  _channels_payload(r["data"], r.get("units"),
                                                    r.get("labels")),
-                                 r["source"], r.get("page")))
+                                 r["source"], r.get("page"),
+                                 r.get("geom")))
         else:
             tables.append({
                 "title": r["title"], "well": r.get("well", ""),

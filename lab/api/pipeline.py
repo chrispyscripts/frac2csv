@@ -48,10 +48,11 @@ def _md(meta):
             "warnings": list(getattr(meta, "warnings", []))}
 
 
-def _series(meta, samples, data, source, page=None, units=None, labels=None):
+def _series(meta, samples, data, source, page=None, units=None, labels=None,
+            geom=None):
     return {"type": "series", "meta": meta, "samples": samples, "data": data,
             "units": units or {}, "labels": labels or {}, "source": source,
-            "page": page}
+            "page": page, "geom": geom}
 
 
 def raster_available():
@@ -122,7 +123,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             try:
                 meta, samples, data, units = lib1.extract_page(page)
                 results.append(_series(_md(meta), samples, data,
-                                       "Liberty chart", pno + 1, units))
+                                       "Liberty chart", pno + 1, units,
+                                       geom=getattr(meta, "geom", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
             continue

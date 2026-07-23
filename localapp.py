@@ -74,7 +74,7 @@ def serialize(results, notes):
                 "n": int(len(r["samples"])), "sample_sec": 1.0,
                 "channels": _channels_payload(r["data"], r.get("units"),
                                               r.get("labels")),
-                "source": r["source"], "page": r.get("page"),
+                "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
             })
         else:
             tables.append({
