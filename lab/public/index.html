@@ -541,15 +541,11 @@ const CANON = ["Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"];
 // typed — strings for UWI/STAGE/DATETIME/LABEL, numbers (or null) elsewhere —
 // so the CSV and the Excel workbook render from one source.
 function wellModel(stages) {
-  const units = {};
-  for (const st of stages)
-    for (const c of st.channels)
-      if (!(c.key in units)) units[c.key] = c.unit || "";
-  const cols = [], seen = new Set();
-  for (const k of CANON) if (k in units) { cols.push(k); seen.add(k); }
-  for (const st of stages)
-    for (const c of st.channels)
-      if (!seen.has(c.key)) { seen.add(c.key); cols.push(c.key); }
+  // Carmine's spec (his 0422 seconds example): ALWAYS exactly the four
+  // canonical channels with his unit strings — vendor extras never export
+  const cols = CANON.slice();
+  const units = { "Tr Press": "MPa", "Slurry Rate": "m3/Min",
+                  "WH Prop Conc": "Kg/m3", "BH Prop Conc": "Kg/m3" };
 
   const order = [], groups = new Map();
   for (const st of stages) {
@@ -885,8 +881,14 @@ function clearGraph() {
   $("pv-legend").innerHTML = "";
 }
 
+function inMode(c) {
+  // "Our terms" shows only Carmine's four canonical channels; "As
+  // extracted" (and Original) shows everything the chart carried
+  return settings.chartLabels !== "canon" || CANON.includes(c.key);
+}
 function chanVisible(c, ci) {
-  return c._vmax > 0 && (gState.isolated == null || gState.isolated === ci);
+  return c._vmax > 0 && inMode(c) &&
+         (gState.isolated == null || gState.isolated === ci);
 }
 
 function fmtTime(t) {
@@ -988,6 +990,7 @@ function drawHover(ctx, W, H) {
 function buildLegend() {
   const Lg = $("pv-legend"); Lg.innerHTML = "";
   gState.channels.forEach((c, ci) => {
+    if (!inMode(c)) return;             // hidden by "Our terms" filter
     const el = document.createElement("span");
     el.innerHTML = `<i style="background:${c._color}"></i>${chanName(c)}` +
       ` <span style="color:var(--mut)">${round2(c._vmax)}${c.unit ? " " + c.unit : ""}</span>`;
@@ -1094,6 +1097,9 @@ $("lblmode").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   settings.chartLabels = b.dataset.v;
   setSeg($("lblmode"), b.dataset.v);
+  // an isolated curve hidden by the new mode would blank the graph
+  if (gState.isolated != null && !inMode(gState.channels[gState.isolated]))
+    gState.isolated = null;
   if (settings.chartLabels === "orig") {
     orig.pageIdx = 0;
     renderOriginal();

@@ -56,16 +56,11 @@ def build_well(series_results, fallback_uwi="", seq=False):
     """
     canoned = [(r, *canon_series(r)) for r in series_results]
 
-    units_all = {}
-    for _, data, units in canoned:
-        for k in data:
-            if k not in units_all:
-                units_all[k] = units.get(k, "")
-    cols = [c for c in CANON if c in units_all]
-    for _, data, _ in canoned:
-        for k in data:
-            if k not in cols:
-                cols.append(k)
+    # Carmine's spec (his 0422 seconds example): ALWAYS exactly the four
+    # canonical channels with his unit strings — vendor extras never export
+    cols = list(CANON)
+    units_all = {"Tr Press": "MPa", "Slurry Rate": "m3/Min",
+                 "WH Prop Conc": "Kg/m3", "BH Prop Conc": "Kg/m3"}
 
     order, groups = [], {}
     for item in canoned:
