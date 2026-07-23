@@ -112,6 +112,12 @@ def build_well(series_results, fallback_uwi="", seq=False):
                            (isinstance(v, float) and not np.isfinite(v))
                            else float(v))
             rows.append(row)
+        # pen-up separators, matching Carmine's reference exports: first and
+        # last row of every stage block carry blank channel values so stage
+        # plots never get connected by a stray line in FracPrep
+        for edge in (0, -1):
+            if rows:
+                rows[edge] = rows[edge][:6] + [None] * len(cols)
         blocks.append({"stage": label, "rows": rows})
     return {"head": head, "unit_row": unit_row, "blocks": blocks}
 

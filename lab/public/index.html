@@ -613,6 +613,11 @@ function wellModel(stages) {
       rows.push([M.uwi || "", label, dt, s, t0.getTime()/1000 + s, label,
                  ...cols.map(c => (chan[c] && chan[c][i] != null) ? chan[c][i] : null)]);
     }
+    // pen-up separators, matching Carmine's reference exports: first and last
+    // row of each stage block carry blank values so plotting tools never
+    // connect stages with a stray line
+    for (const edge of [0, rows.length - 1])
+      if (rows[edge]) rows[edge] = rows[edge].slice(0, 6).concat(cols.map(() => null));
     blocks.push({ stage: label, rows });
   }
   return { head, unitRow, blocks };
