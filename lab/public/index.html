@@ -199,7 +199,7 @@
           <div class="seg mini" id="lblmode" title="Curve naming / source view">
             <button type="button" data-v="canon" class="on">Our terms</button>
             <button type="button" data-v="raw">As extracted</button>
-            <button type="button" data-v="orig">Original chart</button>
+            <button type="button" data-v="orig">Compare Original</button>
           </div>
           <div class="origbar" id="origbar" hidden>
             <button type="button" class="btn" id="origprev">‹</button>
@@ -859,6 +859,7 @@ function showStage(entry, well, item) {
   ].filter(Boolean).join("   ·   ");
   setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
+  if (applyCompareSize()) redrawGraph();
   updateOrigBar();
   scheduleOrigSync();
   $("pv-table").innerHTML = "";
@@ -916,6 +917,7 @@ function setGraph(channels, n, sampleSec, meta) {
 
 function clearGraph() {
   gState.channels = []; gState.hover = null; gState.isolated = null;
+  $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
   cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
   $("pv-legend").innerHTML = "";
@@ -1068,7 +1070,7 @@ function buildLegend() {
 }
 
 // ---------- "Original chart" mode: render the source PDF page ----------
-const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null };
+const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null, buf: null, synced: false };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -1091,6 +1093,33 @@ function origMsg(ctx, cv, msg) {
   ctx.font = "12px ui-monospace,Menlo,monospace";
   ctx.textAlign = "center";
   ctx.fillText(msg, cv.width / 2, cv.height / 2);
+}
+
+// In compare mode both canvases take the ORIGINAL chart's natural plot
+// proportions (full-window uniform scale — the original is never squeezed;
+// zooming magnifies time only). Off, or without geometry: default height.
+const DEFAULT_H = 440;
+function applyCompareSize() {
+  const gcv = $("graph"), ocv = $("origgraph");
+  let h = DEFAULT_H;
+  if (settings.showOrig && current && current.item &&
+      current.item.type === "stage") {
+    const srcs = current.item.srcs || [];
+    const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
+    const g = src && src.geom;
+    if (g && Math.abs(g.tb) > 1e-9) {
+      const plotW = gcv.width - GP.L - GP.R;
+      const timeExt = Math.abs(gState.tMax / g.tb);   // page units, full span
+      const valExt = Math.abs(g.v1 - g.v0);
+      if (timeExt > 1)
+        h = Math.max(240, Math.min(900,
+            Math.round(plotW * valExt / timeExt) + GP.T + GP.B));
+    }
+  }
+  const changed = gcv.height !== h || ocv.height !== h;
+  if (gcv.height !== h) gcv.height = h;
+  if (ocv.height !== h) ocv.height = h;
+  return changed;
 }
 
 function scheduleOrigSync() {
@@ -1163,20 +1192,45 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   const yTop = Math.min(E0[1], E1[1]), yBot = Math.max(E0[1], E1[1]);
   const sy = plotH / Math.max(1e-9, yBot - yTop);
   if (orig.task) { try { orig.task.cancel(); } catch (e) { /* noop */ } }
-  ctx.clearRect(0, 0, W, H);
-  ctx.save();
-  ctx.beginPath(); ctx.rect(L, T, plotW, plotH); ctx.clip();
-  ctx.fillStyle = "#ffffff"; ctx.fillRect(L, T, plotW, plotH);
+  if (!orig.buf) orig.buf = document.createElement("canvas");
+  if (orig.buf.width !== W || orig.buf.height !== H) {
+    orig.buf.width = W; orig.buf.height = H;
+  }
+  const bctx = orig.buf.getContext("2d");
+  bctx.clearRect(0, 0, W, H);
+  bctx.save();
+  bctx.beginPath(); bctx.rect(L, T, plotW, plotH); bctx.clip();
+  bctx.fillStyle = "#ffffff"; bctx.fillRect(L, T, plotW, plotH);
   const task = page.render({
-    canvasContext: ctx, viewport: vp,
+    canvasContext: bctx, viewport: vp,
     transform: [sx, 0, 0, sy, L - sx * A[0], T - sy * yTop],
   });
   orig.task = task;
   await task.promise.catch(() => { /* cancelled */ });
-  ctx.restore();
+  bctx.restore();
   if (mySeq !== orig.seq) return;
-  ctx.strokeStyle = chartColors().grid;
-  ctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
+  bctx.strokeStyle = chartColors().grid;
+  bctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
+  orig.synced = true;
+  drawOrigOverlay(gState.hover ? gState.hover.t : null);
+}
+
+// blit the buffered original + the shared crosshair (both panels track the
+// same time under the cursor, whichever chart you hover)
+function drawOrigOverlay(t) {
+  const cv = $("origgraph"), ctx = cv.getContext("2d");
+  if (!orig.buf) return;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(orig.buf, 0, 0);
+  if (t == null || !orig.synced) return;
+  const { L, R, T, B } = GP;
+  const span = Math.max(1e-9, gState.t1 - gState.t0);
+  if (t < gState.t0 || t > gState.t1) return;
+  const x = L + (t - gState.t0) / span * (cv.width - L - R);
+  ctx.strokeStyle = chartColors().crosshair; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, cv.height - B); ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
@@ -1187,11 +1241,15 @@ async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
   off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
   await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
   if (mySeq !== orig.seq) return;
-  ctx.clearRect(0, 0, cv.width, cv.height);
+  orig.synced = false;
+  if (!orig.buf) orig.buf = document.createElement("canvas");
+  orig.buf.width = cv.width; orig.buf.height = cv.height;
+  const bctx = orig.buf.getContext("2d");
   const w = off.width / 2, h = off.height / 2;
   const x = (cv.width - w) / 2, y = (cv.height - h) / 2;
-  ctx.fillStyle = "#ffffff"; ctx.fillRect(x, y, w, h);
-  ctx.drawImage(off, x, y, w, h);
+  bctx.fillStyle = "#ffffff"; bctx.fillRect(x, y, w, h);
+  bctx.drawImage(off, x, y, w, h);
+  drawOrigOverlay(null);
 }
 
 function updateOrigBar() {
@@ -1238,8 +1296,8 @@ $("origopen").addEventListener("click", async () => {
   if (url) window.open(url + "#page=" + pg, "_blank");
 });
 
-$("origprev").addEventListener("click", () => { orig.pageIdx--; updateOrigBar(); syncOrig(); });
-$("orignext").addEventListener("click", () => { orig.pageIdx++; updateOrigBar(); syncOrig(); });
+$("origprev").addEventListener("click", () => { orig.pageIdx--; if (applyCompareSize()) redrawGraph(); updateOrigBar(); syncOrig(); });
+$("orignext").addEventListener("click", () => { orig.pageIdx++; if (applyCompareSize()) redrawGraph(); updateOrigBar(); syncOrig(); });
 
 $("lblmode").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -1247,6 +1305,7 @@ $("lblmode").addEventListener("click", e => {
     settings.showOrig = !settings.showOrig;
     b.classList.toggle("on", settings.showOrig);
     $("origwrap").hidden = !settings.showOrig;
+    if (applyCompareSize()) redrawGraph();
     updateOrigBar();
     if (settings.showOrig) syncOrig();
     return;
@@ -1322,9 +1381,37 @@ $("lblmode").addEventListener("click", e => {
     });
     gState.hover = { t, my: p.y, hiIdx };
     redrawGraph();
+    if (settings.showOrig) drawOrigOverlay(t);
   });
   cv.addEventListener("mouseleave", () => {
     if (gState.hover) { gState.hover = null; redrawGraph(); }
+    if (settings.showOrig) drawOrigOverlay(null);
+  });
+
+  // hovering the ORIGINAL drives the same crosshair + graph tooltip
+  const ocv = $("origgraph");
+  const opos = e => {
+    const r = ocv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (ocv.width / r.width),
+             y: (e.clientY - r.top) * (ocv.height / r.height) };
+  };
+  ocv.addEventListener("mousemove", e => {
+    if (!orig.synced || !gState.channels.length) return;
+    const p = opos(e);
+    if (p.x < GP.L || p.x > ocv.width - GP.R) {
+      if (gState.hover) { gState.hover = null; redrawGraph(); }
+      drawOrigOverlay(null);
+      return;
+    }
+    const t = gState.t0 + (p.x - GP.L) / (ocv.width - GP.L - GP.R) *
+              (gState.t1 - gState.t0);
+    gState.hover = { t, my: ($("graph").height - GP.B + GP.T) / 2, hiIdx: null };
+    redrawGraph();
+    drawOrigOverlay(t);
+  });
+  ocv.addEventListener("mouseleave", () => {
+    if (gState.hover) { gState.hover = null; redrawGraph(); }
+    drawOrigOverlay(null);
   });
   cv.addEventListener("dblclick", () => {
     gState.t0 = 0; gState.t1 = gState.tMax;
