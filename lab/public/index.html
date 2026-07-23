@@ -8,9 +8,14 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <style>
   :root {
+    /* light (default) */
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="dark"] {
     --bg:#0d1117; --panel:#161b22; --panel2:#1c222b; --ink:#e6edf3; --mut:#8b949e;
     --line:#2a313c; --carmine:#d64a63; --carmine-dk:#b23350; --ok:#3fb950;
-    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; margin:0; }
   html, body { height:100%; }
@@ -149,6 +154,7 @@
       </div>
     </div>
     <div class="grow"></div>
+    <button type="button" class="btn" id="themetoggle" title="Switch theme">🌙 Dark</button>
     <select id="provider" class="prov" title="Batch by service provider">
       <option value="">All service providers</option>
     </select>
@@ -196,6 +202,9 @@
             <button type="button" class="btn" id="origprev">‹</button>
             <span class="origlbl" id="origlbl"></span>
             <button type="button" class="btn" id="orignext">›</button>
+            <button type="button" class="btn" id="origopen"
+                    title="Open the source PDF in a separate window for
+side-by-side comparison">Open PDF ↗</button>
           </div>
           <div class="legend" id="pv-legend"></div>
         </div>
@@ -221,6 +230,25 @@ let localInfo = null;
 fetch("/api/local-info").then(r => r.ok ? r.json() : null)
   .then(j => { localInfo = j; }).catch(() => {});
 // numeric part of a stage label ("HRF 5A" -> 5, "12B" -> 12); non-numeric last
+// ---------- theme (light default, persisted) ----------
+const THEMES = {
+  light: { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
+           tipBg: "rgba(255,255,255,.96)", tipBorder: "#c7ccd1",
+           tipMut: "#697077", tipInk: "#3a4148", tipHi: "#14181d" },
+  dark:  { grid: "#242b34", axisText: "#8b949e", crosshair: "#3a4350",
+           tipBg: "rgba(13,17,23,.93)", tipBorder: "#3a4350",
+           tipMut: "#8b949e", tipInk: "#c9d1d9", tipHi: "#ffffff" },
+};
+let themeName = localStorage.getItem("frac2csv-theme") || "light";
+function chartColors() { return THEMES[themeName] || THEMES.light; }
+function applyTheme() {
+  if (themeName === "dark") document.documentElement.dataset.theme = "dark";
+  else delete document.documentElement.dataset.theme;
+  const b = document.getElementById("themetoggle");
+  if (b) b.textContent = themeName === "dark" ? "\u2600\ufe0f Light" : "\ud83c\udf19 Dark";
+}
+applyTheme();
+
 const stageNum = s => { const m = String(s).match(/\d+/); return m ? +m[0] : 1e9; };
 const wells = [];       // { base, stages, provider }
 const tableFiles = [];  // { name, text, provider } — engineering tables (CSV)
@@ -911,8 +939,9 @@ function redrawGraph() {
   if (!gState.channels.length) return;
   const { t0, t1, dsec } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
-  ctx.strokeStyle = "#242b34"; ctx.lineWidth = 1;
-  ctx.fillStyle = "#8b949e"; ctx.font = "11px ui-monospace,Menlo,monospace";
+  const TC = chartColors();
+  ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
+  ctx.fillStyle = TC.axisText; ctx.font = "11px ui-monospace,Menlo,monospace";
   ctx.textAlign = "center";
   for (let f = 0; f <= 1.0001; f += 0.25) {
     const x = L + f * plotW;
@@ -950,7 +979,8 @@ function drawHover(ctx, W, H) {
   const { t0, t1, dsec, hover } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
   const x = L + (hover.t - t0) / span * plotW;
-  ctx.strokeStyle = "#3a4350"; ctx.lineWidth = 1;
+  const TC = chartColors();
+  ctx.strokeStyle = TC.crosshair; ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
   ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
   ctx.setLineDash([]);
@@ -974,16 +1004,16 @@ function drawHover(ctx, W, H) {
   const th = rows.length * 16 + 24;
   let bx = x + 12; if (bx + tw > W - R) bx = x - 12 - tw;
   let by = Math.max(T, Math.min(hover.my - th / 2, H - B - th));
-  ctx.fillStyle = "rgba(13,17,23,.93)"; ctx.strokeStyle = "#3a4350";
+  ctx.fillStyle = TC.tipBg; ctx.strokeStyle = TC.tipBorder;
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(bx, by, tw, th, 6); else ctx.rect(bx, by, tw, th);
   ctx.fill(); ctx.stroke();
-  ctx.fillStyle = "#8b949e"; ctx.fillText(fmtClock(hover.t), bx + 10, by + 15);
+  ctx.fillStyle = TC.tipMut; ctx.fillText(fmtClock(hover.t), bx + 10, by + 15);
   rows.forEach((r, i) => {
     const yy = by + 32 + i * 16;
     ctx.fillStyle = r.color; ctx.fillRect(bx + 10, yy - 8, 10, 3);
     ctx.font = (r.hi ? "bold " : "") + "11px ui-monospace,Menlo,monospace";
-    ctx.fillStyle = r.hi ? "#ffffff" : "#c9d1d9";
+    ctx.fillStyle = r.hi ? TC.tipHi : TC.tipInk;
     ctx.fillText(lines[i], bx + 26, yy);
   });
 }
@@ -1027,7 +1057,7 @@ function loadPdfjs() {
 
 function origMsg(ctx, cv, msg) {
   ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.fillStyle = "#8b949e";
+  ctx.fillStyle = chartColors().axisText;
   ctx.font = "12px ui-monospace,Menlo,monospace";
   ctx.textAlign = "center";
   ctx.fillText(msg, cv.width / 2, cv.height / 2);
@@ -1089,7 +1119,32 @@ function updateOrigBar() {
     (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
   $("origprev").disabled = i <= 0;
   $("orignext").disabled = i >= pages.length - 1;
+  const e = current && current.entry;
+  $("origopen").disabled = !(e && (e._pdfFile || e._pdfUrl));
 }
+
+$("themetoggle").addEventListener("click", () => {
+  themeName = themeName === "dark" ? "light" : "dark";
+  localStorage.setItem("frac2csv-theme", themeName);
+  applyTheme();
+  if (settings.chartLabels === "orig") renderOriginal();
+  else { redrawGraph(); buildLegend(); }
+});
+
+// open the source PDF in its own window (scalable, side-by-side compare)
+$("origopen").addEventListener("click", () => {
+  const item = current && current.item, entry = current && current.entry;
+  if (!item || !entry) return;
+  const pages = (item.type === "stage" && item.pages) || [];
+  const pg = pages[Math.min(orig.pageIdx, pages.length - 1)] || pages[0] || 1;
+  let url = null;
+  if (entry._pdfUrl) url = entry._pdfUrl;
+  else if (entry._pdfFile) {
+    if (!entry._objUrl) entry._objUrl = URL.createObjectURL(entry._pdfFile);
+    url = entry._objUrl;
+  }
+  if (url) window.open(url + "#page=" + pg, "_blank");
+});
 
 $("origprev").addEventListener("click", () => { orig.pageIdx--; renderOriginal(); });
 $("orignext").addEventListener("click", () => { orig.pageIdx++; renderOriginal(); });
