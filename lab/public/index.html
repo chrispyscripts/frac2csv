@@ -857,7 +857,7 @@ function showStage(entry, well, item) {
     item.n.toLocaleString() + " samples",
     item.channels.length + " channels", item.source || ""
   ].filter(Boolean).join("   ·   ");
-  setGraph(item.channels, item.n, item.sample_sec);
+  setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
   updateOrigBar();
   scheduleOrigSync();
@@ -886,7 +886,7 @@ function showTable(entry, t) {
 }
 
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
-const GP = { L: 50, R: 16, T: 14, B: 30 };            // plot padding
+const GP = { L: 50, R: 16, T: 14, B: 44 };            // plot padding
 const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
                  isolated: null, hover: null };
 
@@ -895,7 +895,12 @@ function chanName(c) {
   return settings.chartLabels === "raw" ? (c.label || c.key) : c.key;
 }
 
-function setGraph(channels, n, sampleSec) {
+function setGraph(channels, n, sampleSec, meta) {
+  gState.clock0 = null;
+  if (meta && meta.date) {
+    const d = new Date(meta.date + "T" + (meta.start_time || "00:00:00"));
+    if (!isNaN(d)) gState.clock0 = d;
+  }
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
   gState.tMax = Math.max(1, (n - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
@@ -952,7 +957,18 @@ function redrawGraph() {
   for (let f = 0; f <= 1.0001; f += 0.25) {
     const x = L + f * plotW;
     ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
-    ctx.fillText(fmtTime(t0 + f * span), x, H - 11);
+    const te = t0 + f * span;
+    if (gState.clock0) {
+      const d = new Date(gState.clock0.getTime() + te * 1000);
+      const p = n2 => String(n2).padStart(2, "0");
+      ctx.fillText(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
+                   x, H - 26);
+      ctx.globalAlpha = .62;
+      ctx.fillText("t+" + fmtTime(te), x, H - 11);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillText(fmtTime(te), x, H - 11);
+    }
   }
   ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
   const hi = gState.hover ? gState.hover.hiIdx : null;
@@ -1014,7 +1030,15 @@ function drawHover(ctx, W, H) {
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(bx, by, tw, th, 6); else ctx.rect(bx, by, tw, th);
   ctx.fill(); ctx.stroke();
-  ctx.fillStyle = TC.tipMut; ctx.fillText(fmtClock(hover.t), bx + 10, by + 15);
+    {
+    let hdr = fmtClock(hover.t);
+    if (gState.clock0) {
+      const d = new Date(gState.clock0.getTime() + hover.t * 1000);
+      const p = n2 => String(n2).padStart(2, "0");
+      hdr = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}  ·  t+` + hdr;
+    }
+    ctx.fillStyle = TC.tipMut; ctx.fillText(hdr, bx + 10, by + 15);
+  }
   rows.forEach((r, i) => {
     const yy = by + 32 + i * 16;
     ctx.fillStyle = r.color; ctx.fillRect(bx + 10, yy - 8, 10, 3);
@@ -1194,7 +1218,7 @@ $("themetoggle").addEventListener("click", () => {
 });
 
 // open the source PDF in its own window (scalable, side-by-side compare)
-$("origopen").addEventListener("click", () => {
+$("origopen").addEventListener("click", async () => {
   const item = current && current.item, entry = current && current.entry;
   if (!item || !entry) return;
   const pages = (item.type === "stage" && item.pages) || [];
@@ -1202,7 +1226,13 @@ $("origopen").addEventListener("click", () => {
   let url = null;
   if (entry._pdfUrl) url = entry._pdfUrl;
   else if (entry._pdfFile) {
-    if (!entry._objUrl) entry._objUrl = URL.createObjectURL(entry._pdfFile);
+    if (!entry._objUrl) {
+      // a blob URL without the PDF MIME type downloads instead of opening
+      // in the browser's viewer — rewrap with the explicit type
+      const buf = await entry._pdfFile.arrayBuffer();
+      entry._objUrl = URL.createObjectURL(
+        new Blob([buf], { type: "application/pdf" }));
+    }
     url = entry._objUrl;
   }
   if (url) window.open(url + "#page=" + pg, "_blank");

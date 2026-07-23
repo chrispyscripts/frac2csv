@@ -195,6 +195,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(404, {"error": str(e)})
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Disposition", "inline")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
