@@ -193,17 +193,26 @@ def extract_page(page, sample_sec=1.0):
                 continue
             if not _close(c, color_int):
                 continue
+            # curves are dense polylines (hundreds of items per drawing); an
+            # isolated 1-2 item drawing that is one long axis-aligned line is
+            # axis/marker ink in the series color — it puts phantom spikes on
+            # the curve (Carmine's 00374 rate spikes). Real flat stretches
+            # live inside the dense drawings, so they survive this filter.
+            sparse = len(d["items"]) <= 2
             for item in d["items"]:
                 if item[0] == "l":
                     x1, y1, x2, y2 = item[1].x, item[1].y, item[2].x, item[2].y
                     if horizontal:            # match the swapped span coords
                         x1, y1, x2, y2 = y1, x1, y2, x2
+                    aligned = abs(x1 - x2) < 0.01 or abs(y1 - y2) < 0.01
+                    seg = max(abs(x1 - x2), abs(y1 - y2))
                     if color_int == 0:
                         # black series shares ink with axes/grid: drop long
                         # axis-aligned segments (frame + gridlines)
-                        if (abs(x1 - x2) < 0.01 or abs(y1 - y2) < 0.01) and \
-                           max(abs(x1 - x2), abs(y1 - y2)) > 5:
+                        if aligned and seg > 5:
                             continue
+                    elif sparse and aligned and seg > 10:
+                        continue
                     pts.append((x1, y1)); pts.append((x2, y2))
                 elif item[0] == "c":
                     ax, ay, bx, by = item[1].x, item[1].y, item[4].x, item[4].y
