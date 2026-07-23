@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frac2CSV — desktop download</title>
+<style>
+  :root { --paper:#fbfbfa; --card:#ffffff; --ink:#14181d; --mut:#697077;
+          --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126;
+          --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--paper); color:var(--ink);
+         font:15px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .wrap { max-width:680px; margin:0 auto; padding:64px 24px 90px; }
+  .wordmark { font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .tag { color:var(--mut); font-size:13.5px; margin-top:4px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:28px; margin-top:28px; }
+  .btn { display:inline-block; background:var(--carmine); color:#fff;
+         font-weight:700; font-size:16px; padding:13px 26px; border-radius:8px;
+         text-decoration:none; }
+  .btn:hover { background:var(--carmine-dk); }
+  .btn.ghost { background:transparent; color:var(--carmine);
+               border:1.5px solid var(--carmine); font-weight:600; }
+  .btn.ghost:hover { background:#fdf7f8; }
+  h2 { font-size:15px; margin-bottom:10px; }
+  ul { margin:10px 0 0 18px; color:var(--mut); font-size:13.5px; }
+  li { margin-top:6px; }
+  .note { color:var(--mut); font-size:12.5px; margin-top:14px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-top:18px; }
+  code { font-family:var(--mono); font-size:12px; background:#f3f4f5;
+         border-radius:4px; padding:2px 6px; }
+  footer { margin-top:46px; color:var(--mut); font-size:12.5px;
+           border-top:1px solid var(--line); padding-top:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="wordmark">Frac2CSV</div>
+  <div class="tag">frac report PDFs → per-second CSV / Excel · desktop app</div>
+
+  <div class="card">
+    <h2>Windows</h2>
+    <p style="color:var(--mut); font-size:13.5px">One file, no install. Runs the same
+    interface as Carmine's Lab, entirely on your machine — files never leave it.</p>
+    <div class="row">
+      <a class="btn" href="https://github.com/chrispyscripts/frac2csv/releases/latest/download/Frac2CSV.exe">
+        Download Frac2CSV.exe</a>
+      <a class="btn ghost" href="https://github.com/chrispyscripts/frac2csv/releases/latest">
+        Release notes</a>
+    </div>
+    <ul>
+      <li>Double-click <code>Frac2CSV.exe</code> — a console window opens (that's the engine)
+          and the app opens in your browser.</li>
+      <li>Drop PDFs or a <code>.txt</code> drive list. List paths like
+          <code>K:\BCER-Frac\…</code> resolve automatically on whatever drive letter
+          holds the files; exports save beside each PDF.</li>
+      <li>Handles scanned/raster charts (STEP, Halliburton treatment plots) —
+          the OCR engine is bundled.</li>
+      <li>Close the console window to quit.</li>
+    </ul>
+    <p class="note">Windows SmartScreen may warn on first run (the app is unsigned):
+    click <b>More info → Run anyway</b>.</p>
+  </div>
+
+  <div class="card">
+    <h2>Web version</h2>
+    <p style="color:var(--mut); font-size:13.5px">Same interface in the browser —
+    vector charts and report tables, no install. Scanned documents need the
+    desktop app.</p>
+    <div class="row">
+      <a class="btn ghost" href="https://carmines-lab.vercel.app">Open Carmine's Lab</a>
+    </div>
+  </div>
+
+  <footer>Frac2CSV · builds are published from
+  <a href="https://github.com/chrispyscripts/frac2csv" style="color:var(--carmine)">github.com/chrispyscripts/frac2csv</a>
+  · the download button always fetches the latest release.</footer>
+</div>
+</body>
+</html>
