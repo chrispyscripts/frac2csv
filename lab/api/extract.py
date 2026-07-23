@@ -25,15 +25,8 @@ import fitz                    # noqa: E402
 import numpy as np             # noqa: E402
 
 import aliases                 # noqa: E402
-import canyon                  # noqa: E402
 import frac_core as fc         # noqa: E402
-import halliburton_ifs as ifs  # noqa: E402
-import leucrotta as lc         # noqa: E402
-import bj1                     # noqa: E402
-import lib1                    # noqa: E402
-import peloton_frac as pel     # noqa: E402
-import sk_fracr as sk          # noqa: E402
-import trican2                 # noqa: E402
+import pipeline                # noqa: E402  shared engine (same as desktop EXE)
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
@@ -64,176 +57,35 @@ def _channels_payload(data, units=None, labels=None):
     return out
 
 
-def _stage(kind, meta_dict, samples, channels, source):
+def _stage(kind, meta_dict, samples, channels, source, page=None):
     return {"kind": kind, "meta": meta_dict, "n": int(len(samples)),
-            "sample_sec": 1.0, "channels": channels, "source": source}
+            "sample_sec": 1.0, "channels": channels, "source": source,
+            "page": page}
 
 
 def process_pdf(data, filename):
+    """Run the shared extraction engine (same pipeline as the desktop EXE) and
+    serialize its results to the Lab's JSON shape. Raster/scanned templates
+    (Step-1, Halliburton treatment plots) need the tesseract OCR engine, which
+    isn't available on the serverless runtime, so they are skipped here."""
     doc = fitz.open(stream=data, filetype="pdf")
-    stages, tables, notes = [], [], []
-
-    # --- Leucrotta acquisition charts (whole-document, stitched by stage)
-    if any(lc.detect(doc[p]) for p in range(len(doc))):
-        groups = lc.extract_document(doc)
-        for g in groups:
-            t0 = g["t0_seconds"]
-            start = f"{int(t0 // 3600) % 24:02d}:{int(t0 % 3600 // 60):02d}:{int(t0 % 60):02d}"
-            meta = {"title": f"Stage {g['stage']}", "uwi": g["well"],
-                    "stage": str(g["stage"]), "date": g["date"],
-                    "start_time": start, "duration_min": len(g["samples"]) / 60.0,
-                    "warnings": []}
-            stages.append(_stage("vector", meta, g["samples"],
-                                 _channels_payload(g["data"], g["units"]),
-                                 "acquisition chart (Leucrotta-style)"))
-        if groups:
-            notes.append(f"{len(groups)} stage(s) from acquisition chart pages.")
-
-    # --- per-page templates
-    sk_pages = 0
-    for pno in range(len(doc)):
-        page = doc[pno]
-        text = page.get_text()
-        if lc.detect(page):
-            continue
-        if sk.detect(page):
-            sk_pages += 1
-            continue
-        if "(IFS v" in text:
-            if re.search(r"Interval\s+\d+\s*[-–]\s*Entire Treatment", text) and \
-               len(re.findall(r"\b\d{1,2}:\d{2}\b", text)) >= 3:
-                try:
-                    meta, samples, data, chinfo = ifs.extract_page(page)
-                    md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
-                          "date": meta.date, "start_time": meta.start_time,
-                          "duration_min": meta.duration_min, "warnings": meta.warnings}
-                    units = {k: v["unit"] for k, v in chinfo.items()}
-                    labels = {k: v["label"] for k, v in chinfo.items()}
-                    stages.append(_stage("vector", md, samples,
-                                         _channels_payload(data, units, labels),
-                                         "Halliburton IFS chart"))
-                except Exception as e:
-                    notes.append(f"p{pno + 1}: IFS chart failed — {e}")
-            continue
-        if lib1.detect(page):
-            try:
-                meta, samples, data, lunits = lib1.extract_page(page)
-                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
-                      "date": meta.date, "start_time": meta.start_time,
-                      "duration_min": meta.duration_min, "warnings": meta.warnings}
-                stages.append(_stage("vector", md, samples,
-                                     _channels_payload(data, lunits),
-                                     "Liberty chart"))
-            except Exception as e:
-                notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
-            continue
-        if bj1.detect(page):
-            try:
-                meta, samples, data, bunits = bj1.extract_page(page)
-                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
-                      "date": meta.date, "start_time": meta.start_time,
-                      "duration_min": meta.duration_min, "warnings": meta.warnings}
-                stages.append(_stage("vector", md, samples,
-                                     _channels_payload(data, bunits),
-                                     "BJ chart"))
-            except Exception as e:
-                notes.append(f"p{pno + 1}: BJ chart failed — {e}")
-            continue
-        if canyon.detect(page):
-            try:
-                meta, samples, data, cunits = canyon.extract_page(page)
-                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
-                      "date": meta.date, "start_time": meta.start_time,
-                      "duration_min": meta.duration_min, "warnings": meta.warnings}
-                stages.append(_stage("vector", md, samples,
-                                     _channels_payload(data, cunits),
-                                     "Canyon chart"))
-            except Exception as e:
-                notes.append(f"p{pno + 1}: Canyon chart failed — {e}")
-            continue
-        if fc.page_kind(page) == "vector":
-            try:
-                meta, samples, data = fc.extract_page(page)
-                md = {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
-                      "date": meta.date, "start_time": meta.start_time,
-                      "duration_min": meta.duration_min, "warnings": meta.warnings}
-                stages.append(_stage("vector", md, samples,
-                                     _channels_payload(data), "MView chart"))
-            except Exception as e:
-                notes.append(f"p{pno + 1}: vector chart failed — {e}")
-
-    # --- SK text tables (document-level)
-    if sk_pages:
-        header, rows = {}, []
-        for pno in range(len(doc)):
-            page = doc[pno]
-            if not sk.detect(page):
-                continue
-            if not header:
-                for line in page.get_text().splitlines():
-                    m = re.search(r"(.+?)\s+(19[12]/[\d-]+W\d)\s*(\w*)", line)
-                    if m:
-                        header = {"well": m.group(1).strip(), "uwi": m.group(2),
-                                  "formation": m.group(3)}
-                        break
-            row = sk.parse_page(page)
-            if row.get("stage") is not None:
-                rows.append(row)
-        if rows:
-            cols = ["stage", "depth_m", "start", "end", "fluid_rate_m3min",
-                    "downhole_rate_m3min"] + [c for c, *_ in sk.FIELDS]
-            used = [c for c in cols if any(c in r for r in rows)]
-            tables.append({
-                "title": f"{header.get('well', filename)} — per-stage engineering data",
-                "well": header.get("well", ""), "uwi": header.get("uwi", ""),
-                "formation": header.get("formation", ""),
-                "columns": used,
-                "rows": [[r.get(c, "") for c in used] for r in rows],
-            })
-            notes.append(f"{len(rows)} stage row(s) parsed from report tables.")
-
-    # --- Peloton WellView reports (Regulatory Frac Stage Details / Frac Detail)
-    try:
-        ph, preg = pel.parse_document(doc)
-    except Exception:
-        ph, preg = {}, []
-    try:
-        pfd = pel.parse_frac_detail(doc)
-    except Exception:
-        pfd = []
-    prows = preg if len(preg) >= len(pfd) else pfd
-    if len(prows) >= 2:
-        cols = sorted({k for r in prows for k in r if k != "page"},
-                      key=lambda c: (c != "stage", c))
-        tables.append({
-            "title": (ph.get("well") or filename) + " — per-stage engineering data (WellView)",
-            "well": ph.get("well", ""), "uwi": ph.get("bh_uwi", ""),
-            "formation": "", "columns": cols,
-            "rows": [[r.get(c, "") for c in cols] for r in sorted(prows, key=lambda r: r.get("stage", 0))],
-        })
-        notes.append(f"{len(prows)} stage row(s) parsed from WellView report tables.")
-
-    # --- Trican 'STAGE INFORMATION' reports
-    try:
-        th, trows = trican2.parse_document(doc)
-    except Exception:
-        th, trows = {}, []
-    if len(trows) >= 2:
-        cols = [c for c in trican2.COLUMNS if any(c in r for r in trows)]
-        tables.append({
-            "title": (th.get("well") or filename) + " — per-stage engineering data (Trican)",
-            "well": th.get("well", ""), "uwi": th.get("uwi", ""),
-            "formation": "", "columns": cols,
-            "rows": [[r.get(c, "") for c in cols] for r in trows],
-        })
-        notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports "
-                     f"(stages numbered by document order).")
-
-    n_pages = len(doc)
+    results, notes = pipeline.extract_document(doc, filename=filename)
     doc.close()
-    if not stages and not tables:
-        notes.append(f"No extractable charts or tables found in {n_pages} pages "
-                     f"(scanned documents aren't supported here yet).")
+
+    stages, tables = [], []
+    for r in results:
+        if r["type"] == "series":
+            stages.append(_stage("vector", r["meta"], r["samples"],
+                                 _channels_payload(r["data"], r.get("units"),
+                                                   r.get("labels")),
+                                 r["source"], r.get("page")))
+        else:
+            tables.append({
+                "title": r["title"], "well": r.get("well", ""),
+                "uwi": r.get("uwi", ""), "formation": r.get("formation", ""),
+                "columns": r["columns"], "rows": r["rows"],
+                "source": r.get("source", ""),
+            })
     return stages, tables, notes
 
 

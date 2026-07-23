@@ -18,13 +18,25 @@ from leucrotta import _fit, _close, _spans
 
 def detect(page):
     t = page.get_text()
-    return "Liberty Energy" in t and re.search(r"Stage\s+\d+", t) is not None
+    return "Liberty Energy" in t and \
+        re.search(r"Stage\s+(?:[A-Z]{2,4}\s+)?\d", t) is not None
+
+
+def _parse_date(txt):
+    """'YYYY/MM/DD', 'MM/DD/YYYY' or 'MM/DD/YY' (2025 Vermilion-operated
+    filings use the short US form) -> (year, month, day)."""
+    a, b, c = (int(x) for x in txt.split("/"))
+    if a > 1900:
+        return a, b, c
+    if c > 1900:
+        return c, a, b
+    return 2000 + c, a, b
 
 
 def _time_axis(spans):
-    """date 'YYYY/MM/DD' + 'HH:MM' span pairs -> abs seconds = a + b*cy."""
+    """date + 'HH:MM' span pairs -> abs seconds = a + b*cy."""
     dates = [s for s in spans if s["color"] == 0 and
-             re.fullmatch(r"\d{4}/\d{2}/\d{2}", s["t"])]
+             re.fullmatch(r"\d{2,4}/\d{2}/\d{2,4}", s["t"])]
     times = [s for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
     if len(times) < 3:
@@ -37,9 +49,12 @@ def _time_axis(spans):
         best = min(dates, key=lambda d: abs(d["cy"] - ts["cy"])) if dates else None
         if best is None or abs(best["cy"] - ts["cy"]) > 40:
             continue
-        y, mo, dd = (int(x) for x in best["t"].split("/"))
+        y, mo, dd = _parse_date(best["t"])
         parts = [int(p) for p in ts["t"].split(":")]
-        secs = (dt.date(y, mo, dd) - dt.date(y, 1, 1)).days * 86400 + \
+        # absolute days (fixed epoch), NOT day-of-year — a stage crossing
+        # Dec 31 -> Jan 1 must keep increasing (Carmine: day/month/year can
+        # all change inside one chart)
+        secs = (dt.date(y, mo, dd) - dt.date(2000, 1, 1)).days * 86400 + \
             parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) > 2 else 0)
         pts.append((secs, ts["cy"]))
         if date0 is None:
@@ -52,10 +67,33 @@ def _time_axis(spans):
     return (a, b), (date0 or "")
 
 
+def _horizontal(spans):
+    """True when the time axis runs along X (landscape charts, page rotation 0)
+    rather than Y (the rotated pages this template was first built for)."""
+    tl = [s for s in spans if s["color"] == 0 and
+          re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
+    if len(tl) < 3:
+        return False
+    cxs = [s["cx"] for s in tl]
+    cys = [s["cy"] for s in tl]
+    return (max(cxs) - min(cxs)) > (max(cys) - min(cys))
+
+
+def _clean_name(name):
+    """Drop a leading wellbore/leg prefix like 'B: ' or 'B :' so the curve
+    name matches Carmine's alias table (e.g. 'B: Treating Pressure')."""
+    return re.sub(r"^[A-Za-z]\s*:\s*", "", name).strip()
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
     text = page.get_text()
+    # landscape charts run time along X; swap axes so the (rotated) logic below
+    # — which expects time along Y — applies unchanged
+    horizontal = _horizontal(spans)
+    if horizontal:
+        spans = [{**s, "cx": s["cy"], "cy": s["cx"]} for s in spans]
     tfit, date = _time_axis(spans)
     if tfit is None:
         raise ValueError("lib1: time labels not found")
@@ -68,8 +106,24 @@ def extract_page(page, sample_sec=1.0):
             continue
         m = re.fullmatch(r"(.+?)\s*\(([^)]+)\)", s["t"])
         if m and len(m.group(1)) > 3:
-            named.setdefault(s["color"], {"name": m.group(1).strip(),
+            named.setdefault(s["color"], {"name": _clean_name(m.group(1).strip()),
                                           "unit": m.group(2).strip()})
+    # a black series (e.g. a chemical CONC drawn in black) shares ink with
+    # axes/grid, so all black curves are indistinguishable — accept one only
+    # when the page has EXACTLY one black-named series (else they'd merge into
+    # garbage) and its unit matches a colored series' axis (shared via unit_fit).
+    colored_units = {v["unit"] for v in named.values()}
+    black = []
+    for s in spans:
+        if s["color"] != 0:
+            continue
+        m = re.fullmatch(r"(.+?)\s*\(([^)]+)\)", s["t"])
+        if m and len(m.group(1)) > 3 and m.group(2).strip() in colored_units:
+            cand = {"name": _clean_name(m.group(1).strip()), "unit": m.group(2).strip()}
+            if cand not in black:
+                black.append(cand)
+    if len(black) == 1:
+        named[0] = black[0]
     ticks = defaultdict(list)
     for s in spans:
         if s["color"] != 0 and re.fullmatch(r"[\d,]+(\.\d+)?", s["t"]):
@@ -88,13 +142,34 @@ def extract_page(page, sample_sec=1.0):
             fits[color] = (a, b)
     if not named or not fits:
         raise ValueError("lib1: legend or tick rows not found")
+    # share an axis by unit for series without their own tick row (black series)
+    unit_fit = {}
+    for color, f in fits.items():
+        u = named.get(color, {}).get("unit", "")
+        if u and u not in unit_fit:
+            unit_fit[u] = f
 
     meta = PageMeta()
-    m = re.search(r"Stage\s+(\d+)", text)
+    # stage labels carry re-frac suffixes/prefixes ("4A", "5B", "HRF 5A",
+    # "14A - HRF") — capture the whole token, not just the leading digits,
+    # or distinct treatments collide into one stage. The "Stage X of N"
+    # chart title is the most explicit form; fall back to a bare token.
+    # keep a "Part I/II" continuation tag distinct — same-key charts merge
+    # by sample index, which would silently drop the later part. Carmine's
+    # naming: "Part I/II" (roman or arabic) -> "Attempt 1/2".
+    m = (re.search(r"Stage\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+"
+                   r"(?:\s+Part\s+(\w+))?", text)
+         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?(?:\s*-\s*[A-Z]{2,4})?)\b()", text))
     if m:
-        meta.stage = m.group(1)
+        stage = " ".join(m.group(1).split())
+        part = m.group(2)
+        if part:
+            roman = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5}
+            n = roman.get(part.lower()) or (int(part) if part.isdigit() else None)
+            stage += f" Attempt {n}" if n else f" Attempt {part}"
+        meta.stage = stage
     first = text.strip().splitlines()[0].strip() if text.strip() else ""
-    m = re.search(r"^(.*?)\s+Stage\s+\d+", first)
+    m = re.search(r"^(.*?)\s+Stage\s+", first)
     meta.title = (m.group(1) if m else first)[:60]
     meta.date = date
 
@@ -107,7 +182,7 @@ def extract_page(page, sample_sec=1.0):
     series = {}
     units = {}
     for color_int, info in named.items():
-        fit = fits.get(color_int)
+        fit = fits.get(color_int) or unit_fit.get(info["unit"])
         if fit is None:
             continue
         a, b = fit
@@ -120,11 +195,21 @@ def extract_page(page, sample_sec=1.0):
                 continue
             for item in d["items"]:
                 if item[0] == "l":
-                    pts.append((item[1].x, item[1].y))
-                    pts.append((item[2].x, item[2].y))
+                    x1, y1, x2, y2 = item[1].x, item[1].y, item[2].x, item[2].y
+                    if horizontal:            # match the swapped span coords
+                        x1, y1, x2, y2 = y1, x1, y2, x2
+                    if color_int == 0:
+                        # black series shares ink with axes/grid: drop long
+                        # axis-aligned segments (frame + gridlines)
+                        if (abs(x1 - x2) < 0.01 or abs(y1 - y2) < 0.01) and \
+                           max(abs(x1 - x2), abs(y1 - y2)) > 5:
+                            continue
+                    pts.append((x1, y1)); pts.append((x2, y2))
                 elif item[0] == "c":
-                    pts.append((item[1].x, item[1].y))
-                    pts.append((item[4].x, item[4].y))
+                    ax, ay, bx, by = item[1].x, item[1].y, item[4].x, item[4].y
+                    if horizontal:
+                        ax, ay, bx, by = ay, ax, by, bx
+                    pts.append((ax, ay)); pts.append((bx, by))
         if len(pts) < 40:
             continue
         arr = np.array(pts)

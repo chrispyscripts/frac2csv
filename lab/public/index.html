@@ -8,96 +8,203 @@
 <script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
 <style>
   :root {
-    --paper:#fbfbfa; --card:#ffffff; --ink:#14181d; --mut:#697077; --line:#e3e5e8;
-    --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c222b; --ink:#e6edf3; --mut:#8b949e;
+    --line:#2a313c; --carmine:#d64a63; --carmine-dk:#b23350; --ok:#3fb950;
     --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   }
   * { box-sizing:border-box; margin:0; }
-  body { background:var(--paper); color:var(--ink);
-         font:15px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif; }
-  .wrap { max-width:920px; margin:0 auto; padding:44px 24px 90px; }
-  header { display:flex; justify-content:space-between; align-items:baseline;
-           flex-wrap:wrap; gap:8px; margin-bottom:8px; }
-  .wordmark { font-size:26px; font-weight:700; letter-spacing:-0.02em; }
+  html, body { height:100%; }
+  body { background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .app { display:flex; flex-direction:column; height:100vh; }
+  /* top bar */
+  .top { display:flex; align-items:center; gap:16px; padding:11px 18px;
+         border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .wordmark { font-size:19px; font-weight:700; letter-spacing:-0.02em; }
   .wordmark::after { content:"."; color:var(--carmine); }
-  .tag { color:var(--mut); font-size:13.5px; }
-  .lede { color:var(--mut); max-width:64ch; margin:6px 0 26px; }
-  .drop { border:1.5px dashed #c7ccd1; border-radius:12px; background:var(--card);
-          padding:52px 24px; text-align:center; cursor:pointer;
-          transition:border-color .15s, background .15s; }
-  .drop:hover, .drop.hot { border-color:var(--carmine); background:#fdf7f8; }
-  .drop .big { font-size:17px; font-weight:600; }
-  .drop .big span { color:var(--carmine); }
-  .drop .small { color:var(--mut); font-size:13px; margin-top:8px; }
-  .queue { margin-top:18px; display:flex; flex-direction:column; gap:8px; }
-  .qitem { background:var(--card); border:1px solid var(--line); border-radius:8px;
-           padding:10px 16px; display:flex; justify-content:space-between; gap:12px;
-           align-items:center; font-size:14px; }
-  .qitem .nm { font-family:var(--mono); font-size:13px; overflow:hidden;
-               text-overflow:ellipsis; white-space:nowrap; }
-  .qitem .st { color:var(--mut); font-size:12.5px; flex-shrink:0; font-family:var(--mono); }
-  .qitem .st.ok { color:var(--ok); }
-  .qitem .st.err { color:var(--carmine); }
-  .results { margin-top:34px; }
-  .grp { margin-bottom:34px; }
-  .grp h2 { font-size:15px; font-family:var(--mono); font-weight:600; margin-bottom:10px;
-            padding-bottom:6px; border-bottom:2px solid var(--ink); }
-  table { width:100%; border-collapse:collapse; background:var(--card);
-          border:1px solid var(--line); border-radius:8px; overflow:hidden;
-          font-size:13.5px; font-variant-numeric:tabular-nums; }
-  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
-       color:var(--mut); padding:9px 12px; border-bottom:1px solid var(--line);
-       background:#f6f7f7; font-weight:600; }
-  td { padding:8px 12px; border-bottom:1px solid var(--line); }
-  tr:last-child td { border-bottom:none; }
-  td.mono { font-family:var(--mono); font-size:12.5px; }
-  .btn { display:inline-block; border:1px solid var(--line); border-radius:6px;
-         background:var(--card); color:var(--ink); font-size:12.5px; font-weight:600;
-         padding:5px 12px; cursor:pointer; text-decoration:none; }
+  .grow { flex:1; }
+  .optlabel { font-size:10px; text-transform:uppercase; letter-spacing:.06em;
+              color:var(--mut); font-weight:600; margin-right:6px; }
+  .optgroup { display:inline-flex; align-items:center; }
+  .optgroup.off { opacity:.38; pointer-events:none; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px;
+         overflow:hidden; background:var(--panel); }
+  .seg button { border:0; border-left:1px solid var(--line); background:transparent;
+                color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+                padding:5px 11px; cursor:pointer; }
+  .seg button:first-child { border-left:0; }
+  .seg button:hover { color:var(--carmine); }
+  .seg button.on { background:var(--carmine); color:#fff; }
+  .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+         color:var(--ink); font-size:12.5px; font-weight:600; padding:6px 13px; cursor:pointer; }
   .btn:hover { border-color:var(--carmine); color:var(--carmine); }
   .btn.primary { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn.primary:hover { background:var(--carmine-dk); color:#fff; }
-  .toolbar { display:flex; justify-content:space-between; align-items:center;
-             margin:26px 0 12px; gap:10px; flex-wrap:wrap; }
-  .toolbar .count { color:var(--mut); font-size:13.5px; }
-  .notes { color:var(--mut); font-size:12.5px; font-family:var(--mono);
-           margin-top:8px; white-space:pre-wrap; }
-  .spin { display:inline-block; width:11px; height:11px; border:2px solid var(--line);
+  .manifestbar { margin:10px 12px; padding:10px 12px; border:1px solid var(--carmine);
+                 border-radius:8px; background:var(--panel2); display:flex;
+                 flex-direction:column; gap:8px; }
+  .manifestbar .mtext { font-size:12px; font-weight:600; }
+  .manifestbar .mnote { font-size:10.5px; color:var(--mut); }
+  .prov { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+          border-radius:6px; font:inherit; font-size:12.5px; font-weight:600;
+          padding:6px 10px; cursor:pointer; }
+  .prov:hover { border-color:var(--carmine); }
+  /* split */
+  .main { flex:1; display:flex; min-height:0; }
+  .left { width:264px; flex-shrink:0; border-right:1px solid var(--line);
+          display:flex; flex-direction:column; min-height:0; }
+  .mid { width:210px; flex-shrink:0; border-right:1px solid var(--line);
+         display:flex; flex-direction:column; min-height:0; }
+  .stages { flex:1; overflow:auto; }
+  .lefthead { padding:9px 14px; font-size:10px; text-transform:uppercase;
+              letter-spacing:.06em; color:var(--mut); font-weight:700;
+              border-bottom:1px solid var(--line); }
+  .files { flex:1; overflow:auto; }
+  .filehead.sel { background:var(--panel2); border-left:2px solid var(--carmine); padding-left:12px; }
+  .fileitem.prov-hide { display:none; }
+  .drop { margin:12px; border:1.5px dashed #39414d; border-radius:10px; padding:20px 12px;
+          text-align:center; cursor:pointer; color:var(--mut); font-size:12.5px; transition:.15s; }
+  .drop:hover, .drop.hot { border-color:var(--carmine); background:#1a1417; color:var(--ink); }
+  .drop b { color:var(--carmine); }
+  .fileitem { border-bottom:1px solid var(--line); }
+  .filehead { display:flex; justify-content:space-between; gap:8px; align-items:center;
+              padding:9px 14px; cursor:pointer; }
+  .filehead:hover { background:var(--panel); }
+  .filehead .nm { font-family:var(--mono); font-size:12px; overflow:hidden;
+                  text-overflow:ellipsis; white-space:nowrap; }
+  .filehead .st { font-size:11px; color:var(--mut); font-family:var(--mono); flex-shrink:0; }
+  .filehead .st.ok { color:var(--ok); } .filehead .st.err { color:var(--carmine); }
+  .stagerow { display:flex; justify-content:space-between; align-items:center;
+              padding:5px 14px 5px 26px; cursor:pointer; font-size:12px; color:var(--mut); }
+  .stagerow:hover { background:var(--panel); color:var(--ink); }
+  .stagerow.sel { background:var(--panel2); color:var(--ink);
+                  border-left:2px solid var(--carmine); padding-left:24px; }
+  .stagerow .ch { font-family:var(--mono); font-size:10.5px; color:var(--mut); }
+  /* preview */
+  .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
+  .previewhead { padding:11px 18px; border-bottom:1px solid var(--line); }
+  .previewhead .title { font-size:14px; font-weight:600; }
+  .previewhead .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .canvaswrap { padding:14px 18px 8px; }
+  canvas#graph { width:100%; height:auto; background:var(--panel);
+                 border:1px solid var(--line); border-radius:8px; display:block; }
+  .legendrow { display:flex; align-items:flex-start; gap:14px; padding:2px 18px 10px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 16px; flex:1; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; font-size:11.5px;
+                 cursor:pointer; user-select:none; border-radius:5px; padding:2px 6px;
+                 border:1px solid transparent; }
+  .legend span:hover { border-color:var(--line); }
+  .legend span.dim { opacity:.32; }
+  .legend span.iso { border-color:var(--carmine); background:var(--panel2); }
+  .legend i { width:13px; height:3px; border-radius:2px; display:inline-block; }
+  .seg.mini button { padding:3px 9px; font-size:11px; }
+  .origbar { display:flex; align-items:center; gap:8px; }
+  .origbar .btn { padding:2px 9px; font-size:12px; }
+  .origbar .btn:disabled { opacity:.35; pointer-events:none; }
+  .origlbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
+  #graph { cursor:grab; }
+  #graph.panning { cursor:grabbing; }
+  .dlbar { padding:6px 18px 16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .dlbar .cnt { color:var(--mut); font-size:11.5px; margin-left:auto; font-family:var(--mono); }
+  .tablewrap { padding:0 18px 18px; }
+  table { width:100%; border-collapse:collapse; background:var(--panel);
+          border:1px solid var(--line); border-radius:8px; overflow:hidden;
+          font-size:12.5px; font-variant-numeric:tabular-nums; }
+  th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+       color:var(--mut); padding:7px 10px; border-bottom:1px solid var(--line); background:var(--panel2); }
+  td { padding:6px 10px; border-bottom:1px solid var(--line);
+       font-family:var(--mono); font-size:11.5px; }
+  tr:last-child td { border-bottom:none; }
+  .empty { color:var(--mut); font-size:13px; padding:56px 24px; text-align:center; max-width:52ch; }
+  .notes { color:var(--mut); font-size:11.5px; font-family:var(--mono);
+           padding:0 18px 16px; white-space:pre-wrap; }
+  .spin { display:inline-block; width:10px; height:10px; border:2px solid var(--line);
           border-top-color:var(--carmine); border-radius:50%;
-          animation:sp .8s linear infinite; vertical-align:-1px; margin-right:6px; }
+          animation:sp .8s linear infinite; vertical-align:-1px; margin-right:5px; }
   @keyframes sp { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
-  footer { margin-top:60px; padding-top:16px; border-top:1px solid var(--line);
-           color:var(--mut); font-size:12.5px; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
+<div class="app">
+  <div class="top">
     <div class="wordmark">Carmine's Lab</div>
-    <div class="tag">frac report → data</div>
-  </header>
-  <p class="lede">Drop frac report PDFs — as many as you like. The lab reads the charts and
-  tables inside, rebuilds the per-second treatment data, and hands back clean CSV files.
-  Documents are processed in memory and never stored.</p>
-
-  <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
-    <div class="big">Drop PDFs here <span>or click to choose</span></div>
-    <div class="small">Handles MView, Halliburton IFS, acquisition-system charts and
-    per-stage report tables · multiple files at once · large files are split automatically</div>
-    <input type="file" id="file" accept=".pdf" hidden multiple>
+    <div class="optgroup"><span class="optlabel">Export</span>
+      <div class="seg" id="fmt">
+        <button type="button" data-v="csv">CSV</button>
+        <button type="button" data-v="xlsx">Excel</button>
+        <button type="button" data-v="both" class="on">Both</button>
+      </div>
+    </div>
+    <div class="optgroup" id="layopt"><span class="optlabel">Excel layout</span>
+      <div class="seg" id="lay">
+        <button type="button" data-v="tabs" class="on">Tab per stage</button>
+        <button type="button" data-v="single">One sheet</button>
+      </div>
+    </div>
+    <div class="optgroup"><span class="optlabel">Stage #</span>
+      <div class="seg" id="stlbl">
+        <button type="button" data-v="asis" class="on">As labeled</button>
+        <button type="button" data-v="seq">Sequential</button>
+      </div>
+    </div>
+    <div class="grow"></div>
+    <select id="provider" class="prov" title="Batch by service provider">
+      <option value="">All service providers</option>
+    </select>
+    <button class="btn primary" id="zip" hidden>Download all (.zip)</button>
   </div>
 
-  <div class="queue" id="queue"></div>
+  <div class="main">
+    <div class="left">
+      <div class="lefthead">Files</div>
+      <div class="files" id="files"></div>
+      <div class="manifestbar" id="manifestbar" hidden>
+        <div class="mtext" id="mtext"></div>
+        <button class="btn primary" id="mrun">Choose drive folder &amp; run</button>
+        <div class="mnote">Pick any folder holding the files — they're matched
+        by name if the layout differs. Exports save into each PDF's own folder.</div>
+      </div>
+      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
+        Drop PDFs or a .txt file list here <b>or click</b>
+        <input type="file" id="file" accept=".pdf,.txt" hidden multiple>
+      </div>
+    </div>
 
-  <div class="toolbar" id="toolbar" hidden>
-    <span class="count" id="count"></span>
-    <button class="btn primary" id="zip">Download everything (.zip)</button>
+    <div class="mid">
+      <div class="lefthead">Stages</div>
+      <div class="stages" id="stages"></div>
+    </div>
+
+    <div class="right">
+      <div class="empty" id="empty">Drop a frac report PDF on the left to begin.
+        Pick a PDF to list its stages in the middle column, then click a stage
+        to see its per-second curves and download as CSV or Excel.</div>
+      <div id="previewpane" hidden>
+        <div class="previewhead">
+          <div class="title" id="pv-title">&mdash;</div>
+          <div class="sub" id="pv-sub"></div>
+        </div>
+        <div class="canvaswrap"><canvas id="graph" width="1120" height="440"></canvas></div>
+        <div class="legendrow">
+          <div class="seg mini" id="lblmode" title="Curve naming / source view">
+            <button type="button" data-v="canon" class="on">Our terms</button>
+            <button type="button" data-v="raw">As extracted</button>
+            <button type="button" data-v="orig">Original chart</button>
+          </div>
+          <div class="origbar" id="origbar" hidden>
+            <button type="button" class="btn" id="origprev">‹</button>
+            <span class="origlbl" id="origlbl"></span>
+            <button type="button" class="btn" id="orignext">›</button>
+          </div>
+          <div class="legend" id="pv-legend"></div>
+        </div>
+        <div class="dlbar" id="pv-dl"></div>
+        <div class="tablewrap" id="pv-table"></div>
+        <div class="notes" id="pv-notes"></div>
+      </div>
+    </div>
   </div>
-  <div class="results" id="results"></div>
-
-  <footer>Carmine's Lab · extraction engine v1 · vector charts are recovered near-losslessly;
-  scanned documents are not yet supported here.</footer>
 </div>
 
 <script>
@@ -105,7 +212,19 @@
 const $ = id => document.getElementById(id);
 const CHUNK_PAGES = 30;
 const MAX_BYTES = 3 * 1024 * 1024;
-const allCSVs = [];   // {name, text}
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const settings = { format: "both", xlsxTabs: true, stageLabel: "asis",
+                   chartLabels: "canon" };  // toggles
+// desktop build: the same UI served by a local server with direct disk
+// access (raster/OCR on, drive lists resolved server-side, no upload limit)
+let localInfo = null;
+fetch("/api/local-info").then(r => r.ok ? r.json() : null)
+  .then(j => { localInfo = j; }).catch(() => {});
+// numeric part of a stage label ("HRF 5A" -> 5, "12B" -> 12); non-numeric last
+const stageNum = s => { const m = String(s).match(/\d+/); return m ? +m[0] : 1e9; };
+const wells = [];       // { base, stages, provider }
+const tableFiles = [];  // { name, text, provider } — engineering tables (CSV)
+const entries = [];     // file entries (for provider menu + filtering)
 
 // ---------- upload plumbing ----------
 const drop = $("drop"), fileInput = $("file");
@@ -116,27 +235,189 @@ drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") 
 drop.addEventListener("drop", e => enqueue([...e.dataTransfer.files]));
 fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); fileInput.value = ""; });
 
-function qadd(name) {
-  const el = document.createElement("div");
-  el.className = "qitem";
-  el.innerHTML = `<span class="nm">${name}</span><span class="st"><span class="spin"></span>queued</span>`;
-  $("queue").appendChild(el);
-  return {
+function makeFileEntry(name) {
+  const el = document.createElement("div"); el.className = "fileitem";
+  const head = document.createElement("div"); head.className = "filehead";
+  head.innerHTML = `<span class="nm">${name}</span><span class="st"><span class="spin"></span>queued</span>`;
+  el.appendChild(head);
+  $("files").prepend(el);
+  const entry = {
+    el, head, name, well: null, notes: [], items: [], provider: "",
     set(msg, cls) {
-      el.querySelector(".st").innerHTML = (cls ? "" : '<span class="spin"></span>') + msg;
-      el.querySelector(".st").className = "st" + (cls ? " " + cls : "");
+      const st = head.querySelector(".st");
+      st.innerHTML = (cls ? "" : '<span class="spin"></span>') + msg;
+      st.className = "st" + (cls ? " " + cls : "");
     }
   };
+  head.addEventListener("click", () => { if (entry.items.length) selectFile(entry); });
+  entries.push(entry);
+  return entry;
 }
 
 let busy = Promise.resolve();
 function enqueue(files) {
   for (const f of files) {
-    if (!f.name.toLowerCase().endsWith(".pdf")) continue;
-    const q = qadd(f.name);
+    const n = f.name.toLowerCase();
+    if (n.endsWith(".txt")) { loadManifest(f); continue; }
+    if (!n.endsWith(".pdf")) continue;
+    const q = makeFileEntry(f.name);
     busy = busy.then(() => handleFile(f, q)).catch(() => {});
   }
 }
+
+// ---------- TXT file-list manifests (batch straight off the drive) ----------
+// Carmine's lists: "UWI  K:\BCER-Frac\<folder>\<file>.PDF" per line. The app
+// can't open drive paths itself — he picks the root folder once (File System
+// Access API), then every PDF is read from and its exports written back to
+// its own folder. Paths resolve by folder name, so the drive letter never
+// matters.
+let manifest = null;   // { name, rows: [{uwi, path}] }
+
+async function loadManifest(f) {
+  const text = await f.text();
+  const rows = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || /\bFNAME\b/i.test(t)) continue;      // header / blanks
+    const m = t.match(/^(\S+)\s+(.+)$/);
+    if (m && /\.pdf\s*$/i.test(m[2])) rows.push({ uwi: m[1], path: m[2].trim() });
+  }
+  if (!rows.length) {
+    alert(`${f.name}: no "UWI  <path>.PDF" rows found in this list.`);
+    return;
+  }
+  manifest = { name: f.name, rows };
+  if (localInfo && localInfo.local) {
+    // desktop build: the server resolves drive paths itself (any browser,
+    // any drive letter) — no folder picker needed
+    $("mtext").textContent = `${f.name} — resolving ${rows.length} paths…`;
+    $("manifestbar").hidden = false;
+    try {
+      const resp = await fetch("/api/manifest", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const out = await resp.json();
+      manifest.resolved = out.rows || [];
+      const found = manifest.resolved.filter(r => r.real).length;
+      $("mtext").textContent = `${f.name} — ${found}/${manifest.resolved.length} found on disk`;
+    } catch (e) {
+      $("mtext").textContent = `${f.name} — server error: ${e.message}`;
+      manifest.resolved = [];
+    }
+    return;
+  }
+  $("mtext").textContent = `${f.name} — ${rows.length} PDFs listed`;
+  $("manifestbar").hidden = false;
+}
+
+function pathSegs(path) {
+  let segs = path.split(/[\\/]+/).filter(Boolean);
+  if (/^[A-Za-z]:$/.test(segs[0])) segs = segs.slice(1);   // drop drive letter
+  return segs;
+}
+
+async function resolveInRoot(root, segs) {
+  let dir = root;
+  for (let i = 0; i < segs.length - 1; i++)
+    dir = await dir.getDirectoryHandle(segs[i]);
+  const fh = await dir.getFileHandle(segs[segs.length - 1]);
+  return { dir, fh };
+}
+
+// resolve a manifest path against the picked root: try the structured path
+// (cut through the segment matching the root's name) first; if the layout
+// differs (a flat "_LIB-Type" copy folder, renamed parents), fall back to a
+// one-time recursive index of every PDF under the root, matched by filename.
+let pdfIndex = null;   // lowercased basename -> {dir, fh}; per picked root
+
+async function buildPdfIndex(root) {
+  pdfIndex = new Map();
+  async function walk(dir, depth) {
+    if (depth > 8) return;
+    for await (const [name, h] of dir.entries()) {
+      if (h.kind === "file") {
+        if (/\.pdf$/i.test(name) && !pdfIndex.has(name.toLowerCase()))
+          pdfIndex.set(name.toLowerCase(), { dir, fh: h });
+      } else {
+        try { await walk(h, depth + 1); } catch (e) { /* unreadable dir */ }
+      }
+    }
+  }
+  await walk(root, 0);
+}
+
+async function resolveManifestPath(root, path) {
+  const segs = pathSegs(path);
+  const i = segs.findIndex(s => s.toLowerCase() === root.name.toLowerCase());
+  const tries = i >= 0 ? [segs.slice(i + 1), segs] : [segs, segs.slice(1)];
+  for (const t of tries) {
+    if (!t.length) continue;
+    try { return await resolveInRoot(root, t); } catch (e) { /* next */ }
+  }
+  if (!pdfIndex) await buildPdfIndex(root);          // lazy, once per run
+  const hit = pdfIndex.get(segs[segs.length - 1].toLowerCase());
+  if (hit) return hit;
+  throw new Error(`not found under ${root.name} (${pdfIndex.size} PDFs indexed)`);
+}
+
+$("mrun").addEventListener("click", async () => {
+  if (!manifest) return;
+  if (localInfo && localInfo.local) {          // desktop: server-side batch
+    const rows = manifest.resolved || [];
+    $("manifestbar").hidden = true;
+    manifest = null;
+    for (const row of rows) {
+      const base = row.path.split(/[\\/]+/).pop();
+      const q = makeFileEntry(base);
+      q.head.querySelector(".nm").title = row.path;
+      busy = busy.then(async () => {
+        if (!row.real) { q.set("✗ not found on this machine", "err"); return; }
+        q.set("extracting");
+        const resp = await fetch("/api/process-path", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: row.real, format: settings.format,
+                                 xlsxTabs: settings.xlsxTabs,
+                                 stageLabel: settings.stageLabel }),
+        });
+        const out = await resp.json();
+        if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
+        q._pdfUrl = "/api/file?path=" + encodeURIComponent(row.real);
+        render(q, base, out.stages || [], out.tables || [], out.notes || []);
+        const bits = [];
+        if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
+        if (out.written && out.written.length)
+          bits.push(`${out.written.length} file${out.written.length > 1 ? "s" : ""} saved beside PDF`);
+        q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data",
+              bits.length ? "ok" : "err");
+      }).catch(e => q.set("✗ " + e.message, "err"));
+    }
+    return;
+  }
+  if (!window.showDirectoryPicker) {
+    alert("This browser can't write to local folders — use Chrome or Edge for file lists.");
+    return;
+  }
+  let root;
+  try { root = await showDirectoryPicker({ mode: "readwrite" }); }
+  catch (e) { return; }                                  // user cancelled
+  pdfIndex = null;                                       // fresh index per root
+  const rows = manifest.rows;
+  $("manifestbar").hidden = true;
+  manifest = null;
+  for (const row of rows) {
+    const base = row.path.split(/[\\/]+/).pop();
+    const q = makeFileEntry(base);
+    q.head.querySelector(".nm").title = row.path;        // full path on hover
+    busy = busy.then(async () => {
+      let dest;
+      try { dest = await resolveManifestPath(root, row.path); }
+      catch (e) { q.set("✗ " + e.message, "err"); return; }
+      const file = await dest.fh.getFile();
+      await handleFile(file, q, dest.dir);
+    }).catch(() => {});
+  }
+});
 
 async function b64(bytes) {
   return new Promise(res => {
@@ -146,70 +427,259 @@ async function b64(bytes) {
   });
 }
 
+// Vercel caps a serverless request body at 4.5MB; base64 inflates bytes by
+// 4/3, and pdf-lib's copyPages duplicates shared resources into each chunk,
+// so a fixed page count can still overflow. Split by actual serialized size.
+const SAFE_B64 = 4_000_000;
+const b64len = bytes => Math.ceil(bytes.length / 3) * 4;
+
+async function saveChunk(src, idx) {
+  const out = await PDFLib.PDFDocument.create();
+  const pages = await out.copyPages(src, idx);
+  pages.forEach(p => out.addPage(p));
+  return out.save();
+}
+
+async function splitRange(src, idx, n, q) {
+  q.set(`splitting ${idx[0] + 1}–${idx[idx.length - 1] + 1} of ${n}p`);
+  const saved = await saveChunk(src, idx);
+  if (b64len(saved) <= SAFE_B64 || idx.length === 1)
+    return [{ bytes: saved, start: idx[0] + 1 }];   // 1-based global start page
+  const mid = Math.ceil(idx.length / 2);   // still too big — halve and retry
+  const a = await splitRange(src, idx.slice(0, mid), n, q);
+  const b = await splitRange(src, idx.slice(mid), n, q);
+  return a.concat(b);
+}
+
 async function splitPdf(bytes, q) {
-  /* big files: split into page-range chunks client-side */
+  /* big files: split into byte-bounded page-range chunks client-side */
   const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
   const n = src.getPageCount();
-  const chunks = [];
+  let chunks = [];
   for (let start = 0; start < n; start += CHUNK_PAGES) {
-    q.set(`splitting ${start + 1}–${Math.min(start + CHUNK_PAGES, n)} of ${n}p`);
-    const out = await PDFLib.PDFDocument.create();
     const idx = Array.from({ length: Math.min(CHUNK_PAGES, n - start) }, (_, i) => start + i);
-    const pages = await out.copyPages(src, idx);
-    pages.forEach(p => out.addPage(p));
-    chunks.push(await out.save());
+    chunks = chunks.concat(await splitRange(src, idx, n, q));
   }
   return chunks;
 }
 
-async function handleFile(f, q) {
+async function handleFile(f, q, saveDir) {
   try {
+    q._pdfFile = f;      // kept for the "Original chart" view (re-read lazily)
     const bytes = new Uint8Array(await f.arrayBuffer());
-    let chunks = [bytes];
-    if (bytes.length > MAX_BYTES) chunks = await splitPdf(bytes, q);
+    let chunks = [{ bytes, start: 1 }];
+    // the local desktop server has no request-size cap — never split there
+    if (bytes.length > MAX_BYTES && !(localInfo && localInfo.local))
+      chunks = await splitPdf(bytes, q);
     const stages = [], tables = [], notes = [];
     for (let i = 0; i < chunks.length; i++) {
       q.set(chunks.length > 1 ? `extracting ${i + 1}/${chunks.length}` : "extracting");
       const resp = await fetch("/api/extract", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: f.name, data: await b64(chunks[i]) }),
+        body: JSON.stringify({ filename: f.name, data: await b64(chunks[i].bytes) }),
       });
-      const out = await resp.json();
+      // errors (esp. Vercel's 413) come back as plain text, not JSON
+      const raw = await resp.text();
+      let out;
+      try { out = JSON.parse(raw); }
+      catch {
+        throw new Error(resp.status === 413 || /too large|request entity/i.test(raw)
+          ? "a page chunk was too large for the server"
+          : `server error ${resp.status}`);
+      }
       if (!resp.ok) throw new Error(out.error || resp.status);
-      stages.push(...(out.stages || []));
+      for (const st of (out.stages || [])) {
+        if (st.page) st.page += chunks[i].start - 1;   // chunk-relative -> global
+        stages.push(st);
+      }
       tables.push(...(out.tables || []));
       notes.push(...(out.notes || []));
     }
-    render(f.name, stages, tables, notes);
+    render(q, f.name, stages, tables, notes);
     const bits = [];
     if (stages.length) bits.push(`${stages.length} stage${stages.length > 1 ? "s" : ""}`);
     if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
+    if (bits.length && saveDir) {
+      q.set("saving exports…");
+      const saved = await saveExports(q, saveDir);
+      bits.push(`${saved} file${saved === 1 ? "" : "s"} saved beside PDF`);
+    }
     q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data", bits.length ? "ok" : "err");
   } catch (e) {
     q.set("✗ " + e.message, "err");
   }
 }
 
-// ---------- CSV building ----------
-function stageCSV(st) {
-  const cols = st.channels.map(c => c.key);
-  const units = Object.fromEntries(st.channels.map(c => [c.key, c.unit || ""]));
-  const M = st.meta;
-  const date = M.date || "2000-01-01";
-  const t0 = new Date(date + "T" + (M.start_time || "00:00:00"));
-  const pad = n => String(n).padStart(2, "0");
-  const rows = [
-    ["UWI","STAGE","DATETIME","ELAPSED","TIMESTAMP","LABEL", ...cols].join(","),
-    ["Units","","YYYY-mm-dd HH:MM:SS","secs","secs","", ...cols.map(c => units[c])].join(","),
-  ];
-  for (let i = 0; i < st.n; i++) {
-    const s = i * st.sample_sec;
-    const d = new Date(t0.getTime() + s * 1000);
-    const dt = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-    rows.push([M.uwi || "", M.stage || "", dt, s.toFixed(5), (t0.getTime()/1000 + s).toFixed(5),
-               M.stage || "", ...st.channels.map(c => c.values[i] == null ? "" : c.values[i].toFixed(5))].join(","));
+// write this entry's exports (per the Export/Excel-layout toggles) into the
+// PDF's own folder via the picked directory handle
+async function saveExports(entry, dir) {
+  async function put(name, data) {
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(data);
+    await w.close();
   }
-  return rows.join("\n");
+  let n = 0;
+  if (entry.well) {
+    const base = entry.well.base;
+    if (settings.format !== "xlsx") { await put(base + ".csv", wellCSV(entry.well.stages)); n++; }
+    if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs)); n++; }
+  }
+  for (const t of (entry._tables || [])) {
+    await put(entry.name.replace(/\.pdf$/i, "") + "-stages-table.csv", tableCSV(t));
+    n++;
+  }
+  return n;
+}
+
+// ---------- CSV / XLSX building ----------
+const CANON = ["Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"];
+
+// Shared data model for a well: every stage stacked, separated by the STAGE
+// column (native MView-style). Charts that share a stage number (e.g. a STEP
+// surface + chemical plot) are merged side-by-side by sample index. Cells are
+// typed — strings for UWI/STAGE/DATETIME/LABEL, numbers (or null) elsewhere —
+// so the CSV and the Excel workbook render from one source.
+function wellModel(stages) {
+  const units = {};
+  for (const st of stages)
+    for (const c of st.channels)
+      if (!(c.key in units)) units[c.key] = c.unit || "";
+  const cols = [], seen = new Set();
+  for (const k of CANON) if (k in units) { cols.push(k); seen.add(k); }
+  for (const st of stages)
+    for (const c of st.channels)
+      if (!seen.has(c.key)) { seen.add(c.key); cols.push(c.key); }
+
+  const order = [], groups = new Map();
+  for (const st of stages) {
+    const key = st.meta.stage || "?";
+    if (!groups.has(key)) { groups.set(key, []); order.push(key); }
+    groups.get(key).push(st);
+  }
+  // sort by the first number anywhere in the label ("HRF 5A" -> 5), then text
+  order.sort((a, b) => (stageNum(a) - stageNum(b)) ||
+                       (a < b ? -1 : a > b ? 1 : 0));
+
+  const pad = n => String(n).padStart(2, "0");
+  const head = ["UWI","STAGE","DATETIME","ELAPSED","TIMESTAMP","LABEL", ...cols];
+  const unitRow = ["Units","","YYYY-mm-dd HH:MM:SS","secs","secs","", ...cols.map(c => units[c] || "")];
+  const blocks = [];
+  for (let bi = 0; bi < order.length; bi++) {
+    const key = order[bi];
+    // STAGE label: the PDF's own stage number, or a 1..N sequential index
+    const label = settings.stageLabel === "seq" ? String(bi + 1) : key;
+    const grp = groups.get(key);
+    const M = grp[0].meta;
+    const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));
+    const dsec = grp[0].sample_sec || 1;
+    const n = Math.max(...grp.map(st => st.n));
+    const chan = {};                       // channel key -> values array
+    for (const st of grp)
+      for (const c of st.channels)
+        if (!(c.key in chan)) chan[c.key] = c.values;
+    const rows = [];
+    for (let i = 0; i < n; i++) {
+      const s = i * dsec;
+      const d = new Date(t0.getTime() + s * 1000);
+      const dt = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      rows.push([M.uwi || "", label, dt, s, t0.getTime()/1000 + s, label,
+                 ...cols.map(c => (chan[c] && chan[c][i] != null) ? chan[c][i] : null)]);
+    }
+    blocks.push({ stage: label, rows });
+  }
+  return { head, unitRow, blocks };
+}
+
+function csvCell(v) {
+  if (v == null) return "";
+  return typeof v === "number" ? v.toFixed(5) : v;
+}
+
+function wellCSV(stages) {
+  const m = wellModel(stages);
+  const lines = [m.head.join(","), m.unitRow.join(",")];
+  for (const b of m.blocks)
+    for (const r of b.rows) lines.push(r.map(csvCell).join(","));
+  return lines.join("\n");
+}
+
+// ---- minimal OOXML (.xlsx) writer, zipped with the fflate already loaded ----
+function xmlEsc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function colLetter(n) {
+  let s = "";
+  for (n += 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s;
+  return s;
+}
+function sheetXml(rows) {
+  const out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'];
+  for (let r = 0; r < rows.length; r++) {
+    const cells = rows[r], parts = [];
+    for (let c = 0; c < cells.length; c++) {
+      const v = cells[c];
+      if (v == null || v === "") continue;
+      const ref = colLetter(c) + (r + 1);
+      if (typeof v === "number" && isFinite(v))
+        parts.push(`<c r="${ref}"><v>${v}</v></c>`);
+      else
+        parts.push(`<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`);
+    }
+    out.push(`<row r="${r + 1}">${parts.join("")}</row>`);
+  }
+  out.push('</sheetData></worksheet>');
+  return out.join("");
+}
+function sheetName(name, used) {
+  let n = String(name).replace(/[\\\/\?\*\[\]:]/g, "-").slice(0, 31) || "Sheet";
+  const base = n;
+  for (let i = 2; used.has(n.toLowerCase()); i++) n = (base.slice(0, 27) + "_" + i).slice(0, 31);
+  used.add(n.toLowerCase());
+  return n;
+}
+function buildXlsx(sheets) {          // sheets = [{name, rows}]
+  const enc = new TextEncoder(), files = {};
+  const ov = sheets.map((s, i) =>
+    `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("");
+  files["[Content_Types].xml"] = enc.encode(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+    '<Default Extension="xml" ContentType="application/xml"/>' +
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+    ov + '</Types>');
+  files["_rels/.rels"] = enc.encode(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+    '</Relationships>');
+  files["xl/workbook.xml"] = enc.encode(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' +
+    sheets.map((s, i) => `<sheet name="${xmlEsc(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join("") +
+    '</sheets></workbook>');
+  files["xl/_rels/workbook.xml.rels"] = enc.encode(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+    sheets.map((s, i) => `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join("") +
+    '</Relationships>');
+  sheets.forEach((s, i) => { files[`xl/worksheets/sheet${i+1}.xml`] = enc.encode(sheetXml(s.rows)); });
+  return fflate.zipSync(files, { level: 6 });
+}
+// tabs=true → MAIN + one sheet per stage; tabs=false → single MAIN sheet only
+function wellXLSX(stages, tabs) {
+  const m = wellModel(stages);
+  const used = new Set();
+  const sheets = [{ name: sheetName("MAIN", used),
+                    rows: [m.head, m.unitRow, ...m.blocks.flatMap(b => b.rows)] }];
+  if (tabs)
+    for (const b of m.blocks)
+      sheets.push({ name: sheetName("Stage " + b.stage, used),
+                    rows: [m.head, m.unitRow, ...b.rows] });
+  return buildXlsx(sheets);
 }
 
 function tableCSV(t) {
@@ -220,95 +690,598 @@ function tableCSV(t) {
 }
 
 function saveText(name, text) {
+  saveBlob(name, new Blob([text], { type: "text/csv" }), null);
+}
+
+function saveBlob(name, data, mime) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime || "application/octet-stream" });
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
-function csvName(fname, st) {
-  const base = fname.replace(/\.pdf$/i, "");
-  return `${base}-stage-${st.meta.stage || "x"}.csv`;
+
+// ---------- results + preview ----------
+const SERIES_COLORS = { "Tr Press":"#4f8ff7", "Slurry Rate":"#f0555a",
+  "WH Prop Conc":"#3fb950", "BH Prop Conc":"#b87fd9", "Gorv Press":"#e3b341" };
+const PALETTE = ["#4f8ff7","#f0555a","#3fb950","#b87fd9","#e3b341","#39c5cf",
+  "#db61a2","#a5a5f5","#f2895d","#8ddc6b"];
+const round2 = v => Math.round(v * 100) / 100;
+let current = null;   // { entry, well, item }
+
+// group a well's charts into one selectable item per stage number
+function stageItems(stages) {
+  const order = [], groups = new Map();
+  for (const st of stages) {
+    const k = st.meta.stage || "?";
+    if (!groups.has(k)) { groups.set(k, []); order.push(k); }
+    groups.get(k).push(st);
+  }
+  // sort by the first number anywhere in the label ("HRF 5A" -> 5), then text
+  order.sort((a, b) => (stageNum(a) - stageNum(b)) ||
+                       (a < b ? -1 : a > b ? 1 : 0));
+  return order.map(k => {
+    const grp = groups.get(k);
+    const channels = [], seen = new Set();
+    for (const st of grp) for (const c of st.channels)
+      if (!seen.has(c.key)) { seen.add(c.key); channels.push(c); }
+    return { type: "stage", key: k, meta: grp[0].meta, source: grp[0].source, channels,
+             pages: grp.map(s => s.page).filter(Boolean),   // source PDF pages
+             n: Math.max(...grp.map(s => s.n)), sample_sec: grp[0].sample_sec || 1 };
+  }).map((it, i) => ({ ...it, seq: i + 1 }));   // 1..N position for sequential labels
 }
 
-// ---------- results ----------
-function render(fname, stages, tables, notes) {
-  if (!stages.length && !tables.length && !notes.length) return;
-  const grp = document.createElement("div");
-  grp.className = "grp";
-  grp.innerHTML = `<h2>${fname}</h2>`;
-  if (stages.length) {
-    const tb = document.createElement("table");
-    tb.innerHTML = `<tr><th>Stage</th><th>Well / UWI</th><th>Date</th>
-      <th>Duration</th><th>Samples</th><th>Channels</th><th>Source</th><th></th></tr>`;
-    for (const st of stages) {
-      const tr = document.createElement("tr");
-      const M = st.meta;
-      tr.innerHTML = `<td class="mono">${M.stage || "—"}</td>
-        <td class="mono">${M.uwi || "—"}</td>
-        <td class="mono">${M.date || "—"}${M.start_time ? " " + M.start_time : ""}</td>
-        <td>${(Math.round(M.duration_min * 10) / 10)} min</td>
-        <td class="mono">${st.n.toLocaleString()}</td>
-        <td>${st.channels.map(c => c.key).join(", ")}</td>
-        <td>${st.source || ""}</td><td></td>`;
-      const b = document.createElement("button");
-      b.className = "btn"; b.textContent = "CSV";
-      const name = csvName(fname, st);
-      const text = stageCSV(st);
-      allCSVs.push({ name, text });
-      b.addEventListener("click", () => saveText(name, text));
-      tr.lastElementChild.appendChild(b);
-      tb.appendChild(tr);
-    }
-    grp.appendChild(tb);
-  }
-  for (const t of tables) {
-    const cap = document.createElement("div");
-    cap.style.cssText = "margin:12px 0 6px; font-weight:600; font-size:13.5px";
-    cap.textContent = t.title;
-    const b = document.createElement("button");
-    b.className = "btn"; b.textContent = "CSV";
-    b.style.marginLeft = "10px";
-    const name = fname.replace(/\.pdf$/i, "") + "-stages-table.csv";
-    const text = tableCSV(t);
-    allCSVs.push({ name, text });
-    b.addEventListener("click", () => saveText(name, text));
-    cap.appendChild(b);
-    grp.appendChild(cap);
-    const tb = document.createElement("table");
-    tb.innerHTML = `<tr>${t.columns.slice(0, 9).map(c => `<th>${c}</th>`).join("")}</tr>` +
-      t.rows.slice(0, 30).map(r =>
-        `<tr>${r.slice(0, 9).map(v => `<td class="mono">${v}</td>`).join("")}</tr>`).join("");
-    grp.appendChild(tb);
-    if (t.rows.length > 30 || t.columns.length > 9) {
-      const more = document.createElement("div");
-      more.className = "notes";
-      more.textContent = `Preview truncated — the CSV has all ${t.rows.length} rows × ${t.columns.length} columns.`;
-      grp.appendChild(more);
-    }
-  }
-  if (notes.length) {
-    const n = document.createElement("div");
-    n.className = "notes";
-    n.textContent = notes.join("\n");
-    grp.appendChild(n);
-  }
-  $("results").prepend(grp);
-  $("toolbar").hidden = allCSVs.length === 0;
-  $("count").textContent = `${allCSVs.length} CSV file${allCSVs.length === 1 ? "" : "s"} ready`;
+// stage label shown in the UI, per the As-labeled / Sequential toggle
+function stageLabel(item) {
+  return settings.stageLabel === "seq" ? String(item.seq) : item.key;
 }
+
+// map a chart/table source string to a service-provider label
+const PROVIDERS = [
+  [/leucrotta/i, "Leucrotta"], [/halliburton|IFS|treatment plot/i, "Halliburton"],
+  [/liberty/i, "Liberty"], [/\bBJ\b/i, "BJ"], [/canyon/i, "Canyon"],
+  [/STEP/i, "STEP"], [/mview/i, "MView"], [/trican/i, "Trican"],
+  [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
+];
+function providerOf(source) {
+  for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
+  return "Other";
+}
+function wellProvider(well) {
+  const c = {};
+  for (const st of well.stages) { const p = providerOf(st.source); c[p] = (c[p] || 0) + 1; }
+  return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || "Other";
+}
+function rebuildProviderMenu() {
+  const sel = $("provider"), cur = sel.value, provs = new Set();
+  for (const e of entries) if (e.provider) provs.add(e.provider);
+  sel.innerHTML = '<option value="">All service providers</option>' +
+    [...provs].sort().map(p => `<option value="${p}">${p}</option>`).join("");
+  sel.value = provs.has(cur) ? cur : "";
+}
+function applyProviderFilter() {
+  const p = $("provider").value;
+  for (const e of entries) e.el.classList.toggle("prov-hide", !!p && e.provider !== p);
+}
+
+function render(entry, fname, stages, tables, notes) {
+  const base = fname.replace(/\.pdf$/i, "");
+  const items = stages.length ? stageItems(stages) : [];
+  for (const t of tables) {
+    const name = base + "-stages-table.csv";
+    if (!tableFiles.some(x => x.name === name))
+      tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
+    items.push({ type: "table", key: "table", table: t });
+  }
+  // charts on some templates (Liberty) carry no parseable UWI — fall back to
+  // Carmine's "<index>-<UWI>_<WA>" file naming
+  const fuwi = (fname.match(/^\d+-([0-9A-Z]{10,20})_\d/) || [])[1] || "";
+  if (fuwi) for (const st of stages) if (!st.meta.uwi) st.meta.uwi = fuwi;
+  const well = stages.length ? { base, stages } : null;
+  if (well) { well.provider = wellProvider(well); wells.push(well); }
+  entry.well = well; entry.notes = notes || []; entry.items = items;
+  entry._tables = tables || [];
+  entry.provider = well ? well.provider : (tables[0] ? providerOf(tables[0].source) : "Other");
+  rebuildProviderMenu();
+  applyProviderFilter();
+  selectFile(entry);            // list this file's stages in the middle column
+  updateCount();
+}
+
+// populate the middle "Stages" column for one file, auto-select its first item
+function selectFile(entry) {
+  document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
+  entry.head.classList.add("sel");
+  const list = $("stages"); list.innerHTML = "";
+  for (const it of entry.items) {
+    const row = document.createElement("div");
+    row.className = "stagerow";
+    row.innerHTML = it.type === "stage"
+      ? `<span>Stage ${stageLabel(it)}</span><span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`
+      : `<span>Table</span><span class="ch">${it.table.rows.length} rows</span>`;
+    row.addEventListener("click", () => selectItem(entry, entry.well, it, row));
+    list.appendChild(row);
+    it._row = row;
+  }
+  if (entry.items.length) selectItem(entry, entry.well, entry.items[0], entry.items[0]._row);
+}
+
+function selectItem(entry, well, item, rowEl) {
+  document.querySelectorAll(".stagerow.sel").forEach(r => r.classList.remove("sel"));
+  if (rowEl) rowEl.classList.add("sel");
+  current = { entry, well, item };
+  $("empty").hidden = true;
+  $("previewpane").hidden = false;
+  if (item.type === "stage") showStage(entry, well, item);
+  else showTable(entry, item.table);
+}
+
+function showStage(entry, well, item) {
+  const M = item.meta;
+  $("pv-title").textContent = (M.uwi || well.base) + "  —  Stage " + stageLabel(item);
+  $("pv-sub").textContent = [
+    M.date && (M.date + (M.start_time ? " " + M.start_time : "")),
+    Math.round(M.duration_min) + " min",
+    item.n.toLocaleString() + " samples",
+    item.channels.length + " channels", item.source || ""
+  ].filter(Boolean).join("   ·   ");
+  setGraph(item.channels, item.n, item.sample_sec);
+  if (settings.chartLabels === "orig") { orig.pageIdx = 0; renderOriginal(); }
+  else updateOrigBar();
+  $("pv-table").innerHTML = "";
+  $("pv-notes").textContent = (entry.notes || []).join("\n");
+  renderDlbar(well);
+}
+
+function showTable(entry, t) {
+  $("pv-title").textContent = t.title;
+  $("pv-sub").textContent = `${t.rows.length} rows × ${t.columns.length} columns`;
+  clearGraph();
+  updateOrigBar();
+  $("pv-table").innerHTML =
+    `<table><tr>${t.columns.map(c => `<th>${c}</th>`).join("")}</tr>` +
+    t.rows.slice(0, 200).map(r => `<tr>${r.map(v => `<td>${v}</td>`).join("")}</tr>`).join("") +
+    "</table>" +
+    (t.rows.length > 200 ? `<div class="notes">Showing 200 of ${t.rows.length} rows — the CSV has all.</div>` : "");
+  const dl = $("pv-dl"); dl.innerHTML = "";
+  const b = document.createElement("button"); b.className = "btn primary";
+  b.textContent = "Download table CSV";
+  const nm = (t.title.split(" — ")[0] || "table").replace(/[^\w.-]+/g, "_") + "-stages-table.csv";
+  b.addEventListener("click", () => saveText(nm, tableCSV(t)));
+  dl.appendChild(b); addZipCount(dl);
+  $("pv-notes").textContent = "";
+}
+
+// ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
+const GP = { L: 50, R: 16, T: 14, B: 30 };            // plot padding
+const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
+                 isolated: null, hover: null };
+
+// curve name per the "Our terms / As extracted" toggle
+function chanName(c) {
+  return settings.chartLabels === "raw" ? (c.label || c.key) : c.key;
+}
+
+function setGraph(channels, n, sampleSec) {
+  gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
+  gState.tMax = Math.max(1, (n - 1) * gState.dsec);
+  gState.t0 = 0; gState.t1 = gState.tMax;
+  gState.isolated = null; gState.hover = null;
+  channels.forEach((c, ci) => {
+    let vmax = 0;
+    for (const v of c.values) if (v != null && isFinite(v)) vmax = Math.max(vmax, Math.abs(v));
+    c._vmax = vmax;
+    c._color = SERIES_COLORS[c.key] || PALETTE[ci % PALETTE.length];
+  });
+  redrawGraph(); buildLegend();
+}
+
+function clearGraph() {
+  gState.channels = []; gState.hover = null; gState.isolated = null;
+  const cv = $("graph");
+  cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+  $("pv-legend").innerHTML = "";
+}
+
+function chanVisible(c, ci) {
+  return c._vmax > 0 && (gState.isolated == null || gState.isolated === ci);
+}
+
+function fmtTime(t) {
+  const span = gState.t1 - gState.t0, m = t / 60;
+  if (span < 120) return m.toFixed(2) + "m";
+  if (span < 1200) return m.toFixed(1) + "m";
+  return Math.round(m) + "m";
+}
+function fmtClock(t) {
+  const s = Math.round(t);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+  return `t+${h}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+function redrawGraph() {
+  const cv = $("graph"), ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height, { L, R, T, B } = GP;
+  ctx.clearRect(0, 0, W, H);
+  if (!gState.channels.length) return;
+  const { t0, t1, dsec } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  ctx.strokeStyle = "#242b34"; ctx.lineWidth = 1;
+  ctx.fillStyle = "#8b949e"; ctx.font = "11px ui-monospace,Menlo,monospace";
+  ctx.textAlign = "center";
+  for (let f = 0; f <= 1.0001; f += 0.25) {
+    const x = L + f * plotW;
+    ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
+    ctx.fillText(fmtTime(t0 + f * span), x, H - 11);
+  }
+  ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
+  const hi = gState.hover ? gState.hover.hiIdx : null;
+  gState.channels.forEach((c, ci) => {
+    if (!chanVisible(c, ci)) return;
+    const vals = c.values;
+    const i0 = Math.max(0, Math.floor(t0 / dsec));
+    const i1 = Math.min(vals.length - 1, Math.ceil(t1 / dsec));
+    const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
+    ctx.strokeStyle = c._color;
+    ctx.lineWidth = hi === ci ? 2.4 : 1.3;
+    ctx.globalAlpha = (hi != null && hi !== ci) ? 0.4 : 1;
+    ctx.beginPath();
+    let pen = false;
+    for (let i = i0; i <= i1; i += step) {
+      const v = vals[i];
+      if (v == null || !isFinite(v)) { pen = false; continue; }
+      const x = L + ((i * dsec) - t0) / span * plotW;
+      const y = T + (1 - v / c._vmax) * (H - T - B);
+      if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+  if (gState.hover) drawHover(ctx, W, H);
+}
+
+function drawHover(ctx, W, H) {
+  const { L, R, T, B } = GP;
+  const { t0, t1, dsec, hover } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  const x = L + (hover.t - t0) / span * plotW;
+  ctx.strokeStyle = "#3a4350"; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
+  ctx.setLineDash([]);
+  const idx = Math.round(hover.t / dsec);
+  const rows = [];
+  gState.channels.forEach((c, ci) => {
+    if (!chanVisible(c, ci)) return;
+    const v = c.values[idx];
+    if (v == null || !isFinite(v)) return;
+    const y = T + (1 - v / c._vmax) * (H - T - B);
+    ctx.fillStyle = c._color;
+    ctx.beginPath(); ctx.arc(x, y, ci === hover.hiIdx ? 4.2 : 2.6, 0, 7); ctx.fill();
+    rows.push({ name: chanName(c), v, unit: c.unit || "",
+                color: c._color, hi: ci === hover.hiIdx });
+  });
+  if (!rows.length) return;
+  ctx.font = "11px ui-monospace,Menlo,monospace"; ctx.textAlign = "left";
+  const lines = rows.map(r => `${r.name}  ${round2(r.v)}${r.unit ? " " + r.unit : ""}`);
+  const tw = Math.max(...lines.map(l => ctx.measureText(l).width),
+                      ctx.measureText(fmtClock(hover.t)).width) + 28;
+  const th = rows.length * 16 + 24;
+  let bx = x + 12; if (bx + tw > W - R) bx = x - 12 - tw;
+  let by = Math.max(T, Math.min(hover.my - th / 2, H - B - th));
+  ctx.fillStyle = "rgba(13,17,23,.93)"; ctx.strokeStyle = "#3a4350";
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, tw, th, 6); else ctx.rect(bx, by, tw, th);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#8b949e"; ctx.fillText(fmtClock(hover.t), bx + 10, by + 15);
+  rows.forEach((r, i) => {
+    const yy = by + 32 + i * 16;
+    ctx.fillStyle = r.color; ctx.fillRect(bx + 10, yy - 8, 10, 3);
+    ctx.font = (r.hi ? "bold " : "") + "11px ui-monospace,Menlo,monospace";
+    ctx.fillStyle = r.hi ? "#ffffff" : "#c9d1d9";
+    ctx.fillText(lines[i], bx + 26, yy);
+  });
+}
+
+function buildLegend() {
+  const Lg = $("pv-legend"); Lg.innerHTML = "";
+  gState.channels.forEach((c, ci) => {
+    const el = document.createElement("span");
+    el.innerHTML = `<i style="background:${c._color}"></i>${chanName(c)}` +
+      ` <span style="color:var(--mut)">${round2(c._vmax)}${c.unit ? " " + c.unit : ""}</span>`;
+    if (gState.isolated != null)
+      el.classList.add(gState.isolated === ci ? "iso" : "dim");
+    el.title = gState.isolated === ci ? "Show all curves" : "Show only this curve";
+    el.addEventListener("click", () => {
+      gState.isolated = (gState.isolated === ci) ? null : ci;
+      gState.hover = null;
+      redrawGraph(); buildLegend();
+    });
+    Lg.appendChild(el);
+  });
+}
+
+// ---------- "Original chart" mode: render the source PDF page ----------
+const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0 };
+
+function loadPdfjs() {
+  if (window.pdfjsLib) return Promise.resolve();
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js";
+    s.onload = () => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      res();
+    };
+    s.onerror = () => rej(new Error("pdf.js failed to load"));
+    document.head.appendChild(s);
+  });
+}
+
+function origMsg(ctx, cv, msg) {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "#8b949e";
+  ctx.font = "12px ui-monospace,Menlo,monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(msg, cv.width / 2, cv.height / 2);
+}
+
+async function renderOriginal() {
+  const cv = $("graph"), ctx = cv.getContext("2d");
+  const mySeq = ++orig.seq;                 // drop stale async renders
+  if (!current || !current.item || current.item.type !== "stage") return;
+  const item = current.item, entry = current.entry;
+  const pages = item.pages || [];
+  if (!entry._pdfFile && !entry._pdfUrl) { origMsg(ctx, cv, "original PDF not kept for this entry — re-add the file"); updateOrigBar(); return; }
+  if (!pages.length) { origMsg(ctx, cv, "source page unknown for this stage"); updateOrigBar(); return; }
+  origMsg(ctx, cv, "rendering original page…");
+  updateOrigBar();
+  try {
+    if (!entry._pdfFile && entry._pdfUrl) {   // desktop: fetch from disk
+      const resp = await fetch(entry._pdfUrl);
+      if (!resp.ok) throw new Error("couldn't read PDF from disk");
+      entry._pdfFile = new File([await resp.blob()], entry.name);
+    }
+    await loadPdfjs();
+    if (orig.docKey !== entry.name) {
+      const buf = await entry._pdfFile.arrayBuffer();
+      if (orig.doc) { try { orig.doc.destroy(); } catch (e) { /* noop */ } }
+      orig.doc = await pdfjsLib.getDocument({ data: buf }).promise;
+      orig.docKey = entry.name;
+    }
+    const pno = pages[Math.min(orig.pageIdx, pages.length - 1)];
+    const page = await orig.doc.getPage(pno);
+    let vp = page.getViewport({ scale: 1 });
+    const fit = Math.min(cv.width / vp.width, cv.height / vp.height);
+    vp = page.getViewport({ scale: fit * 2 });        // supersample, then shrink
+    const off = document.createElement("canvas");
+    off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
+    await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    if (settings.chartLabels !== "orig" || mySeq !== orig.seq) return;   // stale
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const w = off.width / 2, h = off.height / 2;
+    const x = (cv.width - w) / 2, y = (cv.height - h) / 2;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x, y, w, h);
+    ctx.drawImage(off, x, y, w, h);
+  } catch (e) {
+    if (mySeq === orig.seq) origMsg(ctx, cv, "couldn't render original: " + e.message);
+  }
+  updateOrigBar();
+}
+
+function updateOrigBar() {
+  const item = current && current.item;
+  const pages = (item && item.type === "stage" && item.pages) || [];
+  const on = settings.chartLabels === "orig" && pages.length > 0;
+  $("origbar").hidden = !on;
+  $("pv-legend").style.display = settings.chartLabels === "orig" ? "none" : "";
+  if (!on) return;
+  const i = Math.min(orig.pageIdx, pages.length - 1);
+  $("origlbl").textContent = `PDF p.${pages[i]}` +
+    (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
+  $("origprev").disabled = i <= 0;
+  $("orignext").disabled = i >= pages.length - 1;
+}
+
+$("origprev").addEventListener("click", () => { orig.pageIdx--; renderOriginal(); });
+$("orignext").addEventListener("click", () => { orig.pageIdx++; renderOriginal(); });
+
+$("lblmode").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.chartLabels = b.dataset.v;
+  setSeg($("lblmode"), b.dataset.v);
+  if (settings.chartLabels === "orig") {
+    orig.pageIdx = 0;
+    renderOriginal();
+  } else {
+    updateOrigBar();
+    redrawGraph();
+    buildLegend();
+  }
+});
+
+// wheel = zoom around cursor · drag = pan · double-click = reset · move = hover
+(function graphEvents() {
+  const cv = $("graph");
+  const pos = e => {
+    const r = cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (cv.width / r.width),
+             y: (e.clientY - r.top) * (cv.height / r.height) };
+  };
+  const tAt = x => gState.t0 + (x - GP.L) / (cv.width - GP.L - GP.R) * (gState.t1 - gState.t0);
+  let pan = null;
+  cv.addEventListener("wheel", e => {
+    if (!gState.channels.length || settings.chartLabels === "orig") return;
+    e.preventDefault();
+    const t = Math.max(gState.t0, Math.min(tAt(pos(e).x), gState.t1));
+    const z = Math.pow(1.0015, e.deltaY);
+    let t0 = t - (t - gState.t0) * z, t1 = t + (gState.t1 - t) * z;
+    const minSpan = gState.dsec * 10;
+    if (t1 - t0 < minSpan) { const c = (t0 + t1) / 2; t0 = c - minSpan / 2; t1 = c + minSpan / 2; }
+    gState.t0 = Math.max(0, t0);
+    gState.t1 = Math.min(gState.tMax, Math.max(t1, gState.t0 + minSpan));
+    redrawGraph();
+  }, { passive: false });
+  cv.addEventListener("mousedown", e => {
+    if (!gState.channels.length || settings.chartLabels === "orig") return;
+    pan = { x: pos(e).x, t0: gState.t0, t1: gState.t1 };
+    cv.classList.add("panning");
+  });
+  window.addEventListener("mouseup", () => { pan = null; cv.classList.remove("panning"); });
+  cv.addEventListener("mousemove", e => {
+    if (!gState.channels.length || settings.chartLabels === "orig") return;
+    const p = pos(e);
+    if (pan) {
+      const dt = (pan.x - p.x) / (cv.width - GP.L - GP.R) * (pan.t1 - pan.t0);
+      let t0 = pan.t0 + dt, t1 = pan.t1 + dt;
+      if (t0 < 0) { t1 -= t0; t0 = 0; }
+      if (t1 > gState.tMax) { t0 -= t1 - gState.tMax; t1 = gState.tMax; }
+      gState.t0 = Math.max(0, t0); gState.t1 = t1;
+      gState.hover = null;
+      redrawGraph();
+      return;
+    }
+    const H = cv.height;
+    if (p.x < GP.L || p.x > cv.width - GP.R || p.y < GP.T || p.y > H - GP.B) {
+      if (gState.hover) { gState.hover = null; redrawGraph(); }
+      return;
+    }
+    const t = tAt(p.x), idx = Math.round(t / gState.dsec);
+    let hiIdx = null, best = 18;      // highlight the line nearest the cursor
+    gState.channels.forEach((c, ci) => {
+      if (!chanVisible(c, ci)) return;
+      const v = c.values[idx];
+      if (v == null || !isFinite(v)) return;
+      const y = GP.T + (1 - v / c._vmax) * (H - GP.T - GP.B);
+      const d = Math.abs(y - p.y);
+      if (d < best) { best = d; hiIdx = ci; }
+    });
+    gState.hover = { t, my: p.y, hiIdx };
+    redrawGraph();
+  });
+  cv.addEventListener("mouseleave", () => {
+    if (gState.hover) { gState.hover = null; redrawGraph(); }
+  });
+  cv.addEventListener("dblclick", () => {
+    if (settings.chartLabels === "orig") return;
+    gState.t0 = 0; gState.t1 = gState.tMax; redrawGraph();
+  });
+})();
+
+// ---------- downloads + export toggles ----------
+function renderDlbar(well) {
+  const dl = $("pv-dl"); dl.innerHTML = "";
+  if (!well) { addZipCount(dl); return; }
+  const nStages = new Set(well.stages.map(s => s.meta.stage || "?")).size;
+  const stg = `${nStages} stage${nStages > 1 ? "s" : ""}`;
+  if (settings.format !== "xlsx") {
+    const b = document.createElement("button");
+    b.className = "btn" + (settings.format === "csv" ? " primary" : "");
+    b.textContent = `CSV — ${stg}`;
+    b.addEventListener("click", () => saveText(well.base + ".csv", wellCSV(well.stages)));
+    dl.appendChild(b);
+  }
+  if (settings.format !== "csv") {
+    const b = document.createElement("button"); b.className = "btn primary";
+    b.textContent = settings.xlsxTabs
+      ? `Excel — MAIN + ${nStages} tab${nStages > 1 ? "s" : ""}`
+      : `Excel — one sheet (${stg})`;
+    b.addEventListener("click", () => {
+      try { saveBlob(well.base + ".xlsx", wellXLSX(well.stages, settings.xlsxTabs), XLSX_MIME); }
+      catch (e) { alert("Excel build failed: " + e.message); }
+    });
+    dl.appendChild(b);
+  }
+  addZipCount(dl);
+}
+
+function exportTotals() {
+  const p = $("provider").value;
+  const w = wells.filter(x => !p || x.provider === p);
+  const t = tableFiles.filter(x => !p || x.provider === p);
+  return { count: w.length * (settings.format === "both" ? 2 : 1) + t.length, prov: p };
+}
+
+function addZipCount(dl) {
+  const { count, prov } = exportTotals();
+  const c = document.createElement("span"); c.className = "cnt";
+  c.textContent = `${count} file${count === 1 ? "" : "s"} ready` +
+    (prov ? ` · ${prov}` : " · all PDFs");
+  dl.appendChild(c);
+}
+
+function updateCount() {
+  const { count, prov } = exportTotals();
+  $("zip").hidden = count === 0;
+  $("zip").textContent = prov ? `Download ${prov} (.zip)` : "Download all (.zip)";
+}
+
+function setSeg(seg, val) {
+  for (const b of seg.children) b.classList.toggle("on", b.dataset.v === val);
+}
+$("fmt").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.format = b.dataset.v;
+  setSeg($("fmt"), settings.format);
+  $("layopt").classList.toggle("off", settings.format === "csv");
+  if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
+  updateCount();
+});
+$("lay").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.xlsxTabs = b.dataset.v === "tabs";
+  setSeg($("lay"), b.dataset.v);
+  if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
+});
+$("stlbl").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.stageLabel = b.dataset.v;
+  setSeg($("stlbl"), b.dataset.v);
+  relabel();
+});
+
+// re-apply stage labels to the middle column + graph title without losing the
+// current selection (exports read settings.stageLabel at build time)
+function relabel() {
+  if (current && current.entry) {
+    for (const it of current.entry.items) {
+      if (it.type === "stage" && it._row)
+        it._row.firstChild.textContent = "Stage " + stageLabel(it);
+    }
+  }
+  if (current && current.item && current.item.type === "stage") {
+    const M = current.item.meta;
+    $("pv-title").textContent = (M.uwi || current.well.base) + "  —  Stage " + stageLabel(current.item);
+    renderDlbar(current.well);
+  }
+}
+
+// batch by service provider: the dropdown filters the file list, the download
+// buttons/count, and which wells the .zip includes
+$("provider").addEventListener("change", () => {
+  applyProviderFilter();
+  if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
+  updateCount();
+});
 
 $("zip").addEventListener("click", () => {
+  const p = $("provider").value;
   const enc = new TextEncoder();
   const files = {};
-  for (const { name, text } of allCSVs) files[name] = enc.encode(text);
+  for (const w of wells) {
+    if (p && w.provider !== p) continue;
+    if (settings.format !== "xlsx") files[w.base + ".csv"] = enc.encode(wellCSV(w.stages));
+    if (settings.format !== "csv") files[w.base + ".xlsx"] = wellXLSX(w.stages, settings.xlsxTabs);
+  }
+  for (const { name, text, provider } of tableFiles)
+    if (!p || provider === p) files[name] = enc.encode(text);
   const zipped = fflate.zipSync(files, { level: 6 });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([zipped], { type: "application/zip" }));
-  a.download = "carmines-lab-export.zip";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  const tag = p ? p.replace(/[^\w]+/g, "-").toLowerCase() : "all";
+  saveBlob(`carmines-lab-${tag}.zip`, new Blob([zipped], { type: "application/zip" }), null);
 });
 </script>
 </body>

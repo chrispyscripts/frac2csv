@@ -35,16 +35,43 @@ def is_entire_treatment(page):
                      page.get_text()) is not None
 
 
-def _spans(page):
+def page_rotated(page):
+    """True when the chart is drawn 90° rotated (time axis vertical). Some
+    IFS builds (v4.3.1) render portrait: every text span reads bottom-to-top
+    (dir≈(0,-1)). Detected by the dominant span direction."""
+    vert = horiz = 0
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            dx, dy = line.get("dir", (1, 0))
+            if abs(dy) > abs(dx):
+                vert += len(line.get("spans", []))
+            else:
+                horiz += len(line.get("spans", []))
+    return vert > horiz and vert >= 3
+
+
+def _unrotate(x, y):
+    """Map a 90°-rotated (dir=(0,-1)) point back to canonical orientation so
+    the horizontal-chart logic applies unchanged: (x, y) -> (-y, x)."""
+    return -y, x
+
+
+def _spans(page, rotated=None):
+    if rotated is None:
+        rotated = page_rotated(page)
     out = []
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
                 t = span["text"].strip()
-                if t:
-                    x0, y0, x1, y1 = span["bbox"]
-                    out.append({"t": t, "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2,
-                                "x0": x0, "x1": x1, "color": span.get("color", 0)})
+                if not t:
+                    continue
+                x0, y0, x1, y1 = span["bbox"]
+                cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+                if rotated:
+                    cx, cy = _unrotate(cx, cy)
+                out.append({"t": t, "cx": cx, "cy": cy,
+                            "x0": x0, "x1": x1, "color": span.get("color", 0)})
     return out
 
 
@@ -77,31 +104,37 @@ def _axis_columns(spans):
     for group in clusters:
         if len(group) < 4:
             continue
-        # keep the longest evenly-spaced chain in y (drops strays: section
-        # numbers, event-marker labels that share the column's x range)
+        # keep the longest chain that is evenly spaced in y AND arithmetic in
+        # value (drops strays: section numbers, stray decimals, event-marker
+        # labels that share the column's x range but break the tick scale)
         group.sort(key=lambda s: s["cy"])
+
+        def val(s):
+            return float(s["t"].replace(",", ""))
+
         best_chain = []
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 gap = group[j]["cy"] - group[i]["cy"]
                 if gap < 8:
                     continue
+                vstep = val(group[j]) - val(group[i])
+                if vstep == 0:
+                    continue
                 chain = [group[i], group[j]]
-                expect = group[j]["cy"] + gap
+                exp_y = group[j]["cy"] + gap
+                exp_v = val(group[j]) + vstep
                 for k in range(j + 1, len(group)):
-                    if abs(group[k]["cy"] - expect) <= gap * 0.2:
+                    if abs(group[k]["cy"] - exp_y) <= gap * 0.2 and \
+                       abs(val(group[k]) - exp_v) <= abs(vstep) * 0.15 + 1e-9:
                         chain.append(group[k])
-                        expect = group[k]["cy"] + gap
+                        exp_y = group[k]["cy"] + gap
+                        exp_v = val(group[k]) + vstep
                 if len(chain) > len(best_chain):
                     best_chain = chain
         if len(best_chain) < 4:
             continue
-        vals = [(float(s["t"].replace(",", "")), s["cy"]) for s in best_chain]
-        # values must be an arithmetic progression too (real tick scale)
-        vs = [v for v, _ in vals]
-        steps = np.diff(vs)
-        if np.std(steps) > abs(np.mean(steps)) * 0.15 + 1e-9:
-            continue
+        vals = [(val(s), s["cy"]) for s in best_chain]
         a, b = _fit(vals)
         if abs(b) < 1e-9:
             continue
@@ -149,16 +182,15 @@ def _time_axis(spans):
 
 
 def _legend(spans):
-    """[(series_name, unit, color_int, axis_letter)] from colored legend rows."""
-    named = [s for s in spans if s["color"] != 0 and
-             re.search(r"\(([^)]+)\)\s*$", s["t"]) and len(s["t"]) > 8]
-    letters = [s for s in spans if s["color"] != 0 and
-               re.fullmatch(r"[A-F]", s["t"])]
+    """[(series_name, unit, color_int, axis_letter)] from legend rows."""
     out = []
-    for s in named:
+
+    def add(s, letters):
         m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", s["t"])
+        if not m or len(m.group(1).strip()) < 3:
+            return
         name, unit = m.group(1).strip(), m.group(2).strip()
-        # the axis letter with the same color on (nearly) the same line
+        # the axis letter of the same color on (nearly) the same line
         best, bestd = None, 1e9
         for l in letters:
             if l["color"] != s["color"]:
@@ -168,6 +200,21 @@ def _legend(spans):
                 best, bestd = l["t"], l["cx"] - s["cx"]
         if best:
             out.append((name, unit, s["color"], best))
+
+    named = [s for s in spans if s["color"] != 0 and
+             re.search(r"\(([^)]+)\)\s*$", s["t"]) and len(s["t"]) > 8]
+    letters = [s for s in spans if s["color"] != 0 and re.fullmatch(r"[A-F]", s["t"])]
+    for s in named:
+        add(s, letters)
+
+    # one black series (e.g. N2 Standard Rate) has a black name + black axis
+    # letter. Accept it only when exactly one such black-named series exists,
+    # since black curves share ink and can't be separated by colour.
+    black_named = [s for s in spans if s["color"] == 0 and "IFS" not in s["t"]
+                   and re.fullmatch(r".{3,}?\s*\([A-Za-z][^)]{0,9}\)", s["t"])]
+    if len(black_named) == 1:
+        black_letters = [s for s in spans if s["color"] == 0 and re.fullmatch(r"[A-F]", s["t"])]
+        add(black_named[0], black_letters)
     return out
 
 
@@ -180,7 +227,8 @@ def _color_close(stroke, legend_int):
 
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {column: values}, channel_info) for an IFS chart page."""
-    spans = _spans(page)
+    rotated = page_rotated(page)
+    spans = _spans(page, rotated)
     text = page.get_text()
     tfit, date = _time_axis(spans)
     if tfit is None:
@@ -217,11 +265,21 @@ def extract_page(page, sample_sec=1.0):
                 lst = pts_by_color[cint]
                 for item in d["items"]:
                     if item[0] == "l":
-                        lst.append((item[1].x, item[1].y))
-                        lst.append((item[2].x, item[2].y))
+                        p1, p2 = item[1], item[2]
+                        if cint == 0:
+                            # black series shares ink with axes/grid: drop long
+                            # axis-aligned segments (frame + gridlines)
+                            if (abs(p1.x - p2.x) < 0.01 or abs(p1.y - p2.y) < 0.01) and \
+                               max(abs(p1.x - p2.x), abs(p1.y - p2.y)) > 5:
+                                continue
+                        pp = [(p1.x, p1.y), (p2.x, p2.y)]
                     elif item[0] == "c":
-                        lst.append((item[1].x, item[1].y))
-                        lst.append((item[4].x, item[4].y))
+                        pp = [(item[1].x, item[1].y), (item[4].x, item[4].y)]
+                    else:
+                        continue
+                    if rotated:
+                        pp = [_unrotate(x, y) for x, y in pp]
+                    lst.extend(pp)
                 break
 
     # plot x-range from the time row extent (with margin) to clip legend strokes

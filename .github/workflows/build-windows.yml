@@ -24,15 +24,25 @@ jobs:
       - name: Install tesseract (bundled for auto-calibrate mode)
         run: choco install tesseract -y --no-progress
 
-      - name: Build exe
+      - name: Build exe (web UI served locally)
         run: >
-          pyinstaller --onefile --windowed --name Frac2CSV
+          pyinstaller --onefile --console --name Frac2CSV
           --collect-all pymupdf
           --add-data "C:\Program Files\Tesseract-OCR;tesseract"
+          --add-data "alias_table.txt;."
+          --add-data "lab\public;lab\public"
+          localapp.py
+
+      - name: Build legacy Tk exe
+        run: >
+          pyinstaller --onefile --windowed --name Frac2CSV-classic
+          --collect-all pymupdf
+          --add-data "C:\Program Files\Tesseract-OCR;tesseract"
+          --add-data "alias_table.txt;."
           frac2csv_gui.py
 
-      - name: Smoke test import
-        run: python -c "import frac_core; print('core ok')"
+      - name: Smoke test imports
+        run: python -c "import pipeline, pipeline_export, aliases, localapp; print('pipeline ok; canonical', aliases.CANONICAL)"
 
       - uses: actions/upload-artifact@v4
         with:

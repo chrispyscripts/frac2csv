@@ -64,6 +64,33 @@ def _legend(spans):
                 break
         if name and s["color"] not in out:
             out[s["color"]] = {"name": name, "unit": unit}
+
+    # a black series (e.g. Tubing Pressure) is drawn in black, sharing ink with
+    # axes/grid — all black curves are indistinguishable, so accept one only
+    # when there's EXACTLY one black name+unit legend pair whose unit a colored
+    # series also uses (axis shared via unit_fit). Metadata rows (Page:, Stage#:,
+    # Top Perf:) carry a colon and are excluded.
+    if 0 not in out:
+        colored_units = {v["unit"] for v in out.values() if v["unit"]}
+        black = []
+        for s in spans:
+            if s["color"] != 0 or ":" in s["t"] or len(s["t"]) > 34:
+                continue
+            if not re.search(r"[A-Za-z]", s["t"]) or re.fullmatch(r"[\d,.:]+", s["t"]):
+                continue
+            if re.fullmatch(r"[\d.,-]+\s*[A-Za-z³/%°].*", s["t"]):
+                continue                       # a value+unit span, not a name
+            for c in spans:
+                if c is s or c["color"] != 0 or abs(c["cy"] - s["cy"]) >= 3:
+                    continue
+                mp = re.fullmatch(r"[\d.,-]+\s*(.+)", c["t"])
+                if mp and mp.group(1).strip() in colored_units:
+                    cand = {"name": s["t"].strip(), "unit": mp.group(1).strip()}
+                    if cand not in black:
+                        black.append(cand)
+                    break
+        if len(black) == 1:
+            out[0] = black[0]
     return out
 
 

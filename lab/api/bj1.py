@@ -48,6 +48,51 @@ def _fit(pairs):
     return float(a), float(b)
 
 
+def _doc_year_map(doc):
+    """{(month, day): year} harvested from full 'YYYY-MM-DD' dates anywhere
+    in the document — the frac charts label only 'Mon-DD', so the year comes
+    from the per-stage data tables. Cached on the document."""
+    cached = getattr(doc, "_bj1_year_map", None)
+    if cached is not None:
+        return cached
+    m = {}
+    for p in range(len(doc)):
+        for mo in re.finditer(r"\b(20\d{2})-(\d{2})-(\d{2})\b", doc[p].get_text()):
+            m[(int(mo.group(2)), int(mo.group(3)))] = int(mo.group(1))
+    try:
+        doc._bj1_year_map = m
+    except Exception:
+        pass
+    return m
+
+
+def filename_year(name):
+    """Year from a COMP filename ('..._COMP_2024JAN22_...') — survives the
+    Lab's client-side page chunking, where the chart page and the dated
+    tables can land in different chunks."""
+    if not name:
+        return None
+    m = re.search(r"COMP[_-]?(20\d{2})", name) or re.search(r"\b(20\d{2})\b", name)
+    return int(m.group(1)) if m else None
+
+
+def _resolve_year(doc, mon, day):
+    """Best year for a chart's start (month, day): an exact date-table match
+    first; then the filename COMP-date hint (more reliable than a chunk that
+    may hold only drilling-era dates under the Lab's page splitting); then
+    the most common year in the doc; else 2000."""
+    ymap = _doc_year_map(doc)
+    if (mon, day) in ymap:
+        return ymap[(mon, day)]
+    hint = getattr(doc, "_bj1_year_hint", None)
+    if hint:
+        return hint
+    if ymap:
+        years = list(ymap.values())
+        return max(set(years), key=years.count)
+    return 2000
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -59,14 +104,12 @@ def extract_page(page, sample_sec=1.0):
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups()[:6])
         meta.stage = str(int(m.group(7)))
-    tm = re.search(r"([A-Z][a-z]{2})-(\d{1,2})", text)
-    if tm:
-        meta.date = f"{tm.group(1)}-{int(tm.group(2)):02d}"
     meta.title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")[:60]
 
     # time axis: slanted "Mon-DD HH:MM" labels; right bbox edge sits on
     # the gridline they annotate
     tpts = []
+    daytags = []
     for s in spans:
         m = TIME_RE.fullmatch(s["t"])
         if m:
@@ -76,8 +119,23 @@ def extract_page(page, sample_sec=1.0):
             secs = ((MONTHS[mon] * 31 + int(day)) * 86400
                     + int(hh) * 3600 + int(mm) * 60)
             tpts.append((secs, s["x1"], s["cy"]))
+            daytags.append((secs, MONTHS[mon], int(day)))
     if len(tpts) < 3:
         raise ValueError("bj1: time labels not found")
+    # year rollover inside a stage: "Dec-31 ... Jan-01" labels wrap the
+    # month*31+day clock backwards — push the new-year cluster up a
+    # synthetic year (372 days) so time keeps increasing
+    lo = min(p[0] for p in tpts)
+    if max(p[0] for p in tpts) - lo > 186 * 86400:
+        YEAR = 372 * 86400
+        tpts = [(s + YEAR, x, cy) if s - lo < 186 * 86400 else (s, x, cy)
+                for s, x, cy in tpts]
+        daytags = [(s + YEAR, mo, d) if s - lo < 186 * 86400 else (s, mo, d)
+                   for s, mo, d in daytags]
+    # year is absent from the chart — resolve it from the document's tables
+    _, start_mon, start_day = min(daytags)
+    year = _resolve_year(page.parent, start_mon, start_day)
+    meta.date = f"{year:04d}-{start_mon:02d}-{start_day:02d}"
     tfit = _fit([(v, x) for v, x, _ in tpts])
     if tfit[1] <= 0:
         raise ValueError("bj1: bad time fit")
@@ -152,6 +210,17 @@ def extract_page(page, sample_sec=1.0):
                 return key
         return None
 
+    # a black series (e.g. Comb FR Ratio) has a black legend dash, so it never
+    # matched a colored sample above. Assign it the black stroke color when
+    # exactly one un-coloured legend series maps to an axis (more than one black
+    # curve would be indistinguishable).
+    legend_names = {s["t"] for s in spans
+                    if re.search(r"\([^)]+\)", s["t"]) and (s["y1"] - s["y0"]) <= 20}
+    black_cands = [n for n in legend_names
+                   if n not in name_color and name_axis(n) is not None]
+    if len(black_cands) == 1:
+        name_color[black_cands[0]] = (0.0, 0.0, 0.0)
+
     x_lo = min(x for _, x, _ in tpts) - 15
     x_hi = max(x for _, x, _ in tpts) + 15
     series, units = {}, {}
@@ -169,8 +238,15 @@ def extract_page(page, sample_sec=1.0):
                 continue
             for item in d["items"]:
                 if item[0] == "l":
-                    pts.append((item[1].x, item[1].y))
-                    pts.append((item[2].x, item[2].y))
+                    p1, p2 = item[1], item[2]
+                    if color == (0.0, 0.0, 0.0):
+                        # black series shares ink with axes/grid: drop long
+                        # axis-aligned segments (frame + gridlines)
+                        if (abs(p1.x - p2.x) < 0.01 or abs(p1.y - p2.y) < 0.01) and \
+                           max(abs(p1.x - p2.x), abs(p1.y - p2.y)) > 5:
+                            continue
+                    pts.append((p1.x, p1.y))
+                    pts.append((p2.x, p2.y))
                 elif item[0] == "c":
                     pts.append((item[1].x, item[1].y))
                     pts.append((item[4].x, item[4].y))
