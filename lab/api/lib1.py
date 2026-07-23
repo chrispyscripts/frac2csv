@@ -128,6 +128,24 @@ def extract_page(page, sample_sec=1.0):
     for s in spans:
         if s["color"] != 0 and re.fullmatch(r"[\d,]+(\.\d+)?", s["t"]):
             ticks[s["color"]].append((float(s["t"].replace(",", "")), s["cx"], s["cy"]))
+    # value gridlines: long constant-x strokes. Tick LABELS sit ~12pt off
+    # the gridline they annotate (left-aligned text), which biased every
+    # value by a constant few units — snap each label to its gridline and
+    # fit on true geometry (Carmine's 0422 comparison caught this).
+    grid_xs = []
+    for d in page.get_drawings():
+        c = d.get("color")
+        if c is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        gx0, gy0, gx1, gy1 = (r.y0, r.x0, r.y1, r.x1) if horizontal \
+            else (r.x0, r.y0, r.x1, r.y1)
+        if abs(gx1 - gx0) < 0.5 and (gy1 - gy0) > 100:
+            grid_xs.append(round((gx0 + gx1) / 2, 2))
+    grid_xs = sorted(set(grid_xs))
+    snap_tol = min((b - a for a, b in zip(grid_xs, grid_xs[1:])),
+                   default=0) * 0.45
+
     fits = {}
     for color, pts in ticks.items():
         if len(pts) < 4:
@@ -137,9 +155,21 @@ def extract_page(page, sample_sec=1.0):
         side = [p for p in pts if p[2] < split] or pts
         if len(side) < 3:
             side = pts
-        a, b = _fit([(v, x) for v, x, _ in side])
+        anchors = [(v, x) for v, x, _ in side]
+        if grid_xs and snap_tol > 0:
+            snapped = []
+            for v, x in anchors:
+                g = min(grid_xs, key=lambda gx: abs(gx - x))
+                snapped.append((v, g if abs(g - x) <= snap_tol else x))
+            # only trust the snap when it stays one-to-one and ordered
+            xs = [x for _, x in snapped]
+            if len(set(xs)) == len(xs) and \
+                    (sorted(xs) == xs or sorted(xs, reverse=True) == xs):
+                anchors = snapped
+        a, b = _fit(anchors)
         if abs(b) > 1e-9:
-            fits[color] = (a, b)
+            vals = [v for v, _, _ in pts]
+            fits[color] = (a, b, min(vals), max(vals))
     if not named or not fits:
         raise ValueError("lib1: legend or tick rows not found")
     # share an axis by unit for series without their own tick row (black series)
@@ -186,7 +216,7 @@ def extract_page(page, sample_sec=1.0):
         fit = fits.get(color_int) or unit_fit.get(info["unit"])
         if fit is None:
             continue
-        a, b = fit
+        a, b, v_lo_ax, v_hi_ax = fit
         pts = []
         for d in page.get_drawings():
             c = d.get("color")
@@ -229,16 +259,25 @@ def extract_page(page, sample_sec=1.0):
         if len(arr) < 40:
             continue
         t = ta + tb * arr[:, 1]
-        v = a + b * arr[:, 0]
+        # clamp to the axis' own tick range: ink at the frame edge maps a
+        # hair outside the scale and shows up as impossible negatives in
+        # the CSV (Carmine's 0422 sample never goes below the axis)
+        v = np.clip(a + b * arr[:, 0], v_lo_ax, v_hi_ax)
         order = np.argsort(t, kind="stable")
         series[info["name"]] = (t[order], v[order])
         units[info["name"]] = info["unit"]
     if not series:
         raise ValueError("lib1: no curves matched")
 
-    t_lo = min(t.min() for t, _ in series.values())
-    t_hi = max(t.max() for t, _ in series.values())
+    # window = the labeled time span, matching Carmine's own exports: his
+    # sample starts exactly at the first time label, not at the first ink
+    label_ts = [ta + tb * cy for cy in tl_cy]
+    t_lo, t_hi = min(label_ts), max(label_ts)
     n = int(t_hi - t_lo)
+    if not (60 < n < 100000):
+        t_lo = min(t.min() for t, _ in series.values())
+        t_hi = max(t.max() for t, _ in series.values())
+        n = int(t_hi - t_lo)
     if not (60 < n < 100000):
         raise ValueError(f"lib1: implausible duration {n}s")
     meta.duration_min = n / 60.0

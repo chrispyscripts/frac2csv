@@ -772,8 +772,9 @@ function render(entry, fname, stages, tables, notes) {
     items.push({ type: "table", key: "table", table: t });
   }
   // charts on some templates (Liberty) carry no parseable UWI — fall back to
-  // Carmine's "<index>-<UWI>_<WA>" file naming
-  const fuwi = (fname.match(/^\d+-([0-9A-Z]{10,20})_\d/) || [])[1] || "";
+  // Carmine's file naming: "<index>-<UWI>_<WA>" or "<UWI>-<WA>-..." (AB)
+  const fuwi = (fname.match(/^\d+-([0-9A-Z]{10,20})_\d/) ||
+                fname.match(/^([12]\d{2}[0-9A-Z]{9,13}W?\d{0,3})[-_]\d/) || [])[1] || "";
   if (fuwi) for (const st of stages) if (!st.meta.uwi) st.meta.uwi = fuwi;
   const well = stages.length ? { base, stages } : null;
   if (well) { well.provider = wellProvider(well); wells.push(well); }

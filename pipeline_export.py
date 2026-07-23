@@ -42,9 +42,12 @@ def canon_series(result):
 
 
 def filename_uwi(name):
-    """UWI from Carmine's folder/file naming '<index>-<UWI>_<WA>_...' —
-    charts on some templates (Liberty) carry no parseable UWI."""
-    m = re.match(r"^\d+-([0-9A-Z]{10,20})_\d", str(name or ""))
+    """UWI from Carmine's file naming — charts on some templates (Liberty)
+    carry no parseable UWI. Two forms exist on his drives:
+    '<index>-<UWI>_<WA>_...' and '<UWI>-<WA>-...' (AB filings)."""
+    s = str(name or "")
+    m = (re.match(r"^\d+-([0-9A-Z]{10,20})_\d", s)
+         or re.match(r"^([12]\d{2}[0-9A-Z]{9,13}W?\d{0,3})[-_]\d", s))
     return m.group(1) if m else ""
 
 
