@@ -1204,8 +1204,11 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   const bctx = orig.buf.getContext("2d");
   bctx.clearRect(0, 0, W, H);
   bctx.save();
-  bctx.beginPath(); bctx.rect(L, T, plotW, plotH); bctx.clip();
-  bctx.fillStyle = "#ffffff"; bctx.fillRect(L, T, plotW, plotH);
+  // crop hard at the frame top (hides the chart's own legend band) but let
+  // the render spill into the left/bottom margins so the first time label
+  // and the x-axis dates stay fully readable
+  bctx.beginPath(); bctx.rect(0, T, W, H - T); bctx.clip();
+  bctx.fillStyle = "#ffffff"; bctx.fillRect(0, T, W, H - T);
   const task = page.render({
     canvasContext: bctx, viewport: vp,
     transform: [sx, 0, 0, sy, L - sx * A[0], T - sy * yTop],

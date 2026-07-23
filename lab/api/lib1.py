@@ -284,6 +284,18 @@ def extract_page(page, sample_sec=1.0):
     day_sec = t_lo % 86400
     meta.start_time = (f"{int(day_sec // 3600):02d}:{int(day_sec % 3600 // 60):02d}"
                        f":{int(day_sec % 60):02d}")
+    # chart geometry in PAGE coordinates for the synced original-chart view:
+    # elapsed seconds e -> page coord along `axis` = (t_lo + e - ta) / tb;
+    # v0/v1 span the plot across the other dimension. (For landscape pages
+    # the swapped span coords mean the time map applies to page-x and the
+    # tick extent to page-y — which is exactly what axis/v0/v1 encode.)
+    # frame extent from the gridline geometry when present — the padded tick
+    # extent includes the legend band, which the compare view must crop
+    v_lo_f = min(grid_xs) if grid_xs else x_lo
+    v_hi_f = max(grid_xs) if grid_xs else x_hi
+    meta.geom = {"axis": "x" if horizontal else "y",
+                 "ta": float(ta - t_lo), "tb": float(tb),
+                 "v0": float(v_lo_f), "v1": float(v_hi_f)}
     samples = np.arange(int(n / sample_sec)) * sample_sec
     data = {name: _resample(t - t_lo, v, samples) for name, (t, v) in series.items()}
     return meta, samples, data, units
