@@ -19,7 +19,7 @@ from leucrotta import _fit, _close, _spans
 def detect(page):
     t = page.get_text()
     return "Liberty Energy" in t and \
-        re.search(r"Stage\s+(?:[A-Z]{2,4}\s+)?\d", t) is not None
+        re.search(r"Stage\s+(?:[A-Z]{2,4}\s+)?\d", t, re.I) is not None
 
 
 def _parse_date(txt):
@@ -158,8 +158,9 @@ def extract_page(page, sample_sec=1.0):
     # by sample index, which would silently drop the later part. Carmine's
     # naming: "Part I/II" (roman or arabic) -> "Attempt 1/2".
     m = (re.search(r"Stage\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+"
-                   r"(?:\s+Part\s+(\w+))?", text)
-         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?(?:\s*-\s*[A-Z]{2,4})?)\b()", text))
+                   r"(?:\s+Part\s+(\w+))?", text, re.I)
+         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?(?:\s*-\s*[A-Z]{2,4})?)\b()",
+                      text, re.I))
     if m:
         stage = " ".join(m.group(1).split())
         part = m.group(2)
@@ -169,7 +170,7 @@ def extract_page(page, sample_sec=1.0):
             stage += f" Attempt {n}" if n else f" Attempt {part}"
         meta.stage = stage
     first = text.strip().splitlines()[0].strip() if text.strip() else ""
-    m = re.search(r"^(.*?)\s+Stage\s+", first)
+    m = re.search(r"^(.*?)\s+Stage\s+", first, re.I)
     meta.title = (m.group(1) if m else first)[:60]
     meta.date = date
 
