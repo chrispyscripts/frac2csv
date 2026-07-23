@@ -33,14 +33,16 @@ def _parse_date(txt):
     return 2000 + c, a, b
 
 
-def _time_axis(spans):
-    """date + 'HH:MM' span pairs -> abs seconds = a + b*cy."""
+def _time_axis(spans, time_frame=None, time_grid=None):
+    """date + 'HH:MM' span pairs -> abs seconds = a + b*cy. Label anchors
+    snap to the time gridlines when the page provides them — edge labels
+    shift inward from their gridline, which skews a label-only fit."""
     dates = [s for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{2,4}/\d{2}/\d{2,4}", s["t"])]
     times = [s for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
     if len(times) < 3:
-        return None, ""
+        return None, "", None
     import datetime as dt
     pts = []
     date0 = None
@@ -60,11 +62,39 @@ def _time_axis(spans):
         if date0 is None:
             date0 = f"{y:04d}-{mo:02d}-{dd:02d}"
     if len(pts) < 3:
-        return None, ""
+        return None, "", None
+    # Liberty prints the first/last time labels AT the plot frame edges, but
+    # the label text sits several points inside the frame — a label-only fit
+    # maps the first ~1-2 minutes of ink to negative time, which the export
+    # window then cuts (Carmine's missing ramp starts). When the frame's
+    # time extent is known, calibrate on the two edges and keep it only if
+    # the interior labels agree.
+    if time_frame:
+        lo_e, hi_e = time_frame
+        anchors = list(time_grid or []) + [lo_e, hi_e]
+        by_cy = sorted(pts, key=lambda p: p[1])
+        first, last = by_cy[0], by_cy[-1]
+        span_lbl = abs(last[1] - first[1])
+        if span_lbl > 1 and \
+                abs(first[1] - lo_e) < span_lbl * 0.1 and \
+                abs(last[1] - hi_e) < span_lbl * 0.1:
+            a2, b2 = _fit([(first[0], lo_e), (last[0], hi_e)])
+            if abs(b2) > 1e-12:
+                # each label must belong to a gridline/edge under this fit
+                # (label TEXT is offset from its anchor by up to ~15pt)
+                ok = True
+                for secs, cy in pts:
+                    anc = min(anchors, key=lambda g: abs(g - cy))
+                    if abs(a2 + b2 * anc - secs) > 5:
+                        ok = False
+                        break
+                if ok:
+                    win = tuple(sorted((a2 + b2 * lo_e, a2 + b2 * hi_e)))
+                    return (a2, b2), (date0 or ""), win
     a, b = _fit(pts)
     if abs(b) < 1e-12:
-        return None, ""
-    return (a, b), (date0 or "")
+        return None, "", None
+    return (a, b), (date0 or ""), None
 
 
 def _horizontal(spans):
@@ -94,7 +124,35 @@ def extract_page(page, sample_sec=1.0):
     horizontal = _horizontal(spans)
     if horizontal:
         spans = [{**s, "cx": s["cy"], "cy": s["cx"]} for s in spans]
-    tfit, date = _time_axis(spans)
+    # frame time extent: the value gridlines run the full time width of the
+    # plot, so their span along the time axis marks the frame edges
+    t_edges = []
+    for d in page.get_drawings():
+        c = d.get("color")
+        if c is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        gx0, gy0, gx1, gy1 = (r.y0, r.x0, r.y1, r.x1) if horizontal \
+            else (r.x0, r.y0, r.x1, r.y1)
+        if abs(gx1 - gx0) < 0.5 and (gy1 - gy0) > 100:
+            t_edges.append((gy0, gy1))
+    time_frame = None
+    if t_edges:
+        time_frame = (min(e[0] for e in t_edges), max(e[1] for e in t_edges))
+    # time gridlines (constant along time coord, long across values) anchor
+    # the interior labels when validating the frame fit
+    time_grid = []
+    for d in page.get_drawings():
+        c = d.get("color")
+        if c is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        gx0, gy0, gx1, gy1 = (r.y0, r.x0, r.y1, r.x1) if horizontal \
+            else (r.x0, r.y0, r.x1, r.y1)
+        if abs(gy1 - gy0) < 0.5 and (gx1 - gx0) > 100:
+            time_grid.append(round((gy0 + gy1) / 2, 2))
+    time_grid = sorted(set(time_grid))
+    tfit, date, frame_win = _time_axis(spans, time_frame, time_grid)
     if tfit is None:
         raise ValueError("lib1: time labels not found")
     ta, tb = tfit
@@ -271,8 +329,11 @@ def extract_page(page, sample_sec=1.0):
 
     # window = the labeled time span, matching Carmine's own exports: his
     # sample starts exactly at the first time label, not at the first ink
-    label_ts = [ta + tb * cy for cy in tl_cy]
-    t_lo, t_hi = min(label_ts), max(label_ts)
+    if frame_win:
+        t_lo, t_hi = frame_win
+    else:
+        label_ts = [ta + tb * cy for cy in tl_cy]
+        t_lo, t_hi = min(label_ts), max(label_ts)
     n = int(t_hi - t_lo)
     if not (60 < n < 100000):
         t_lo = min(t.min() for t, _ in series.values())
