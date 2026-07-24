@@ -922,10 +922,9 @@ const PROVIDERS = [
 ];
 // validated seconds-data providers — always offered in the menu even before
 // any of their files are loaded, so the supported set is visible up front
-// vector seconds-data providers. "CalFrac" is the label for the MView-format
-// charts Calfrac reports carry; "Halliburton" covers the Halliburton-IFS
-// charts. Labels must match what providerOf() returns or the filter won't match.
-const WORKED_PROVIDERS = ["Liberty", "BJ", "Canyon", "CalFrac", "Halliburton", "Leucrotta"];
+// the only providers offered in the filter. "CalFrac" is the label for the
+// MView-format charts Calfrac reports carry; must match providerOf().
+const WORKED_PROVIDERS = ["CalFrac", "BJ", "Liberty"];
 function providerOf(source) {
   for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
   return "Other";
@@ -937,11 +936,10 @@ function wellProvider(well) {
 }
 function rebuildProviderMenu() {
   const sel = $("provider"), cur = sel.value;
-  const provs = new Set(WORKED_PROVIDERS);   // always offer the validated set
-  for (const e of entries) if (e.provider) provs.add(e.provider);
+  const provs = WORKED_PROVIDERS;            // fixed set — only these are offered
   sel.innerHTML = '<option value="">All service providers</option>' +
     [...provs].sort().map(p => `<option value="${p}">${p}</option>`).join("");
-  sel.value = provs.has(cur) ? cur : "";
+  sel.value = provs.includes(cur) ? cur : "";
 }
 function applyProviderFilter() {
   const p = $("provider").value;
