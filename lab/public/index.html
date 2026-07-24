@@ -80,9 +80,19 @@
               padding:9px 14px; cursor:pointer; }
   .filehead:hover { background:var(--panel); }
   .filehead .nm { font-family:var(--mono); font-size:12px; overflow:hidden;
-                  text-overflow:ellipsis; white-space:nowrap; }
+                  text-overflow:ellipsis; white-space:nowrap; flex:1; }
   .filehead .st { font-size:11px; color:var(--mut); font-family:var(--mono); flex-shrink:0; }
   .filehead .st.ok { color:var(--ok); } .filehead .st.err { color:var(--carmine); }
+  .filehead .del { flex-shrink:0; border:none; background:none; cursor:pointer;
+                   color:var(--mut); font-size:15px; line-height:1; padding:2px 4px;
+                   border-radius:4px; opacity:.55; }
+  .filehead .del:hover { opacity:1; color:var(--carmine); background:var(--panel2); }
+  .midhead .clr, .filehdr .clr { border:1px solid var(--line); background:none;
+                   color:var(--mut); font-size:10px; text-transform:uppercase;
+                   letter-spacing:.05em; font-weight:700; cursor:pointer;
+                   padding:3px 8px; border-radius:5px; }
+  .midhead .clr:hover, .filehdr .clr:hover { color:var(--carmine); border-color:var(--carmine); }
+  .filehdr { display:flex; align-items:center; justify-content:space-between; }
   .stagerow { display:flex; justify-content:space-between; align-items:center;
               padding:5px 14px 5px 26px; cursor:pointer; font-size:12px; color:var(--mut); }
   .stagerow:hover { background:var(--panel); color:var(--ink); }
@@ -168,7 +178,10 @@
 
   <div class="main">
     <div class="left">
-      <div class="lefthead">Files</div>
+      <div class="lefthead filehdr">
+        <span>Files</span>
+        <button class="clr" id="clearall" hidden>Clear all</button>
+      </div>
       <div class="files" id="files"></div>
       <div class="manifestbar" id="manifestbar" hidden>
         <div class="mtext" id="mtext"></div>
@@ -290,7 +303,9 @@ fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); file
 function makeFileEntry(name) {
   const el = document.createElement("div"); el.className = "fileitem";
   const head = document.createElement("div"); head.className = "filehead";
-  head.innerHTML = `<span class="nm">${name}</span><span class="st"><span class="spin"></span>queued</span>`;
+  head.innerHTML = `<span class="nm">${name}</span>`
+    + `<span class="st"><span class="spin"></span>queued</span>`
+    + `<button class="del" title="Remove this file">×</button>`;
   el.appendChild(head);
   $("files").prepend(el);
   const entry = {
@@ -302,7 +317,11 @@ function makeFileEntry(name) {
     }
   };
   head.addEventListener("click", () => { if (entry.items.length) selectFile(entry); });
+  head.querySelector(".del").addEventListener("click", e => {
+    e.stopPropagation(); deleteEntry(entry);
+  });
   entries.push(entry);
+  updateClearAll();
   return entry;
 }
 
@@ -876,14 +895,14 @@ function selectFile(entry) {
   tog.querySelectorAll("button").forEach(b =>
     b.classList.toggle("on", b.dataset.v === entry.viewMode));
   $("midlabel").textContent = entry.hasToggle
-    ? (entry.viewMode === "summary" ? "Summary Data" : "Stages")
-    : ((entry.secItems && entry.secItems.length) ? "Stages" : "Tables");
+    ? (entry.viewMode === "summary" ? "Summary Data" : "Charts")
+    : ((entry.secItems && entry.secItems.length) ? "Charts" : "Tables");
   const list = $("stages"); list.innerHTML = "";
   for (const it of entry.items) {
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")
-      row.innerHTML = `<span>Stage ${stageLabel(it)}</span>`
+      row.innerHTML = `<span>Chart ${stageLabel(it)}</span>`
         + `<span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`;
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
@@ -932,7 +951,7 @@ function setPreviewMode(mode) {
 function showStage(entry, well, item) {
   setPreviewMode("graph");
   const M = item.meta;
-  $("pv-title").textContent = (M.uwi || well.base) + "  —  Stage " + stageLabel(item);
+  $("pv-title").textContent = (M.uwi || well.base) + "  —  Chart " + stageLabel(item);
   $("pv-sub").textContent = [
     M.date && (M.date + (M.start_time ? " " + M.start_time : "")),
     Math.round(M.duration_min) + " min",
@@ -1640,6 +1659,50 @@ function updateCount() {
   $("zip").textContent = prov ? `Download ${prov} (.zip)` : "Download all (.zip)";
 }
 
+function updateClearAll() {
+  $("clearall").hidden = entries.length === 0;
+}
+
+// remove a single file: its row, its well, its table CSVs, and — if it was
+// the open one — the preview
+function deleteEntry(entry) {
+  entry.el.remove();
+  const ei = entries.indexOf(entry);
+  if (ei >= 0) entries.splice(ei, 1);
+  if (entry.well) {
+    const wi = wells.indexOf(entry.well);
+    if (wi >= 0) wells.splice(wi, 1);
+  }
+  const base = entry.name.replace(/\.pdf$/i, "");
+  for (let i = tableFiles.length - 1; i >= 0; i--)
+    if (tableFiles[i].name.startsWith(base + "-stages-table")) tableFiles.splice(i, 1);
+  if (current && current.entry === entry) {
+    current = null;
+    $("previewpane").hidden = true;
+    $("empty").hidden = false;
+  }
+  if (sumState.docKey === entry.name) sumState.docKey = null;
+  rebuildProviderMenu();
+  applyProviderFilter();
+  updateCount();
+  updateClearAll();
+}
+
+function clearAll() {
+  for (const e of entries.slice()) e.el.remove();
+  entries.length = 0; wells.length = 0; tableFiles.length = 0;
+  current = null;
+  manifest = null;
+  $("manifestbar").hidden = true;
+  $("previewpane").hidden = true;
+  $("empty").hidden = false;
+  rebuildProviderMenu();
+  applyProviderFilter();
+  updateCount();
+  updateClearAll();
+}
+$("clearall").addEventListener("click", clearAll);
+
 function setSeg(seg, val) {
   for (const b of seg.children) b.classList.toggle("on", b.dataset.v === val);
 }
@@ -1670,12 +1733,12 @@ function relabel() {
   if (current && current.entry) {
     for (const it of current.entry.items) {
       if (it.type === "stage" && it._row)
-        it._row.firstChild.textContent = "Stage " + stageLabel(it);
+        it._row.firstChild.textContent = "Chart " + stageLabel(it);
     }
   }
   if (current && current.item && current.item.type === "stage") {
     const M = current.item.meta;
-    $("pv-title").textContent = (M.uwi || current.well.base) + "  —  Stage " + stageLabel(current.item);
+    $("pv-title").textContent = (M.uwi || current.well.base) + "  —  Chart " + stageLabel(current.item);
     renderDlbar(current.well);
   }
 }

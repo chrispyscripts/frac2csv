@@ -282,10 +282,34 @@ def extract_page(page, sample_sec=1.0):
                     lst.extend(pp)
                 break
 
-    # plot x-range from the time row extent (with margin) to clip legend strokes
+    # plot time-range: clip to the plot FRAME, not the time-label span. IFS
+    # (like BJ/Liberty) insets its first/last time labels from the frame
+    # edges, so each interval's opening ramp sits between the frame and the
+    # first labeled gridline and a label-based window clips it. The frame is
+    # the outermost full-height vertical gridlines (in the unrotated frame);
+    # the per-column value band and legend-color match already exclude
+    # off-plot strokes, so widening to the frame only recovers real points.
     t_row = [s for s in spans if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
-    x_lo = min(s["cx"] for s in t_row) - 30
-    x_hi = max(s["cx"] for s in t_row) + 30
+    lab_lo = min(s["cx"] for s in t_row)
+    lab_hi = max(s["cx"] for s in t_row)
+    vgrid = []
+    for d in page.get_drawings():
+        if d.get("color") is None or d["type"] not in ("s", "fs"):
+            continue
+        for item in d["items"]:
+            if item[0] != "l":
+                continue
+            p1, p2 = item[1], item[2]
+            ax, ay = (_unrotate(p1.x, p1.y) if rotated else (p1.x, p1.y))
+            bx, by = (_unrotate(p2.x, p2.y) if rotated else (p2.x, p2.y))
+            if abs(ax - bx) < 0.6 and abs(ay - by) > 100:
+                vgrid.append((ax + bx) / 2)
+    if vgrid:
+        # never narrower than the old label-based window (stay a superset)
+        x_lo = min(min(vgrid) - 2, lab_lo - 30)
+        x_hi = max(max(vgrid) + 2, lab_hi + 30)
+    else:
+        x_lo, x_hi = lab_lo - 30, lab_hi + 30
 
     meta = PageMeta()
     m = re.search(r"UWI:\s*(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
