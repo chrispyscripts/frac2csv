@@ -780,6 +780,9 @@ const PROVIDERS = [
   [/STEP/i, "STEP"], [/mview/i, "MView"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
 ];
+// validated seconds-data providers — always offered in the menu even before
+// any of their files are loaded, so the supported set is visible up front
+const WORKED_PROVIDERS = ["Liberty", "BJ", "Canyon"];
 function providerOf(source) {
   for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
   return "Other";
@@ -790,7 +793,8 @@ function wellProvider(well) {
   return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || "Other";
 }
 function rebuildProviderMenu() {
-  const sel = $("provider"), cur = sel.value, provs = new Set();
+  const sel = $("provider"), cur = sel.value;
+  const provs = new Set(WORKED_PROVIDERS);   // always offer the validated set
   for (const e of entries) if (e.provider) provs.add(e.provider);
   sel.innerHTML = '<option value="">All service providers</option>' +
     [...provs].sort().map(p => `<option value="${p}">${p}</option>`).join("");
@@ -1540,6 +1544,9 @@ $("zip").addEventListener("click", () => {
   const tag = p ? p.replace(/[^\w]+/g, "-").toLowerCase() : "all";
   saveBlob(`carmines-lab-${tag}.zip`, new Blob([zipped], { type: "application/zip" }), null);
 });
+
+// seed the provider menu with the validated set before any file loads
+rebuildProviderMenu();
 </script>
 </body>
 </html>
