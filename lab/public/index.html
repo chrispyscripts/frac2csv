@@ -254,6 +254,15 @@
             <button type="button" class="btn" id="destpick">Change…</button>
           </div>
         </div>
+        <div class="setrow col">
+          <div class="setlabel">Alias table (.ini)
+            <span class="sethint" id="aliashint"></span></div>
+          <div class="destrow">
+            <input type="text" id="aliaspath" placeholder="Built-in alias table"
+                   spellcheck="false">
+            <button type="button" class="btn" id="aliaspick">Change…</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -342,7 +351,8 @@ const CHUNK_PAGES = 30;
 const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true, stageLabel: "asis",
-                   chartLabels: "canon", showOrig: false, destFolder: "" };  // toggles
+                   chartLabels: "canon", showOrig: false, destFolder: "",
+                   aliasFile: "" };  // toggles
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
 let localInfo = null;
@@ -357,6 +367,18 @@ function refreshDestUI() {
     ? "where exports are saved"
     : "web build — exports go to the browser's Downloads folder";
   if (!local) $("destpath").placeholder = "Browser Downloads folder";
+  $("aliaspath").disabled = !local;
+  $("aliaspick").disabled = !local;
+  if (!local) {
+    $("aliashint").textContent = "web build — uses the built-in alias table";
+  } else if (settings.aliasFile) {
+    applyAliasFile(settings.aliasFile, true);      // re-apply on startup
+  } else {
+    fetch("/api/alias-info").then(r => r.json()).then(o => {
+      $("aliashint").textContent =
+        `built-in · ${o.count} curve names · ${o.templates.length} providers`;
+    }).catch(() => {});
+  }
 }
 // numeric part of a stage label ("HRF 5A" -> 5, "12B" -> 12); non-numeric last
 // ---------- theme (light default, persisted) ----------
@@ -1572,11 +1594,13 @@ function loadSettings() {
   setSeg($("stlbl"), settings.stageLabel);
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
+  $("aliaspath").value = settings.aliasFile || "";
 }
 function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
     stageLabel: settings.stageLabel, destFolder: settings.destFolder || "",
+    aliasFile: settings.aliasFile || "",
   }));
 }
 function openSettings() { $("settingsback").hidden = false; }
@@ -1613,6 +1637,36 @@ $("destpath").addEventListener("change", () => {
   settings.destFolder = $("destpath").value.trim();
   saveSettings();
 });
+
+// alias table — Carmine keeps his own .ini on disk so he can add providers
+// and vendor curve names without a rebuild. Desktop only (the web build uses
+// the bundled table).
+async function applyAliasFile(path, quiet) {
+  if (!(localInfo && localInfo.local)) return;
+  try {
+    const r = await fetch("/api/alias-file", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path || "" }) });
+    const out = await r.json();
+    if (!r.ok) throw new Error(out.error || "load failed");
+    $("aliashint").textContent =
+      `${out.count} curve names · ${out.templates.length} providers`;
+    if (!quiet) { settings.aliasFile = path || ""; saveSettings(); }
+  } catch (e) {
+    $("aliashint").textContent = "✗ " + e.message;
+  }
+}
+$("aliaspick").addEventListener("click", async () => {
+  if (!(localInfo && localInfo.local)) return;
+  $("aliaspick").disabled = true;
+  try {
+    const out = await (await fetch("/api/pick-file")).json();
+    if (out.path) { $("aliaspath").value = out.path; await applyAliasFile(out.path); }
+  } catch (e) { $("aliashint").textContent = "couldn't open file picker"; }
+  $("aliaspick").disabled = false;
+});
+$("aliaspath").addEventListener("change", () =>
+  applyAliasFile($("aliaspath").value.trim()));
 
 // open the source PDF in its own window (scalable, side-by-side compare)
 $("origopen").addEventListener("click", async () => {

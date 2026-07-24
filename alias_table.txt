@@ -2,12 +2,16 @@ alias = Tr Press,Slurry Rate,WH Prop Conc,BH Prop Conc
 units =      MPa,     m3/Min,       Kg/m3,       Kg/m3
 
 Calfrac-2
+chart_headers_include = Surface
+chart_stage_tokens = Zone, Stage , Zones , *Zon*
 curve.Tr Press = Treating Pressure
 curve.Slurry Rate = Combined Rate @ Wellhead, Combined Rate @ Formation, Combined Slurry Rate, Blender Slurry Rate
 curve.WH Prop Conc = Master Conc @ Wellhead, Master Concentration, Master Conc @ Blender
 curve.BH Prop Conc = Master Conc @ Formation, Combined Conc @ Blender, Master Concentration @ Formation , Master Concentration At Formation
 
 Hal-2
+chart_headers_include = Main Treatment,Entire Treatment, Treatment
+chart_stage_tokens = Interval
 curve.Tr Press = Annulus Pressure
 curve.Slurry Rate = Slurry Rate
 curve.WH Prop Conc = Surface Conc
@@ -15,18 +19,24 @@ curve.BH Prop Conc = BH Conc
 curve.Gorv Press = Tubing Pressure
 
 Lib-1
+chart_headers_include = PRC
+chart_stage_tokens = Stage , STG
 curve.Tr Press = Treating Pressure , Treating Pressure 2 , Treatin Pressure
 curve.Slurry Rate = Slurry Rate, Slur Rate, CFLD Rate
 curve.WH Prop Conc = Prop Con,Prop Conc
 curve.BH Prop Conc = BH Prop Conc, Btm Prop Conc, Denso 2, BH PROP CON
 
 SCHLUM-1
+chart_headers_include = PRC Plot
+chart_stage_tokens = Interval
 curve.Tr Press = Treating Pressure
 curve.Slurry Rate = Slurry Rate x 10, Slurry Rate x 5, Slurry Rate
 curve.WH Prop Conc = Prop Con
 curve.BH Prop Conc = BH Prop Con
 
 BJ-1
+chart_headers_include = Press
+chart_stage_tokens =
 curve.Tr Press = WH 2 Press, WH 2 , WH Press 2
 curve.Slurry Rate = CMB SLR Rate
 curve.WH Prop Conc = WH Density
@@ -38,7 +48,17 @@ curve.Slurry Rate = Slurry Rate
 curve.WH Prop Conc = Surface Conc
 curve.BH Prop Conc = BH Conc
 
+BAKER-1
+chart_headers_include = Press
+chart_stage_tokens = Frac #
+curve.Tr Press = WH Press
+curve.Slurry Rate = Comb Rate
+curve.WH Prop Conc = WH Density
+curve.BH Prop Conc = Density at Perfs
+
 Canyon-1
+chart_headers_include = Pressure, Rate, Concentration
+chart_stage_tokens = Interval
 curve.Tr Press = Mainline, Main Pressure
 curve.Slurry Rate = Combined WH, Blender Slurry, Blender 1 Dirty Rate
 curve.WH Prop Conc = Proppant WH, Blender 1 Concentration

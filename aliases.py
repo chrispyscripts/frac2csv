@@ -29,11 +29,16 @@ def _find_table():
     return cands[0]
 
 
-_PATH = _find_table()
+_DEFAULT_PATH = _find_table()   # the bundled table
+_PATH = _DEFAULT_PATH
 
 CANONICAL = []          # ordered canonical columns
 CANONICAL_UNITS = {}    # canonical -> unit
 _LOOKUP = {}            # normalized raw name -> canonical
+# per-template extras Carmine keeps in his file (chart_headers_include,
+# chart_stage_tokens, ...). Parsed and kept so his data round-trips even
+# though the templates don't consult them yet.
+DIRECTIVES = {}         # template code -> {key: [values]}
 
 
 def _norm(s):
@@ -43,6 +48,7 @@ def _norm(s):
 def _load():
     if not os.path.exists(_PATH):
         return
+    template = None
     for line in open(_PATH, encoding="utf-8", errors="replace"):
         line = line.strip()
         if not line:
@@ -59,9 +65,32 @@ def _load():
             for raw in right.split(","):
                 if raw.strip():
                     _LOOKUP[_norm(raw)] = canonical
+        elif "=" in line:
+            # a per-template directive (chart_headers_include, ...)
+            key, right = line.split("=", 1)
+            if template:
+                DIRECTIVES.setdefault(template, {})[key.strip().lower()] = \
+                    [v.strip() for v in right.split(",") if v.strip()]
+        else:
+            template = line          # a bare line starts a template section
     # canonical names map to themselves
     for c in CANONICAL:
         _LOOKUP.setdefault(_norm(c), c)
+
+
+def reload(path=None):
+    """Re-read the alias table, optionally from a user-supplied file — Carmine
+    keeps his own .ini on disk so he can add providers/terminology without a
+    rebuild. Pass a falsy path to revert to the bundled table. Returns
+    (path_loaded, n_aliases)."""
+    global _PATH
+    _PATH = path or _DEFAULT_PATH
+    CANONICAL.clear()
+    CANONICAL_UNITS.clear()
+    _LOOKUP.clear()
+    DIRECTIVES.clear()
+    _load()
+    return _PATH, len(_LOOKUP)
 
 
 _load()

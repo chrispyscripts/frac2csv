@@ -46,6 +46,36 @@ KNOWN = {"Tr Press": "#1d5bd8", "Slurry Rate": "#b02e2e",
 ALLOWED_FILES = set()
 
 
+def pick_file(prompt="Choose the alias table file"):
+    """Native file chooser -> path (or None). Carmine keeps his own alias
+    .ini on disk; this lets him point the app at it."""
+    import subprocess
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(
+                ["osascript", "-e",
+                 f'POSIX path of (choose file with prompt "{prompt}")'],
+                capture_output=True, text=True, timeout=120)
+            return out.stdout.strip() or None
+        if os.name == "nt":
+            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+                  "$f=New-Object System.Windows.Forms.OpenFileDialog;"
+                  "$f.Filter='Alias table (*.ini;*.txt)|*.ini;*.txt|All files (*.*)|*.*';"
+                  "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                 capture_output=True, text=True, timeout=120)
+            return out.stdout.strip() or None
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        path = filedialog.askopenfilename()
+        root.destroy()
+        return path or None
+    except Exception:
+        return None
+
+
 def pick_folder():
     """Open the OS's native folder chooser and return the picked path (or
     None if cancelled). macOS uses osascript; Windows a PowerShell dialog;
@@ -217,6 +247,12 @@ class Handler(BaseHTTPRequestHandler):
                                     "raster": pipeline.raster_available()})
         if p == "/api/pick-folder":
             return self._json(200, {"path": pick_folder() or ""})
+        if p == "/api/pick-file":
+            return self._json(200, {"path": pick_file() or ""})
+        if p == "/api/alias-info":
+            return self._json(200, {"path": aliases._PATH,
+                                    "count": len(aliases._LOOKUP),
+                                    "templates": sorted(aliases.DIRECTIVES)})
         if p == "/api/file":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             m = re.search(r"path=([^&]+)", q)
@@ -258,6 +294,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(400, {"error": f"bad request: {e}"})
         try:
+            if self.path == "/api/alias-file":
+                # point the engine at Carmine's own alias .ini on disk
+                path = req.get("path", "").strip()
+                if path and not os.path.isfile(path):
+                    return self._json(404, {"error": "file not found"})
+                try:
+                    loaded, count = aliases.reload(path or None)
+                except Exception as e:
+                    return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+                return self._json(200, {"path": loaded, "count": count,
+                                        "templates": sorted(aliases.DIRECTIVES)})
             if self.path == "/api/save":
                 # write one export file into a folder on disk (desktop only).
                 folder = req.get("folder", "") or os.path.join(
