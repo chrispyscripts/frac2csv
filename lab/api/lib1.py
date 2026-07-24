@@ -15,6 +15,11 @@ import numpy as np
 from frac_core import PageMeta, _resample
 from leucrotta import _fit, _close, _spans
 
+# Max seconds a time label may disagree with the gridline/frame-edge fit
+# before that fit is rejected. Labels are minute-rounded and their gridline
+# spacing is uneven by up to a minute, so this has to sit above 60.
+FRAME_FIT_TOL = 75
+
 
 def detect(page):
     t = page.get_text()
@@ -64,11 +69,11 @@ def _time_axis(spans, time_frame=None, time_grid=None):
     if len(pts) < 3:
         return None, "", None
     # Liberty prints the first/last time labels AT the plot frame edges, but
-    # the label text sits several points inside the frame — a label-only fit
+    # the label TEXT sits several points inside the frame — a label-only fit
     # maps the first ~1-2 minutes of ink to negative time, which the export
     # window then cuts (Carmine's missing ramp starts). When the frame's
-    # time extent is known, calibrate on the two edges and keep it only if
-    # the interior labels agree.
+    # time extent is known, calibrate on the two edges and keep that fit only
+    # if every label still lands on a gridline or edge under it.
     if time_frame:
         lo_e, hi_e = time_frame
         anchors = list(time_grid or []) + [lo_e, hi_e]
@@ -80,14 +85,13 @@ def _time_axis(spans, time_frame=None, time_grid=None):
                 abs(last[1] - hi_e) < span_lbl * 0.1:
             a2, b2 = _fit([(first[0], lo_e), (last[0], hi_e)])
             if abs(b2) > 1e-12:
-                # each label must belong to a gridline/edge under this fit
-                # (label TEXT is offset from its anchor by up to ~15pt)
-                ok = True
-                for secs, cy in pts:
-                    anc = min(anchors, key=lambda g: abs(g - cy))
-                    if abs(a2 + b2 * anc - secs) > 5:
-                        ok = False
-                        break
+                # every label must sit on a gridline/edge under this fit.
+                # Labels are minute-rounded and their spacing is uneven by
+                # up to a minute, so judge at that scale — a tighter bound
+                # rejects good fits and the window falls back to the label
+                # span, which clips the stage's opening ramp.
+                ok = all(abs(a2 + b2 * min(anchors, key=lambda g: abs(g - cy))
+                             - secs) <= FRAME_FIT_TOL for secs, cy in pts)
                 if ok:
                     win = tuple(sorted((a2 + b2 * lo_e, a2 + b2 * hi_e)))
                     return (a2, b2), (date0 or ""), win
