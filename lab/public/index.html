@@ -801,12 +801,15 @@ function stageLabel(item) {
 const PROVIDERS = [
   [/leucrotta/i, "Leucrotta"], [/halliburton|IFS|treatment plot/i, "Halliburton"],
   [/liberty/i, "Liberty"], [/\bBJ\b/i, "BJ"], [/canyon/i, "Canyon"],
-  [/STEP/i, "STEP"], [/mview/i, "MView"], [/trican/i, "Trican"],
+  [/STEP/i, "STEP"], [/mview/i, "CalFrac"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
 ];
 // validated seconds-data providers — always offered in the menu even before
 // any of their files are loaded, so the supported set is visible up front
-const WORKED_PROVIDERS = ["Liberty", "BJ", "Canyon"];
+// vector seconds-data providers. "CalFrac" is the label for the MView-format
+// charts Calfrac reports carry; "Halliburton" covers the Halliburton-IFS
+// charts. Labels must match what providerOf() returns or the filter won't match.
+const WORKED_PROVIDERS = ["Liberty", "BJ", "Canyon", "CalFrac", "Halliburton", "Leucrotta"];
 function providerOf(source) {
   for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
   return "Other";
