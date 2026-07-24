@@ -64,6 +64,10 @@
   .lefthead { padding:9px 14px; font-size:10px; text-transform:uppercase;
               letter-spacing:.06em; color:var(--mut); font-weight:700;
               border-bottom:1px solid var(--line); }
+  .midhead { display:flex; align-items:center; justify-content:space-between;
+             gap:8px; padding:6px 10px; }
+  .midhead .seg.mini button { text-transform:none; letter-spacing:0; }
+  #sumcanvas { width:100%; height:auto; background:#fff; border:1px solid var(--line); }
   .files { flex:1; overflow:auto; }
   .filehead.sel { background:var(--panel2); border-left:2px solid var(--carmine); padding-left:12px; }
   .fileitem.prov-hide { display:none; }
@@ -179,7 +183,13 @@
     </div>
 
     <div class="mid">
-      <div class="lefthead">Stages</div>
+      <div class="lefthead midhead">
+        <span id="midlabel">Stages</span>
+        <div class="seg mini" id="viewtoggle" hidden>
+          <button type="button" data-v="seconds" class="on">Seconds</button>
+          <button type="button" data-v="summary">Summary</button>
+        </div>
+      </div>
       <div class="stages" id="stages"></div>
     </div>
 
@@ -192,11 +202,21 @@
           <div class="title" id="pv-title">&mdash;</div>
           <div class="sub" id="pv-sub"></div>
         </div>
-        <div class="canvaswrap"><canvas id="graph" width="1120" height="440"></canvas></div>
+        <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
         <div class="canvaswrap" id="origwrap" hidden>
           <canvas id="origgraph" width="1120" height="440"></canvas>
         </div>
-        <div class="legendrow">
+        <div id="sumwrap" hidden>
+          <div class="origbar" id="sumbar">
+            <button type="button" class="btn" id="sumprev">‹</button>
+            <span class="origlbl" id="sumlbl"></span>
+            <button type="button" class="btn" id="sumnext">›</button>
+            <button type="button" class="btn" id="sumopen"
+                    title="Open the source PDF in a separate window">Open PDF ↗</button>
+          </div>
+          <div class="canvaswrap"><canvas id="sumcanvas" width="1000" height="1294"></canvas></div>
+        </div>
+        <div class="legendrow" id="legendrow">
           <div class="seg mini" id="lblmode" title="Curve naming / source view">
             <button type="button" data-v="canon" class="on">Our terms</button>
             <button type="button" data-v="raw">As extracted</button>
@@ -415,7 +435,7 @@ $("mrun").addEventListener("click", async () => {
         const out = await resp.json();
         if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
         q._pdfUrl = "/api/file?path=" + encodeURIComponent(row.real);
-        render(q, base, out.stages || [], out.tables || [], out.notes || []);
+        render(q, base, out.stages || [], out.tables || [], out.notes || [], out.summary || []);
         const bits = [];
         if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
         if (out.written && out.written.length)
@@ -503,7 +523,7 @@ async function handleFile(f, q, saveDir) {
     // the local desktop server has no request-size cap — never split there
     if (bytes.length > MAX_BYTES && !(localInfo && localInfo.local))
       chunks = await splitPdf(bytes, q);
-    const stages = [], tables = [], notes = [];
+    const stages = [], tables = [], notes = [], summary = [];
     for (let i = 0; i < chunks.length; i++) {
       q.set(chunks.length > 1 ? `extracting ${i + 1}/${chunks.length}` : "extracting");
       const resp = await fetch("/api/extract", {
@@ -526,8 +546,12 @@ async function handleFile(f, q, saveDir) {
       }
       tables.push(...(out.tables || []));
       notes.push(...(out.notes || []));
+      for (const g of (out.summary || [])) {   // chunk-relative -> global pages
+        g.pages = g.pages.map(p => p + chunks[i].start - 1);
+        summary.push(g);
+      }
     }
-    render(q, f.name, stages, tables, notes);
+    render(q, f.name, stages, tables, notes, summary);
     const bits = [];
     if (stages.length) bits.push(`${stages.length} stage${stages.length > 1 ? "s" : ""}`);
     if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
@@ -805,14 +829,20 @@ function applyProviderFilter() {
   for (const e of entries) e.el.classList.toggle("prov-hide", !!p && e.provider !== p);
 }
 
-function render(entry, fname, stages, tables, notes) {
+function render(entry, fname, stages, tables, notes, summary) {
   const base = fname.replace(/\.pdf$/i, "");
-  const items = stages.length ? stageItems(stages) : [];
+  summary = summary || [];
+  // Seconds view = the stage graphs; Summary view = the document's summary
+  // pages (rendered) plus any parsed table (the BJ Totals grid)
+  const secItems = stages.length ? stageItems(stages) : [];
+  const sumItems = [];
+  for (const g of summary)
+    sumItems.push({ type: "summary", key: "sum", group: g, pageIdx: 0 });
   for (const t of tables) {
     const name = base + "-stages-table.csv";
     if (!tableFiles.some(x => x.name === name))
       tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
-    items.push({ type: "table", key: "table", table: t });
+    sumItems.push({ type: "table", key: "table", table: t });
   }
   // charts on some templates (Liberty) carry no parseable UWI — fall back to
   // Carmine's file naming: "<index>-<UWI>_<WA>" or "<UWI>-<WA>-..." (AB)
@@ -821,7 +851,11 @@ function render(entry, fname, stages, tables, notes) {
   if (fuwi) for (const st of stages) if (!st.meta.uwi) st.meta.uwi = fuwi;
   const well = stages.length ? { base, stages } : null;
   if (well) { well.provider = wellProvider(well); wells.push(well); }
-  entry.well = well; entry.notes = notes || []; entry.items = items;
+  entry.well = well; entry.notes = notes || [];
+  entry.secItems = secItems; entry.sumItems = sumItems; entry.summary = summary;
+  entry.hasToggle = secItems.length > 0 && sumItems.length > 0;
+  entry.viewMode = "seconds";
+  entry.items = secItems.length ? secItems : sumItems;   // active list
   entry._tables = tables || [];
   entry.provider = well ? well.provider : (tables[0] ? providerOf(tables[0].source) : "Other");
   rebuildProviderMenu();
@@ -830,23 +864,47 @@ function render(entry, fname, stages, tables, notes) {
   updateCount();
 }
 
-// populate the middle "Stages" column for one file, auto-select its first item
+// populate the middle column for one file, auto-select its first item
 function selectFile(entry) {
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
   entry.head.classList.add("sel");
+  const tog = $("viewtoggle");
+  tog.hidden = !entry.hasToggle;
+  tog.querySelectorAll("button").forEach(b =>
+    b.classList.toggle("on", b.dataset.v === entry.viewMode));
+  $("midlabel").textContent = entry.hasToggle
+    ? (entry.viewMode === "summary" ? "Summary Data" : "Stages")
+    : ((entry.secItems && entry.secItems.length) ? "Stages" : "Tables");
   const list = $("stages"); list.innerHTML = "";
   for (const it of entry.items) {
     const row = document.createElement("div");
     row.className = "stagerow";
-    row.innerHTML = it.type === "stage"
-      ? `<span>Stage ${stageLabel(it)}</span><span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`
-      : `<span>Table</span><span class="ch">${it.table.rows.length} rows</span>`;
+    if (it.type === "stage")
+      row.innerHTML = `<span>Stage ${stageLabel(it)}</span>`
+        + `<span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`;
+    else if (it.type === "summary")
+      row.innerHTML = `<span>${it.group.title}</span>`
+        + `<span class="ch">${it.group.pages.length} pg</span>`;
+    else
+      row.innerHTML = `<span>${(it.table.title.split(" — ")[0])}</span>`
+        + `<span class="ch">${it.table.rows.length} rows</span>`;
     row.addEventListener("click", () => selectItem(entry, entry.well, it, row));
     list.appendChild(row);
     it._row = row;
   }
   if (entry.items.length) selectItem(entry, entry.well, entry.items[0], entry.items[0]._row);
 }
+
+// Seconds / Summary toggle above the stages list
+$("viewtoggle").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b || !current || !current.entry.hasToggle) return;
+  const entry = current.entry;
+  if (entry.viewMode === b.dataset.v) return;
+  entry.viewMode = b.dataset.v;
+  entry.items = entry.viewMode === "summary" ? entry.sumItems : entry.secItems;
+  selectFile(entry);
+});
 
 function selectItem(entry, well, item, rowEl) {
   document.querySelectorAll(".stagerow.sel").forEach(r => r.classList.remove("sel"));
@@ -855,10 +913,21 @@ function selectItem(entry, well, item, rowEl) {
   $("empty").hidden = true;
   $("previewpane").hidden = false;
   if (item.type === "stage") showStage(entry, well, item);
+  else if (item.type === "summary") showSummary(entry, item);
   else showTable(entry, item.table);
 }
 
+// swap the preview body between the interactive graph and a rendered PDF page
+function setPreviewMode(mode) {
+  const isSum = mode === "summary";
+  $("graphwrap").hidden = isSum;
+  $("legendrow").hidden = isSum;
+  if (isSum) $("origwrap").hidden = true;
+  $("sumwrap").hidden = !isSum;
+}
+
 function showStage(entry, well, item) {
+  setPreviewMode("graph");
   const M = item.meta;
   $("pv-title").textContent = (M.uwi || well.base) + "  —  Stage " + stageLabel(item);
   $("pv-sub").textContent = [
@@ -878,6 +947,7 @@ function showStage(entry, well, item) {
 }
 
 function showTable(entry, t) {
+  setPreviewMode("graph");
   $("pv-title").textContent = t.title;
   $("pv-sub").textContent = `${t.rows.length} rows × ${t.columns.length} columns`;
   clearGraph();
@@ -895,6 +965,92 @@ function showTable(entry, t) {
   dl.appendChild(b); addZipCount(dl);
   $("pv-notes").textContent = "";
 }
+
+// ---------- Summary Data: render a document's table pages from the PDF ----------
+const sumState = { doc: null, docKey: null, seq: 0 };
+
+async function ensureSumPdf(entry) {
+  if (!entry._pdfFile && entry._pdfUrl) {          // desktop: read from disk
+    const resp = await fetch(entry._pdfUrl);
+    if (!resp.ok) throw new Error("couldn't read PDF from disk");
+    entry._pdfFile = new File([await resp.blob()], entry.name);
+  }
+  if (!entry._pdfFile) throw new Error("original PDF not kept — re-add the file");
+  await loadPdfjs();
+  if (sumState.docKey !== entry.name) {
+    const buf = await entry._pdfFile.arrayBuffer();
+    if (sumState.doc) { try { sumState.doc.destroy(); } catch (e) { /* noop */ } }
+    sumState.doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    sumState.docKey = entry.name;
+  }
+  return sumState.doc;
+}
+
+function showSummary(entry, item) {
+  setPreviewMode("summary");
+  const g = item.group, n = g.pages.length;
+  $("pv-title").textContent = g.title;
+  $("pv-sub").textContent = `${n} page${n > 1 ? "s" : ""}  ·  rendered from the source PDF`;
+  $("pv-dl").innerHTML = ""; $("pv-table").innerHTML = ""; $("pv-notes").textContent = "";
+  renderSummaryPage(entry, item);
+}
+
+async function renderSummaryPage(entry, item) {
+  const cv = $("sumcanvas"), ctx = cv.getContext("2d");
+  const g = item.group, total = g.pages.length;
+  const i = Math.max(0, Math.min(item.pageIdx || 0, total - 1));
+  item.pageIdx = i;
+  $("sumlbl").textContent = `Page ${i + 1} / ${total}`;
+  $("sumprev").disabled = i <= 0;
+  $("sumnext").disabled = i >= total - 1;
+  const mySeq = ++sumState.seq;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = chartColors().axisText; ctx.font = "13px system-ui";
+  ctx.fillText("rendering…", 18, 26);
+  try {
+    const doc = await ensureSumPdf(entry);
+    const page = await doc.getPage(g.pages[i]);      // 1-based
+    if (mySeq !== sumState.seq) return;
+    let vp = page.getViewport({ scale: 1 });
+    vp = page.getViewport({ scale: (cv.width / vp.width) * 2 });   // 2x crisp
+    const off = document.createElement("canvas");
+    off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
+    await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
+    if (mySeq !== sumState.seq) return;
+    cv.height = Math.round(cv.width * off.height / off.width);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(off, 0, 0, cv.width, cv.height);
+  } catch (e) {
+    if (mySeq !== sumState.seq) return;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = "#c0392b"; ctx.font = "13px system-ui";
+    ctx.fillText("couldn't render page: " + e.message, 18, 26);
+  }
+}
+
+$("sumprev").addEventListener("click", () => {
+  if (!current || current.item.type !== "summary") return;
+  current.item.pageIdx--; renderSummaryPage(current.entry, current.item);
+});
+$("sumnext").addEventListener("click", () => {
+  if (!current || current.item.type !== "summary") return;
+  current.item.pageIdx++; renderSummaryPage(current.entry, current.item);
+});
+$("sumopen").addEventListener("click", async () => {
+  if (!current || current.item.type !== "summary") return;
+  const entry = current.entry;
+  try {
+    if (!entry._pdfFile && entry._pdfUrl) {
+      if (entry._pdfUrl.startsWith("/api/file")) { window.open(entry._pdfUrl, "_blank"); return; }
+      const resp = await fetch(entry._pdfUrl);
+      entry._pdfFile = new File([await resp.blob()], entry.name);
+    }
+    const url = URL.createObjectURL(
+      new Blob([await entry._pdfFile.arrayBuffer()], { type: "application/pdf" }));
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { /* noop */ }
+});
 
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
 const GP = { L: 50, R: 16, T: 14, B: 44 };            // plot padding

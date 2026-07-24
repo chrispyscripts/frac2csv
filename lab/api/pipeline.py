@@ -26,6 +26,7 @@ import frac_core as fc
 import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
+import bj_summary
 import lib1
 import peloton_frac as pel
 import sk_fracr as sk
@@ -265,6 +266,30 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             "rows": [[r.get(c, "") for c in cols] for r in trows],
             "source": "Trican stage report (stages numbered by document order)"})
         notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports.")
+
+    # --- BJ / WellView "Summary Data": table pages for viewing + the
+    # per-interval Totals table parsed into a grid (document-level) ---
+    if any(bj1.detect(doc[p]) for p in range(npages)):
+        try:
+            groups = bj_summary.find_summary_pages(doc)
+        except Exception:
+            groups = []
+        if groups:
+            results.append({"type": "summary", "groups": groups,
+                            "source": "BJ / WellView summary"})
+        for pno in range(npages):
+            try:
+                if bj_summary.is_totals_page(doc[pno]):
+                    tab = bj_summary.parse_totals(doc[pno])
+                    if tab:
+                        results.append({
+                            "type": "table",
+                            "title": "Totals — per-interval frac summary",
+                            "well": "", "uwi": "", "formation": "",
+                            "columns": tab["columns"], "rows": tab["rows"],
+                            "source": "BJ Totals summary", "page": pno + 1})
+            except Exception as e:
+                notes.append(f"p{pno + 1}: BJ Totals parse failed — {e}")
 
     if not results:
         extra = "" if raster else \

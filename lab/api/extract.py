@@ -72,7 +72,7 @@ def process_pdf(data, filename):
     results, notes = pipeline.extract_document(doc, filename=filename)
     doc.close()
 
-    stages, tables = [], []
+    stages, tables, summary = [], [], []
     for r in results:
         if r["type"] == "series":
             stages.append(_stage("vector", r["meta"], r["samples"],
@@ -80,14 +80,16 @@ def process_pdf(data, filename):
                                                    r.get("labels")),
                                  r["source"], r.get("page"),
                                  r.get("geom")))
+        elif r["type"] == "summary":
+            summary.extend(r.get("groups", []))
         else:
             tables.append({
                 "title": r["title"], "well": r.get("well", ""),
                 "uwi": r.get("uwi", ""), "formation": r.get("formation", ""),
                 "columns": r["columns"], "rows": r["rows"],
-                "source": r.get("source", ""),
+                "source": r.get("source", ""), "page": r.get("page"),
             })
-    return stages, tables, notes
+    return stages, tables, notes, summary
 
 
 class handler(BaseHTTPRequestHandler):
@@ -113,7 +115,9 @@ class handler(BaseHTTPRequestHandler):
             data = base64.b64decode(req["data"])
             if data[:5] != b"%PDF-":
                 return self._send(422, {"error": "Not a PDF."})
-            stages, tables, notes = process_pdf(data, req.get("filename", "file.pdf"))
-            self._send(200, {"stages": stages, "tables": tables, "notes": notes})
+            stages, tables, notes, summary = process_pdf(
+                data, req.get("filename", "file.pdf"))
+            self._send(200, {"stages": stages, "tables": tables,
+                             "notes": notes, "summary": summary})
         except Exception as e:
             self._send(400, {"error": f"{type(e).__name__}: {e}"})

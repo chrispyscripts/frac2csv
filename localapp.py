@@ -66,7 +66,7 @@ def _channels_payload(data, units=None, labels=None):
 
 
 def serialize(results, notes):
-    stages, tables = [], []
+    stages, tables, summary = [], [], []
     for r in results:
         if r["type"] == "series":
             stages.append({
@@ -76,14 +76,16 @@ def serialize(results, notes):
                                               r.get("labels")),
                 "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
             })
+        elif r["type"] == "summary":
+            summary.extend(r.get("groups", []))
         else:
             tables.append({
                 "title": r["title"], "well": r.get("well", ""),
                 "uwi": r.get("uwi", ""), "formation": r.get("formation", ""),
                 "columns": r["columns"], "rows": r["rows"],
-                "source": r.get("source", ""),
+                "source": r.get("source", ""), "page": r.get("page"),
             })
-    return stages, tables, notes
+    return stages, tables, notes, summary
 
 
 def process_bytes(data, filename):
@@ -98,7 +100,7 @@ def process_path(path, fmt="both", tabs=True, seq=False):
     results, notes = pipeline.extract_document(
         doc, filename=os.path.basename(path))
     doc.close()
-    stages, tables, notes = serialize(results, notes)
+    stages, tables, notes, summary = serialize(results, notes)
 
     series = [r for r in results if r["type"] == "series"]
     written = []
@@ -126,7 +128,7 @@ def process_path(path, fmt="both", tabs=True, seq=False):
             for row in t["rows"]:
                 w.writerow(row)
         written.append(nm)
-    return stages, tables, notes, written
+    return stages, tables, notes, written, summary
 
 
 _ROOT_CACHE = {}
@@ -227,10 +229,10 @@ class Handler(BaseHTTPRequestHandler):
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":
                     return self._json(422, {"error": "Not a PDF."})
-                stages, tables, notes = process_bytes(
+                stages, tables, notes, summary = process_bytes(
                     data, req.get("filename", "file.pdf"))
                 return self._json(200, {"stages": stages, "tables": tables,
-                                        "notes": notes})
+                                        "notes": notes, "summary": summary})
             if self.path == "/api/manifest":
                 rows = pe.parse_manifest(req.get("text", ""))
                 indexes = {}
@@ -257,12 +259,13 @@ class Handler(BaseHTTPRequestHandler):
                 path = req.get("path", "")
                 if path not in ALLOWED_FILES:
                     return self._json(403, {"error": "path not allowed"})
-                stages, tables, notes, written = process_path(
+                stages, tables, notes, written, summary = process_path(
                     path, req.get("format", "both"),
                     bool(req.get("xlsxTabs", True)),
                     req.get("stageLabel") == "seq")
                 return self._json(200, {"stages": stages, "tables": tables,
-                                        "notes": notes, "written": written})
+                                        "notes": notes, "written": written,
+                                        "summary": summary})
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
