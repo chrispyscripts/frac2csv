@@ -37,3 +37,9 @@ curve.Tr Press = Annulus Pressure
 curve.Slurry Rate = Slurry Rate
 curve.WH Prop Conc = Surface Conc
 curve.BH Prop Conc = BH Conc
+
+Canyon-1
+curve.Tr Press = Mainline, Main Pressure
+curve.Slurry Rate = Combined WH, Blender Slurry, Blender 1 Dirty Rate
+curve.WH Prop Conc = Proppant WH, Blender 1 Concentration
+curve.BH Prop Conc = BH Prop. Conc., Btm Prop Conc

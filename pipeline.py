@@ -143,7 +143,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             try:
                 meta, samples, data, units = canyon.extract_page(page)
                 results.append(_series(_md(meta), samples, data,
-                                       "Canyon chart", pno + 1, units))
+                                       "Canyon chart", pno + 1, units,
+                                       geom=getattr(meta, "geom", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Canyon chart failed — {e}")
             continue

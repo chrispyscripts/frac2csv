@@ -189,6 +189,22 @@ def extract_page(page, sample_sec=1.0):
     if not (60 < n < 100000):
         raise ValueError(f"canyon: implausible duration {n}s")
     meta.duration_min = n / 60.0
+
+    # geometry for the Lab's synced "Compare Original" view. Time runs along
+    # x; the three stacked panels share it, so the value extent spans the
+    # whole plotted region (top panel's frame down to the bottom panel's) —
+    # the horizontal gridlines across all panels give that span.
+    hgrid = []
+    for d in drawings:
+        if d.get("color") is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        if abs(r.y1 - r.y0) < 0.6 and (r.x1 - r.x0) > 100:
+            hgrid.append((r.y0 + r.y1) / 2)
+    if hgrid:
+        ta, tb = t_fit_global
+        meta.geom = {"axis": "x", "ta": float(ta - t_lo), "tb": float(tb),
+                     "v0": float(min(hgrid)), "v1": float(max(hgrid))}
     if meta.date:
         h = int(t_lo // 3600) % 24
         meta.start_time = f"{h:02d}:{int(t_lo % 3600 // 60):02d}:{int(t_lo % 60):02d}"
