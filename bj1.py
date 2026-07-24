@@ -224,8 +224,22 @@ def extract_page(page, sample_sec=1.0):
     if not name_color:
         raise ValueError("bj1: no legend colors")
 
-    x_lo = min(x for _, x, _ in tpts) - 15
-    x_hi = max(x for _, x, _ in tpts) + 15
+    # Clip curves to the plot FRAME (the full-height vertical gridlines), not
+    # the time-label span. BJ prints its first/last time labels inset from the
+    # frame edges, so each stage's opening ramp (and tail) sits between the
+    # frame and the outermost labels — a label-based window clips it. The
+    # per-series y-band and the >=5-item stroke length filter below already
+    # exclude off-plot strokes, so widening to the frame only recovers real
+    # curve points (verified: never drops points, only adds contiguous ramp).
+    vgrid = [(d["rect"].x0 + d["rect"].x1) / 2 for d in drawings
+             if d.get("color") is not None and d["type"] in ("s", "fs")
+             and abs(d["rect"].x1 - d["rect"].x0) < 0.6
+             and (d["rect"].y1 - d["rect"].y0) > 100]
+    if vgrid:
+        x_lo, x_hi = min(vgrid) - 2, max(vgrid) + 2
+    else:
+        x_lo = min(x for _, x, _ in tpts) - 15
+        x_hi = max(x for _, x, _ in tpts) + 15
     series, units = {}, {}
     for name, color in name_color.items():
         key = name_axis(name)
