@@ -258,6 +258,23 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(400, {"error": f"bad request: {e}"})
         try:
+            if self.path == "/api/save":
+                # write one export file into a folder on disk (desktop only).
+                folder = req.get("folder", "") or os.path.join(
+                    os.path.expanduser("~"), "Downloads")
+                name = os.path.basename(req.get("name", "export.csv"))
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                    dest = os.path.join(folder, name)
+                    if "b64" in req:
+                        with open(dest, "wb") as f:
+                            f.write(base64.b64decode(req["b64"]))
+                    else:
+                        with open(dest, "w", newline="") as f:
+                            f.write(req.get("text", ""))
+                    return self._json(200, {"written": dest})
+                except OSError as e:
+                    return self._json(500, {"error": str(e)})
             if self.path == "/api/extract":
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":

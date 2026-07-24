@@ -67,6 +67,19 @@
   .destrow input { flex:1; border:1px solid var(--line); border-radius:6px; background:var(--panel2);
                    color:var(--ink); font-family:var(--mono); font-size:11.5px; padding:6px 9px; }
   .btn.gear { flex-shrink:0; }
+  /* export 2x2 popover */
+  .exportwrap { position:relative; }
+  .exportpop { position:absolute; right:0; top:calc(100% + 6px); z-index:40;
+               background:var(--panel); border:1px solid var(--line); border-radius:10px;
+               box-shadow:0 14px 40px rgba(0,0,0,.3); padding:14px; min-width:320px; }
+  .exgrid { display:grid; grid-template-columns:auto 1fr 1fr; gap:8px 10px; align-items:center; }
+  .exgrid .exh { font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+                 font-weight:700; color:var(--mut); text-align:center; }
+  .exgrid .exrl { font-size:12.5px; font-weight:700; color:var(--ink); padding-right:6px; }
+  .exgrid .btn { width:100%; text-align:center; }
+  .exgrid .btn:disabled { opacity:.4; pointer-events:none; }
+  .exfoot { margin-top:12px; padding-top:10px; border-top:1px solid var(--line);
+            font-size:11px; color:var(--mut); font-family:var(--mono); word-break:break-all; }
   .manifestbar { margin:10px 12px; padding:10px 12px; border:1px solid var(--carmine);
                  border-radius:8px; background:var(--panel2); display:flex;
                  flex-direction:column; gap:8px; }
@@ -175,7 +188,23 @@
     <select id="provider" class="prov" title="Batch by service provider">
       <option value="">All service providers</option>
     </select>
-    <button class="btn primary" id="zip" hidden>Download all (.zip)</button>
+    <div class="exportwrap">
+      <button type="button" class="btn primary" id="exportbtn">⬇ Export ▾</button>
+      <div class="exportpop" id="exportpop" hidden>
+        <div class="exgrid">
+          <span></span>
+          <span class="exh">Current file</span>
+          <span class="exh">All files</span>
+          <span class="exrl">Seconds</span>
+          <button type="button" class="btn" id="exSecOne">Save</button>
+          <button type="button" class="btn" id="exSecAll">Save all</button>
+          <span class="exrl">Summary</span>
+          <button type="button" class="btn" id="exSumOne">Save</button>
+          <button type="button" class="btn" id="exSumAll">Save all</button>
+        </div>
+        <div class="exfoot" id="exfoot"></div>
+      </div>
+    </div>
     <button type="button" class="btn gear" id="settingsbtn" title="Settings">⚙ Settings</button>
   </div>
 
@@ -517,6 +546,7 @@ $("mrun").addEventListener("click", async () => {
         const out = await resp.json();
         if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
         q._pdfUrl = "/api/file?path=" + encodeURIComponent(row.real);
+        q._srcPath = row.real;   // TXT-batch file: exports go to its own folder
         render(q, base, out.stages || [], out.tables || [], out.notes || [], out.summary || []);
         const bits = [];
         if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
@@ -821,10 +851,14 @@ function wellXLSX(stages, tabs) {
   return buildXlsx(sheets);
 }
 
+function csvCell(v) {
+  const s = v == null ? "" : String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;   // RFC-4180 quoting
+}
 function tableCSV(t) {
-  const rows = [["well", t.well, "uwi", t.uwi, "formation", t.formation].join(","),
-                t.columns.join(",")];
-  for (const r of t.rows) rows.push(r.join(","));
+  const rows = [["well", t.well, "uwi", t.uwi, "formation", t.formation].map(csvCell).join(","),
+                t.columns.map(csvCell).join(",")];
+  for (const r of t.rows) rows.push(r.map(csvCell).join(","));
   return rows.join("\n");
 }
 
@@ -1044,9 +1078,8 @@ function showTable(entry, t) {
     (t.rows.length > 200 ? `<div class="notes">Showing 200 of ${t.rows.length} rows — the CSV has all.</div>` : "");
   const dl = $("pv-dl"); dl.innerHTML = "";
   const b = document.createElement("button"); b.className = "btn primary";
-  b.textContent = "Download table CSV";
-  const nm = (t.title.split(" — ")[0] || "table").replace(/[^\w.-]+/g, "_") + "-stages-table.csv";
-  b.addEventListener("click", () => saveText(nm, tableCSV(t)));
+  b.textContent = "⬇ Export…";
+  b.addEventListener("click", () => $("exportbtn").click());
   dl.appendChild(b); addZipCount(dl);
   $("pv-notes").textContent = "";
 }
@@ -1729,29 +1762,14 @@ $("lblmode").addEventListener("click", e => {
 })();
 
 // ---------- downloads + export toggles ----------
+// the preview footer just shows how many files are export-ready; the actual
+// downloads live in the Export panel (top bar)
 function renderDlbar(well) {
   const dl = $("pv-dl"); dl.innerHTML = "";
-  if (!well) { addZipCount(dl); return; }
-  const nStages = new Set(well.stages.map(s => s.meta.stage || "?")).size;
-  const stg = `${nStages} stage${nStages > 1 ? "s" : ""}`;
-  if (settings.format !== "xlsx") {
-    const b = document.createElement("button");
-    b.className = "btn" + (settings.format === "csv" ? " primary" : "");
-    b.textContent = `CSV — ${stg}`;
-    b.addEventListener("click", () => saveText(well.base + ".csv", wellCSV(well.stages)));
-    dl.appendChild(b);
-  }
-  if (settings.format !== "csv") {
-    const b = document.createElement("button"); b.className = "btn primary";
-    b.textContent = settings.xlsxTabs
-      ? `Excel — MAIN + ${nStages} tab${nStages > 1 ? "s" : ""}`
-      : `Excel — one sheet (${stg})`;
-    b.addEventListener("click", () => {
-      try { saveBlob(well.base + ".xlsx", wellXLSX(well.stages, settings.xlsxTabs), XLSX_MIME); }
-      catch (e) { alert("Excel build failed: " + e.message); }
-    });
-    dl.appendChild(b);
-  }
+  const b = document.createElement("button");
+  b.className = "btn primary"; b.textContent = "⬇ Export…";
+  b.addEventListener("click", () => $("exportbtn").click());
+  dl.appendChild(b);
   addZipCount(dl);
 }
 
@@ -1771,9 +1789,9 @@ function addZipCount(dl) {
 }
 
 function updateCount() {
-  const { count, prov } = exportTotals();
-  $("zip").hidden = count === 0;
-  $("zip").textContent = prov ? `Download ${prov} (.zip)` : "Download all (.zip)";
+  const { count } = exportTotals();
+  $("exportbtn").disabled = count === 0 && entries.length === 0;
+  if (!$("exportpop").hidden) refreshExportPanel();
 }
 
 function updateClearAll() {
@@ -1869,21 +1887,164 @@ $("provider").addEventListener("change", () => {
   updateCount();
 });
 
-$("zip").addEventListener("click", () => {
-  const p = $("provider").value;
-  const enc = new TextEncoder();
-  const files = {};
-  for (const w of wells) {
-    if (p && w.provider !== p) continue;
-    if (settings.format !== "xlsx") files[w.base + ".csv"] = enc.encode(wellCSV(w.stages));
-    if (settings.format !== "csv") files[w.base + ".xlsx"] = wellXLSX(w.stages, settings.xlsxTabs);
+// ---------- Export panel: Seconds/Summary x current/all ----------
+const isLocal = () => !!(localInfo && localInfo.local);
+const b64enc = buf => {
+  let s = ""; const a = new Uint8Array(buf);
+  for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+  return btoa(s);
+};
+function dirName(p) { return p.replace(/[\/\\][^\/\\]*$/, ""); }
+// where an entry's exports go: its own folder for TXT-batch files, else the
+// configured destination folder
+function folderFor(entry) {
+  if (entry && entry._srcPath) return dirName(entry._srcPath);
+  return settings.destFolder || "";
+}
+// one file out: desktop writes to disk, web downloads
+async function emit(entry, name, content, binary) {
+  if (isLocal()) {
+    const body = binary
+      ? { folder: folderFor(entry), name, b64: b64enc(content) }
+      : { folder: folderFor(entry), name, text: content };
+    const r = await fetch("/api/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    if (!r.ok) throw new Error("save failed");
+    return (await r.json()).written;
   }
-  for (const { name, text, provider } of tableFiles)
-    if (!p || provider === p) files[name] = enc.encode(text);
+  if (binary) saveBlob(name, content, XLSX_MIME); else saveText(name, content);
+  return name;
+}
+// the seconds file(s) for one well, honoring the format setting
+async function emitSeconds(entry, well) {
+  const out = [];
+  if (settings.format !== "xlsx")
+    out.push(await emit(entry, well.base + ".csv", wellCSV(well.stages), false));
+  if (settings.format !== "csv")
+    out.push(await emit(entry, well.base + ".xlsx",
+                        wellXLSX(well.stages, settings.xlsxTabs), true));
+  return out;
+}
+// the summary table CSV(s) for one entry (BJ Totals etc.)
+async function emitSummary(entry) {
+  const out = [];
+  for (const t of (entry._tables || [])) {
+    const nm = entry.name.replace(/\.pdf$/i, "") + "-summary.csv";
+    out.push(await emit(entry, nm, tableCSV(t), false));
+  }
+  return out;
+}
+// web batch: bundle into one zip instead of many downloads
+async function emitZip(pairs, zipName) {
+  const enc = new TextEncoder(); const files = {};
+  for (const { name, text, bin } of pairs)
+    files[name] = bin ? new Uint8Array(bin) : enc.encode(text);
   const zipped = fflate.zipSync(files, { level: 6 });
-  const tag = p ? p.replace(/[^\w]+/g, "-").toLowerCase() : "all";
-  saveBlob(`carmines-lab-${tag}.zip`, new Blob([zipped], { type: "application/zip" }), null);
+  saveBlob(zipName, new Blob([zipped], { type: "application/zip" }), null);
+}
+function providerFilter() { return $("provider").value; }
+function entriesInScope() {
+  const p = providerFilter();
+  return entries.filter(e => !p || e.provider === p);
+}
+
+async function exportSecondsOne() {
+  const e = current && current.entry;
+  if (!e || !e.well) return;
+  const files = await emitSeconds(e, e.well);
+  exportDone(files);
+}
+async function exportSummaryOne() {
+  const e = current && current.entry;
+  if (!e || !(e._tables && e._tables.length)) return;
+  const files = await emitSummary(e);
+  exportDone(files);
+}
+async function exportSecondsAll() {
+  const list = entriesInScope().filter(e => e.well);
+  if (!list.length) return;
+  if (isLocal()) {
+    let n = 0;
+    for (const e of list) n += (await emitSeconds(e, e.well)).length;
+    exportDone([`${n} file(s)`]);
+  } else {
+    const pairs = [];
+    for (const e of list) {
+      if (settings.format !== "xlsx")
+        pairs.push({ name: e.well.base + ".csv", text: wellCSV(e.well.stages) });
+      if (settings.format !== "csv")
+        pairs.push({ name: e.well.base + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs) });
+    }
+    await emitZip(pairs, "carmines-seconds.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
+  }
+}
+async function exportSummaryAll() {
+  const list = entriesInScope().filter(e => e._tables && e._tables.length);
+  if (!list.length) return;
+  if (isLocal()) {
+    let n = 0;
+    for (const e of list) n += (await emitSummary(e)).length;
+    exportDone([`${n} file(s)`]);
+  } else {
+    const pairs = [];
+    for (const e of list)
+      for (const t of e._tables)
+        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + "-summary.csv", text: tableCSV(t) });
+    await emitZip(pairs, "carmines-summary.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
+  }
+}
+
+function exportDone(files) {
+  const foot = $("exfoot");
+  const where = isLocal()
+    ? (settings.destFolder || "each file's folder")
+    : "browser downloads";
+  foot.textContent = `✓ saved ${files.join(", ")} → ${where}`;
+}
+
+function refreshExportPanel() {
+  const e = current && current.entry;
+  const hasWell = !!(e && e.well);
+  const hasSum = !!(e && e._tables && e._tables.length);
+  const inScope = entriesInScope();
+  $("exSecOne").disabled = !hasWell;
+  $("exSumOne").disabled = !hasSum;
+  $("exSecAll").disabled = !inScope.some(x => x.well);
+  $("exSumAll").disabled = !inScope.some(x => x._tables && x._tables.length);
+  const dest = isLocal()
+    ? "Saves to: " + (settings.destFolder
+        ? settings.destFolder + "  (TXT-list files → their own folder)"
+        : "each file's own folder / Downloads — set a folder in Settings")
+    : "Downloads to your browser";
+  $("exfoot").textContent = dest;
+}
+
+// open right-aligned to the button, but flip to left-aligned if that would
+// run off the left edge (narrow window / wrapped top bar)
+function positionExportPop() {
+  const pop = $("exportpop");
+  pop.style.left = "auto"; pop.style.right = "0";
+  if (pop.getBoundingClientRect().left < 8) {
+    pop.style.right = "auto"; pop.style.left = "0";
+  }
+}
+$("exportbtn").addEventListener("click", () => {
+  const pop = $("exportpop");
+  if (pop.hidden) { refreshExportPanel(); pop.hidden = false; positionExportPop(); }
+  else pop.hidden = true;
 });
+document.addEventListener("click", e => {
+  if (!$("exportpop").hidden && !e.target.closest(".exportwrap"))
+    $("exportpop").hidden = true;
+});
+const wrapErr = fn => async () => {
+  try { await fn(); } catch (err) { $("exfoot").textContent = "✗ " + err.message; }
+};
+$("exSecOne").addEventListener("click", wrapErr(exportSecondsOne));
+$("exSumOne").addEventListener("click", wrapErr(exportSummaryOne));
+$("exSecAll").addEventListener("click", wrapErr(exportSecondsAll));
+$("exSumAll").addEventListener("click", wrapErr(exportSummaryAll));
 
 // seed the provider menu with the validated set before any file loads
 rebuildProviderMenu();
