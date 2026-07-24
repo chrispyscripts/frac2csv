@@ -210,6 +210,27 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             except Exception as e:
                 notes.append(f"p{pno + 1}: vector chart failed — {e}")
 
+    # CalFrac/MView 2013-vintage: a stage's channels are split across several
+    # consecutive chart pages, only the FIRST of which carries the stage
+    # number (rate+pressure numbered; the concentration pages left blank).
+    # Fill the stage number down onto those blank pages so build_well merges
+    # the four channels into one stage, and drop the empty whole-job overview
+    # pages (no curves) that would otherwise become phantom stages.
+    last_stage, keep = None, []
+    for r in results:
+        if r.get("source") != "MView chart":
+            keep.append(r)
+            continue
+        if not r["data"]:                       # whole-job overview, no curves
+            continue
+        st = r["meta"].get("stage")
+        if st:
+            last_stage = st
+        elif last_stage:
+            r["meta"]["stage"] = last_stage     # blank conc page -> its stage
+        keep.append(r)
+    results[:] = keep
+
     # --- SK 'FracR' per-stage engineering tables (document-level) ---
     if any(sk.detect(doc[p]) for p in range(npages)):
         header, rows = {}, []
