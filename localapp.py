@@ -46,6 +46,37 @@ KNOWN = {"Tr Press": "#1d5bd8", "Slurry Rate": "#b02e2e",
 ALLOWED_FILES = set()
 
 
+def pick_folder():
+    """Open the OS's native folder chooser and return the picked path (or
+    None if cancelled). macOS uses osascript; Windows a PowerShell dialog;
+    otherwise tkinter."""
+    import subprocess
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(
+                ["osascript", "-e",
+                 'POSIX path of (choose folder with prompt '
+                 '"Choose the export destination folder")'],
+                capture_output=True, text=True, timeout=120)
+            return out.stdout.strip() or None
+        if os.name == "nt":
+            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+                  "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                  "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}")
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                                 capture_output=True, text=True, timeout=120)
+            return out.stdout.strip() or None
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        path = filedialog.askdirectory()
+        root.destroy()
+        return path or None
+    except Exception:
+        return None
+
+
 def _channels_payload(data, units=None, labels=None):
     out, seen = [], set()
     for i, (key, vals) in enumerate(data.items()):
@@ -184,6 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/local-info":
             return self._json(200, {"local": True,
                                     "raster": pipeline.raster_available()})
+        if p == "/api/pick-folder":
+            return self._json(200, {"path": pick_folder() or ""})
         if p == "/api/file":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             m = re.search(r"path=([^&]+)", q)
