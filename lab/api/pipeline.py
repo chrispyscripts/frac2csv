@@ -133,7 +133,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             try:
                 meta, samples, data, units = bj1.extract_page(page)
                 results.append(_series(_md(meta), samples, data,
-                                       "BJ chart", pno + 1, units))
+                                       "BJ chart", pno + 1, units,
+                                       geom=getattr(meta, "geom", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: BJ chart failed — {e}")
             continue

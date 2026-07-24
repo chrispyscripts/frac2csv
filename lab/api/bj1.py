@@ -199,8 +199,6 @@ def extract_page(page, sample_sec=1.0):
                 best, bestd = c, dx
         if best:
             name_color.setdefault(s["t"], best)
-    if not name_color:
-        raise ValueError("bj1: no legend colors")
 
     # match each legend name to the axis whose name span mentions it
     def name_axis(name):
@@ -213,13 +211,18 @@ def extract_page(page, sample_sec=1.0):
     # a black series (e.g. Comb FR Ratio) has a black legend dash, so it never
     # matched a colored sample above. Assign it the black stroke color when
     # exactly one un-coloured legend series maps to an axis (more than one black
-    # curve would be indistinguishable).
+    # curve would be indistinguishable). This has to run BEFORE the empty-legend
+    # guard below: the auxiliary single-series pages BJ emits alongside each
+    # stage plot their only curve in black, so bailing out first threw them all
+    # away as "no legend colors".
     legend_names = {s["t"] for s in spans
                     if re.search(r"\([^)]+\)", s["t"]) and (s["y1"] - s["y0"]) <= 20}
     black_cands = [n for n in legend_names
                    if n not in name_color and name_axis(n) is not None]
     if len(black_cands) == 1:
         name_color[black_cands[0]] = (0.0, 0.0, 0.0)
+    if not name_color:
+        raise ValueError("bj1: no legend colors")
 
     x_lo = min(x for _, x, _ in tpts) - 15
     x_hi = max(x for _, x, _ in tpts) + 15
@@ -274,6 +277,25 @@ def extract_page(page, sample_sec=1.0):
     if not (60 < n < 100000):
         raise ValueError(f"bj1: implausible duration {n}s")
     meta.duration_min = n / 60.0
+
+    # geometry for the Lab's synced "Compare Original" view. Time runs along
+    # x here (no page rotation), and the stacked value axes share one frame,
+    # so the horizontal gridlines give its vertical extent.
+    hgrid = []
+    for d in drawings:
+        if d.get("color") is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        if abs(r.y1 - r.y0) < 0.6 and (r.x1 - r.x0) > 100:
+            hgrid.append((r.y0 + r.y1) / 2)
+    if hgrid:
+        v0, v1 = min(hgrid), max(hgrid)
+    else:
+        v0 = min(f[2] for f in fits.values())
+        v1 = max(f[3] for f in fits.values())
+    meta.geom = {"axis": "x", "ta": float(tfit[0] - t_lo),
+                 "tb": float(tfit[1]), "v0": float(v0), "v1": float(v1)}
+
     day_sec = t_lo % 86400
     meta.start_time = (f"{int(day_sec // 3600):02d}:"
                        f"{int(day_sec % 3600 // 60):02d}:"
