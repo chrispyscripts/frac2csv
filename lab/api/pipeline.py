@@ -27,6 +27,8 @@ import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
 import bj_summary
+import calfrac_summary
+import liberty_summary
 import lib1
 import peloton_frac as pel
 import sk_fracr as sk
@@ -58,6 +60,16 @@ def _series(meta, samples, data, source, page=None, units=None, labels=None,
 
 def raster_available():
     return _RASTER_OK and ar.available()
+
+
+def _bj_totals(doc):
+    """doc-level wrapper: the BJ per-interval Totals table as {columns, rows}."""
+    for p in range(doc.page_count):
+        if bj_summary.is_totals_page(doc[p]):
+            tab = bj_summary.parse_totals(doc[p])
+            if tab:
+                return tab
+    return None
 
 
 def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
@@ -267,29 +279,41 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             "source": "Trican stage report (stages numbered by document order)"})
         notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports.")
 
-    # --- BJ / WellView "Summary Data": table pages for viewing + the
-    # per-interval Totals table parsed into a grid (document-level) ---
-    if any(bj1.detect(doc[p]) for p in range(npages)):
+    # --- "Summary Data": each chart provider's summary table pages (for
+    # viewing) + the key per-stage summary table parsed into a grid. Keyed
+    # to the chart provider actually present so summaries don't fire on the
+    # wrong document. ---
+    chart_srcs = {r["source"] for r in results if r["type"] == "series"}
+
+    def _summary(mod, present, title, parse_fn):
+        if not present:
+            return
         try:
-            groups = bj_summary.find_summary_pages(doc)
+            groups = mod.find_summary_pages(doc)
         except Exception:
             groups = []
         if groups:
             results.append({"type": "summary", "groups": groups,
-                            "source": "BJ / WellView summary"})
-        for pno in range(npages):
-            try:
-                if bj_summary.is_totals_page(doc[pno]):
-                    tab = bj_summary.parse_totals(doc[pno])
-                    if tab:
-                        results.append({
-                            "type": "table",
-                            "title": "Totals — per-interval frac summary",
-                            "well": "", "uwi": "", "formation": "",
-                            "columns": tab["columns"], "rows": tab["rows"],
-                            "source": "BJ Totals summary", "page": pno + 1})
-            except Exception as e:
-                notes.append(f"p{pno + 1}: BJ Totals parse failed — {e}")
+                            "source": title})
+        try:
+            tab = parse_fn(doc)
+        except Exception as e:
+            notes.append(f"{title} parse failed — {e}")
+            return
+        if tab and tab.get("rows"):
+            results.append({
+                "type": "table", "title": title,
+                "well": "", "uwi": "", "formation": "",
+                "columns": tab["columns"], "rows": tab["rows"],
+                "source": title})
+
+    _summary(bj_summary, "BJ chart" in chart_srcs,
+             "Totals — per-interval frac summary",
+             lambda d: _bj_totals(d))
+    _summary(liberty_summary, "Liberty chart" in chart_srcs,
+             "Stimulation Summary", liberty_summary.parse_stimulation)
+    _summary(calfrac_summary, "MView chart" in chart_srcs,
+             "Treatment Summary", calfrac_summary.parse_treatment_summary)
 
     if not results:
         extra = "" if raster else \
