@@ -32,12 +32,12 @@ PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
 
 
-def _channels_payload(data, units=None, labels=None):
+def _channels_payload(data, units=None, labels=None, scales=None):
     """Channels normalized through Carmine's alias table: vendor curve
     names become his canonical columns; the raw name survives as the
     label. Unmapped series keep their own name."""
     out = []
-    known = {"Tr Press": "#1d5bd8", "Slurry Rate": "#b02e2e",
+    known = {"Tr Press": "#b02e2e", "Slurry Rate": "#1d5bd8",
              "WH Prop Conc": "#1e7a34", "BH Prop Conc": "#7a3b9b"}
     seen = set()
     for i, (key, vals) in enumerate(data.items()):
@@ -52,6 +52,16 @@ def _channels_payload(data, units=None, labels=None):
             "label": (labels or {}).get(key, key),
             "unit": unit,
             "color": known.get(col, PALETTE[i % len(PALETTE)]),
+            # the chart axis this channel was drawn against, when the template
+            # knows it — the ghost overlay plots against it so it lands on the
+            # printed ink instead of being auto-normalised
+            # the chart's OWN printed axis for this curve. A pair means the
+            # axis is not zero-based (some are inverted or offset), so both
+            # ends travel; a bare number is a 0..max axis.
+            "axisMin": (lambda v: float(v[0]) if isinstance(v, (list, tuple))
+                        else 0.0)((scales or {}).get(key) or 0.0),
+            "axisMax": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
+                        else (float(v) if v else None))((scales or {}).get(key)),
             "values": [None if np.isnan(v) else round(float(v), 4) for v in vals],
         })
     return out
@@ -77,7 +87,8 @@ def process_pdf(data, filename):
         if r["type"] == "series":
             stages.append(_stage("vector", r["meta"], r["samples"],
                                  _channels_payload(r["data"], r.get("units"),
-                                                   r.get("labels")),
+                                                   r.get("labels"),
+                                                   r.get("scales")),
                                  r["source"], r.get("page"),
                                  r.get("geom")))
         elif r["type"] == "summary":

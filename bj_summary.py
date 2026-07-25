@@ -62,10 +62,20 @@ def find_summary_pages(doc):
     return groups
 
 
+# Each Totals data row is anchored on its start-time cell. WellView writes
+# that as ISO ('2024-10-05 03:14') in some exports and US ('10/5/2024 3:14')
+# in others — matching only ISO dropped whole documents on the floor.
+_ROWDATE = re.compile(r"(?:20\d\d-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/20\d\d)")
+
+
 def is_totals_page(page):
+    # WellView writes the header as 'Interval #' (non-breaking space) in
+    # some vintages, so a literal ' ' match silently skipped whole documents —
+    # find_summary_pages still listed the page, which is why those files
+    # showed a Totals page with nothing parsed from it. \s covers NBSP/NNBSP.
     t = page.get_text()
     return (re.search(r"^Totals\s*$", t, re.M) is not None
-            and "Interval #" in t
+            and re.search(r"Interval\s*#", t) is not None
             and re.search(r"(Breakdown|Max\.?\s*Pressure)", t) is not None)
 
 
@@ -125,7 +135,7 @@ def parse_totals(page):
     if iy is None:
         return None
     dates = sorted(y for x, y, t in spans
-                   if re.match(r"20\d\d-\d\d-\d\d", t) and y > iy)
+                   if _ROWDATE.match(t) and y > iy)
     if len(dates) < 2:
         return None
     first_data = dates[0]
@@ -134,7 +144,7 @@ def parse_totals(page):
     # in the table body define the columns; cluster their left-x.
     body = [(x, y, t) for x, y, t in spans if y >= first_data - 3
             and (re.fullmatch(r"-?[\d,]+(\.\d+)?", t)
-                 or re.match(r"20\d\d-\d\d-\d\d", t)
+                 or _ROWDATE.match(t)
                  or re.fullmatch(r"\d{1,3}", t))]
     xs = sorted(x for x, y, t in body)
     anchors = []
@@ -162,14 +172,14 @@ def parse_totals(page):
     # and cells within a tight y-band, drop each into its column
     rows = []
     date_spans = sorted(((y, x, t) for x, y, t in spans
-                         if re.match(r"20\d\d-\d\d-\d\d", t) and y > iy),
+                         if _ROWDATE.match(t) and y > iy),
                         key=lambda s: s[0])
     for dy, dx, dt in date_spans:
         cells = [None] * len(anchors)
         for x, y, t in spans:
             if abs(y - dy) <= 6 and y >= first_data - 3:
                 if re.fullmatch(r"-?[\d,]+(\.\d+)?", t) or \
-                        re.match(r"20\d\d-\d\d-\d\d", t) or \
+                        _ROWDATE.match(t) or \
                         re.fullmatch(r"\d{1,3}", t):
                     ci = col_of(x)
                     if cells[ci] is None:

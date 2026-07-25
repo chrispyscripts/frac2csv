@@ -166,6 +166,34 @@ def extract_page(page, sample_sec=1.0):
     if not fits:
         raise ValueError("bj1: no axis tick columns")
 
+    # Tick labels are NOT consistently aligned: on some pages the '0' of an
+    # axis sits ~11pt left of its '2000' (right edges 726 vs 743), so the
+    # 8pt right-edge clustering above orphans it into a 1-member column that
+    # gets dropped. The column then loses its bottom tick, its band starts
+    # part-way up the axis, and every sample below that is clipped away —
+    # which surfaced as concentration channels sitting on a flat raised
+    # baseline (~373 kg/m³) instead of zero through the pad.
+    # Re-attach an orphan only when it lands on an existing column's own
+    # fitted line, so a genuinely unrelated number can't be absorbed.
+    orphans = [s for _k, ss in cols.items() if len(ss) < 3 for s in ss]
+    for s in orphans:
+        try:
+            v = float(s["t"].replace(",", ""))
+        except ValueError:
+            continue
+        for key in list(fits):
+            a, b, y_lo, y_hi = fits[key]
+            if abs(key - s["x1"]) > 40:
+                continue
+            axis_span = abs(b) * max(1.0, y_hi - y_lo)
+            if abs(a + b * s["cy"] - v) <= max(1e-6, 0.02 * axis_span):
+                cols[key].append(s)
+                pts = [(float(z["t"].replace(",", "")), z["cy"]) for z in cols[key]]
+                a2, b2 = _fit(pts)
+                ys = [z["cy"] for z in cols[key]]
+                fits[key] = (a2, b2, min(ys) - 10, max(ys) + 10)
+                break
+
     # rotated axis-name spans (taller than wide) -> nearest tick column
     axis_names = {}
     for s in spans:
@@ -241,6 +269,8 @@ def extract_page(page, sample_sec=1.0):
         x_lo = min(x for _, x, _ in tpts) - 15
         x_hi = max(x for _, x, _ in tpts) + 15
     series, units = {}, {}
+    axes = {}          # label -> (axis_min, axis_max) from the printed ticks
+    axis_fit = {}      # label -> (a, b) so the axis can be read AT the frame
     for name, color in name_color.items():
         key = name_axis(name)
         if key is None:
@@ -282,6 +312,12 @@ def extract_page(page, sample_sec=1.0):
         label = mn.group(1).strip() if mn else name
         series[label] = (t[order], v[order])
         units[label] = mn.group(2).strip() if mn else ""
+        # the chart's OWN printed axis for this curve, so the Lab plots
+        # against the report's range instead of guessing one from the data
+        tvals = [float(z["t"].replace(",", "")) for z in cols.get(key, [])]
+        if tvals:
+            axes[label] = (float(min(tvals)), float(max(tvals)))
+            axis_fit[label] = (float(a), float(b))
     if not series:
         raise ValueError("bj1: no curves matched")
 
@@ -302,7 +338,24 @@ def extract_page(page, sample_sec=1.0):
         r = d["rect"]
         if abs(r.y1 - r.y0) < 0.6 and (r.x1 - r.x0) > 100:
             hgrid.append((r.y0 + r.y1) / 2)
-    if hgrid:
+    # Ghost stretches the page so v0..v1 fills our plot rect, and the Lab
+    # draws each curve against its printed tick range — so v0/v1 must be the
+    # page coords where the axis READS those ticks. Gridline extremes are not
+    # that (there is no gridline at the axis zero), which shifted the whole
+    # backdrop. Invert each series' own fit and take the median.
+    edges_lo, edges_hi = [], []
+    for _n, (fa, fb) in axis_fit.items():
+        if abs(fb) < 1e-12:
+            continue
+        lo_v, hi_v = axes[_n]
+        edges_lo.append((lo_v - fa) / fb)
+        edges_hi.append((hi_v - fa) / fb)
+    if edges_lo and edges_hi:
+        edges_lo.sort(); edges_hi.sort()
+        p_lo = edges_lo[len(edges_lo) // 2]
+        p_hi = edges_hi[len(edges_hi) // 2]
+        v0, v1 = min(p_lo, p_hi), max(p_lo, p_hi)
+    elif hgrid:
         v0, v1 = min(hgrid), max(hgrid)
     else:
         v0 = min(f[2] for f in fits.values())
@@ -317,4 +370,10 @@ def extract_page(page, sample_sec=1.0):
     samples = np.arange(int(n / sample_sec)) * sample_sec
     data = {name: _resample(t - t_lo, v, samples)
             for name, (t, v) in series.items()}
+    # printed axis range per curve, so the Lab's y axis matches the report;
+    # axes_frame is the same axis read AT the geom frame edges — ghost
+    # stretches the page between those, so any gap is visible misalignment
+    meta.axes = axes
+    meta.axes_frame = {n: (af[0] + af[1] * v0, af[0] + af[1] * v1)
+                       for n, af in axis_fit.items()}
     return meta, samples, data, units

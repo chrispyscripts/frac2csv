@@ -29,15 +29,16 @@ def _find_table():
     return cands[0]
 
 
-_DEFAULT_PATH = _find_table()   # the bundled table
-_PATH = _DEFAULT_PATH
+_PATH = _find_table()           # the bundled table (shipped via --add-data)
 
 CANONICAL = []          # ordered canonical columns
 CANONICAL_UNITS = {}    # canonical -> unit
 _LOOKUP = {}            # normalized raw name -> canonical
-# per-template extras Carmine keeps in his file (chart_headers_include,
-# chart_stage_tokens, ...). Parsed and kept so his data round-trips even
-# though the templates don't consult them yet.
+# Per-template extras in Carmine's format (chart_headers_include,
+# chart_stage_tokens, ...). The templates don't consult these yet, but the
+# parsing is NOT optional: alias_table.txt contains those lines, and without
+# this branch each one would fall through to the bare-line case and be read
+# as the start of a new template section, silently mis-scoping the aliases.
 DIRECTIVES = {}         # template code -> {key: [values]}
 
 
@@ -76,21 +77,6 @@ def _load():
     # canonical names map to themselves
     for c in CANONICAL:
         _LOOKUP.setdefault(_norm(c), c)
-
-
-def reload(path=None):
-    """Re-read the alias table, optionally from a user-supplied file — Carmine
-    keeps his own .ini on disk so he can add providers/terminology without a
-    rebuild. Pass a falsy path to revert to the bundled table. Returns
-    (path_loaded, n_aliases)."""
-    global _PATH
-    _PATH = path or _DEFAULT_PATH
-    CANONICAL.clear()
-    CANONICAL_UNITS.clear()
-    _LOOKUP.clear()
-    DIRECTIVES.clear()
-    _load()
-    return _PATH, len(_LOOKUP)
 
 
 _load()

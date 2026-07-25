@@ -209,6 +209,21 @@ def extract_page(page, meta=None, sample_sec=1.0):
     if meta.duration_min <= 0:
         raise ValueError("stage duration unknown (no time axis labels); set it manually")
 
+    # Geometry for the Lab's synced "Compare Original" view. Unlike the other
+    # templates, this page's content is rotated: time runs along the PDF y
+    # axis and increases upward, the value axes along x. The Lab wants
+    # t = ta + tb * coord, so invert the sample mapping used below --
+    #   t = (frame.y1 - y) / H * D   ->   ta = D/H * frame.y1,  tb = -D/H
+    # -- and hand it the frame's x extent as the value axis. Taken from the
+    # detected frame itself, so it lines up edge-to-edge rather than to the
+    # inset tick labels.
+    H = frame.y1 - frame.y0
+    if H > 1e-9:
+        D = meta.duration_min * 60.0
+        meta.geom = {"axis": "y", "ta": float(D / H * frame.y1),
+                     "tb": float(-D / H),
+                     "v0": float(frame.x0), "v1": float(frame.x1)}
+
     fullscale = {"pressure": meta.pressure_max, "rate": meta.rate_max, "conc": meta.conc_max}
     points = _collect_points(page, frame)
     if not points:
@@ -219,12 +234,18 @@ def extract_page(page, meta=None, sample_sec=1.0):
     sample_min = samples / 60.0
 
     data = {}
+    # Each channel's axis full-scale. The Lab's ghost overlay needs it: the
+    # printed curve is drawn against the chart's own axis, so normalising the
+    # ghost to the channel's observed max would float it off the ink and make
+    # a correctly-aligned chart look wrong.
+    meta.scales = {}
     for color, arr in points.items():
         name, kind = SERIES[color]
         fs = fullscale[kind]
         if fs <= 0:
             meta.warnings.append(f"{name}: axis scale unknown, channel skipped")
             continue
+        meta.scales[name] = float(fs)
         t = (frame.y1 - arr[:, 1]) / (frame.y1 - frame.y0) * meta.duration_min
         v = (frame.x1 - arr[:, 0]) / (frame.x1 - frame.x0) * fs
         order = np.argsort(t, kind="stable")

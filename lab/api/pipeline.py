@@ -52,10 +52,10 @@ def _md(meta):
 
 
 def _series(meta, samples, data, source, page=None, units=None, labels=None,
-            geom=None):
+            geom=None, scales=None):
     return {"type": "series", "meta": meta, "samples": samples, "data": data,
             "units": units or {}, "labels": labels or {}, "source": source,
-            "page": page, "geom": geom}
+            "page": page, "geom": geom, "scales": scales or {}}
 
 
 def raster_available():
@@ -137,7 +137,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                 meta, samples, data, units = lib1.extract_page(page)
                 results.append(_series(_md(meta), samples, data,
                                        "Liberty chart", pno + 1, units,
-                                       geom=getattr(meta, "geom", None)))
+                                       geom=getattr(meta, "geom", None),
+                                       scales=getattr(meta, "axes", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
             continue
@@ -147,7 +148,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                 meta, samples, data, units = bj1.extract_page(page)
                 results.append(_series(_md(meta), samples, data,
                                        "BJ chart", pno + 1, units,
-                                       geom=getattr(meta, "geom", None)))
+                                       geom=getattr(meta, "geom", None),
+                                       scales=getattr(meta, "axes", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: BJ chart failed — {e}")
             continue
@@ -206,7 +208,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             try:
                 meta, samples, data = fc.extract_page(page, sample_sec=sample_sec)
                 results.append(_series(_md(meta), samples, data,
-                                       "MView chart", pno + 1))
+                                       "MView chart", pno + 1,
+                                       geom=getattr(meta, "geom", None),
+                                       scales=getattr(meta, "scales", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: vector chart failed — {e}")
 

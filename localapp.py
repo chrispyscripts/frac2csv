@@ -6,7 +6,8 @@ layout), backed by a 127.0.0.1-only server with direct disk access:
 
   - raster/scanned templates work (local tesseract), unlike the web
   - TXT drive lists resolve server-side — no folder picker, any browser
-  - exports write straight into each PDF's own folder
+  - exports write straight into each PDF's own folder (or, when that folder
+    is read-only, the destination folder set in Settings)
   - no upload chunking; original-chart pages served from disk
 
 This is the desktop entrypoint frozen into the Windows EXE.
@@ -33,47 +34,18 @@ import fitz                     # noqa: E402
 import numpy as np              # noqa: E402
 
 import aliases                  # noqa: E402
+from version import VERSION     # noqa: E402
 import pipeline                 # noqa: E402
 import pipeline_export as pe    # noqa: E402
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
-KNOWN = {"Tr Press": "#1d5bd8", "Slurry Rate": "#b02e2e",
+KNOWN = {"Tr Press": "#b02e2e", "Slurry Rate": "#1d5bd8",
          "WH Prop Conc": "#1e7a34", "BH Prop Conc": "#7a3b9b"}
 
 # paths the client may read back (Original chart) — filled by manifest and
 # process-path requests so /api/file can't be pointed anywhere else
 ALLOWED_FILES = set()
-
-
-def pick_file(prompt="Choose the alias table file"):
-    """Native file chooser -> path (or None). Carmine keeps his own alias
-    .ini on disk; this lets him point the app at it."""
-    import subprocess
-    try:
-        if sys.platform == "darwin":
-            out = subprocess.run(
-                ["osascript", "-e",
-                 f'POSIX path of (choose file with prompt "{prompt}")'],
-                capture_output=True, text=True, timeout=120)
-            return out.stdout.strip() or None
-        if os.name == "nt":
-            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
-                  "$f=New-Object System.Windows.Forms.OpenFileDialog;"
-                  "$f.Filter='Alias table (*.ini;*.txt)|*.ini;*.txt|All files (*.*)|*.*';"
-                  "if($f.ShowDialog() -eq 'OK'){$f.FileName}")
-            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                                 capture_output=True, text=True, timeout=120)
-            return out.stdout.strip() or None
-        import tkinter
-        from tkinter import filedialog
-        root = tkinter.Tk()
-        root.withdraw()
-        path = filedialog.askopenfilename()
-        root.destroy()
-        return path or None
-    except Exception:
-        return None
 
 
 def pick_folder():
@@ -107,7 +79,55 @@ def pick_folder():
         return None
 
 
-def _channels_payload(data, units=None, labels=None):
+_WRITABLE = {}
+
+
+def dir_writable(folder):
+    """Can we actually create a file in `folder`? Probed for real (and cached
+    per folder) rather than trusting os.access — Carmine's charts live on an
+    NTFS external drive macOS mounts read-only, and the write only fails at
+    open() time with Errno 30."""
+    if not folder:
+        return False
+    if folder in _WRITABLE:
+        return _WRITABLE[folder]
+    ok = False
+    # thread id in the name: two requests may probe the same folder at once
+    # and must not delete each other's probe
+    probe = os.path.join(folder, f".frac2csv-writetest-{os.getpid()}-"
+                                 f"{threading.get_ident()}")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with open(probe, "w"):
+            pass
+        ok = True
+    except OSError:
+        ok = False
+    if ok:
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
+    _WRITABLE[folder] = ok
+    return ok
+
+
+def export_folder(preferred, dest_folder=""):
+    """Where exports actually land: `preferred` (normally the PDF's own
+    folder) when it is writable, else the folder configured in Settings, else
+    ~/Downloads, else home. -> (folder, skipped) where skipped is the
+    unwritable folder we had to give up on ("" when none)."""
+    if dir_writable(preferred):
+        return preferred, ""
+    home = os.path.expanduser("~")
+    for cand in (dest_folder, os.path.join(home, "Downloads"), home):
+        if cand and dir_writable(cand):
+            return cand, preferred
+    raise OSError(f"no writable export folder — tried {preferred}, "
+                  f"{dest_folder or '(no destination set)'}, {home}")
+
+
+def _channels_payload(data, units=None, labels=None, scales=None):
     out, seen = [], set()
     for i, (key, vals) in enumerate(data.items()):
         canonical = aliases.canon(key)
@@ -120,6 +140,16 @@ def _channels_payload(data, units=None, labels=None):
             "label": (labels or {}).get(key, key),
             "unit": unit,
             "color": KNOWN.get(col, PALETTE[i % len(PALETTE)]),
+            # the chart axis this channel was drawn against, when the
+            # template knows it — the ghost overlay plots against it so it
+            # lands on the printed ink instead of being auto-normalised
+            # the chart's OWN printed axis for this curve. A pair means the
+            # axis is not zero-based (some are inverted or offset), so both
+            # ends travel; a bare number is a 0..max axis.
+            "axisMin": (lambda v: float(v[0]) if isinstance(v, (list, tuple))
+                        else 0.0)((scales or {}).get(key) or 0.0),
+            "axisMax": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
+                        else (float(v) if v else None))((scales or {}).get(key)),
             "values": [None if (v is None or not np.isfinite(v))
                        else round(float(v), 4) for v in vals],
         })
@@ -134,7 +164,7 @@ def serialize(results, notes):
                 "kind": "vector", "meta": r["meta"],
                 "n": int(len(r["samples"])), "sample_sec": 1.0,
                 "channels": _channels_payload(r["data"], r.get("units"),
-                                              r.get("labels")),
+                                              r.get("labels"), r.get("scales")),
                 "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
             })
         elif r["type"] == "summary":
@@ -156,7 +186,7 @@ def process_bytes(data, filename):
     return serialize(results, notes)
 
 
-def process_path(path, fmt="both", tabs=True, seq=False):
+def process_path(path, fmt="both", tabs=True, seq=False, dest_folder=""):
     doc = fitz.open(path)
     results, notes = pipeline.extract_document(
         doc, filename=os.path.basename(path))
@@ -165,7 +195,8 @@ def process_path(path, fmt="both", tabs=True, seq=False):
 
     series = [r for r in results if r["type"] == "series"]
     written = []
-    folder = os.path.dirname(path)
+    src_dir = os.path.dirname(path)
+    folder, skipped = export_folder(src_dir, dest_folder)
     base = os.path.splitext(os.path.basename(path))[0]
     if series:
         model = pe.build_well(series, fallback_uwi=pe.filename_uwi(
@@ -189,7 +220,10 @@ def process_path(path, fmt="both", tabs=True, seq=False):
             for row in t["rows"]:
                 w.writerow(row)
         written.append(nm)
-    return stages, tables, notes, written, summary
+    if written and skipped:
+        notes.append(f"{skipped} is read-only — exports saved to {folder} "
+                     "instead.")
+    return stages, tables, notes, written, summary, folder
 
 
 _ROOT_CACHE = {}
@@ -243,16 +277,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split("?")[0]
         if p == "/api/local-info":
-            return self._json(200, {"local": True,
+            return self._json(200, {"local": True, "version": VERSION,
                                     "raster": pipeline.raster_available()})
         if p == "/api/pick-folder":
             return self._json(200, {"path": pick_folder() or ""})
-        if p == "/api/pick-file":
-            return self._json(200, {"path": pick_file() or ""})
-        if p == "/api/alias-info":
-            return self._json(200, {"path": aliases._PATH,
-                                    "count": len(aliases._LOOKUP),
-                                    "templates": sorted(aliases.DIRECTIVES)})
         if p == "/api/file":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             m = re.search(r"path=([^&]+)", q)
@@ -294,24 +322,15 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._json(400, {"error": f"bad request: {e}"})
         try:
-            if self.path == "/api/alias-file":
-                # point the engine at Carmine's own alias .ini on disk
-                path = req.get("path", "").strip()
-                if path and not os.path.isfile(path):
-                    return self._json(404, {"error": "file not found"})
-                try:
-                    loaded, count = aliases.reload(path or None)
-                except Exception as e:
-                    return self._json(500, {"error": f"{type(e).__name__}: {e}"})
-                return self._json(200, {"path": loaded, "count": count,
-                                        "templates": sorted(aliases.DIRECTIVES)})
             if self.path == "/api/save":
                 # write one export file into a folder on disk (desktop only).
                 folder = req.get("folder", "") or os.path.join(
                     os.path.expanduser("~"), "Downloads")
                 name = os.path.basename(req.get("name", "export.csv"))
                 try:
-                    os.makedirs(folder, exist_ok=True)
+                    # a TXT-batch entry's own folder can be a read-only volume
+                    folder, _ = export_folder(folder,
+                                              req.get("destFolder", ""))
                     dest = os.path.join(folder, name)
                     if "b64" in req:
                         with open(dest, "wb") as f:
@@ -356,13 +375,14 @@ class Handler(BaseHTTPRequestHandler):
                 path = req.get("path", "")
                 if path not in ALLOWED_FILES:
                     return self._json(403, {"error": "path not allowed"})
-                stages, tables, notes, written, summary = process_path(
+                stages, tables, notes, written, summary, out_dir = process_path(
                     path, req.get("format", "both"),
                     bool(req.get("xlsxTabs", True)),
-                    req.get("stageLabel") == "seq")
+                    req.get("stageLabel") == "seq",
+                    req.get("destFolder", ""))
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "written": written,
-                                        "summary": summary})
+                                        "summary": summary, "outDir": out_dir})
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})

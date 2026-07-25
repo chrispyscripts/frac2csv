@@ -188,8 +188,14 @@ def extract_page(page, sample_sec=1.0):
         named[0] = black[0]
     ticks = defaultdict(list)
     for s in spans:
-        if s["color"] != 0 and re.fullmatch(r"[\d,]+(\.\d+)?", s["t"]):
-            ticks[s["color"]].append((float(s["t"].replace(",", "")), s["cx"], s["cy"]))
+        # Liberty prints the zero tick of several axes as '-0' (the charting
+        # tool's negative zero). Without the optional sign that tick was
+        # dropped, so e.g. Treating Pressure came out 15..75 instead of 0..75
+        # and Slurry Rate 4..20 instead of 0..20 — every curve on those axes
+        # was then placed against the wrong range. '+ 0.0' normalises -0.0.
+        if s["color"] != 0 and re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
+            ticks[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
+                                      s["cx"], s["cy"]))
     # value gridlines: long constant-x strokes. Tick LABELS sit ~12pt off
     # the gridline they annotate (left-aligned text), which biased every
     # value by a constant few units — snap each label to its gridline and
@@ -274,6 +280,8 @@ def extract_page(page, sample_sec=1.0):
 
     series = {}
     units = {}
+    axes = {}          # name -> (axis_min, axis_max) from the printed ticks
+    axis_fit = {}      # name -> (a, b) so the axis can be read AT the frame
     for color_int, info in named.items():
         fit = fits.get(color_int) or unit_fit.get(info["unit"])
         if fit is None:
@@ -328,6 +336,11 @@ def extract_page(page, sample_sec=1.0):
         order = np.argsort(t, kind="stable")
         series[info["name"]] = (t[order], v[order])
         units[info["name"]] = info["unit"]
+        # The chart's OWN axis range for this curve, straight off its printed
+        # tick labels. The Lab plots against this instead of guessing a top
+        # from the data, so our y axis reads the same as the source report.
+        axes[info["name"]] = (float(v_lo_ax), float(v_hi_ax))
+        axis_fit[info["name"]] = (float(a), float(b))
     if not series:
         raise ValueError("lib1: no curves matched")
 
@@ -354,13 +367,39 @@ def extract_page(page, sample_sec=1.0):
     # v0/v1 span the plot across the other dimension. (For landscape pages
     # the swapped span coords mean the time map applies to page-x and the
     # tick extent to page-y — which is exactly what axis/v0/v1 encode.)
-    # frame extent from the gridline geometry when present — the padded tick
-    # extent includes the legend band, which the compare view must crop
-    v_lo_f = min(grid_xs) if grid_xs else x_lo
-    v_hi_f = max(grid_xs) if grid_xs else x_hi
+    # Ghost/compare stretches the page so v0..v1 fills our plot rect, and the
+    # Lab draws each curve against its printed tick range. Those only agree if
+    # v0/v1 are the page coords where the axis READS those tick values.
+    # min/max of the gridlines is not that: there is no gridline at the axis
+    # zero, so the lowest one sits ~11% of the span above it and the backdrop
+    # rode up by that much. Invert each series' own fit instead and take the
+    # median, so one noisy axis can't drag the frame.
+    edges_lo, edges_hi = [], []
+    for _n, (fa, fb) in axis_fit.items():
+        if abs(fb) < 1e-12:
+            continue
+        lo_v, hi_v = axes[_n]
+        edges_lo.append((lo_v - fa) / fb)
+        edges_hi.append((hi_v - fa) / fb)
+    if edges_lo and edges_hi:
+        edges_lo.sort(); edges_hi.sort()
+        p_lo = edges_lo[len(edges_lo) // 2]
+        p_hi = edges_hi[len(edges_hi) // 2]
+        v_lo_f, v_hi_f = min(p_lo, p_hi), max(p_lo, p_hi)
+    else:
+        v_lo_f = min(grid_xs) if grid_xs else x_lo
+        v_hi_f = max(grid_xs) if grid_xs else x_hi
     meta.geom = {"axis": "x" if horizontal else "y",
                  "ta": float(ta - t_lo), "tb": float(tb),
                  "v0": float(v_lo_f), "v1": float(v_hi_f)}
     samples = np.arange(int(n / sample_sec)) * sample_sec
     data = {name: _resample(t - t_lo, v, samples) for name, (t, v) in series.items()}
+    # printed axis range per curve; the Lab plots against these so its y
+    # axis matches the source report instead of a value-derived guess.
+    # axes_frame is the same axis read AT the plot-frame edges (what geom
+    # v0/v1 spans) — ghost mode stretches the page between those edges, so
+    # this is the range our curves must be placed against to sit on the ink.
+    meta.axes = axes
+    meta.axes_frame = {n: (af[0] + af[1] * v_lo_f, af[0] + af[1] * v_hi_f)
+                       for n, af in axis_fit.items()}
     return meta, samples, data, units

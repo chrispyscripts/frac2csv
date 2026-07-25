@@ -18,6 +18,11 @@
     --line:#2a313c; --carmine:#d64a63; --carmine-dk:#b23350; --ok:#3fb950;
   }
   * { box-sizing:border-box; margin:0; }
+  /* Any author `display:` (flex, inline-flex, grid) outranks the browser's
+     own [hidden]{display:none}, so elements we hide in JS by setting .hidden
+     kept rendering. Restore the attribute's meaning globally — every rule
+     below that sets display must lose to it. */
+  [hidden] { display:none !important; }
   html, body { height:100%; }
   body { background:var(--bg); color:var(--ink);
          font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
@@ -27,6 +32,10 @@
          border-bottom:1px solid var(--line); flex-wrap:wrap; }
   .wordmark { font-size:19px; font-weight:700; letter-spacing:-0.02em; }
   .wordmark::after { content:"."; color:var(--carmine); }
+  /* build version, so a user can say which EXE they are running */
+  .verbadge { font-family:var(--mono); font-size:10.5px; color:var(--mut);
+              border:1px solid var(--line); border-radius:5px;
+              padding:1px 6px; margin-left:8px; align-self:center; }
   .grow { flex:1; }
   .optlabel { font-size:10px; text-transform:uppercase; letter-spacing:.06em;
               color:var(--mut); font-weight:600; margin-right:6px; }
@@ -43,12 +52,12 @@
   .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
          color:var(--ink); font-size:12.5px; font-weight:600; padding:6px 13px; cursor:pointer; }
   .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn.primary { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn.primary:hover { background:var(--carmine-dk); color:#fff; }
   /* settings modal */
   .modalback { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50;
                display:flex; align-items:flex-start; justify-content:center; padding-top:70px; }
-  .modalback[hidden] { display:none; }   /* author display:flex would else beat [hidden] */
   .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px;
            width:min(520px,92vw); box-shadow:0 20px 60px rgba(0,0,0,.35); }
   .modalhead { display:flex; align-items:center; justify-content:space-between;
@@ -99,17 +108,25 @@
   .lefthead { padding:9px 14px; font-size:10px; text-transform:uppercase;
               letter-spacing:.06em; color:var(--mut); font-weight:700;
               border-bottom:1px solid var(--line); }
-  .midhead { display:flex; align-items:center; justify-content:space-between;
-             gap:8px; padding:6px 10px; }
-  .midhead .seg.mini button { text-transform:none; letter-spacing:0; }
+  /* the column title is gone — the Seconds/Summary toggle owns this strip */
+  .midhead { display:flex; align-items:center; gap:8px; padding:6px 10px;
+             min-height:33px; }
+  .midhead .seg.mini { flex:1; }
+  .midhead .seg.mini button { text-transform:none; letter-spacing:0; flex:1; }
   #sumcanvas { width:100%; height:auto; background:#fff; border:1px solid var(--line); }
   .files { flex:1; overflow:auto; }
   .filehead.sel { background:var(--panel2); border-left:2px solid var(--carmine); padding-left:12px; }
   .fileitem.prov-hide { display:none; }
   .drop { margin:12px; border:1.5px dashed #39414d; border-radius:10px; padding:20px 12px;
           text-align:center; cursor:pointer; color:var(--mut); font-size:12.5px; transition:.15s; }
-  .drop:hover, .drop.hot { border-color:var(--carmine); background:#1a1417; color:var(--ink); }
+  /* No fill on hover/drag — a hardcoded dark background went unreadable in
+     the light theme. The border (and text) carry the highlight instead. */
+  .drop:hover { border-color:var(--carmine); color:var(--carmine); }
   .drop b { color:var(--carmine); }
+  /* the whole left column is a drop target, not just the dashed box */
+  .left.hot { box-shadow:inset 0 0 0 2px var(--carmine); }
+  .left.hot .drop { border-color:var(--carmine); border-style:solid;
+                    color:var(--carmine); }
   .fileitem { border-bottom:1px solid var(--line); }
   .filehead { display:flex; justify-content:space-between; gap:8px; align-items:center;
               padding:9px 14px; cursor:pointer; }
@@ -136,9 +153,16 @@
   .stagerow .ch { font-family:var(--mono); font-size:10.5px; color:var(--mut); }
   /* preview */
   .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
-  .previewhead { padding:11px 18px; border-bottom:1px solid var(--line); }
+  /* title on the left, curve toggles on the right — above the chart */
+  .previewhead { padding:11px 18px; border-bottom:1px solid var(--line);
+                 display:flex; align-items:flex-start; gap:16px;
+                 flex-wrap:wrap; }
+  /* the toggles must not starve the title — below this width they wrap to
+     their own line instead of squeezing the metadata to one word per line */
+  .previewhead .phmeta { flex:1 1 260px; min-width:0; }
   .previewhead .title { font-size:14px; font-weight:600; }
   .previewhead .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .previewhead .legend { flex:0 1 auto; justify-content:flex-end; }
   .canvaswrap { padding:14px 18px 8px; }
   canvas#graph, canvas#origgraph { width:100%; height:auto;
                  background:var(--panel);
@@ -149,12 +173,16 @@
                  cursor:pointer; user-select:none; border-radius:5px; padding:2px 6px;
                  border:1px solid transparent; }
   .legend span:hover { border-color:var(--line); }
-  .legend span.dim { opacity:.32; }
-  .legend span.iso { border-color:var(--carmine); background:var(--panel2); }
+  /* every curve is ON by default; clicking a chip switches that one OFF, and
+     any number can be off at once */
+  .legend span.off { opacity:.4; text-decoration:line-through;
+                     background:var(--panel2); }
+  .legend span.off i { background:var(--mut) !important; }
   .legend i { width:13px; height:3px; border-radius:2px; display:inline-block; }
   .seg.mini button { padding:3px 9px; font-size:11px; }
   .origbar { display:flex; align-items:center; gap:8px; }
-  .origbar .btn { padding:2px 9px; font-size:12px; }
+  .origbar .btn, .previewhead > .btn { padding:2px 9px; font-size:12px; }
+  .previewhead > .btn { flex-shrink:0; align-self:center; }
   .origbar .btn:disabled { opacity:.35; pointer-events:none; }
   .origlbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
   #graph { cursor:grab; }
@@ -184,6 +212,7 @@
 <div class="app">
   <div class="top">
     <div class="wordmark">Carmine's Lab</div>
+    <span class="verbadge" id="verbadge" hidden></span>
     <div class="grow"></div>
     <select id="provider" class="prov" title="Batch by service provider">
       <option value="">All service providers</option>
@@ -254,21 +283,12 @@
             <button type="button" class="btn" id="destpick">Change…</button>
           </div>
         </div>
-        <div class="setrow col">
-          <div class="setlabel">Alias table (.ini)
-            <span class="sethint" id="aliashint"></span></div>
-          <div class="destrow">
-            <input type="text" id="aliaspath" placeholder="Built-in alias table"
-                   spellcheck="false">
-            <button type="button" class="btn" id="aliaspick">Change…</button>
-          </div>
-        </div>
       </div>
     </div>
   </div>
 
   <div class="main">
-    <div class="left">
+    <div class="left" id="leftcol">
       <div class="lefthead filehdr">
         <span>Files</span>
         <button class="clr" id="clearall" hidden>Clear all</button>
@@ -288,7 +308,6 @@
 
     <div class="mid">
       <div class="lefthead midhead">
-        <span id="midlabel">Stages</span>
         <div class="seg mini" id="viewtoggle" hidden>
           <button type="button" data-v="seconds" class="on">Seconds</button>
           <button type="button" data-v="summary">Summary</button>
@@ -303,8 +322,12 @@
         to see its per-second curves and download as CSV or Excel.</div>
       <div id="previewpane" hidden>
         <div class="previewhead">
-          <div class="title" id="pv-title">&mdash;</div>
-          <div class="sub" id="pv-sub"></div>
+          <div class="phmeta">
+            <div class="title" id="pv-title">&mdash;</div>
+            <div class="sub" id="pv-sub"></div>
+          </div>
+          <button type="button" class="btn" id="ghostbtn">Ghost</button>
+          <div class="legend" id="pv-legend"></div>
         </div>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
         <div class="canvaswrap" id="origwrap" hidden>
@@ -321,10 +344,9 @@
           <div class="canvaswrap"><canvas id="sumcanvas" width="1000" height="1294"></canvas></div>
         </div>
         <div class="legendrow" id="legendrow">
-          <div class="seg mini" id="lblmode" title="Curve naming / source view">
+          <div class="seg mini" id="lblmode" title="Curve naming">
             <button type="button" data-v="canon" class="on">Our terms</button>
             <button type="button" data-v="raw">As extracted</button>
-            <button type="button" data-v="orig">Compare Original</button>
           </div>
           <div class="origbar" id="origbar" hidden>
             <button type="button" class="btn" id="origprev">‹</button>
@@ -334,7 +356,6 @@
                     title="Open the source PDF in a separate window for
 side-by-side comparison">Open PDF ↗</button>
           </div>
-          <div class="legend" id="pv-legend"></div>
         </div>
         <div class="dlbar" id="pv-dl"></div>
         <div class="tablewrap" id="pv-table"></div>
@@ -351,8 +372,8 @@ const CHUNK_PAGES = 30;
 const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true, stageLabel: "asis",
-                   chartLabels: "canon", showOrig: false, destFolder: "",
-                   aliasFile: "" };  // toggles
+                   chartLabels: "canon", ghost: true, destFolder: "",
+                 };  // toggles
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
 let localInfo = null;
@@ -367,17 +388,10 @@ function refreshDestUI() {
     ? "where exports are saved"
     : "web build — exports go to the browser's Downloads folder";
   if (!local) $("destpath").placeholder = "Browser Downloads folder";
-  $("aliaspath").disabled = !local;
-  $("aliaspick").disabled = !local;
-  if (!local) {
-    $("aliashint").textContent = "web build — uses the built-in alias table";
-  } else if (settings.aliasFile) {
-    applyAliasFile(settings.aliasFile, true);      // re-apply on startup
-  } else {
-    fetch("/api/alias-info").then(r => r.json()).then(o => {
-      $("aliashint").textContent =
-        `built-in · ${o.count} curve names · ${o.templates.length} providers`;
-    }).catch(() => {});
+  const vb = $("verbadge");
+  if (localInfo && localInfo.version) {
+    vb.textContent = "v" + localInfo.version;
+    vb.hidden = false;
   }
 }
 // numeric part of a stage label ("HRF 5A" -> 5, "12B" -> 12); non-numeric last
@@ -406,13 +420,40 @@ const tableFiles = [];  // { name, text, provider } — engineering tables (CSV)
 const entries = [];     // file entries (for provider menu + filtering)
 
 // ---------- upload plumbing ----------
-const drop = $("drop"), fileInput = $("file");
+const drop = $("drop"), fileInput = $("file"), leftcol = $("leftcol");
 drop.addEventListener("click", () => fileInput.click());
 drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
-["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hot"); }));
-["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hot"); }));
-drop.addEventListener("drop", e => enqueue([...e.dataTransfer.files]));
+
+// The whole left column accepts a drop, not just the dashed box. dragenter/
+// dragleave also fire when the pointer crosses CHILD elements, so a plain
+// add/remove flickers the highlight off mid-drag — count depth instead and
+// only clear at zero.
+let dragDepth = 0;
+const dragging = e => [...(e.dataTransfer?.types || [])].includes("Files");
+leftcol.addEventListener("dragenter", e => {
+  if (!dragging(e)) return;
+  e.preventDefault(); dragDepth++; leftcol.classList.add("hot");
+});
+leftcol.addEventListener("dragover", e => {
+  if (!dragging(e)) return;
+  e.preventDefault();                       // required to allow the drop
+  e.dataTransfer.dropEffect = "copy";
+});
+leftcol.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; leftcol.classList.remove("hot"); }
+});
+leftcol.addEventListener("drop", e => {
+  e.preventDefault();
+  dragDepth = 0; leftcol.classList.remove("hot");
+  enqueue([...e.dataTransfer.files]);
+});
 fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); fileInput.value = ""; });
+
+// A file dropped anywhere BUT the left column would otherwise make the browser
+// navigate to it and blow away the loaded session. Swallow those.
+["dragover", "drop"].forEach(ev => window.addEventListener(ev, e => {
+  if (dragging(e) && !leftcol.contains(e.target)) e.preventDefault();
+}));
 
 function makeFileEntry(name) {
   const el = document.createElement("div"); el.className = "fileitem";
@@ -563,19 +604,30 @@ $("mrun").addEventListener("click", async () => {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: row.real, format: settings.format,
                                  xlsxTabs: settings.xlsxTabs,
-                                 stageLabel: settings.stageLabel }),
+                                 stageLabel: settings.stageLabel,
+                                 destFolder: settings.destFolder }),
         });
         const out = await resp.json();
         if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
         q._pdfUrl = "/api/file?path=" + encodeURIComponent(row.real);
         q._srcPath = row.real;   // TXT-batch file: exports go to its own folder
+        // ...unless that folder is read-only (Carmine's NTFS drive), in which
+        // case the server fell back and told us where it actually wrote
+        const srcDir = dirName(row.real);
+        if (out.outDir && out.outDir !== srcDir) q._outDir = out.outDir;
         render(q, base, out.stages || [], out.tables || [], out.notes || [], out.summary || []);
         const bits = [];
         if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
         if (out.written && out.written.length)
-          bits.push(`${out.written.length} file${out.written.length > 1 ? "s" : ""} saved beside PDF`);
+          bits.push(`${out.written.length} file${out.written.length > 1 ? "s" : ""} saved `
+                    + (q._outDir ? `→ ${baseName(q._outDir)} (PDF folder read-only)`
+                                 : "beside PDF"));
         q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data",
               bits.length ? "ok" : "err");
+        // the row only has space for the folder's name — full path on hover
+        // (and in the notes panel)
+        if (q._outDir) q.head.querySelector(".st").title = "exports written to "
+                                                          + q._outDir;
       }).catch(e => q.set("✗ " + e.message, "err"));
     }
     return;
@@ -899,7 +951,9 @@ function saveBlob(name, data, mime) {
 
 
 // ---------- results + preview ----------
-const SERIES_COLORS = { "Tr Press":"#4f8ff7", "Slurry Rate":"#f0555a",
+// Match the source charts: Liberty prints treating pressure RED and
+// slurry rate BLUE, so use the same mapping rather than the reverse.
+const SERIES_COLORS = { "Tr Press":"#f0555a", "Slurry Rate":"#4f8ff7",
   "WH Prop Conc":"#3fb950", "BH Prop Conc":"#b87fd9", "Gorv Press":"#e3b341" };
 const PALETTE = ["#4f8ff7","#f0555a","#3fb950","#b87fd9","#e3b341","#39c5cf",
   "#db61a2","#a5a5f5","#f2895d","#8ddc6b"];
@@ -1011,9 +1065,6 @@ function selectFile(entry) {
   tog.hidden = !entry.hasToggle;
   tog.querySelectorAll("button").forEach(b =>
     b.classList.toggle("on", b.dataset.v === entry.viewMode));
-  $("midlabel").textContent = entry.hasToggle
-    ? (entry.viewMode === "summary" ? "Summary Data" : "Charts")
-    : ((entry.secItems && entry.secItems.length) ? "Charts" : "Tables");
   const list = $("stages"); list.innerHTML = "";
   for (const it of entry.items) {
     const row = document.createElement("div");
@@ -1056,12 +1107,15 @@ function selectItem(entry, well, item, rowEl) {
   else showTable(entry, item.table);
 }
 
-// swap the preview body between the interactive graph and a rendered PDF page
+// swap the preview body between the interactive graph, a rendered PDF page,
+// and a plain parsed table. "table" has no curves, so everything the graph
+// needs (canvas, curve naming, compare-original page nav, legend) is chrome
+// that would only confuse — the grid and its Export button stand alone.
 function setPreviewMode(mode) {
-  const isSum = mode === "summary";
-  $("graphwrap").hidden = isSum;
-  $("legendrow").hidden = isSum;
-  if (isSum) $("origwrap").hidden = true;
+  const isSum = mode === "summary", isTable = mode === "table";
+  $("graphwrap").hidden = isSum || isTable;
+  $("legendrow").hidden = isSum || isTable;
+  if (isSum || isTable) $("origwrap").hidden = true;
   $("sumwrap").hidden = !isSum;
 }
 
@@ -1086,11 +1140,10 @@ function showStage(entry, well, item) {
 }
 
 function showTable(entry, t) {
-  setPreviewMode("graph");
+  setPreviewMode("table");
   $("pv-title").textContent = t.title;
   $("pv-sub").textContent = `${t.rows.length} rows × ${t.columns.length} columns`;
   clearGraph();
-  updateOrigBar();
   $("pv-table").innerHTML =
     `<table><tr>${t.columns.map(c => `<th>${c}</th>`).join("")}</tr>` +
     t.rows.slice(0, 200).map(r => `<tr>${r.map(v => `<td>${v}</td>`).join("")}</tr>`).join("") +
@@ -1193,7 +1246,7 @@ $("sumopen").addEventListener("click", async () => {
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
 const GP = { L: 50, R: 16, T: 14, B: 44 };            // plot padding
 const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
-                 isolated: null, hover: null };
+                 hidden: new Set(), hover: null };
 
 // curve name per the "Our terms / As extracted" toggle
 function chanName(c) {
@@ -1209,7 +1262,7 @@ function setGraph(channels, n, sampleSec, meta) {
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
   gState.tMax = Math.max(1, (n - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
-  gState.isolated = null; gState.hover = null;
+  gState.hidden = new Set(); gState.hover = null;
   channels.forEach((c, ci) => {
     let vmax = 0;
     for (const v of c.values) if (v != null && isFinite(v)) vmax = Math.max(vmax, Math.abs(v));
@@ -1220,7 +1273,7 @@ function setGraph(channels, n, sampleSec, meta) {
 }
 
 function clearGraph() {
-  gState.channels = []; gState.hover = null; gState.isolated = null;
+  gState.channels = []; gState.hover = null; gState.hidden = new Set();
   $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
   cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
@@ -1233,8 +1286,7 @@ function inMode(c) {
   return settings.chartLabels !== "canon" || CANON.includes(c.key);
 }
 function chanVisible(c, ci) {
-  return c._vmax > 0 && inMode(c) &&
-         (gState.isolated == null || gState.isolated === ci);
+  return c._vmax > 0 && inMode(c) && !gState.hidden.has(ci);
 }
 
 function fmtTime(t) {
@@ -1256,7 +1308,15 @@ function redrawGraph() {
   if (!gState.channels.length) return;
   const { t0, t1, dsec } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
-  const TC = chartColors();
+  const ghost = ghostActive();
+  // Ghost mode is a monochrome blueprint: black paper, the source chart in
+  // glowing white, our curves in one vibrant blue on top.
+  const TC = ghost
+    ? { grid: "rgba(255,255,255,.22)", axisText: "rgba(255,255,255,.75)",
+        crosshair: "rgba(255,255,255,.8)" }
+    : chartColors();
+  if (ghost) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
+  drawGhostBackdrop(ctx, W, H);
   ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
   ctx.fillStyle = TC.axisText; ctx.font = "11px ui-monospace,Menlo,monospace";
   ctx.textAlign = "center";
@@ -1277,29 +1337,186 @@ function redrawGraph() {
     }
   }
   ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
-  const hi = gState.hover ? gState.hover.hiIdx : null;
+  drawYAxis(ctx, W, H);
+  drawCurves(ctx, W, H, gState.hover ? gState.hover.hiIdx : null);
+  if (gState.hover) drawHover(ctx, W, H);
+}
+
+// The ghost is only truthful when every visible curve can be placed in the
+// ORIGINAL chart's own value space. That needs axisMax per channel. Without
+// it the curves are auto-normalised and land nowhere near the printed ink —
+// and on a multi-panel chart (Canyon stacks pressure/rate/concentration, so
+// geom's v0..v1 covers all three) there is no single vertical mapping that
+// could work at all. Showing a wrong overlay is worse than showing none,
+// because the whole point is to let the eye certify alignment.
+// Round up to a readable axis top. The ladder has to be FINE: a coarse
+// 1/2/2.5/5/10 leaves a gap between 5 and 10, so a 57 MPa treating pressure
+// jumped to a 0-100 axis and drew at 57% of the plot — which reads as a
+// scaling bug next to the source chart, whose own pressure axis is 0-60.
+const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+function niceCeil(v) {
+  if (!(v > 0)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v)));
+  const m = v / e;
+  for (const s of NICE_STEPS) if (m <= s + 1e-9) return s * e;
+  return 10 * e;
+}
+
+// EACH curve gets its own axis, rounded up to a readable top — which is how
+// the source charts are drawn (Liberty prints separate 0-75 / 0-60 / 15-71
+// axes side by side, so every curve still uses most of the plot height).
+// Sharing one scale per UNIT was tried and is wrong: it squashed a 22 MPa
+// hydraulic pressure onto the same 0-100 axis as a 79 MPa treating pressure
+// and threw away the detail that makes the small channel readable.
+function axisChannels() {
+  const out = [];
+  gState.channels.forEach((c, i) => {
+    if (!chanVisible(c, i)) return;
+    const r = axisRange(c);
+    out.push({ c, color: c._color, unit: c.unit || "",
+               lo: r.lo, hi: r.hi, printed: r.printed });
+  });
+  return out;
+}
+
+// The chart's OWN axis when the template reports it (Liberty prints a tick
+// row per curve), so our y axis reads the same as the source report. Falling
+// back to a rounded peak is a guess and will not agree with the original.
+function axisRange(c) {
+  if (c.axisMax != null && isFinite(c.axisMax) &&
+      c.axisMax !== c.axisMin) {
+    return { lo: +c.axisMin || 0, hi: +c.axisMax, printed: true };
+  }
+  return { lo: 0, hi: niceCeil(c._vmax || 0) || 1, printed: false };
+}
+
+// The scale a channel is drawn against. Hover dots and the nearest-line hit
+// test must use this too or they detach from the curve.
+function chanFrac(c, v) {
+  const r = axisRange(c);
+  const span = r.hi - r.lo;
+  return Math.abs(span) < 1e-12 ? 0 : (v - r.lo) / span;
+}
+
+function ghostMeaningful() {
+  const vis = gState.channels.filter((c, i) => chanVisible(c, i));
+  return vis.length > 0 && vis.every(c => c.axisMax > 0);
+}
+
+// Ghost mode: the source chart drawn UNDERNEATH our curves in the top graph,
+// so the two can be compared directly in one place. orig.buf already holds
+// the page rendered into the very same plot rect the graph uses, so it drops
+// straight in — clipped to that rect so its footer can't cover our time axis.
+// The comparison panel below is left completely untouched.
+const GHOST_LINE = "#2e9bff";      // vibrant blue for our curves
+const GHOST_INK = "#ffffff";       // the source chart, inverted to white
+
+// True only when the backdrop will actually render, so the black-and-white
+// treatment and the normal palette never disagree about which mode we're in.
+function ghostActive() {
+  if (!settings.ghost || !orig.synced || !orig.buf) return false;
+  // Needs real geometry: without geom the render is a whole-page fit, and
+  // painting that behind the curves would imply an alignment that isn't there.
+  const it = current && current.item;
+  const srcs = (it && it.srcs) || [];
+  const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
+  return !!(src && src.geom);
+}
+
+function drawGhostBackdrop(ctx, W, H) {
+  if (!ghostActive()) return;
+  const { L, R, T, B } = GP;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(L, T, W - L - R, H - T - B);
+  ctx.clip();
+  // The source page is dark ink on white paper. Inverting it puts white ink
+  // on black, which is what makes it read underneath a blue curve. Drawing a
+  // blurred pass first and a sharp one over it gives the ink its glow.
+  ctx.globalCompositeOperation = "lighter";
+  ctx.filter = "grayscale(1) invert(1) blur(2.5px)";
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(orig.buf, 0, 0);
+  ctx.filter = "grayscale(1) invert(1)";
+  ctx.globalAlpha = 0.9;
+  ctx.drawImage(orig.buf, 0, 0);
+  ctx.restore();
+}
+
+// One colour-coded scale per unit, stacked in the left gutter — the same way
+// the source charts print several axes side by side. Without this the plot
+// had no y axis at all and no value could be read off it.
+function drawYAxis(ctx, W, H) {
+  const { L, T, B } = GP;
+  const axes = axisChannels();
+  if (!axes.length) return;
+  const plotH = H - T - B;
+  const gh = ghostActive();
+  const TC = gh ? { grid: "rgba(255,255,255,.22)", axisText: "rgba(255,255,255,.75)" }
+                : chartColors();
+  // Stacked numbers eat vertical room fast, so thin the tick rows out as
+  // curves are added instead of letting the labels collide.
+  const fracs = axes.length > 5 ? [0, 1]
+              : axes.length > 3 ? [0, 0.5, 1]
+              : [0, 0.25, 0.5, 0.75, 1];
+  const rowH = 10;
+  ctx.save();
+  ctx.textAlign = "right";
+  ctx.font = `${rowH - 1}px ui-monospace,Menlo,monospace`;
+  for (const f of fracs) {
+    const y = T + (1 - f) * plotH;
+    ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L - 3, y + .5); ctx.lineTo(L, y + .5); ctx.stroke();
+    // Only collapse the bottom row to a single "0" when every axis really
+    // is zero-based — printed axes can start anywhere (some are inverted).
+    if (f === 0 && axes.every(a => a.lo === 0)) {
+      ctx.fillStyle = TC.axisText;
+      ctx.fillText("0", L - 5, y - 2);
+      continue;
+    }
+    axes.forEach((a, ai) => {
+      const v = a.lo + (a.hi - a.lo) * f;
+      const txt = v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2);
+      ctx.fillStyle = gh ? GHOST_LINE : a.color;
+      const dy = (ai - (axes.length - 1) / 2) * rowH + rowH / 2 - 1;
+      ctx.fillText(txt, L - 5, y + dy);
+    });
+  }
+  ctx.restore();
+}
+
+// Shared by the graph and the ghost overlay on the original. The ghost is
+// only meaningful if it is plotted by the SAME math as the real curve — a
+// second implementation could drift and make a misaligned chart look right.
+function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
+  const { L, R, T, B } = GP;
+  const { t0, t1, dsec } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  const am = alphaMul == null ? 1 : alphaMul;
+  const gh = ghostActive();
   gState.channels.forEach((c, ci) => {
     if (!chanVisible(c, ci)) return;
+    // Both the graph and the ghost place a value inside that curve's own
+    // axis — the chart's printed one when the template reports it.
     const vals = c.values;
     const i0 = Math.max(0, Math.floor(t0 / dsec));
     const i1 = Math.min(vals.length - 1, Math.ceil(t1 / dsec));
     const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
-    ctx.strokeStyle = c._color;
-    ctx.lineWidth = hi === ci ? 2.4 : 1.3;
-    ctx.globalAlpha = (hi != null && hi !== ci) ? 0.4 : 1;
+    ctx.strokeStyle = gh ? GHOST_LINE : c._color;
+    ctx.lineWidth = hi === ci ? 2.4 : (gh ? 1.6 : 1.3);
+    ctx.globalAlpha = ((hi != null && hi !== ci) ? 0.4 : 1) * am;
     ctx.beginPath();
     let pen = false;
     for (let i = i0; i <= i1; i += step) {
       const v = vals[i];
       if (v == null || !isFinite(v)) { pen = false; continue; }
       const x = L + ((i * dsec) - t0) / span * plotW;
-      const y = T + (1 - v / c._vmax) * (H - T - B);
+      const y = T + (1 - chanFrac(c, v)) * (H - T - B);
       if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
   });
-  if (gState.hover) drawHover(ctx, W, H);
 }
 
 function drawHover(ctx, W, H) {
@@ -1307,7 +1524,15 @@ function drawHover(ctx, W, H) {
   const { t0, t1, dsec, hover } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
   const x = L + (hover.t - t0) / span * plotW;
-  const TC = chartColors();
+  // Ghost needs the FULL tooltip palette, not just a crosshair: a missing key
+  // assigns `undefined` to fillStyle, which canvas ignores, so the box kept
+  // whatever colour was last set and came out unreadable on black.
+  const gh = ghostActive();
+  const TC = gh
+    ? { crosshair: "rgba(255,255,255,.85)", tipBg: "rgba(0,0,0,.90)",
+        tipBorder: "rgba(255,255,255,.60)", tipMut: "rgba(255,255,255,.70)",
+        tipInk: "#ffffff", tipHi: "#ffffff" }
+    : chartColors();
   ctx.strokeStyle = TC.crosshair; ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
   ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
@@ -1318,8 +1543,8 @@ function drawHover(ctx, W, H) {
     if (!chanVisible(c, ci)) return;
     const v = c.values[idx];
     if (v == null || !isFinite(v)) return;
-    const y = T + (1 - v / c._vmax) * (H - T - B);
-    ctx.fillStyle = c._color;
+    const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+    ctx.fillStyle = ghostActive() ? GHOST_LINE : c._color;
     ctx.beginPath(); ctx.arc(x, y, ci === hover.hiIdx ? 4.2 : 2.6, 0, 7); ctx.fill();
     rows.push({ name: chanName(c), v, unit: c.unit || "",
                 color: c._color, hi: ci === hover.hiIdx });
@@ -1347,7 +1572,14 @@ function drawHover(ctx, W, H) {
   }
   rows.forEach((r, i) => {
     const yy = by + 32 + i * 16;
-    ctx.fillStyle = r.color; ctx.fillRect(bx + 10, yy - 8, 10, 3);
+    // ghost: the selected reading gets a white highlight bar behind it, so it
+    // reads as picked out rather than merely bolder
+    if (gh && r.hi) {
+      ctx.fillStyle = "rgba(255,255,255,.18)";
+      ctx.fillRect(bx + 5, yy - 11, tw - 10, 15);
+    }
+    ctx.fillStyle = gh ? (r.hi ? "#ffffff" : GHOST_LINE) : r.color;
+    ctx.fillRect(bx + 10, yy - 8, 10, 3);
     ctx.font = (r.hi ? "bold " : "") + "11px ui-monospace,Menlo,monospace";
     ctx.fillStyle = r.hi ? TC.tipHi : TC.tipInk;
     ctx.fillText(lines[i], bx + 26, yy);
@@ -1361,11 +1593,12 @@ function buildLegend() {
     const el = document.createElement("span");
     el.innerHTML = `<i style="background:${c._color}"></i>${chanName(c)}` +
       ` <span style="color:var(--mut)">${round2(c._vmax)}${c.unit ? " " + c.unit : ""}</span>`;
-    if (gState.isolated != null)
-      el.classList.add(gState.isolated === ci ? "iso" : "dim");
-    el.title = gState.isolated === ci ? "Show all curves" : "Show only this curve";
+    const off = gState.hidden.has(ci);
+    if (off) el.classList.add("off");
+    el.title = off ? "Show this curve" : "Hide this curve";
     el.addEventListener("click", () => {
-      gState.isolated = (gState.isolated === ci) ? null : ci;
+      if (gState.hidden.has(ci)) gState.hidden.delete(ci);
+      else gState.hidden.add(ci);
       gState.hover = null;
       redrawGraph(); buildLegend();
     });
@@ -1403,10 +1636,15 @@ function origMsg(ctx, cv, msg) {
 // proportions (full-window uniform scale — the original is never squeezed;
 // zooming magnifies time only). Off, or without geometry: default height.
 const DEFAULT_H = 440;
+// The original's x-axis labels are printed BELOW its plot frame, so the
+// compare canvas gets a taller footer than the graph. The plot rect itself
+// must stay identical in both or the two panels stop lining up — hence the
+// extra height is added to the canvas and subtracted back out of plotH.
+const ORIG_FOOT = 40;
 function applyCompareSize() {
   const gcv = $("graph"), ocv = $("origgraph");
   let h = DEFAULT_H;
-  if (settings.showOrig && current && current.item &&
+  if (current && current.item &&
       current.item.type === "stage") {
     const srcs = current.item.srcs || [];
     const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
@@ -1420,22 +1658,21 @@ function applyCompareSize() {
             Math.round(plotW * valExt / timeExt) + GP.T + GP.B));
     }
   }
-  const changed = gcv.height !== h || ocv.height !== h;
+  const oh = h + ORIG_FOOT;
+  const changed = gcv.height !== h || ocv.height !== oh;
   if (gcv.height !== h) gcv.height = h;
-  if (ocv.height !== h) ocv.height = h;
+  if (ocv.height !== oh) ocv.height = oh;
   return changed;
 }
 
 function scheduleOrigSync() {
-  if (!settings.showOrig) return;
   if (orig.raf) cancelAnimationFrame(orig.raf);
   orig.raf = requestAnimationFrame(() => { orig.raf = null; syncOrig(); });
 }
 
 async function syncOrig() {
   const cv = $("origgraph"), ctx = cv.getContext("2d");
-  const on = settings.showOrig && current && current.item &&
-             current.item.type === "stage";
+  const on = current && current.item && current.item.type === "stage";
   $("origwrap").hidden = !on;
   if (!on) return;
   const item = current.item, entry = current.entry;
@@ -1473,7 +1710,7 @@ async function syncOrig() {
 // graph's exact time window — zoom/pan stay in lockstep with the graph
 async function renderSynced(ctx, cv, page, g, mySeq) {
   const { L, R, T, B } = GP, W = cv.width, H = cv.height;
-  const plotW = W - L - R, plotH = H - T - B;
+  const plotW = W - L - R, plotH = H - ORIG_FOOT - T - B;
   const ph = page.view[3] - page.view[1];       // page height, pdf user units
   const coord = t => (t - g.ta) / g.tb;         // elapsed s -> mupdf axis coord
   const toPdf = (axisC, vC) => g.axis === "y"
@@ -1536,7 +1773,7 @@ function drawOrigOverlay(t) {
   const x = L + (t - gState.t0) / span * (cv.width - L - R);
   ctx.strokeStyle = chartColors().crosshair; ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
-  ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, cv.height - B); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, cv.height - ORIG_FOOT - B); ctx.stroke();
   ctx.setLineDash([]);
 }
 
@@ -1562,7 +1799,17 @@ async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
 function updateOrigBar() {
   const item = current && current.item;
   const pages = (item && item.type === "stage" && item.pages) || [];
-  const on = settings.showOrig && pages.length > 0;
+  // Ghost toggles the backdrop on the top chart. Set it before the early
+  // return below so it stays live in every state.
+  const gb = $("ghostbtn");
+  gb.hidden = !(item && item.type === "stage" && pages.length > 0);
+  gb.classList.toggle("on", !!settings.ghost);
+  gb.title = settings.ghost
+    ? "Hide the source chart from behind our curves (the comparison panel "
+      + "below is unaffected)"
+    : "Draw the source chart behind our curves to compare them directly";
+
+  const on = pages.length > 0;
   $("origbar").hidden = !on;
   if (!on) return;
   const i = Math.min(orig.pageIdx, pages.length - 1);
@@ -1594,13 +1841,12 @@ function loadSettings() {
   setSeg($("stlbl"), settings.stageLabel);
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
-  $("aliaspath").value = settings.aliasFile || "";
 }
 function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
     stageLabel: settings.stageLabel, destFolder: settings.destFolder || "",
-    aliasFile: settings.aliasFile || "",
+    ghost: settings.ghost,
   }));
 }
 function openSettings() { $("settingsback").hidden = false; }
@@ -1638,35 +1884,10 @@ $("destpath").addEventListener("change", () => {
   saveSettings();
 });
 
-// alias table — Carmine keeps his own .ini on disk so he can add providers
-// and vendor curve names without a rebuild. Desktop only (the web build uses
-// the bundled table).
-async function applyAliasFile(path, quiet) {
-  if (!(localInfo && localInfo.local)) return;
-  try {
-    const r = await fetch("/api/alias-file", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: path || "" }) });
-    const out = await r.json();
-    if (!r.ok) throw new Error(out.error || "load failed");
-    $("aliashint").textContent =
-      `${out.count} curve names · ${out.templates.length} providers`;
-    if (!quiet) { settings.aliasFile = path || ""; saveSettings(); }
-  } catch (e) {
-    $("aliashint").textContent = "✗ " + e.message;
-  }
-}
-$("aliaspick").addEventListener("click", async () => {
-  if (!(localInfo && localInfo.local)) return;
-  $("aliaspick").disabled = true;
-  try {
-    const out = await (await fetch("/api/pick-file")).json();
-    if (out.path) { $("aliaspath").value = out.path; await applyAliasFile(out.path); }
-  } catch (e) { $("aliashint").textContent = "couldn't open file picker"; }
-  $("aliaspick").disabled = false;
-});
-$("aliaspath").addEventListener("change", () =>
-  applyAliasFile($("aliaspath").value.trim()));
+// NOTE: loading Carmine's own alias .ini at runtime was removed for now — it
+// added avoidable failure modes in the frozen build (path resolution, and a
+// malformed file silently emptying the table). The bundled alias_table.txt
+// still carries his content; revisit once the EXE is settled.
 
 // open the source PDF in its own window (scalable, side-by-side compare)
 $("origopen").addEventListener("click", async () => {
@@ -1691,25 +1912,22 @@ $("origopen").addEventListener("click", async () => {
 
 $("origprev").addEventListener("click", () => { orig.pageIdx--; if (applyCompareSize()) redrawGraph(); updateOrigBar(); syncOrig(); });
 $("orignext").addEventListener("click", () => { orig.pageIdx++; if (applyCompareSize()) redrawGraph(); updateOrigBar(); syncOrig(); });
+// "Ghost" shows/hides the source chart underneath. The synced comparison
+// itself is always on — it is no longer something to switch into.
+// Ghost mode overlays the source chart behind OUR curves in the top graph.
+// It does not touch the comparison panel below, which is always shown.
+$("ghostbtn").addEventListener("click", () => {
+  settings.ghost = !settings.ghost;
+  $("ghostbtn").classList.toggle("on", settings.ghost);
+  saveSettings();
+  redrawGraph();
+});
 
 $("lblmode").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.v === "orig") {          // companion view on/off
-    settings.showOrig = !settings.showOrig;
-    b.classList.toggle("on", settings.showOrig);
-    $("origwrap").hidden = !settings.showOrig;
-    if (applyCompareSize()) redrawGraph();
-    updateOrigBar();
-    if (settings.showOrig) syncOrig();
-    return;
-  }
   settings.chartLabels = b.dataset.v;
   for (const x of $("lblmode").children)
-    if (x.dataset.v !== "orig")
-      x.classList.toggle("on", x.dataset.v === b.dataset.v);
-  // an isolated curve hidden by the new mode would blank the graph
-  if (gState.isolated != null && !inMode(gState.channels[gState.isolated]))
-    gState.isolated = null;
+    x.classList.toggle("on", x.dataset.v === b.dataset.v);
   redrawGraph();
   buildLegend();
 });
@@ -1764,21 +1982,21 @@ $("lblmode").addEventListener("click", e => {
     }
     const t = tAt(p.x), idx = Math.round(t / gState.dsec);
     let hiIdx = null, best = 18;      // highlight the line nearest the cursor
-    gState.channels.forEach((c, ci) => {
+      gState.channels.forEach((c, ci) => {
       if (!chanVisible(c, ci)) return;
       const v = c.values[idx];
       if (v == null || !isFinite(v)) return;
-      const y = GP.T + (1 - v / c._vmax) * (H - GP.T - GP.B);
+      const y = GP.T + (1 - chanFrac(c, v)) * (H - GP.T - GP.B);
       const d = Math.abs(y - p.y);
       if (d < best) { best = d; hiIdx = ci; }
     });
     gState.hover = { t, my: p.y, hiIdx };
     redrawGraph();
-    if (settings.showOrig) drawOrigOverlay(t);
+    drawOrigOverlay(t);
   });
   cv.addEventListener("mouseleave", () => {
     if (gState.hover) { gState.hover = null; redrawGraph(); }
-    if (settings.showOrig) drawOrigOverlay(null);
+    drawOrigOverlay(null);
   });
 
   // hovering the ORIGINAL drives the same crosshair + graph tooltip
@@ -1947,9 +2165,12 @@ const b64enc = buf => {
   return btoa(s);
 };
 function dirName(p) { return p.replace(/[\/\\][^\/\\]*$/, ""); }
-// where an entry's exports go: its own folder for TXT-batch files, else the
+function baseName(p) { return String(p).replace(/[\/\\]+$/, "").split(/[\/\\]/).pop() || p; }
+// where an entry's exports go: its own folder for TXT-batch files (or the
+// folder the server fell back to when that one is read-only), else the
 // configured destination folder
 function folderFor(entry) {
+  if (entry && entry._outDir) return entry._outDir;
   if (entry && entry._srcPath) return dirName(entry._srcPath);
   return settings.destFolder || "";
 }
@@ -1957,8 +2178,10 @@ function folderFor(entry) {
 async function emit(entry, name, content, binary) {
   if (isLocal()) {
     const body = binary
-      ? { folder: folderFor(entry), name, b64: b64enc(content) }
-      : { folder: folderFor(entry), name, text: content };
+      ? { folder: folderFor(entry), name, b64: b64enc(content),
+          destFolder: settings.destFolder }
+      : { folder: folderFor(entry), name, text: content,
+          destFolder: settings.destFolder };
     const r = await fetch("/api/save", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body) });
