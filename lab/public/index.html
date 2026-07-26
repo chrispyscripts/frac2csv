@@ -58,14 +58,28 @@
   /* settings modal */
   .modalback { position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50;
                display:flex; align-items:flex-start; justify-content:center; padding-top:70px; }
+  /* Cap the dialog at the viewport and scroll its BODY: the Flag dialog
+     carries a snapshot preview, which made it taller than the screen and
+     pushed the Send button out of reach entirely. */
   .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px;
-           width:min(520px,92vw); box-shadow:0 20px 60px rgba(0,0,0,.35); }
+           width:min(520px,92vw); box-shadow:0 20px 60px rgba(0,0,0,.35);
+           display:flex; flex-direction:column; max-height:calc(100vh - 90px); }
+  .modalhead, .modalfoot { flex:0 0 auto; }
   .modalhead { display:flex; align-items:center; justify-content:space-between;
                padding:14px 18px; border-bottom:1px solid var(--line); font-weight:700; }
   .modalhead .x { border:none; background:none; font-size:22px; line-height:1; cursor:pointer;
                   color:var(--mut); padding:0 4px; }
   .modalhead .x:hover { color:var(--carmine); }
-  .modalbody { padding:8px 18px 18px; }
+  .modalbody { padding:8px 18px 18px; overflow-y:auto; flex:1 1 auto; }
+  .modalfoot { display:flex; align-items:center; gap:10px; justify-content:flex-end;
+               padding:10px 18px 14px; border-top:1px solid var(--line); }
+  .modalfoot .sethint { margin-right:auto; }
+  #flagdesc, #flagwho { width:100%; border:1px solid var(--line); border-radius:6px;
+                background:var(--panel2); color:var(--ink); font:inherit;
+                font-size:12.5px; padding:7px 9px; resize:vertical; }
+  .flagshot { border:1px solid var(--line); border-radius:6px; overflow:hidden;
+              background:var(--panel2); max-height:150px; }
+  .flagshot img { width:100%; display:block; }
   .setrow { display:flex; align-items:center; justify-content:space-between; gap:14px;
             padding:12px 0; border-bottom:1px solid var(--line); }
   .setrow.col { flex-direction:column; align-items:stretch; }
@@ -287,6 +301,33 @@
     </div>
   </div>
 
+  <div class="modalback" id="flagback" hidden>
+    <div class="modal">
+      <div class="modalhead"><b>Flag an error</b>
+        <button type="button" class="x" id="flagclose">&times;</button></div>
+      <div class="modalbody">
+        <div class="setrow col">
+          <div class="setlabel">What looks wrong?</div>
+          <textarea id="flagdesc" rows="5" spellcheck="true"
+            placeholder="e.g. the end of the pressure curve is missing on this stage"></textarea>
+        </div>
+        <div class="setrow col">
+          <div class="setlabel">Your name <span class="sethint">(so we know who reported it)</span></div>
+          <input type="text" id="flagwho" placeholder="Carmine" spellcheck="false">
+        </div>
+        <div class="setrow col">
+          <div class="setlabel">Attached automatically
+            <span class="sethint" id="flaghint"></span></div>
+          <div class="flagshot"><img id="flagimg" alt="chart snapshot"></div>
+        </div>
+      </div>
+      <div class="modalfoot">
+        <span class="sethint" id="flagstatus"></span>
+        <button type="button" class="btn primary" id="flagsend">Send report</button>
+      </div>
+    </div>
+  </div>
+
   <div class="main">
     <div class="left" id="leftcol">
       <div class="lefthead filehdr">
@@ -327,6 +368,9 @@
             <div class="sub" id="pv-sub"></div>
           </div>
           <button type="button" class="btn" id="ghostbtn">Ghost</button>
+          <button type="button" class="btn" id="flagbtn"
+                  title="Report a problem with this chart — sends your notes plus
+a picture of these panels and the extraction diagnostics">Flag Error</button>
           <div class="legend" id="pv-legend"></div>
         </div>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
@@ -1899,6 +1943,98 @@ $("destpath").addEventListener("change", () => {
 // added avoidable failure modes in the frozen build (path resolution, and a
 // malformed file silently emptying the table). The bundled alias_table.txt
 // still carries his content; revisit once the EXE is settled.
+
+// ---------- Flag Error: report a problem without leaving the app ----------
+// The desktop build is served from 127.0.0.1, so reports go to the deployed
+// Lab rather than to its own origin. On the web build the relative path wins.
+const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
+                       location.hostname === "localhost")
+  ? "https://carmines-lab.vercel.app/api/flag" : "/api/flag";
+
+// Stitch the chart panels into one PNG — this is the picture Carmine would
+// otherwise take by hand, and it lands already cropped to what matters.
+function flagSnapshot() {
+  const parts = [$("graph"), $("origgraph")].filter(
+    c => c && c.width && !c.closest(".canvaswrap").hidden);
+  if (!parts.length) return null;
+  const w = Math.max(...parts.map(c => c.width));
+  const h = parts.reduce((a, c) => a + c.height, 0) + (parts.length - 1) * 8;
+  const out = document.createElement("canvas");
+  out.width = w; out.height = h;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+  let y = 0;
+  for (const c of parts) { ctx.drawImage(c, 0, y); y += c.height + 8; }
+  return out.toDataURL("image/png");
+}
+
+// Everything the app already knows about this chart — the detail that turns
+// "it looks wrong" into something reproducible.
+function flagDiagnostics() {
+  const e = current && current.entry, it = current && current.item;
+  const m = (it && it.meta) || {};
+  const d = {
+    version: (localInfo && localInfo.version) || "web",
+    build: localInfo && localInfo.local ? "desktop" : "web",
+    provider: it && it.source, file: e && e.name,
+    chart: it && (it.key || ""), stage: m.stage || "",
+    pdfPage: (it && it.pages) ? it.pages.join(",") : (it && it.page) || "",
+    duration: m.duration_min ? Math.round(m.duration_min) + " min" : "",
+    samples: it && it.n, ghost: !!settings.ghost,
+    labelMode: settings.chartLabels,
+    userAgent: navigator.userAgent, platform: navigator.platform,
+  };
+  d.channels = gState.channels.map(c => {
+    const r = axisRange(c);
+    return { key: c.key, unit: c.unit || "",
+             axis: `${round2(r.lo)}..${round2(r.hi)}${r.printed ? "" : " (guessed)"}`,
+             peak: round2(c._vmax) };
+  });
+  if (e && e.notes && e.notes.length) d.notes = e.notes.slice(0, 40);
+  return d;
+}
+
+let flagShot = null;
+$("flagbtn").addEventListener("click", () => {
+  flagShot = flagSnapshot();
+  const img = $("flagimg");
+  if (flagShot) { img.src = flagShot; img.hidden = false; } else { img.hidden = true; }
+  const d = flagDiagnostics();
+  $("flaghint").textContent =
+    `${d.provider || "chart"} · ${d.file || "file"} · ${d.chart || ""}`
+    + ` · v${d.version}` + (flagShot ? " · snapshot" : " · no snapshot");
+  $("flagstatus").textContent = "";
+  $("flagback").hidden = false;
+  $("flagdesc").focus();
+});
+$("flagclose").addEventListener("click", () => { $("flagback").hidden = true; });
+$("flagback").addEventListener("click", e => {
+  if (e.target === $("flagback")) $("flagback").hidden = true;
+});
+$("flagsend").addEventListener("click", async () => {
+  const desc = $("flagdesc").value.trim();
+  if (!desc) { $("flagstatus").textContent = "Please describe the problem."; return; }
+  $("flagsend").disabled = true;
+  $("flagstatus").textContent = "Sending…";
+  try {
+    const r = await fetch(FLAG_ENDPOINT, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc,
+                             reporter: $("flagwho").value.trim() || "user",
+                             diagnostics: flagDiagnostics(),
+                             screenshot: flagShot }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
+    $("flagstatus").innerHTML = out.url
+      ? `Sent — <a href="${out.url}" target="_blank">report #${out.number}</a>`
+      : "Sent. Thank you.";
+    $("flagdesc").value = "";
+    setTimeout(() => { $("flagback").hidden = true; }, 2500);
+  } catch (err) {
+    $("flagstatus").textContent = "Could not send: " + err.message;
+  }
+  $("flagsend").disabled = false;
+});
 
 // open the source PDF in its own window (scalable, side-by-side compare)
 $("origopen").addEventListener("click", async () => {

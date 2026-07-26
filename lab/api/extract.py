@@ -27,6 +27,7 @@ import numpy as np             # noqa: E402
 import aliases                 # noqa: E402
 import frac_core as fc         # noqa: E402
 import pipeline                # noqa: E402  shared engine (same as desktop EXE)
+import flag                    # noqa: E402  Flag Error reports -> GitHub issues
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
@@ -104,7 +105,14 @@ def process_pdf(data, filename):
 
 
 class handler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self._send(204, {})
+
     def do_GET(self):
+        # this project builds ONE function (pyproject pins the entrypoint to
+        # api.extract:handler), so every route is dispatched from here
+        if self.path.split("?")[0].rstrip("/").endswith("/flag"):
+            return self._send(200, flag.status())
         self.send_response(307)
         self.send_header("Location", "/index.html")
         self.end_headers()
@@ -113,11 +121,25 @@ class handler(BaseHTTPRequestHandler):
         body = json.dumps(obj, separators=(",", ":")).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        # the desktop build posts reports from http://127.0.0.1:<port>
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.split("?")[0].rstrip("/").endswith("/flag"):
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                if n > flag.MAX_BODY:
+                    return self._send(413, {"error": "report too large"})
+                req = json.loads(self.rfile.read(n) or "{}")
+            except Exception as e:
+                return self._send(400, {"error": f"bad request: {e}"})
+            code, obj = flag.create_report(req)
+            return self._send(code, obj)
         try:
             length = int(self.headers.get("Content-Length", 0))
             if length > 6_000_000:
