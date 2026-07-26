@@ -13,6 +13,11 @@ the repo renders inline from its raw URL.
 Server env (set in Vercel, never shipped in the EXE):
   FLAG_GITHUB_TOKEN  PAT with `repo` scope on FLAG_REPO
   FLAG_REPO          owner/name, default chrispyscripts/frac2csv
+  FLAG_BRANCH        branch the screenshots are committed to, default
+                     "reports". Keeping them OFF main matters: every report
+                     is a commit, so writing to main means the working branch
+                     gains a commit per report and local pushes start getting
+                     rejected until you pull.
   FLAG_APP_KEY       optional shared string the client must send. This is a
                      speed bump against drive-by bots, NOT authentication —
                      anything shipped in a desktop binary is readable.
@@ -29,6 +34,7 @@ GH_API = "https://api.github.com"
 REPO = os.environ.get("FLAG_REPO", "chrispyscripts/frac2csv")
 TOKEN = os.environ.get("FLAG_GITHUB_TOKEN", "")
 APP_KEY = os.environ.get("FLAG_APP_KEY", "")
+BRANCH = os.environ.get("FLAG_BRANCH", "reports")
 
 MAX_BODY = 4_000_000          # Vercel caps the request body around 4.5MB
 MAX_SHOT = 3_000_000          # decoded PNG ceiling
@@ -91,6 +97,24 @@ def _fmt_diag(d):
     return out
 
 
+def _ensure_branch():
+    """Create the reports branch off the default head if it isn't there yet."""
+    try:
+        _gh("GET", f"/repos/{REPO}/branches/{BRANCH}")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return False
+    try:
+        repo = _gh("GET", f"/repos/{REPO}")
+        head = _gh("GET", f"/repos/{REPO}/git/ref/heads/{repo['default_branch']}")
+        _gh("POST", f"/repos/{REPO}/git/refs",
+            {"ref": f"refs/heads/{BRANCH}", "sha": head["object"]["sha"]})
+        return True
+    except Exception:
+        return False
+
+
 def status():
     """Lets the client tell "not configured yet" from "broken"."""
     return {"ready": bool(TOKEN), "repo": REPO, "needsKey": bool(APP_KEY)}
@@ -125,11 +149,13 @@ def create_report(req):
             stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
             path = f"reports/{stamp}-{abs(hash(desc)) % 10000:04d}.png"
             try:
+                _ensure_branch()
                 _gh("PUT", f"/repos/{REPO}/contents/{path}",
                     {"message": f"flag: screenshot for {_slug(desc, 50)}",
-                     "content": base64.b64encode(blob).decode()})
+                     "content": base64.b64encode(blob).decode(),
+                     "branch": BRANCH})
                 shot_md = (f"\n![screenshot](https://raw.githubusercontent.com/"
-                           f"{REPO}/main/{path})\n")
+                           f"{REPO}/{BRANCH}/{path})\n")
             except urllib.error.HTTPError as e:
                 shot_md = f"\n_(screenshot upload failed: {e.code})_\n"
             except Exception:
