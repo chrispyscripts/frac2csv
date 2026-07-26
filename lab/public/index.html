@@ -1462,10 +1462,12 @@ function ghostMeaningful() {
 const GHOST_LINE = "#2e9bff";      // vibrant blue for our curves
 const GHOST_INK = "#ffffff";       // the source chart, inverted to white
 
-// True only when the backdrop will actually render, so the black-and-white
-// treatment and the normal palette never disagree about which mode we're in.
+// Which mode we're in, for styling. Deliberately NOT tied to the render being
+// finished: the source page renders asynchronously, and flipping the whole
+// chart back to the light palette for those few frames on every switch reads
+// as a flash.
 function ghostActive() {
-  if (!settings.ghost || !orig.synced || !orig.buf) return false;
+  if (!settings.ghost || orig.failed) return false;
   // Needs real geometry: without geom the render is a whole-page fit, and
   // painting that behind the curves would imply an alignment that isn't there.
   const it = current && current.item;
@@ -1474,8 +1476,15 @@ function ghostActive() {
   return !!(src && src.geom);
 }
 
+// Whether the buffered page actually belongs to the chart on screen. Switching
+// charts bumps orig.seq immediately but the new render lands later, so without
+// this the previous stage's ink stays painted under the new curves.
+function ghostReady() {
+  return ghostActive() && orig.synced && !!orig.buf && orig.bufSeq === orig.seq;
+}
+
 function drawGhostBackdrop(ctx, W, H) {
-  if (!ghostActive()) return;
+  if (!ghostReady()) return;
   const { L, R, T, B } = GP;
   ctx.save();
   ctx.beginPath();
@@ -1669,7 +1678,8 @@ function buildLegend() {
 }
 
 // ---------- "Original chart" mode: render the source PDF page ----------
-const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null, buf: null, synced: false };
+const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null,
+               buf: null, synced: false, bufSeq: -1, failed: false };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -1739,12 +1749,18 @@ async function syncOrig() {
   if (!on) return;
   const item = current.item, entry = current.entry;
   const srcs = item.srcs || [];
-  const mySeq = ++orig.seq;
+  const mySeq = ++orig.seq;      // anything buffered is now stale by definition
+  orig.failed = false;
   if (!entry._pdfFile && !entry._pdfUrl) {
+    orig.failed = true;
     origMsg(ctx, cv, "original PDF not kept for this entry — re-add the file");
     return;
   }
-  if (!srcs.length) { origMsg(ctx, cv, "source page unknown for this stage"); return; }
+  if (!srcs.length) {
+    orig.failed = true;
+    origMsg(ctx, cv, "source page unknown for this stage");
+    return;
+  }
   try {
     if (!entry._pdfFile && entry._pdfUrl) {   // desktop: fetch from disk
       const resp = await fetch(entry._pdfUrl);
@@ -1764,7 +1780,10 @@ async function syncOrig() {
     if (src.geom) await renderSynced(ctx, cv, page, src.geom, mySeq);
     else await renderFit(ctx, cv, page, mySeq);
   } catch (e) {
-    if (mySeq === orig.seq) origMsg(ctx, cv, "couldn't render original: " + e.message);
+    if (mySeq !== orig.seq) return;
+    orig.failed = true;
+    origMsg(ctx, cv, "couldn't render original: " + e.message);
+    redrawGraph();               // drop out of ghost styling, don't strand it
   }
 }
 
@@ -1818,7 +1837,9 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   bctx.strokeStyle = chartColors().grid;
   bctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
   orig.synced = true;
+  orig.bufSeq = mySeq;
   drawOrigOverlay(gState.hover ? gState.hover.t : null);
+  redrawGraph();       // the backdrop only became valid now
 }
 
 // blit the buffered original + the shared crosshair (both panels track the
@@ -1848,6 +1869,7 @@ async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
   await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
   if (mySeq !== orig.seq) return;
   orig.synced = false;
+  orig.bufSeq = mySeq;
   if (!orig.buf) orig.buf = document.createElement("canvas");
   orig.buf.width = cv.width; orig.buf.height = cv.height;
   const bctx = orig.buf.getContext("2d");
