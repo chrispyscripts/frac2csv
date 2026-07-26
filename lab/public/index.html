@@ -86,6 +86,10 @@
   .setrow:last-child { border-bottom:0; }
   .setlabel { font-size:12.5px; font-weight:600; color:var(--ink); }
   .sethint { font-weight:400; color:var(--mut); font-size:11px; margin-left:6px; }
+  /* the attachment label carries its own buttons, so it lays out as a row */
+  .setlabel.row { display:flex; align-items:center; gap:6px; }
+  .setlabel.row .sethint { margin-left:0; margin-right:auto; }
+  .btn.tiny { padding:3px 8px; font-size:11px; border-radius:5px; }
   .destrow { display:flex; gap:8px; }
   .destrow input { flex:1; border:1px solid var(--line); border-radius:6px; background:var(--panel2);
                    color:var(--ink); font-family:var(--mono); font-size:11.5px; padding:6px 9px; }
@@ -312,12 +316,15 @@
             placeholder="e.g. the end of the pressure curve is missing on this stage"></textarea>
         </div>
         <div class="setrow col">
-          <div class="setlabel">Your name <span class="sethint">(so we know who reported it)</span></div>
+          <div class="setlabel">Your name</div>
           <input type="text" id="flagwho" placeholder="Carmine" spellcheck="false">
         </div>
         <div class="setrow col">
-          <div class="setlabel">Attached automatically
-            <span class="sethint" id="flaghint"></span></div>
+          <div class="setlabel row">Attached
+            <span class="sethint" id="flaghint"></span>
+            <button type="button" class="btn tiny" id="flagcap"
+              title="Grab the whole window or screen instead — useful when the problem involves the original PDF alongside">Capture window…</button>
+            <button type="button" class="btn tiny" id="flagrecap" hidden>Use chart only</button></div>
           <div class="flagshot"><img id="flagimg" alt="chart snapshot"></div>
         </div>
       </div>
@@ -1951,21 +1958,96 @@ const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
                        location.hostname === "localhost")
   ? "https://carmines-lab.vercel.app/api/flag" : "/api/flag";
 
-// Stitch the chart panels into one PNG — this is the picture Carmine would
-// otherwise take by hand, and it lands already cropped to what matters.
+// The canvases alone lose the context that makes a report readable — which
+// well, which stage, what the axes are, what the engine warned about. Draw
+// that header onto the composite so the picture stands on its own.
 function flagSnapshot() {
   const parts = [$("graph"), $("origgraph")].filter(
     c => c && c.width && !c.closest(".canvaswrap").hidden);
   if (!parts.length) return null;
-  const w = Math.max(...parts.map(c => c.width));
-  const h = parts.reduce((a, c) => a + c.height, 0) + (parts.length - 1) * 8;
+  const W = Math.max(...parts.map(c => c.width));
+  const title = $("pv-title").textContent.trim();
+  const sub = $("pv-sub").textContent.trim();
+  // ">" matters: each chip nests a span for the value, and matching both
+  // repeats every reading twice in the header.
+  const legend = [...document.querySelectorAll("#pv-legend > span")]
+    .map(e => e.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const notes = ($("pv-notes").textContent || "").split("\n")
+    .map(t => t.trim()).filter(Boolean).slice(0, 4);
+
+  const pad = 14, lh = 17;
+  const legLines = [];
+  for (let i = 0; i < legend.length; i += 2)
+    legLines.push(legend.slice(i, i + 2).join("    "));
+  const headH = pad + 20 + 16 + legLines.length * lh
+              + (notes.length ? 6 + notes.length * 15 : 0) + pad;
+  const H = headH + parts.reduce((a, c) => a + c.height, 0)
+          + (parts.length - 1) * 8 + pad;
+
+  // Follow the app's theme so the header doesn't sit as a white slab above a
+  // dark chart (or vice versa).
+  const cs = getComputedStyle(document.body);
+  const vv = (n, d) => (cs.getPropertyValue(n) || "").trim() || d;
+  const BG = vv("--panel", "#ffffff"), INK = vv("--ink", "#14181d");
+  const MUT = vv("--mut", "#697077"), WARN = vv("--carmine", "#a31631");
+
   const out = document.createElement("canvas");
-  out.width = w; out.height = h;
+  out.width = W; out.height = H;
   const ctx = out.getContext("2d");
-  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
-  let y = 0;
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+
+  let y = pad + 15;
+  ctx.fillStyle = INK;
+  ctx.font = "600 15px ui-sans-serif,system-ui,sans-serif";
+  ctx.fillText(title, pad, y);
+  y += 17;
+  ctx.fillStyle = MUT;
+  ctx.font = "11.5px ui-monospace,Menlo,monospace";
+  ctx.fillText(sub, pad, y);
+  y += 16;
+  ctx.fillStyle = INK;
+  ctx.font = "11.5px ui-monospace,Menlo,monospace";
+  for (const l of legLines) { ctx.fillText(l, pad, y); y += lh; }
+  if (notes.length) {
+    y += 6;
+    ctx.fillStyle = WARN;
+    ctx.font = "11px ui-monospace,Menlo,monospace";
+    for (const n of notes) { ctx.fillText(n.slice(0, 150), pad, y); y += 15; }
+  }
+
+  y = headH;
   for (const c of parts) { ctx.drawImage(c, 0, y); y += c.height + 8; }
   return out.toDataURL("image/png");
+}
+
+// A real screen grab, for when the surrounding context matters — the source
+// PDF open alongside, a dialog, another app. Chrome prompts for which window
+// or screen to share, so nothing is captured without an explicit choice.
+async function captureWindow() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
+    throw new Error("this browser can't capture the screen");
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: { displaySurface: "window" }, audio: false });
+  try {
+    const track = stream.getVideoTracks()[0];
+    const v = document.createElement("video");
+    v.srcObject = stream; v.muted = true;
+    await v.play();
+    await new Promise(r => setTimeout(r, 250));   // let the first frame land
+    const st = track.getSettings();
+    const w = st.width || v.videoWidth, h = st.height || v.videoHeight;
+    // A 4K screen as PNG blows the server's 3MB ceiling, so bound the long
+    // edge. 1800px still leaves axis labels legible.
+    const k = Math.min(1, 1800 / Math.max(w, h));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+    const c = cv.getContext("2d");
+    c.imageSmoothingQuality = "high";
+    c.drawImage(v, 0, 0, cv.width, cv.height);
+    return cv.toDataURL("image/png");
+  } finally {
+    stream.getTracks().forEach(t => t.stop());     // drop the share immediately
+  }
 }
 
 // Everything the app already knows about this chart — the detail that turns
@@ -1994,19 +2076,37 @@ function flagDiagnostics() {
   return d;
 }
 
-let flagShot = null;
-$("flagbtn").addEventListener("click", () => {
-  flagShot = flagSnapshot();
+let flagShot = null, flagShotKind = "chart";
+function setFlagShot(data, kind) {
+  flagShot = data; flagShotKind = kind;
   const img = $("flagimg");
-  if (flagShot) { img.src = flagShot; img.hidden = false; } else { img.hidden = true; }
+  if (data) { img.src = data; img.hidden = false; } else { img.hidden = true; }
+  $("flagrecap").hidden = kind !== "window";
+  $("flagcap").textContent = kind === "window" ? "Recapture…" : "Capture window…";
   const d = flagDiagnostics();
   $("flaghint").textContent =
     `${d.provider || "chart"} · ${d.file || "file"} · ${d.chart || ""}`
-    + ` · v${d.version}` + (flagShot ? " · snapshot" : " · no snapshot");
+    + ` · v${d.version} · `
+    + (!data ? "no image" : kind === "window" ? "window shot" : "chart + details");
+}
+$("flagbtn").addEventListener("click", () => {
+  setFlagShot(flagSnapshot(), "chart");
   $("flagstatus").textContent = "";
   $("flagback").hidden = false;
   $("flagdesc").focus();
 });
+$("flagcap").addEventListener("click", async () => {
+  $("flagstatus").textContent = "Pick the window to capture…";
+  try {
+    setFlagShot(await captureWindow(), "window");
+    $("flagstatus").textContent = "";
+  } catch (err) {
+    // Cancelling the Chrome picker throws too — that isn't worth an error.
+    $("flagstatus").textContent =
+      /denied|abort|Permission/i.test(err.message) ? "" : "Capture failed: " + err.message;
+  }
+});
+$("flagrecap").addEventListener("click", () => setFlagShot(flagSnapshot(), "chart"));
 $("flagclose").addEventListener("click", () => { $("flagback").hidden = true; });
 $("flagback").addEventListener("click", e => {
   if (e.target === $("flagback")) $("flagback").hidden = true;
@@ -2021,7 +2121,8 @@ $("flagsend").addEventListener("click", async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description: desc,
                              reporter: $("flagwho").value.trim() || "user",
-                             diagnostics: flagDiagnostics(),
+                             diagnostics: { ...flagDiagnostics(),
+                                            shot: flagShotKind },
                              screenshot: flagShot }) });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
