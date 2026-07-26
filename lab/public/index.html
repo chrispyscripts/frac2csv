@@ -374,6 +374,12 @@
             <div class="title" id="pv-title">&mdash;</div>
             <div class="sub" id="pv-sub"></div>
           </div>
+          <div class="seg mini" id="ghostlayers" hidden>
+            <button type="button" data-layer="ours" class="on"
+              title="Show or hide our extracted curves">Extracted</button>
+            <button type="button" data-layer="ref" class="on"
+              title="Show or hide the original chart underneath">Original</button>
+          </div>
           <button type="button" class="btn" id="ghostbtn">Ghost</button>
           <button type="button" class="btn" id="flagbtn"
                   title="Report a problem with this chart — sends your notes plus
@@ -424,6 +430,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true, stageLabel: "asis",
                    chartLabels: "canon", ghost: true, destFolder: "",
+                   ghostOurs: true, ghostRef: true,
                  };  // toggles
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
@@ -1390,7 +1397,46 @@ function redrawGraph() {
   ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
   drawYAxis(ctx, W, H);
   drawCurves(ctx, W, H, gState.hover ? gState.hover.hiIdx : null);
+  if (ghost) drawGhostLegend(ctx, W, H);
   if (gState.hover) drawHover(ctx, W, H);
+}
+
+// Fixed key in the top-left of the ghost plot. Always drawn, including for a
+// muted layer — with both layers in one colour scheme, a blank chart otherwise
+// gives no clue what was switched off or how to get it back.
+function drawGhostLegend(ctx, W, H) {
+  const { L, T } = GP;
+  const rows = [
+    { on: settings.ghostOurs, color: GHOST_LINE, label: "Extracted" },
+    { on: settings.ghostRef && ghostReady(), color: GHOST_INK,
+      label: "Original" },
+  ];
+  const x = L + 12, y = T + 12, lh = 15;
+  ctx.save();
+  ctx.font = "11px ui-monospace,Menlo,monospace";
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  const w = Math.max(...rows.map(r => ctx.measureText(r.label).width)) + 34;
+  ctx.fillStyle = "rgba(0,0,0,.55)";
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, rows.length * lh + 10, 5);
+  else ctx.rect(x, y, w, rows.length * lh + 10);
+  ctx.fill();
+  rows.forEach((r, i) => {
+    const cy = y + 12 + i * lh;
+    ctx.globalAlpha = r.on ? 1 : 0.38;
+    ctx.strokeStyle = r.color; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(x + 8, cy); ctx.lineTo(x + 24, cy); ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(r.label, x + 30, cy);
+    if (!r.on) {                       // struck through: off, not merely faint
+      ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 1;
+      const tw = ctx.measureText(r.label).width;
+      ctx.beginPath(); ctx.moveTo(x + 30, cy); ctx.lineTo(x + 30 + tw, cy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  });
+  ctx.restore();
 }
 
 // The ghost is only truthful when every visible curve can be placed in the
@@ -1484,7 +1530,7 @@ function ghostReady() {
 }
 
 function drawGhostBackdrop(ctx, W, H) {
-  if (!ghostReady()) return;
+  if (!ghostReady() || !settings.ghostRef) return;
   const { L, R, T, B } = GP;
   ctx.save();
   ctx.beginPath();
@@ -1565,6 +1611,9 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
   const am = alphaMul == null ? 1 : alphaMul;
   const gh = ghostActive();
+  // Muting is a ghost-mode idea only: outside it there is nothing to compare
+  // against, so hiding our own curves would just blank the chart.
+  if (gh && !settings.ghostOurs) return;
   gState.channels.forEach((c, ci) => {
     if (!chanVisible(c, ci)) return;
     // Both the graph and the ghost place a value inside that curve's own
@@ -1615,8 +1664,10 @@ function drawHover(ctx, W, H) {
     const v = c.values[idx];
     if (v == null || !isFinite(v)) return;
     const y = T + (1 - chanFrac(c, v)) * (H - T - B);
-    ctx.fillStyle = ghostActive() ? GHOST_LINE : c._color;
-    ctx.beginPath(); ctx.arc(x, y, ci === hover.hiIdx ? 4.2 : 2.6, 0, 7); ctx.fill();
+    if (!gh || settings.ghostOurs) {    // the dot is part of the muted layer
+      ctx.fillStyle = gh ? GHOST_LINE : c._color;
+      ctx.beginPath(); ctx.arc(x, y, ci === hover.hiIdx ? 4.2 : 2.6, 0, 7); ctx.fill();
+    }
     rows.push({ name: chanName(c), v, unit: c.unit || "",
                 color: c._color, hi: ci === hover.hiIdx });
   });
@@ -1892,6 +1943,7 @@ function updateOrigBar() {
     ? "Hide the source chart from behind our curves (the comparison panel "
       + "below is unaffected)"
     : "Draw the source chart behind our curves to compare them directly";
+  syncGhostLayerUI();
 
   const on = pages.length > 0;
   $("origbar").hidden = !on;
@@ -1925,12 +1977,14 @@ function loadSettings() {
   setSeg($("stlbl"), settings.stageLabel);
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
+  syncGhostLayerUI();
 }
 function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
     stageLabel: settings.stageLabel, destFolder: settings.destFolder || "",
     ghost: settings.ghost,
+    ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
   }));
 }
 function openSettings() { $("settingsback").hidden = false; }
@@ -2227,6 +2281,25 @@ $("orignext").addEventListener("click", () => { orig.pageIdx++; if (applyCompare
 $("ghostbtn").addEventListener("click", () => {
   settings.ghost = !settings.ghost;
   $("ghostbtn").classList.toggle("on", settings.ghost);
+  syncGhostLayerUI();
+  saveSettings();
+  redrawGraph();
+});
+
+// Independent toggles, not a segmented choice: either layer, both, or neither.
+function syncGhostLayerUI() {
+  // follows the Ghost button: pointless on a page that has no source
+  $("ghostlayers").hidden = !settings.ghost || $("ghostbtn").hidden;
+  for (const b of $("ghostlayers").children) {
+    const on = b.dataset.layer === "ours" ? settings.ghostOurs : settings.ghostRef;
+    b.classList.toggle("on", !!on);
+  }
+}
+$("ghostlayers").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.layer === "ours") settings.ghostOurs = !settings.ghostOurs;
+  else settings.ghostRef = !settings.ghostRef;
+  syncGhostLayerUI();
   saveSettings();
   redrawGraph();
 });
