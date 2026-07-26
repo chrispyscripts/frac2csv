@@ -140,14 +140,16 @@ def create_report(req):
     # screenshot -> a file in the repo (issues have no attachment API)
     shot_md = ""
     shot = req.get("screenshot") or ""
-    if shot.startswith("data:image/png;base64,"):
+    m = re.match(r"data:image/(png|jpeg);base64,", shot)
+    if m:
+        ext = "png" if m.group(1) == "png" else "jpg"
         try:
             blob = base64.b64decode(shot.split(",", 1)[1])
         except Exception:
             blob = b""
         if 0 < len(blob) <= MAX_SHOT:
             stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-            path = f"reports/{stamp}-{abs(hash(desc)) % 10000:04d}.png"
+            path = f"reports/{stamp}-{abs(hash(desc)) % 10000:04d}.{ext}"
             try:
                 _ensure_branch()
                 _gh("PUT", f"/repos/{REPO}/contents/{path}",

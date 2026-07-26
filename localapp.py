@@ -279,6 +279,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/local-info":
             return self._json(200, {"local": True, "version": VERSION,
                                     "raster": pipeline.raster_available()})
+        if p == "/api/screenshot":
+            shot, why = grab_screen()
+            if not shot:
+                return self._json(200, {"ok": False, "error": why})
+            return self._json(200, {"ok": True, "image": shot})
         if p == "/api/pick-folder":
             return self._json(200, {"path": pick_folder() or ""})
         if p == "/api/file":
@@ -386,6 +391,64 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+
+
+def grab_screen(max_edge=1800):
+    """Full-screen PNG as a data URL -> (dataurl, None) or (None, reason).
+
+    The desktop build runs its own server on the user's machine, so it can
+    capture the screen directly — no browser picker, no extra click. That is
+    the point: a report should carry what the user was actually looking at,
+    including the source PDF open beside the app.
+
+    The user still sees the image in the dialog before sending, and nothing
+    leaves the machine until they press Send.
+
+    Windows grabs via GDI and needs no permission. macOS gates screen capture
+    behind Screen Recording (TCC), so say so rather than failing blankly.
+    """
+    try:
+        from PIL import ImageGrab
+    except Exception:
+        return None, "Pillow is not available in this build"
+    img = None
+    try:
+        # all_screens spans multiple monitors on Windows; ignored elsewhere.
+        try:
+            img = ImageGrab.grab(all_screens=True)
+        except TypeError:
+            img = ImageGrab.grab()
+    except Exception as e:
+        if sys.platform == "darwin":
+            return None, ("macOS is blocking screen capture — allow it under "
+                          "System Settings > Privacy & Security > Screen "
+                          "Recording, then reopen the app")
+        return None, f"{type(e).__name__}: {e}"[:120]
+    if img is None:
+        return None, "screen capture returned nothing"
+    try:
+        w, h = img.size
+        if max(w, h) > max_edge:             # keep it under the 3MB cap
+            k = max_edge / float(max(w, h))
+            img = img.resize((max(1, int(w * k)), max(1, int(h * k))))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        import io
+        buf = io.BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        kind = "png"
+        # A detail-dense 4K desktop can push PNG past the endpoint's ceiling.
+        # JPEG keeps a screenshot readable at a fraction of the size, so fall
+        # back rather than have the report arrive with no image at all.
+        if buf.tell() > 2_400_000:
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=85,
+                                    optimize=True)
+            kind = "jpeg"
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"[:120]
+    return (f"data:image/{kind};base64,"
+            + base64.b64encode(buf.getvalue()).decode()), None
 
 
 def main():

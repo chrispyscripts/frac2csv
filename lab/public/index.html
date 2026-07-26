@@ -2020,9 +2020,20 @@ function flagSnapshot() {
   return out.toDataURL("image/png");
 }
 
-// A real screen grab, for when the surrounding context matters — the source
-// PDF open alongside, a dialog, another app. Chrome prompts for which window
-// or screen to share, so nothing is captured without an explicit choice.
+// Desktop build: the local server shares the machine, so it can grab the
+// whole screen itself — no picker, no extra click. This is the default there,
+// because the surrounding context (the source PDF open beside the app) is
+// usually the point. The image is shown in the dialog before anything is sent.
+async function captureScreenLocal() {
+  const r = await fetch("/api/screenshot");
+  if (!r.ok) throw new Error("screen capture request failed");
+  const j = await r.json();
+  if (!j.ok || !j.image) throw new Error(j.error || "screen capture unavailable");
+  return j.image;
+}
+
+// Web build: no local server, so the browser has to ask. Chrome prompts for
+// which window or screen to share.
 async function captureWindow() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia)
     throw new Error("this browser can't capture the screen");
@@ -2076,37 +2087,64 @@ function flagDiagnostics() {
   return d;
 }
 
-let flagShot = null, flagShotKind = "chart";
+let flagShot = null, flagShotKind = "chart", flagSeq = 0;
 function setFlagShot(data, kind) {
   flagShot = data; flagShotKind = kind;
   const img = $("flagimg");
   if (data) { img.src = data; img.hidden = false; } else { img.hidden = true; }
-  $("flagrecap").hidden = kind !== "window";
-  $("flagcap").textContent = kind === "window" ? "Recapture…" : "Capture window…";
+  $("flagrecap").hidden = (kind === "chart");
+  $("flagcap").textContent = kind === "chart"
+    ? (isLocal() ? "Capture screen" : "Capture window…")
+    : "Recapture";
   const d = flagDiagnostics();
   $("flaghint").textContent =
     `${d.provider || "chart"} · ${d.file || "file"} · ${d.chart || ""}`
     + ` · v${d.version} · `
-    + (!data ? "no image" : kind === "window" ? "window shot" : "chart + details");
+    + (!data ? "no image"
+       : kind === "screen" ? "full screen"
+       : kind === "window" ? "window shot" : "chart + details");
 }
-$("flagbtn").addEventListener("click", () => {
+$("flagbtn").addEventListener("click", async () => {
+  // Show the chart composite straight away so the dialog is never empty,
+  // then swap in the full screen once the server returns it.
   setFlagShot(flagSnapshot(), "chart");
   $("flagstatus").textContent = "";
   $("flagback").hidden = false;
   $("flagdesc").focus();
-});
-$("flagcap").addEventListener("click", async () => {
-  $("flagstatus").textContent = "Pick the window to capture…";
+  if (!isLocal()) return;
+  const seq = ++flagSeq;
+  $("flaghint").textContent = "capturing the screen…";
   try {
-    setFlagShot(await captureWindow(), "window");
-    $("flagstatus").textContent = "";
+    const img = await captureScreenLocal();
+    if (seq === flagSeq && !$("flagback").hidden) setFlagShot(img, "screen");
   } catch (err) {
-    // Cancelling the Chrome picker throws too — that isn't worth an error.
-    $("flagstatus").textContent =
-      /denied|abort|Permission/i.test(err.message) ? "" : "Capture failed: " + err.message;
+    if (seq !== flagSeq) return;
+    setFlagShot(flagSnapshot(), "chart");   // restores the hint too
+    // Not worth an error banner: the chart snapshot still goes with the report.
+    $("flagstatus").textContent = /permission|Screen Recording/i.test(err.message)
+      ? err.message : "";
   }
 });
-$("flagrecap").addEventListener("click", () => setFlagShot(flagSnapshot(), "chart"));
+$("flagcap").addEventListener("click", async () => {
+  const seq = ++flagSeq;
+  $("flagstatus").textContent = isLocal()
+    ? "Capturing the screen…" : "Pick the window to capture…";
+  try {
+    const img = isLocal() ? await captureScreenLocal() : await captureWindow();
+    if (seq !== flagSeq) return;
+    setFlagShot(img, isLocal() ? "screen" : "window");
+    $("flagstatus").textContent = "";
+  } catch (err) {
+    if (seq !== flagSeq) return;
+    // Cancelling the Chrome picker throws too — that isn't worth an error.
+    $("flagstatus").textContent =
+      /denied|abort|Permission denied/i.test(err.message) ? "" : "Capture failed: " + err.message;
+  }
+});
+$("flagrecap").addEventListener("click", () => {
+  ++flagSeq;                                // cancel any in-flight capture
+  setFlagShot(flagSnapshot(), "chart");
+});
 $("flagclose").addEventListener("click", () => { $("flagback").hidden = true; });
 $("flagback").addEventListener("click", e => {
   if (e.target === $("flagback")) $("flagback").hidden = true;
