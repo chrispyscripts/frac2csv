@@ -276,7 +276,16 @@ def extract_page(page, sample_sec=1.0):
     x_lo, x_hi = min(tick_x) - 10, max(tick_x) + 10
     tl_cy = [s["cy"] for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
-    y_lo, y_hi = min(tl_cy) - 10, max(tl_cy) + 10
+    # Clip curve ink to the plot FRAME, not to the time-LABEL span. The last
+    # label sits inside the frame, so a label-span clip threw away every point
+    # after it while the export window (taken from the frame) still ran to the
+    # frame edge — the stage's last minutes came out empty. Measured on 00374:
+    # 110-220s lost off the tail of every stage, 0 off the head, which is
+    # exactly what Carmine reported ("the start looks ok").
+    if time_frame:
+        y_lo, y_hi = time_frame[0] - 10, time_frame[1] + 10
+    else:
+        y_lo, y_hi = min(tl_cy) - 10, max(tl_cy) + 10
 
     series = {}
     units = {}
@@ -393,7 +402,29 @@ def extract_page(page, sample_sec=1.0):
                  "ta": float(ta - t_lo), "tb": float(tb),
                  "v0": float(v_lo_f), "v1": float(v_hi_f)}
     samples = np.arange(int(n / sample_sec)) * sample_sec
+    # diagnostic: where each curve's INK actually starts/ends relative to the
+    # export window, so truncated heads/tails can be measured rather than eyeballed
+    meta.ink = {name: (float(t.min() - t_lo), float(t.max() - t_lo))
+                for name, (t, _v) in series.items()}
+    meta.window = float(n)
     data = {name: _resample(t - t_lo, v, samples) for name, (t, v) in series.items()}
+    # The plot frame runs a little past the last recorded point, and the window
+    # is taken from the frame so the opening ramp is never clipped. That left
+    # 1-3 minutes of EMPTY rows at the end of every stage — what Carmine saw as
+    # "not getting the ends of the pressure and rates". Trim to the last sample
+    # any channel actually reaches. The head is deliberately untouched: t=0
+    # must stay at the frame edge or the ramp start comes back off.
+    if data:
+        fin = np.zeros(len(samples), dtype=bool)
+        for v in data.values():
+            fin |= np.isfinite(np.asarray(v, dtype=float))
+        if fin.any():
+            last = int(np.nonzero(fin)[0][-1]) + 1
+            if last < len(samples):
+                samples = samples[:last]
+                data = {k: np.asarray(v)[:last] for k, v in data.items()}
+                meta.duration_min = (last * sample_sec) / 60.0
+                meta.window = float(last)
     # printed axis range per curve; the Lab plots against these so its y
     # axis matches the source report instead of a value-derived guess.
     # axes_frame is the same axis read AT the plot-frame edges (what geom

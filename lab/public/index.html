@@ -1474,11 +1474,22 @@ function drawYAxis(ctx, W, H) {
       ctx.fillText("0", L - 5, y - 2);
       continue;
     }
+    // The stack is centred on the tick, so at the TOP tick its first row sits
+    // above the canvas and the scales get cut off (Carmine hit this). Nudge
+    // the whole stack back inside instead of letting it overflow.
+    const dyTop = (0 - (axes.length - 1) / 2) * rowH + rowH / 2 - 1;
+    const dyBot = ((axes.length - 1) - (axes.length - 1) / 2) * rowH + rowH / 2 - 1;
+    let shift = 0;
+    const glyphTop = y + dyTop - (rowH - 1);
+    if (glyphTop < 1) shift = 1 - glyphTop;
+    const glyphBot = y + dyBot + shift;
+    if (glyphBot > H - 1) shift -= glyphBot - (H - 1);
+
     axes.forEach((a, ai) => {
       const v = a.lo + (a.hi - a.lo) * f;
       const txt = v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2);
       ctx.fillStyle = gh ? GHOST_LINE : a.color;
-      const dy = (ai - (axes.length - 1) / 2) * rowH + rowH / 2 - 1;
+      const dy = (ai - (axes.length - 1) / 2) * rowH + rowH / 2 - 1 + shift;
       ctx.fillText(txt, L - 5, y + dy);
     });
   }
