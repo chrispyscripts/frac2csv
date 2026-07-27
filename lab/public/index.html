@@ -1471,7 +1471,8 @@ function axisChannels() {
     if (!chanVisible(c, i)) return;
     const r = axisRange(c);
     out.push({ c, color: c._color, unit: c.unit || "",
-               lo: r.lo, hi: r.hi, printed: r.printed });
+               lo: r.lo, hi: r.hi, printed: r.printed,
+               pLo: r.pLo, pHi: r.pHi });
   });
   return out;
 }
@@ -1479,7 +1480,23 @@ function axisChannels() {
 // The chart's OWN axis when the template reports it (Liberty prints a tick
 // row per curve), so our y axis reads the same as the source report. Falling
 // back to a rounded peak is a guess and will not agree with the original.
+//
+// Prefer the axis read AT THE FRAME EDGES (frameBot..frameTop) over the
+// printed tick range. Ghost stretches the source page so those edges fill the
+// plot, so this is the only mapping that lands a curve on its own ink: the
+// printed range is the same axis re-derived through a per-curve tick fit, and
+// that fit's error put 36% of Liberty channels more than 1% off, worst 99.5%.
+// It also carries an INVERTED axis (lo > hi) the right way up, which a plain
+// min..max cannot express — Liberty prints one on Hydr Pressure. pLo/pHi keep
+// the printed endpoints so the labels can still read as round numbers.
 function axisRange(c) {
+  if (c.frameTop != null && c.frameBot != null &&
+      isFinite(c.frameTop) && isFinite(c.frameBot) &&
+      Math.abs(c.frameTop - c.frameBot) > 1e-12) {
+    return { lo: +c.frameBot, hi: +c.frameTop, printed: true,
+             pLo: (+c.axisMin || 0),
+             pHi: (c.axisMax != null && isFinite(c.axisMax)) ? +c.axisMax : null };
+  }
   if (c.axisMax != null && isFinite(c.axisMax) &&
       c.axisMax !== c.axisMin) {
     return { lo: +c.axisMin || 0, hi: +c.axisMax, printed: true };
@@ -1592,7 +1609,17 @@ function drawYAxis(ctx, W, H) {
     if (glyphBot > H - 1) shift -= glyphBot - (H - 1);
 
     axes.forEach((a, ai) => {
-      const v = a.lo + (a.hi - a.lo) * f;
+      let v = a.lo + (a.hi - a.lo) * f;
+      // The plot frame runs a hair past the outermost printed tick, so the
+      // true reading at the very edge is e.g. -2.4 where the report prints 0.
+      // Snap the two end rows back to the printed number; the tick keeps its
+      // exact position, only the text rounds to what the source shows.
+      if (f === 0 || f === 1) {
+        const tol = Math.abs(a.hi - a.lo) * 0.025;
+        for (const pv of [a.pLo, a.pHi]) {
+          if (pv != null && isFinite(pv) && Math.abs(v - pv) <= tol) { v = pv; break; }
+        }
+      }
       const txt = v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2);
       ctx.fillStyle = gh ? GHOST_LINE : a.color;
       const dy = (ai - (axes.length - 1) / 2) * rowH + rowH / 2 - 1 + shift;

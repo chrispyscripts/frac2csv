@@ -52,10 +52,17 @@ def _md(meta):
 
 
 def _series(meta, samples, data, source, page=None, units=None, labels=None,
-            geom=None, scales=None):
+            geom=None, scales=None, frames=None):
+    # `scales` is each curve's PRINTED tick range — what the y-axis reads.
+    # `frames` is that same axis read at the plot-frame edges (geom v0/v1),
+    # which is where ghost mode stretches the page to. They differ by the
+    # per-curve tick-fit error, so drawing against `scales` while the backdrop
+    # is placed by the frame leaves the curve sitting a percent or two off the
+    # ink. Ship both: labels come from `scales`, positions from `frames`.
     return {"type": "series", "meta": meta, "samples": samples, "data": data,
             "units": units or {}, "labels": labels or {}, "source": source,
-            "page": page, "geom": geom, "scales": scales or {}}
+            "page": page, "geom": geom, "scales": scales or {},
+            "frames": frames or {}}
 
 
 def raster_available():
@@ -138,7 +145,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                 results.append(_series(_md(meta), samples, data,
                                        "Liberty chart", pno + 1, units,
                                        geom=getattr(meta, "geom", None),
-                                       scales=getattr(meta, "axes", None)))
+                                       scales=getattr(meta, "axes", None),
+                                       frames=getattr(meta, "axes_frame", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
             continue
@@ -149,7 +157,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                 results.append(_series(_md(meta), samples, data,
                                        "BJ chart", pno + 1, units,
                                        geom=getattr(meta, "geom", None),
-                                       scales=getattr(meta, "axes", None)))
+                                       scales=getattr(meta, "axes", None),
+                                       frames=getattr(meta, "axes_frame", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: BJ chart failed — {e}")
             continue

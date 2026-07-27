@@ -33,7 +33,8 @@ PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
 
 
-def _channels_payload(data, units=None, labels=None, scales=None):
+def _channels_payload(data, units=None, labels=None, scales=None,
+                      frames=None):
     """Channels normalized through Carmine's alias table: vendor curve
     names become his canonical columns; the raw name survives as the
     label. Unmapped series keep their own name."""
@@ -63,6 +64,15 @@ def _channels_payload(data, units=None, labels=None, scales=None):
                         else 0.0)((scales or {}).get(key) or 0.0),
             "axisMax": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
                         else (float(v) if v else None))((scales or {}).get(key)),
+            # The same axis read at the plot-frame edges: value at the TOP of
+            # the frame, then at the BOTTOM. Ghost stretches the source page
+            # between exactly those edges, so positioning a curve against this
+            # pair puts it on the ink no matter how the per-curve tick fit came
+            # out — and it carries an inverted axis the right way up.
+            "frameTop": (lambda v: float(v[0]) if isinstance(v, (list, tuple))
+                         else None)((frames or {}).get(key)),
+            "frameBot": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
+                         else None)((frames or {}).get(key)),
             "values": [None if np.isnan(v) else round(float(v), 4) for v in vals],
         })
     return out
@@ -89,7 +99,8 @@ def process_pdf(data, filename):
             stages.append(_stage("vector", r["meta"], r["samples"],
                                  _channels_payload(r["data"], r.get("units"),
                                                    r.get("labels"),
-                                                   r.get("scales")),
+                                                   r.get("scales"),
+                                                   r.get("frames")),
                                  r["source"], r.get("page"),
                                  r.get("geom")))
         elif r["type"] == "summary":
