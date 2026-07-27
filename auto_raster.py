@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 
+import difflib
 import math
 import numpy as np
 
@@ -252,6 +253,178 @@ def snap_axis(top, bot, tick_vals=None, tol_frac=0.03):
         if abs(top - t2) <= tol and abs(bot - b2) <= tol and t2 != b2:
             return t2, b2, (t2 != top or b2 != bot)
     return top, bot, False
+
+
+def ocr_line(img_arr, psm=7):
+    """OCR a small crop as plain text (letters allowed, unlike ocr_words)."""
+    binpath = tesseract_path()
+    if binpath is None:
+        return ""
+    from PIL import Image
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        Image.fromarray(img_arr.astype(np.uint8)).save(f.name)
+        path = f.name
+    try:
+        out = subprocess.run(
+            [binpath, path, "stdout", "--psm", str(psm)],
+            capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace",
+            env=_tess_env(binpath)).stdout
+    except Exception:
+        return ""
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return " ".join(out.split())
+
+
+_LEGEND_UNITS = ["m3/min", "kg/m3", "L/m3", "MPa", "kPa", "m3", "kg"]
+
+
+def _legend_unit(raw):
+    """OCR'd unit text -> a known unit, or ''. Scans mangle the superscript
+    and the slash badly ('kg/m*}', '(Lim3)'), so match loosely."""
+    if not raw:
+        return ""
+    u = raw.strip(" ()[]{}")
+    u = (u.replace("*", "3").replace("^", "3").replace("\u00b3", "3")
+          .replace("\u2019", "").replace("|", "/"))
+    u = re.sub(r"[^A-Za-z0-9/]", "", u)
+    if not u:
+        return ""
+    low = u.lower().replace("lim", "l/m")      # '(L/m3)' often reads '(Lim3)'
+    best = difflib.get_close_matches(
+        low, [x.lower() for x in _LEGEND_UNITS], n=1, cutoff=0.62)
+    if not best:
+        return ""
+    return _LEGEND_UNITS[[x.lower() for x in _LEGEND_UNITS].index(best[0])]
+
+
+def _legend_name(raw):
+    """Strip the rule sample, the trailing unit and OCR speckle."""
+    s = re.sub(r"[\u2014\u2013_=~]+", " ", raw)
+    s = re.sub(r"\([^)]*\)|\{[^}]*\}|\[[^\]]*\]", " ", s)
+    s = re.sub(r"[^A-Za-z0-9 .\-/+]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip(" .-/")
+    toks = [t for t in s.split()
+            if re.search(r"[A-Za-z]{2}", t) or re.fullmatch(r"[\d.\-]{2,}", t)]
+    return " ".join(toks).strip()
+
+
+def _col_groups(mask, gap=40, min_w=55):
+    """Column runs of a mask, merged across small gaps -> [(x0, x1)].
+    The legend prints two columns; one bounding box over both would feed
+    tesseract two unrelated labels as a single line."""
+    cols = np.where(mask.any(axis=0))[0]
+    if len(cols) == 0:
+        return []
+    groups, start, prev = [], cols[0], cols[0]
+    for c in cols[1:]:
+        if c - prev > gap:
+            groups.append((start, prev))
+            start = c
+        prev = c
+    groups.append((start, prev))
+    return [(a, b) for a, b in groups if b - a >= min_w]
+
+
+def _col_groups(mask, gap=45, min_w=55):
+    """Column runs of a mask, merged across small gaps -> [(x0, x1)].
+    The legend prints two columns; one bounding box over both would hand
+    tesseract two unrelated labels as a single line."""
+    cols = np.where(mask.any(axis=0))[0]
+    if len(cols) == 0:
+        return []
+    groups, a, prev = [], cols[0], cols[0]
+    for c in cols[1:]:
+        if c - prev > gap:
+            groups.append((a, prev))
+            a = c
+        prev = c
+    groups.append((a, prev))
+    return [(x, y) for x, y in groups if y - x >= min_w]
+
+
+# What a legend entry is allowed to be called. A scanned legend OCRs roughly
+# ("Aqucar" -> "Aaqucar", "Conc" -> "Cone"), so a raw read is not trustworthy
+# enough to name a column in a deliverable. Only a confident match against
+# this vocabulary is accepted; anything else leaves the caller's own naming
+# alone, so a bad read can never rename a channel to something wrong.
+LEGEND_VOCAB = [
+    "Surface Pressure", "Surface BU", "Treating Pressure", "Hydr Pressure",
+    "Slurry Rate", "Combined Slurry Rate", "Combined Clean Rate", "Clean Rate",
+    "Prop Conc", "Btm Prop Conc", "Bottom Prop Conc",
+    "Surf Total Proppant Conc", "Total Proppant Conc",
+]
+
+
+def match_legend_name(raw, cutoff=0.78):
+    """OCR'd legend text -> a canonical name from LEGEND_VOCAB, or ''."""
+    if not raw or len(raw) < 4:
+        return ""
+    key = re.sub(r"[^a-z ]", " ", raw.lower())
+    key = re.sub(r"\s+", " ", key).strip()
+    if not key:
+        return ""
+    best, score = "", 0.0
+    for cand in LEGEND_VOCAB:
+        r = difflib.SequenceMatcher(None, key, cand.lower()).ratio()
+        if r > score:
+            best, score = cand, r
+    return best if score >= cutoff else ""
+
+
+def read_legend(img, box):
+    """{colour family: (name, unit)} read off the legend above the plot.
+
+    The colour -> series mapping is NOT fixed, so it cannot be hardcoded: in
+    one PSC report Surface Pressure is red on the first chart and cyan on the
+    second, where Slurry Rate is magenta — and that second chart is a
+    treatment chart sitting where the chemical one usually goes. The legend is
+    the only place the pairing is actually stated.
+
+    Names are returned only when they match LEGEND_VOCAB confidently, so a
+    poor scan degrades to "no opinion" rather than to a wrong label.
+    """
+    x0, y0, x1, y1 = box
+    band = int(min(130, max(35, (y1 - y0) * 0.10)))
+    top = max(0, y0 - band)
+    if y0 - 3 - top < 12:
+        return {}
+    strip = img[top:y0 - 3, x0:x1]
+    try:
+        masks = hue_masks(strip)
+    except Exception:
+        return {}
+    from PIL import Image
+    out = {}
+    for key, m in masks.items():
+        best = None
+        for gx0, gx1 in _col_groups(m):
+            sub = m[:, gx0:gx1 + 1]
+            rows = np.where(sub.any(axis=1))[0]
+            if len(rows) < 4:
+                continue
+            crop = sub[rows.min():rows.max() + 1]
+            canvas = np.where(crop, 0, 255).astype(np.uint8)
+            pil = Image.fromarray(canvas)
+            # LANCZOS on the binary mask restores anti-aliased edges, which
+            # tesseract reads far better than hard pixel steps
+            pil = pil.resize((pil.width * 6, pil.height * 6), Image.LANCZOS)
+            raw = ocr_line(np.array(pil), psm=7)
+            name = match_legend_name(_legend_name(raw))
+            if not name:
+                continue
+            mu = re.search(r"[\(\{\[]([^\)\}\]]*)[\)\}\]]\s*$", raw)
+            unit = _legend_unit(mu.group(1) if mu else "")
+            score = len(name)
+            if best is None or score > best[2]:
+                best = (name, unit, score)
+        if best:
+            out[key] = (best[0], best[1])
+    return out
 
 
 def fit_ticks_guarded(pts):

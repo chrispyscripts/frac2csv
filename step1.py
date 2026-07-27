@@ -12,6 +12,7 @@ Prop Conc).
 import fitz
 import numpy as np
 
+import aliases
 import auto_raster as ar
 
 SERIES_NAMES = {
@@ -374,8 +375,42 @@ def extract_page(page, sample_sec=1.0):
         except ValueError:
             continue
         info["geom"] = _page_geom(info, sx, sy)
+        # The legend states the colour -> series pairing; SERIES_NAMES only
+        # guesses it from (chart position, colour). Measured on real wells the
+        # guess is sometimes flatly wrong: 00184/00185 put a SECOND TREATMENT
+        # chart where the chemical one usually sits, so its Surface Pressure
+        # (cyan there, red on the first chart) was being exported as
+        # "Combined Clean Rate" and its Slurry Rate as "SSI-3 Conc".
+        legend = {}
+        try:
+            legend = ar.read_legend(img, box)
+        except Exception:
+            legend = {}
+        # A legend name that contradicts the table proves the table's
+        # (tag, colour) assumption does not hold for THIS chart, so its other
+        # guesses are not trustworthy either — leave those channels unnamed
+        # rather than stamping a confident wrong name onto a column.
+        def _same(a, b):
+            # compare through the alias table: the legend prints "Combined
+            # Slurry Rate" where the table says "Slurry Rate", and those are
+            # one channel, not a contradiction
+            if a.lower() == b.lower():
+                return True
+            ca, cb = aliases.canon(a), aliases.canon(b)
+            return bool(ca) and ca == cb
+        fams = {c["key"].replace("series-", "").rstrip("2") for c in chans}
+        contradicted = any(
+            fam in fams and (tag, fam) in SERIES_NAMES
+            and not _same(SERIES_NAMES[(tag, fam)][0], nm)
+            for fam, (nm, _u) in legend.items())
         for c in chans:
             fam = c["key"].replace("series-", "").rstrip("2")
+            if fam in legend and legend[fam][0]:
+                c["label"] = legend[fam][0]
+                c["unit"] = legend[fam][1] or c["unit"]
+                continue
+            if contradicted:
+                continue                      # keep the neutral "Series (x)"
             name, unit = SERIES_NAMES.get((tag, fam), (c["label"], c["unit"]))
             c["label"] = name
             c["unit"] = unit
