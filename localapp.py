@@ -213,18 +213,22 @@ def process_path(path, fmt="both", tabs=True, seq=False, dest_folder=""):
     src_dir = os.path.dirname(path)
     folder, skipped = export_folder(src_dir, dest_folder)
     base = os.path.splitext(os.path.basename(path))[0]
+    # per-second curve data is the "seconds" export; the stage tables written
+    # below already carry their own suffix, so name this one too rather than
+    # leaving the bare well name to mean "whatever this happens to be"
+    sec_base = base + "-seconds"
     if series:
         model = pe.build_well(series, fallback_uwi=pe.filename_uwi(
             os.path.basename(path)), seq=seq)
         if fmt != "xlsx":
-            with open(os.path.join(folder, base + ".csv"), "w",
+            with open(os.path.join(folder, sec_base + ".csv"), "w",
                       newline="") as f:
                 f.write(pe.well_csv(model))
-            written.append(base + ".csv")
+            written.append(sec_base + ".csv")
         if fmt != "csv":
-            with open(os.path.join(folder, base + ".xlsx"), "wb") as f:
+            with open(os.path.join(folder, sec_base + ".xlsx"), "wb") as f:
                 f.write(pe.well_xlsx(model, tabs))
-            written.append(base + ".xlsx")
+            written.append(sec_base + ".xlsx")
     for i, t in enumerate(r for r in results if r["type"] == "table"):
         nm = base + ("-stages-table.csv" if i == 0
                      else f"-stages-table-{i + 1}.csv")

@@ -56,6 +56,12 @@ def build_well(series_results, fallback_uwi="", seq=False):
 
     blocks = [{stage, rows}] with typed cells (str for UWI/STAGE/DATETIME/
     LABEL, float/None elsewhere) — one source for both CSV and XLSX.
+
+    STAGE carries the sequential position (1, 2, 3...) and LABEL the chart's
+    own printed name ("24A", "1 Attempt 2"). They used to hold the SAME value,
+    picked by a setting, so a file could tell you the order or the printed
+    name but never both. `seq` is kept for call compatibility and no longer
+    changes the output.
     """
     canoned = [(r, *canon_series(r)) for r in series_results]
 
@@ -79,7 +85,8 @@ def build_well(series_results, fallback_uwi="", seq=False):
                [units_all.get(c, "") for c in cols]
     blocks = []
     for bi, key in enumerate(order):
-        label = str(bi + 1) if seq else key   # sequential stage numbering
+        seq_no = str(bi + 1)                  # position within the well
+        label = str(key)                      # the chart's own printed name
         grp = groups[key]
         meta = grp[0][0]["meta"]
         try:
@@ -105,7 +112,7 @@ def build_well(series_results, fallback_uwi="", seq=False):
         for i in range(n):
             sec = i * dsec
             dt = (t0 + timedelta(seconds=sec)).strftime("%Y-%m-%d %H:%M:%S")
-            row = [uwi, label, dt, round(sec, 5), round(epoch0 + sec, 5), label]
+            row = [uwi, seq_no, dt, round(sec, 5), round(epoch0 + sec, 5), label]
             for c in cols:
                 v = chan[c][i] if c in chan and i < len(chan[c]) else None
                 row.append(None if v is None or
@@ -118,7 +125,7 @@ def build_well(series_results, fallback_uwi="", seq=False):
         for edge in (0, -1):
             if rows:
                 rows[edge] = rows[edge][:6] + [None] * len(cols)
-        blocks.append({"stage": label, "rows": rows})
+        blocks.append({"stage": seq_no, "label": label, "rows": rows})
     return {"head": head, "unit_row": unit_row, "blocks": blocks}
 
 

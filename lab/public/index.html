@@ -119,7 +119,15 @@
   /* split */
   .main { flex:1; display:flex; min-height:0; }
   .left { width:264px; flex-shrink:0; border-right:1px solid var(--line);
-          display:flex; flex-direction:column; min-height:0; }
+          display:flex; flex-direction:column; min-height:0; position:relative; }
+  /* drag the right edge to widen the file list — report names are long and
+     the default column truncates most of them */
+  .lgrip { position:absolute; top:0; right:-3px; width:7px; height:100%;
+           cursor:col-resize; z-index:5; }
+  .lgrip::after { content:""; position:absolute; left:3px; top:0;
+                  width:1px; height:100%; background:transparent; }
+  .lgrip:hover::after, .lgrip.drag::after { background:var(--carmine); }
+  body.colresize { cursor:col-resize; user-select:none; }
   .mid { width:210px; flex-shrink:0; border-right:1px solid var(--line);
          display:flex; flex-direction:column; min-height:0; }
   .stages { flex:1; overflow:auto; }
@@ -169,6 +177,8 @@
   .stagerow.sel { background:var(--panel2); color:var(--ink);
                   border-left:2px solid var(--carmine); padding-left:24px; }
   .stagerow .ch { font-family:var(--mono); font-size:10.5px; color:var(--mut); }
+  /* sequential position, shown next to the chart's printed name */
+  .stagerow .seqno { font-family:var(--mono); font-size:10px; color:var(--mut); }
   /* preview */
   .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
   /* title on the left, curve toggles on the right — above the chart */
@@ -279,13 +289,6 @@
           </div>
         </div>
         <div class="setrow">
-          <div class="setlabel">Chart numbering</div>
-          <div class="seg" id="stlbl">
-            <button type="button" data-v="asis" class="on">As labeled</button>
-            <button type="button" data-v="seq">Sequential</button>
-          </div>
-        </div>
-        <div class="setrow">
           <div class="setlabel">Theme</div>
           <div class="seg" id="themeseg">
             <button type="button" data-v="light" class="on">Light</button>
@@ -336,7 +339,8 @@
   </div>
 
   <div class="main">
-    <div class="left" id="leftcol">
+    <div class="left" id="leftcol"><div class="lgrip" id="lgrip"
+        title="Drag to resize · double-click to fit the longest name"></div>
       <div class="lefthead filehdr">
         <span>Files</span>
         <button class="clr" id="clearall" hidden>Clear all</button>
@@ -428,7 +432,7 @@ const $ = id => document.getElementById(id);
 const CHUNK_PAGES = 30;
 const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const settings = { format: "both", xlsxTabs: true, stageLabel: "asis",
+const settings = { format: "both", xlsxTabs: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
                    ghostOurs: true, ghostRef: true,
                  };  // toggles
@@ -463,6 +467,48 @@ const THEMES = {
            tipMut: "#8b949e", tipInk: "#c9d1d9", tipHi: "#ffffff" },
 };
 let themeName = localStorage.getItem("frac2csv-theme") || "light";
+
+// ---- resizable file column ----
+const LEFT_MIN = 200, LEFT_MAX = 900;
+function setLeftWidth(px, save) {
+  const w = Math.round(Math.min(LEFT_MAX, Math.max(LEFT_MIN, px)));
+  $("leftcol").style.width = w + "px";
+  if (save) localStorage.setItem("frac2csv-leftw", String(w));
+}
+(() => {
+  const stored = parseInt(localStorage.getItem("frac2csv-leftw") || "", 10);
+  if (isFinite(stored)) setLeftWidth(stored, false);
+  const grip = $("lgrip");
+  let startX = 0, startW = 0;
+  const move = e => setLeftWidth(startW + (e.clientX - startX), false);
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    grip.classList.remove("drag");
+    document.body.classList.remove("colresize");
+    setLeftWidth(parseInt($("leftcol").style.width, 10) || LEFT_MIN, true);
+  };
+  grip.addEventListener("mousedown", e => {
+    startX = e.clientX;
+    startW = $("leftcol").getBoundingClientRect().width;
+    grip.classList.add("drag");
+    document.body.classList.add("colresize");
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    e.preventDefault();
+  });
+  // double-click: widen just enough for the longest name currently listed
+  grip.addEventListener("dblclick", () => {
+    let widest = 0;
+    for (const el of document.querySelectorAll("#files .filehead .nm")) {
+      const prev = el.style.overflow;
+      el.style.overflow = "visible";
+      widest = Math.max(widest, el.scrollWidth);
+      el.style.overflow = prev;
+    }
+    if (widest) setLeftWidth(widest + 92, true);
+  });
+})();
 function chartColors() { return THEMES[themeName] || THEMES.light; }
 function applyTheme() {
   if (themeName === "dark") document.documentElement.dataset.theme = "dark";
@@ -662,7 +708,6 @@ $("mrun").addEventListener("click", async () => {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: row.real, format: settings.format,
                                  xlsxTabs: settings.xlsxTabs,
-                                 stageLabel: settings.stageLabel,
                                  destFolder: settings.destFolder }),
         });
         const out = await resp.json();
@@ -821,7 +866,7 @@ async function saveExports(entry, dir) {
   }
   let n = 0;
   if (entry.well) {
-    const base = entry.well.base;
+    const base = secondsBase(entry.well);
     if (settings.format !== "xlsx") { await put(base + ".csv", wellCSV(entry.well.stages)); n++; }
     if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs)); n++; }
   }
@@ -863,8 +908,10 @@ function wellModel(stages) {
   const blocks = [];
   for (let bi = 0; bi < order.length; bi++) {
     const key = order[bi];
-    // STAGE label: the PDF's own stage number, or a 1..N sequential index
-    const label = settings.stageLabel === "seq" ? String(bi + 1) : key;
+    // STAGE is the sequential position, LABEL the chart's own printed name.
+    // They used to hold the same value chosen by a setting, so a file could
+    // say the order or the printed name but never both.
+    const seqNo = String(bi + 1), label = String(key);
     const grp = groups.get(key);
     const M = grp[0].meta;
     const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));
@@ -879,7 +926,7 @@ function wellModel(stages) {
       const s = i * dsec;
       const d = new Date(t0.getTime() + s * 1000);
       const dt = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-      rows.push([M.uwi || "", label, dt, s, t0.getTime()/1000 + s, label,
+      rows.push([M.uwi || "", seqNo, dt, s, t0.getTime()/1000 + s, label,
                  ...cols.map(c => (chan[c] && chan[c][i] != null) ? chan[c][i] : null)]);
     }
     // pen-up separators, matching Carmine's reference exports: first and last
@@ -887,7 +934,7 @@ function wellModel(stages) {
     // connect stages with a stray line
     for (const edge of [0, rows.length - 1])
       if (rows[edge]) rows[edge] = rows[edge].slice(0, 6).concat(cols.map(() => null));
-    blocks.push({ stage: label, rows });
+    blocks.push({ stage: seqNo, label, rows });
   }
   return { head, unitRow, blocks };
 }
@@ -1043,8 +1090,11 @@ function stageItems(stages) {
 }
 
 // stage label shown in the UI, per the As-labeled / Sequential toggle
+// The chart's own printed name. The sequential position rides alongside it in
+// the stage list rather than replacing it — the export carries both columns,
+// so there is nothing for a setting to choose between.
 function stageLabel(item) {
-  return settings.stageLabel === "seq" ? String(item.seq) : item.key;
+  return item.key;
 }
 
 // map a chart/table source string to a service-provider label
@@ -1128,7 +1178,10 @@ function selectFile(entry) {
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")
-      row.innerHTML = `<span>Chart ${stageLabel(it)}</span>`
+      row.innerHTML = `<span>Chart ${stageLabel(it)}`
+        + (String(it.seq) !== String(it.key)
+           ? ` <span class="seqno">#${it.seq}</span>` : "")
+        + `</span>`
         + `<span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`;
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
@@ -1180,7 +1233,9 @@ function setPreviewMode(mode) {
 function showStage(entry, well, item) {
   setPreviewMode("graph");
   const M = item.meta;
-  $("pv-title").textContent = (M.uwi || well.base) + "  —  Chart " + stageLabel(item);
+  // the full file name, not the UWI — the UWI is already in the sub-line and
+  // several files can share one
+  $("pv-title").textContent = entry.name + "  —  Chart " + stageLabel(item);
   $("pv-sub").textContent = [
     M.date && (M.date + (M.start_time ? " " + M.start_time : "")),
     Math.round(M.duration_min) + " min",
@@ -2009,7 +2064,6 @@ function loadSettings() {
   } catch (e) { /* ignore */ }
   setSeg($("fmt"), settings.format);
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
-  setSeg($("stlbl"), settings.stageLabel);
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
   syncGhostLayerUI();
@@ -2017,7 +2071,7 @@ function loadSettings() {
 function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
-    stageLabel: settings.stageLabel, destFolder: settings.destFolder || "",
+    destFolder: settings.destFolder || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
   }));
@@ -2542,25 +2596,11 @@ $("lay").addEventListener("click", e => {
   if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
   saveSettings();
 });
-$("stlbl").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
-  settings.stageLabel = b.dataset.v;
-  setSeg($("stlbl"), b.dataset.v);
-  relabel(); saveSettings();
-});
-
-// re-apply stage labels to the middle column + graph title without losing the
-// current selection (exports read settings.stageLabel at build time)
+// re-apply the graph title without losing the current selection
 function relabel() {
-  if (current && current.entry) {
-    for (const it of current.entry.items) {
-      if (it.type === "stage" && it._row)
-        it._row.firstChild.textContent = "Chart " + stageLabel(it);
-    }
-  }
   if (current && current.item && current.item.type === "stage") {
-    const M = current.item.meta;
-    $("pv-title").textContent = (M.uwi || current.well.base) + "  —  Chart " + stageLabel(current.item);
+    $("pv-title").textContent =
+      current.entry.name + "  —  Chart " + stageLabel(current.item);
     renderDlbar(current.well);
   }
 }
@@ -2607,13 +2647,17 @@ async function emit(entry, name, content, binary) {
   if (binary) saveBlob(name, content, XLSX_MIME); else saveText(name, content);
   return name;
 }
+// Per-second curve exports carry a -seconds suffix, so a chart download is
+// never confused with the stage-table one sitting beside it in the folder.
+const secondsBase = well => well.base + "-seconds";
+
 // the seconds file(s) for one well, honoring the format setting
 async function emitSeconds(entry, well) {
   const out = [];
   if (settings.format !== "xlsx")
-    out.push(await emit(entry, well.base + ".csv", wellCSV(well.stages), false));
+    out.push(await emit(entry, secondsBase(well) + ".csv", wellCSV(well.stages), false));
   if (settings.format !== "csv")
-    out.push(await emit(entry, well.base + ".xlsx",
+    out.push(await emit(entry, secondsBase(well) + ".xlsx",
                         wellXLSX(well.stages, settings.xlsxTabs), true));
   return out;
 }
@@ -2663,9 +2707,9 @@ async function exportSecondsAll() {
     const pairs = [];
     for (const e of list) {
       if (settings.format !== "xlsx")
-        pairs.push({ name: e.well.base + ".csv", text: wellCSV(e.well.stages) });
+        pairs.push({ name: secondsBase(e.well) + ".csv", text: wellCSV(e.well.stages) });
       if (settings.format !== "csv")
-        pairs.push({ name: e.well.base + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs) });
+        pairs.push({ name: secondsBase(e.well) + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs) });
     }
     await emitZip(pairs, "carmines-seconds.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
