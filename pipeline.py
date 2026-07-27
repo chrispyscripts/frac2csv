@@ -197,6 +197,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                     for tag, samples, chans, info in charts:
                         data = {c["label"]: c["values"] for c in chans}
                         units = {c["label"]: c["unit"] for c in chans}
+                        frames = {c["label"]: c["axis_frame"] for c in chans
+                                  if c.get("axis_frame")}
                         if not data:
                             continue
                         kind = "surface" if tag == "t" else "chemical"
@@ -208,7 +210,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
                                 "warnings": []}
                         results.append(_series(
                             meta, samples, data,
-                            f"STEP {kind} chart (raster)", pno + 1, units))
+                            f"STEP {kind} chart (raster)", pno + 1, units,
+                            geom=info.get("geom"), frames=frames))
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue

@@ -1529,14 +1529,20 @@ const GHOST_INK = "#ffffff";       // the source chart, inverted to white
 // finished: the source page renders asynchronously, and flipping the whole
 // chart back to the light palette for those few frames on every switch reads
 // as a flash.
-function ghostActive() {
-  if (!settings.ghost || orig.failed) return false;
-  // Needs real geometry: without geom the render is a whole-page fit, and
-  // painting that behind the curves would imply an alignment that isn't there.
+// Without geom the source render is a whole-page fit, and painting that behind
+// the curves would imply an alignment that isn't there. Templates that report
+// no geometry therefore get no ghost — and, so the UI doesn't lie, no ghost
+// controls either.
+function chartHasGeom() {
   const it = current && current.item;
   const srcs = (it && it.srcs) || [];
   const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
   return !!(src && src.geom);
+}
+
+function ghostActive() {
+  if (!settings.ghost || orig.failed) return false;
+  return chartHasGeom();
 }
 
 // Whether the buffered page actually belongs to the chart on screen. Switching
@@ -1964,7 +1970,9 @@ function updateOrigBar() {
   // Ghost toggles the backdrop on the top chart. Set it before the early
   // return below so it stays live in every state.
   const gb = $("ghostbtn");
-  gb.hidden = !(item && item.type === "stage" && pages.length > 0);
+  // a chart with no geometry cannot be ghosted, so don't offer it
+  gb.hidden = !(item && item.type === "stage" && pages.length > 0
+                && chartHasGeom());
   gb.classList.toggle("on", !!settings.ghost);
   gb.title = settings.ghost
     ? "Hide the source chart from behind our curves (the comparison panel "

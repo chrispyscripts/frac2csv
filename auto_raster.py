@@ -401,7 +401,12 @@ def extract(img, sample_sec=1.0, plot=None):
         v = np.interp(samples, t_cols[ok], vals[ok])
         channels.append({"key": f"series-{key}", "label": f"Series ({key})",
                          "unit": "", "color": HUE_HEX.get(key.rstrip("2"), "#555577"),
-                         "values": v, "ticks": ntick, "coverage": cov})
+                         "values": v, "ticks": ntick, "coverage": cov,
+                         # the axis read AT the frame edges (top, bottom).
+                         # Same idea as lib1's axes_frame: the Lab positions
+                         # against this so a curve lands on its own ink in
+                         # ghost mode instead of on a guessed 0..peak scale.
+                         "axis_frame": (float(a + b * y0), float(a + b * y1))})
     if not channels:
         raise ValueError("no channel could be calibrated; " + "; ".join(notes[:3]))
     info = {"plot": (x0, y0, x1, y1), "t0_seconds": float(t_start),

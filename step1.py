@@ -263,13 +263,48 @@ def _extract_new_chart(img, sample_sec=1.0):
         v = np.interp(samples, t_cols[ok], vals[ok])
         channels.append({"key": f"series-{fam}", "label": name, "unit": unit,
                          "color": ar.HUE_HEX.get(base, "#555577"),
-                         "values": v, "ticks": ntick, "coverage": cov})
+                         "values": v, "ticks": ntick, "coverage": cov,
+                         # axis read at the frame edges — see auto_raster
+                         "axis_frame": (float(a + b * y0), float(a + b * y1))})
         seen.add(name)
     if not channels:
         raise ValueError("step1: no channel calibrated")
     info = {"plot": box, "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": []}
     return samples, channels, info
+
+
+def _page_geom(info, scale_x, scale_y, off_x=0.0, off_y=0.0):
+    """Chart geometry in PAGE coordinates, so the Lab can lay the source page
+    behind our curves (ghost mode) the same way it does for vector templates.
+
+    STEP is scanned, so everything upstream works in IMAGE pixels. The page
+    embeds those images at a known rect, which makes the conversion a plain
+    scale + offset. Convention matches lib1/frac_core: elapsed second e sits at
+    page coord (e - ta) / tb along `axis`, and v0/v1 bracket the plot on the
+    other axis in mupdf (y-down) units. STEP charts run time left-to-right, so
+    the axis is x and v0/v1 are the frame's top and bottom.
+    """
+    box = info.get("plot")
+    if not box or not scale_x or not scale_y:
+        return None
+    x0, y0, x1, y1 = box
+    if x1 - x0 < 1 or y1 - y0 < 1:
+        return None
+    dur = float(info.get("duration_s") or 0)
+    if dur <= 0:
+        return None
+    tb_img = dur / float(x1 - x0)               # seconds per image pixel
+    ta_img = float(info.get("t0_seconds") or 0) - tb_img * x0
+    tb_page = tb_img * scale_x                  # seconds per page unit
+    ta_page = ta_img - tb_img * scale_x * off_x
+    if abs(tb_page) < 1e-12:
+        return None
+    return {"axis": "x",
+            "ta": float(ta_page - float(info.get("t0_seconds") or 0)),
+            "tb": float(tb_page),
+            "v0": float(off_y + y0 / scale_y),
+            "v1": float(off_y + y1 / scale_y)}
 
 
 def _extract_new(page, sample_sec=1.0):
@@ -304,6 +339,13 @@ def _extract_new(page, sample_sec=1.0):
             samples, chans, info = _extract_new_chart(img, sample_sec)
         except ValueError:
             continue
+        try:
+            r = page.get_image_rects(im[0])[0]
+            if r.width > 1 and r.height > 1:
+                info["geom"] = _page_geom(info, pix.width / r.width,
+                                          pix.height / r.height, r.x0, r.y0)
+        except Exception:
+            pass
         out.append((tag, samples, chans, info))
     return meta, out
 
@@ -313,6 +355,10 @@ def extract_page(page, sample_sec=1.0):
     if not _detect_tiled(page) and _detect_new(page):
         return _extract_new(page, sample_sec)
     img = composite(page)
+    # the stacked tiles span the whole page, so one scale converts back
+    pr = page.rect
+    sx = img.shape[1] / pr.width if pr.width else 0
+    sy = img.shape[0] / pr.height if pr.height else 0
     out = []
     for i, box in enumerate(find_charts(img)):
         tag = "t" if i == 0 else "c"
@@ -321,6 +367,7 @@ def extract_page(page, sample_sec=1.0):
                                               plot=box)
         except ValueError:
             continue
+        info["geom"] = _page_geom(info, sx, sy)
         for c in chans:
             fam = c["key"].replace("series-", "").rstrip("2")
             name, unit = SERIES_NAMES.get((tag, fam), (c["label"], c["unit"]))
