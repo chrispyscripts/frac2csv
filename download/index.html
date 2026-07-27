@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frac2CSV — download</title>
 <style>
-  :root { --paper:#fbfbfa; --ink:#14181d; --carmine:#a31631; --carmine-dk:#821126; }
+  :root { --paper:#fbfbfa; --ink:#14181d; --mut:#697077; --line:#e3e5e8;
+          --carmine:#a31631; --carmine-dk:#821126;
+          --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
   * { box-sizing:border-box; margin:0; }
   body { background:var(--paper); color:var(--ink);
          font:15px/1.55 -apple-system,"Segoe UI",system-ui,sans-serif;
@@ -17,6 +19,13 @@
          font-weight:700; font-size:18px; padding:16px 34px; border-radius:10px;
          text-decoration:none; margin-top:26px; }
   .btn:hover { background:var(--carmine-dk); }
+  .ver { font:12px var(--mono); color:var(--mut); margin-top:12px; }
+  .notes { text-align:left; display:inline-block; margin-top:34px;
+           padding-top:18px; border-top:1px solid var(--line);
+           color:var(--mut); font-size:13.5px; }
+  .notes h2 { font:600 13.5px inherit; color:var(--ink); margin-bottom:6px; }
+  .notes ul { margin:0; padding-left:18px; }
+  .notes li { margin-bottom:4px; }
 </style>
 </head>
 <body>
@@ -24,6 +33,28 @@
   <div class="wordmark">Frac2CSV</div>
   <a class="btn" href="https://github.com/chrispyscripts/frac2csv/releases/latest/download/Frac2CSV.exe">
     Download for Windows</a>
+  <div class="ver" id="ver">&nbsp;</div>
+
+  <div class="notes">
+    <h2>New in this version</h2>
+    <ul>
+      <li>Ghost mode: mute the extracted curves or the original chart separately</li>
+      <li>Fixed the old chart's ghost lines staying on screen after switching charts</li>
+      <li>Flag Error now attaches a full screenshot automatically</li>
+      <li>Reports include the chart title, axis ranges and extraction notes</li>
+    </ul>
+  </div>
 </div>
+
+<script>
+// Read the version off the release itself so this line can't claim a build
+// that isn't the one the button downloads.
+fetch("https://api.github.com/repos/chrispyscripts/frac2csv/releases/latest")
+  .then(r => r.ok ? r.json() : null)
+  .then(rel => {
+    if (rel && rel.tag_name) document.getElementById("ver").textContent = rel.tag_name;
+  })
+  .catch(() => {});
+</script>
 </body>
 </html>
