@@ -255,6 +255,12 @@ def _extract_new_chart(img, sample_sec=1.0):
             ys_ = np.where(sub[:, cx])[0]
             if len(ys_):
                 py[cx] = np.median(ys_) + y0
+        # same round-bound snap as the tiled path (see auto_raster.snap_axis):
+        # applied before values are read so it reaches the exported numbers
+        _vt, _vb, _sn = ar.snap_axis(a + b * y0, a + b * y1)
+        if _sn and abs(y1 - y0) > 1:
+            b = (_vb - _vt) / float(y1 - y0)
+            a = _vt - b * y0
         vals = a + b * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
         ok = ~np.isnan(vals)

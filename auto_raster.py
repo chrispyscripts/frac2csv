@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 
+import math
 import numpy as np
 
 HUE_NAMES = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
@@ -218,6 +219,41 @@ def ocr_left_ticks(img, masks, x_hi):
     return ocr_tick_strip(img, masks, 0, x_hi)
 
 
+def snap_axis(top, bot, tick_vals=None, tol_frac=0.03):
+    """Pull fitted frame-edge values onto round numbers.
+
+    Scanned charts print round axis bounds sitting on the frame edges. The fit
+    is built from OCR'd label centroids, which sit a little off their tick, so
+    it lands near-but-not-on those bounds — measured 0.6-2.0% against a page
+    read by eye, an error that otherwise rides into the exported values.
+
+    Deliberately does NOT use the tick values to infer a step: that strip
+    carries junk (a dropped decimal turns "12.00" into 1200, and a neighbouring
+    scale bleeds in), which made a true step of 12 estimate as 36. The span
+    alone gives a reliable unit, and a bound is only moved when it is already
+    within `tol_frac` of a round multiple.
+
+    -> (top, bot, snapped_bool)
+    """
+    span = abs(top - bot)
+    if not np.isfinite(span) or span <= 0:
+        return top, bot, False
+    base = 10.0 ** math.floor(math.log10(span))
+    tol = tol_frac * span
+    # Coarsest grid first, so a 0..60 axis snaps on tens rather than being
+    # dragged onto a finer multiple. Axis bounds are not always a power of ten
+    # — STEP prints rate as 0..16 — so step down to halves, fifths and tenths
+    # before giving up. Both bounds must fit the SAME grid or the axis is left
+    # alone; snapping one end only would skew the scale.
+    for mult in (1.0, 0.5, 0.2, 0.1):
+        unit = base * mult
+        t2 = round(top / unit) * unit
+        b2 = round(bot / unit) * unit
+        if abs(top - t2) <= tol and abs(bot - b2) <= tol and t2 != b2:
+            return t2, b2, (t2 != top or b2 != bot)
+    return top, bot, False
+
+
 def fit_ticks_guarded(pts):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
@@ -388,6 +424,16 @@ def extract(img, sample_sec=1.0, plot=None):
             notes.append(f"series '{key}': too sparse ({cov:.0%}) — skipped")
             continue
         a, b, ntick = cal
+        # The axis bounds are printed round and sit on the frame edges. The fit
+        # comes from OCR'd label centroids and lands ~1-2% off them, an error
+        # that otherwise rides straight into the exported values. Snap the two
+        # edges onto the tick grid and re-derive the line through them.
+        _vt, _vb, _snapped = snap_axis(a + b * y0, a + b * y1)
+        if _snapped and abs(y1 - y0) > 1:
+            # re-derive through the snapped edges so the correction reaches the
+            # exported values, not just the drawing
+            b = (_vb - _vt) / float(y1 - y0)
+            a = _vt - b * y0
         py = np.full(n_cols, np.nan)
         for cx in range(n_cols):
             ys_ = np.where(sub[:, cx])[0]
