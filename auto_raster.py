@@ -134,6 +134,11 @@ def ocr_words(img_arr, psm=6, whitelist="0123456789:.-"):
             [binpath, path, "stdout", "--psm", str(psm), "-c",
              f"tessedit_char_whitelist={whitelist}", "tsv"],
             capture_output=True, text=True, timeout=120,
+            # Tesseract writes UTF-8. Without saying so, Python decodes with
+            # the locale codepage (cp1252 on a Canadian Windows box) and a
+            # single stray byte raises UnicodeDecodeError inside the worker
+            # thread, losing the whole page silently.
+            encoding="utf-8", errors="replace",
             env=_tess_env(binpath)).stdout
     finally:
         os.unlink(path)

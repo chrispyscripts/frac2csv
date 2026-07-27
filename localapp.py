@@ -59,14 +59,18 @@ def pick_folder():
                 ["osascript", "-e",
                  'POSIX path of (choose folder with prompt '
                  '"Choose the export destination folder")'],
-                capture_output=True, text=True, timeout=120)
+                capture_output=True, text=True, timeout=120,
+                encoding="utf-8", errors="replace")
             return out.stdout.strip() or None
         if os.name == "nt":
             ps = ("Add-Type -AssemblyName System.Windows.Forms;"
                   "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
                   "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}")
+            # a folder path with an accented character would otherwise blow
+            # up decoding on the locale codepage
             out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                                 capture_output=True, text=True, timeout=120)
+                                 capture_output=True, text=True, timeout=120,
+                                 encoding="utf-8", errors="replace")
             return out.stdout.strip() or None
         import tkinter
         from tkinter import filedialog
@@ -127,7 +131,8 @@ def export_folder(preferred, dest_folder=""):
                   f"{dest_folder or '(no destination set)'}, {home}")
 
 
-def _channels_payload(data, units=None, labels=None, scales=None):
+def _channels_payload(data, units=None, labels=None, scales=None,
+                      frames=None):
     out, seen = [], set()
     for i, (key, vals) in enumerate(data.items()):
         canonical = aliases.canon(key)
@@ -150,6 +155,15 @@ def _channels_payload(data, units=None, labels=None, scales=None):
                         else 0.0)((scales or {}).get(key) or 0.0),
             "axisMax": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
                         else (float(v) if v else None))((scales or {}).get(key)),
+            # The same axis read at the plot-frame edges: value at the TOP of
+            # the frame, then at the BOTTOM. Ghost stretches the source page
+            # between exactly those edges, so positioning a curve against this
+            # pair puts it on the ink no matter how the per-curve tick fit came
+            # out — and it carries an inverted axis the right way up.
+            "frameTop": (lambda v: float(v[0]) if isinstance(v, (list, tuple))
+                         else None)((frames or {}).get(key)),
+            "frameBot": (lambda v: float(v[1]) if isinstance(v, (list, tuple))
+                         else None)((frames or {}).get(key)),
             "values": [None if (v is None or not np.isfinite(v))
                        else round(float(v), 4) for v in vals],
         })
@@ -164,7 +178,8 @@ def serialize(results, notes):
                 "kind": "vector", "meta": r["meta"],
                 "n": int(len(r["samples"])), "sample_sec": 1.0,
                 "channels": _channels_payload(r["data"], r.get("units"),
-                                              r.get("labels"), r.get("scales")),
+                                              r.get("labels"), r.get("scales"),
+                                              r.get("frames")),
                 "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
             })
         elif r["type"] == "summary":
