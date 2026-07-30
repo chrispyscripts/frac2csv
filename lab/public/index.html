@@ -911,7 +911,10 @@ function wellModel(stages) {
     // STAGE is the sequential position, LABEL the chart's own printed name.
     // They used to hold the same value chosen by a setting, so a file could
     // say the order or the printed name but never both.
-    const seqNo = String(bi + 1), label = String(key);
+    const seqNo = String(bi + 1);
+    // templates that report no printed stage name give "?", which is no use
+    // in a deliverable — fall back to the position
+    const label = (String(key) === "?" || String(key) === "") ? seqNo : String(key);
     const grp = groups.get(key);
     const M = grp[0].meta;
     const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));

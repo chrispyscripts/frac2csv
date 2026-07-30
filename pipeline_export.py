@@ -86,7 +86,9 @@ def build_well(series_results, fallback_uwi="", seq=False):
     blocks = []
     for bi, key in enumerate(order):
         seq_no = str(bi + 1)                  # position within the well
-        label = str(key)                      # the chart's own printed name
+        # the chart's own printed name; templates that report none give "?",
+        # which is no use in a deliverable — fall back to the position
+        label = str(key) if str(key) not in ("", "?") else seq_no
         grp = groups[key]
         meta = grp[0][0]["meta"]
         try:
