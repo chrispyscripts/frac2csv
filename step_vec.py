@@ -1,0 +1,250 @@
+"""STEP Energy Services charts published as VECTOR pages.
+
+step1.py handles the scanned variant of these reports — image tiles, OCR for
+every tick and legend. The same operator also files the identical report as a
+vector PDF, and nothing recognised it: no template matched, so the whole file
+came back "no extractable data".
+
+Vector is the easier case and needs no OCR at all. Each series carries one
+colour, and that colour is shared by three things on the page:
+
+    legend text   "Surf Total Prop Conc (kg/m³)"   -> the name and unit
+    tick labels   1000 / 750 / 500 / 250 / 0       -> the value axis
+    stroke paths                                    -> the curve
+
+so a colour is enough to tie a curve to its own name and its own scale. Time
+comes from the black labels under each plot ("Time (min)": 115, 130, ...).
+
+A page holds two stacked charts — Treatment on top, Chemicals below — and the
+SAME colour means different series in each (green is Surf Total Prop Conc
+above and SFR-106 below), so everything is resolved per chart band rather than
+per page.
+"""
+import re
+
+import numpy as np
+
+NUM = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
+_UNIT = re.compile(r"\(([^)]*)\)\s*$")
+
+
+def detect(page):
+    """A STEP report page drawn as vector, not scanned."""
+    try:
+        text = page.get_text()
+    except Exception:
+        return False
+    if "STEP Energy Services" not in text:
+        return False
+    if "Treatment Analysis" not in text and "Chemicals Analysis" not in text:
+        return False
+    try:
+        # The scanned variant carries no text layer at all, so the checks above
+        # already exclude it; what identifies this one is that the chart is
+        # DRAWN. Do not also require zero images — these pages embed the STEP
+        # logo, and that alone was disqualifying whole files.
+        return len(page.get_drawings()) > 40
+    except Exception:
+        return False
+
+
+def _spans(page):
+    """-> [(colour_int, text, cx, cy)] for every non-blank span."""
+    out = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            for s in line["spans"]:
+                t = s["text"].strip()
+                if not t:
+                    continue
+                x0, y0, x1, y1 = s["bbox"]
+                out.append((s.get("color", 0), t, (x0 + x1) / 2, (y0 + y1) / 2))
+    return out
+
+
+def _fit(pairs):
+    """[(value, coord)] -> (a, b) with value = a + b*coord, or None."""
+    if len(pairs) < 2:
+        return None
+    v = np.array([p[0] for p in pairs], float)
+    c = np.array([p[1] for p in pairs], float)
+    if c.max() - c.min() < 1e-6:
+        return None
+    b, a = np.polyfit(c, v, 1)
+    return float(a), float(b)
+
+
+def _num(t):
+    try:
+        return float(t.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _rgb_int(c):
+    """Drawing colour (float triple) -> the int a text span carries."""
+    r, g, b = (int(round(max(0.0, min(1.0, x)) * 255)) for x in c)
+    return (r << 16) | (g << 8) | b
+
+
+def _bands(spans):
+    """Chart bands, one per plot, split on the 'Time (min)' axis captions."""
+    ys = sorted(y for _c, t, _x, y in spans if t.lower().startswith("time ("))
+    if not ys:
+        return []
+    out, top = [], 0.0
+    for y in ys:
+        out.append((top, y))
+        top = y
+    return out
+
+
+def extract_page(page, sample_sec=1.0):
+    """-> (meta, samples, {name: values}, {name: unit}).
+
+    Mirrors lib1's shape so pipeline can treat this like any other template.
+    """
+    class Meta:
+        pass
+
+    spans = _spans(page)
+    bands = _bands(spans)
+    if not bands:
+        raise ValueError("step_vec: no time axis caption found")
+
+    meta = Meta()
+    text = page.get_text()
+    meta.warnings = []
+    m = re.search(r"-\s*Stage\s+([A-Za-z0-9]+)", text)
+    meta.stage = m.group(1) if m else None
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d\d)\b", text)
+    meta.date = f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else ""
+    m = re.search(r"^(.*?)\s*-\s*Stage\s", text, re.M)
+    meta.title = (m.group(1).strip() if m else "")[:60]
+    meta.uwi = ""
+
+    # curve points grouped by colour, kept with their y so a band can claim them
+    strokes = {}
+    for d in page.get_drawings():
+        c = d.get("color")
+        if c is None:
+            continue
+        key = _rgb_int(c)
+        pts = strokes.setdefault(key, [])
+        for item in d["items"]:
+            if item[0] == "l":
+                pts.append((item[1].x, item[1].y))
+                pts.append((item[2].x, item[2].y))
+            elif item[0] == "c":
+                pts.append((item[1].x, item[1].y))
+                pts.append((item[4].x, item[4].y))
+
+    data, units, axes, axes_frame = {}, {}, {}, {}
+    t_lo = t_hi = None
+    geom = None
+    for ylo, yhi in bands:
+        in_band = [(c, t, x, y) for c, t, x, y in spans if ylo < y <= yhi]
+        # Time axis: the black numeric row immediately above the caption.
+        # Not "any black number in the band" — the info table between the two
+        # charts is black too, and its licence number (29344) dragged the fit
+        # to an 11,000-minute stage.
+        cand = [(_num(t), x, y) for c, t, x, y in in_band
+                if c == 0 and NUM.match(t) and _num(t) is not None]
+        rows = {}
+        for v, x, y in cand:
+            rows.setdefault(round(y, 1), []).append((v, x))
+        # the axis row is the lowest one that has several labels spread in x
+        tpairs = []
+        for ry in sorted(rows, reverse=True):
+            pts = rows[ry]
+            if len(pts) >= 3 and max(x for _v, x in pts) - min(x for _v, x in pts) > 80:
+                tpairs = pts
+                break
+        tfit = _fit(tpairs)
+        if tfit is None:
+            continue
+        ta, tb = tfit
+
+        # per colour: the legend name and this chart's own tick ladder
+        named, ticks = {}, {}
+        for c, t, x, y in in_band:
+            if c == 0:
+                continue
+            if NUM.match(t):
+                v = _num(t)
+                if v is not None:
+                    ticks.setdefault(c, []).append((v, y))
+            elif "(" in t:
+                named[c] = t
+
+        xs = [x for _v, x in tpairs]
+        if not xs:
+            continue
+        x_lo, x_hi = min(xs), max(xs)
+        # The plot's own top and bottom are where the outermost TICKS sit, and
+        # a curve cannot leave them. The band reaches further: it includes the
+        # legend, whose colour-matched line samples were being read as curve
+        # points and pushed every peak a few percent past its axis (Surface
+        # Press 41.16 on a 0..40 scale).
+        if not ticks:
+            continue
+        for c, label in named.items():
+            vfit = _fit(ticks.get(c, []))
+            pts = strokes.get(c)
+            if vfit is None or not pts:
+                continue
+            va, vb = vfit
+            # Clip to THIS colour's own tick ladder. The scales are stacked, so
+            # one colour's outermost label sits a few points off another's, and
+            # a shared window let the chemical curves run past their axis.
+            own = [y for _v, y in ticks[c]]
+            y_top, y_bot = min(own) - 2, max(own) + 2
+            arr = np.array([p for p in pts
+                            if y_top <= p[1] <= y_bot
+                            and x_lo - 12 <= p[0] <= x_hi + 12])
+            if len(arr) < 40:
+                continue
+            name = _UNIT.sub("", label).strip()
+            unit = (_UNIT.search(label).group(1) if _UNIT.search(label) else "")
+            t_abs = ta + tb * arr[:, 0]
+            vals = va + vb * arr[:, 1]
+            order = np.argsort(t_abs, kind="stable")
+            t_abs, vals = t_abs[order], vals[order]
+            lo, hi = float(t_abs.min()), float(t_abs.max())
+            t_lo = lo if t_lo is None else min(t_lo, lo)
+            t_hi = hi if t_hi is None else max(t_hi, hi)
+            data[name] = (t_abs, vals)
+            units[name] = unit.replace("³", "3")
+            tv = sorted(v for v, _y in ticks[c])
+            axes[name] = (tv[0], tv[-1])
+            # the axis read at the plot's own top and bottom, for the Lab's
+            # ghost overlay — same contract as lib1's axes_frame
+            axes_frame[name] = (float(va + vb * y_top), float(va + vb * y_bot))
+        if geom is None:
+            geom = {"axis": "x", "ta": float(ta * 60.0), "tb": float(tb * 60.0),
+                    "v0": float(y_top), "v1": float(y_bot)}
+
+    if not data:
+        raise ValueError("step_vec: no series curves matched a legend entry")
+
+    # the labels are minutes; the pipeline works in seconds from stage start
+    span_s = max(1.0, (t_hi - t_lo) * 60.0)
+    n = int(span_s / sample_sec)
+    if not (60 < n < 200000):
+        raise ValueError(f"step_vec: implausible duration {n}s")
+    samples = np.arange(n) * sample_sec
+    out = {}
+    for name, (t_abs, vals) in data.items():
+        rel = (t_abs - t_lo) * 60.0
+        keep = np.isfinite(rel) & np.isfinite(vals)
+        if keep.sum() < 2:
+            continue
+        out[name] = np.interp(samples, rel[keep], vals[keep],
+                              left=np.nan, right=np.nan)
+    meta.duration_min = span_s / 60.0
+    meta.start_time = "00:00:00"
+    meta.axes = axes
+    meta.axes_frame = axes_frame
+    if geom:
+        meta.geom = geom
+    return meta, samples, out, units

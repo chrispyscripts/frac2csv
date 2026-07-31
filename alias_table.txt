@@ -67,5 +67,6 @@ curve.BH Prop Conc = BH Prop. Conc., Btm Prop Conc
 Step-1
 chart_headers_include = Treatment Analysis
 chart_stage_tokens = Treatment , Interval
-curve.Tr Press = Surface Pressure, Surface BU
-curve.WH Prop Conc = Surf Total Proppant Conc
+curve.Tr Press = Surface Pressure, Surface BU, Surface Press
+curve.WH Prop Conc = Surf Total Proppant Conc, Surf Total Prop Conc
+curve.Slurry Rate = Surf Total Slurry Rate

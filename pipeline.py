@@ -32,6 +32,7 @@ import calfrac_summary
 import liberty_summary
 import lib1
 import peloton_frac as pel
+import step_vec
 import pipeline_export as pe
 import sk_fracr as sk
 import trican2
@@ -225,6 +226,20 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                        frames=getattr(meta, "axes_frame", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: BJ chart failed — {e}")
+            continue
+
+        if step_vec.detect(page):
+            # STEP filed as vector: no OCR needed, and step1 only matches the
+            # scanned twin, so without this the whole file reports no data.
+            try:
+                meta, samples, data, units = step_vec.extract_page(page, sample_sec)
+                results.append(_series(_md(meta), samples, data,
+                                       "STEP chart", pno + 1, units,
+                                       geom=getattr(meta, "geom", None),
+                                       scales=getattr(meta, "axes", None),
+                                       frames=getattr(meta, "axes_frame", None)))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: STEP vector chart failed — {e}")
             continue
 
         if canyon.detect(page):
