@@ -13,11 +13,18 @@ import fitz
 
 MARKER = "Regulatory Frac Stage Details"
 
+# A date cell holds a date. WellView leaves one blank when the interval has no
+# end recorded, and the parser then read the FOLLOWING row's first cell as the
+# value — stage 1 of 00604 ended up with "Pumpdown Volume … Link" where a
+# timestamp belongs. The blank-field guard only catches a next line that is
+# itself a known label, which a link cell is not.
+_DATE_CELL = re.compile(r"^\s*\d{1,4}[/-]\d{1,2}[/-]\d{1,4}(?:\s+\d{1,2}:\d{2})?")
+
 # label -> (csv column, value kind)
 FIELDS = {
     "Int#": ("stage", "int"),
-    "Start Date": ("start", "text"),
-    "End Date": ("end", "text"),
+    "Start Date": ("start", "date"),
+    "End Date": ("end", "date"),
     "Top Depth (mKB)": ("top_depth_m", "num"),
     "Bottom Depth (mKB)": ("bottom_depth_m", "num"),
     "Pre Treat SIP (MPa)": ("pre_treat_sip_mpa", "num"),
@@ -83,6 +90,14 @@ def parse_page(page):
             nxt = lines[i + 1] if i + 1 < len(lines) else ""
             if nxt in labels:            # blank field
                 i += 1
+                continue
+            if kind == "date":
+                if _DATE_CELL.match(nxt):
+                    (header if col in [c for c, _ in HEADER_FIELDS.values()]
+                     else row)[col] = nxt
+                    i += 2
+                else:
+                    i += 1          # not a date: the field is blank, re-scan
                 continue
             if kind == "int":
                 v = _num(nxt)
