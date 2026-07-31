@@ -105,29 +105,57 @@ def _runs(col, minlen):
 
 
 def find_charts(img):
-    """-> [(x0, y0, x1, y1)] plot boxes, top chart first."""
+    """-> [(x0, y0, x1, y1)] plot boxes, top chart first.
+
+    A plot box is a PAIR of long vertical rules at the same height — the
+    frame's left and right edges. This used to take the leftmost and rightmost
+    columns carrying any long dark run, which fails on the 5-tile layout two
+    ways at once: at a threshold dark enough to exclude the page border the
+    frame rules themselves do not register, and at one loose enough to see them
+    the border becomes the outermost column. Six wells extracted nothing.
+
+    Three things make it hold up:
+      - every qualifying run in a column counts, not just the longest. A column
+        crosses BOTH charts, so keeping one run threw away an edge and left the
+        other chart unpaired.
+      - runs are grouped by vertical overlap, so a left edge is paired with the
+        right edge at its own height rather than with whatever is furthest away.
+      - the outer 4% of the width is ignored, which is where the page border
+        lives; it is also longer than maxlen, but at a loose threshold it can
+        break into shorter segments that would otherwise qualify.
+    """
     H, W = img.shape[:2]
-    dark = img.sum(axis=2) < 200
+    dark = img.sum(axis=2) < 300
     minlen, maxlen = int(H * 0.1), int(H * 0.7)
-    bars = {}
-    for x in range(W):
-        rr = [r for r in _runs(dark[:, x], minlen) if r[1] - r[0] <= maxlen]
-        if rr:
-            bars[x] = rr
-    if not bars:
+    lo, hi = int(W * 0.04), int(W * 0.96)
+    runs = []
+    for x in range(lo, hi):
+        for r in _runs(dark[:, x], minlen):
+            if r[1] - r[0] <= maxlen:
+                runs.append((x, r[0], r[1]))
+    if not runs:
         return []
-    xs = sorted(bars)
-    x_lo, x_hi = xs[0], xs[-1]
-    if x_hi - x_lo < W * 0.3:
-        return []
-    charts = []
-    for ya, yb in bars[x_lo]:
-        # a chart needs a matching right bar overlapping the same y-range
-        for yc, yd in bars[x_hi]:
-            if min(yb, yd) - max(ya, yc) > (yb - ya) * 0.5:
-                charts.append((x_lo, max(ya, yc), x_hi, min(yb, yd)))
+
+    groups = []
+    for x, ya, yb in runs:
+        for g in groups:
+            ov = min(yb, g["y1"]) - max(ya, g["y0"])
+            if ov > 0.6 * min(yb - ya, g["y1"] - g["y0"]):
+                g["xs"].append(x)
+                g["y0"] = min(g["y0"], ya)
+                g["y1"] = max(g["y1"], yb)
                 break
-    return charts
+        else:
+            groups.append({"xs": [x], "y0": ya, "y1": yb})
+
+    out = []
+    for g in groups:
+        x0, x1 = min(g["xs"]), max(g["xs"])
+        if x1 - x0 < W * 0.3:
+            continue                      # too narrow to be a plot
+        out.append((x0, g["y0"], x1, g["y1"]))
+    out.sort(key=lambda b: b[1])
+    return out
 
 
 def page_meta(img):
