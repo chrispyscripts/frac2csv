@@ -367,6 +367,7 @@ def extract_page(page, sample_sec=1.0):
     sx = img.shape[1] / pr.width if pr.width else 0
     sy = img.shape[0] / pr.height if pr.height else 0
     out = []
+    seen_titles = []
     for i, box in enumerate(find_charts(img)):
         # The chart says what it is. Position does not: 00184/00185 put a
         # second TREATMENT chart where the chemical one usually sits.
@@ -374,6 +375,7 @@ def extract_page(page, sample_sec=1.0):
             title = ar.read_chart_title(img, box)
         except Exception:
             title = ""
+        seen_titles.append(title)
         is_chem = "chemical" in title
         tag = "c" if is_chem else ("t" if "treatment" in title else
                                    ("t" if i == 0 else "c"))
@@ -433,4 +435,21 @@ def extract_page(page, sample_sec=1.0):
             c["label"] = name
             c["unit"] = unit
         out.append((tag, samples, chans, info))
-    return page_meta(img), out
+
+    meta = page_meta(img)
+    # page_meta decides main-vs-casing by OCR'ing the header BAND, which on
+    # these reports reads "STEP Energy Services Interval Summary ..." and
+    # contains neither "Prop Conc" nor "Surface Pressure" — so every page fell
+    # through to "casing" and the pipeline, which only emits "main", produced
+    # nothing for the whole file. The chart's own title is the reliable signal
+    # (v0.7.10 reads it for the treatment/chemical split already), so let it
+    # correct the verdict when it recognises the analysis type.
+    joined = " ".join(seen_titles)
+    # Only a treatment chart promotes the page. An "offset analysis" is a
+    # neighbouring well's chart and would invent stages that are not this
+    # well's; a page carrying both still promotes on the treatment one.
+    if "treatment analysis" in joined:
+        meta["kind"] = "main"
+    elif "casing" in joined:
+        meta["kind"] = "casing"
+    return meta, out
