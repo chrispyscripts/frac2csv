@@ -368,7 +368,15 @@ def extract_page(page, sample_sec=1.0):
     sy = img.shape[0] / pr.height if pr.height else 0
     out = []
     for i, box in enumerate(find_charts(img)):
-        tag = "t" if i == 0 else "c"
+        # The chart says what it is. Position does not: 00184/00185 put a
+        # second TREATMENT chart where the chemical one usually sits.
+        try:
+            title = ar.read_chart_title(img, box)
+        except Exception:
+            title = ""
+        is_chem = "chemical" in title
+        tag = "c" if is_chem else ("t" if "treatment" in title else
+                                   ("t" if i == 0 else "c"))
         try:
             samples, chans, info = ar.extract(img, sample_sec=sample_sec,
                                               plot=box)
@@ -385,6 +393,16 @@ def extract_page(page, sample_sec=1.0):
         try:
             legend = ar.read_legend(img, box)
         except Exception:
+            legend = {}
+        # A chemical chart in this report family reprints the TREATMENT
+        # chart's legend wholesale — "Surface Pressure (MPa)" over a 0..10 axis
+        # whose curve peaks at 6 while the real surface pressure peaks at 58.
+        # Trusting it exported a slurry rate of 1683 m3/min. One treatment-only
+        # name is enough to condemn the whole block: it is the wrong legend,
+        # not a wrong entry, and its remaining names (a "Slurry Rate" sitting
+        # on a 0..2000 axis) are no more trustworthy. A genuine chemical legend
+        # carries none of these names, so it survives intact.
+        if is_chem and any(v[0] in ar.TREATMENT_ONLY for v in legend.values()):
             legend = {}
         # A legend name that contradicts the table proves the table's
         # (tag, colour) assumption does not hold for THIS chart, so its other

@@ -376,6 +376,42 @@ def match_legend_name(raw, cutoff=0.78):
     return best if score >= cutoff else ""
 
 
+# Names that cannot legitimately appear on a chemical-analysis chart. Used to
+# reject a legend that names the wrong thing — see read_chart_title.
+TREATMENT_ONLY = {
+    "Surface Pressure", "Surface BU", "Treating Pressure", "Hydr Pressure",
+    "Prop Conc", "Btm Prop Conc", "Bottom Prop Conc",
+    "Surf Total Proppant Conc", "Total Proppant Conc",
+}
+
+
+def read_chart_title(img, box):
+    """The chart's own title line ('... Treatment Analysis' / '... Chemical
+    Analysis'), lowercased.
+
+    Large dark text on a plain bar, so it OCRs far more reliably than the
+    coloured legend — reliable enough to decide what KIND of chart this is,
+    which position-in-page cannot: a page's second chart is not always the
+    chemical one.
+    """
+    x0, y0, x1, y1 = box
+    band = int(min(130, max(35, (y1 - y0) * 0.10)))
+    t0 = max(0, y0 - band - 95)
+    t1 = max(t0 + 1, y0 - band)
+    if t1 - t0 < 12:
+        return ""
+    strip = img[t0:t1, x0:x1]
+    try:
+        grey = np.asarray(strip).sum(axis=2) / 3.0
+    except Exception:
+        return ""
+    canvas = np.where(grey < 150, 0, 255).astype(np.uint8)   # dark text only
+    from PIL import Image
+    pil = Image.fromarray(canvas)
+    pil = pil.resize((pil.width * 3, pil.height * 3), Image.LANCZOS)
+    return ocr_line(np.array(pil), psm=6).lower()
+
+
 def read_legend(img, box):
     """{colour family: (name, unit)} read off the legend above the plot.
 
