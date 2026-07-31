@@ -169,6 +169,14 @@
   .fprog.ok > i { background:var(--ok); }
   .fprog.err > i { background:var(--carmine); }
   .fprog.idle { opacity:.35; }
+  /* one-click report for a file that yielded nothing — the notes say why, so
+     there is nothing for the user to add */
+  .rptbtn { flex-shrink:0; border:1px solid var(--line); background:none;
+            color:var(--mut); font:600 10px ui-sans-serif,system-ui,sans-serif;
+            text-transform:uppercase; letter-spacing:.04em;
+            border-radius:5px; padding:3px 7px; cursor:pointer; }
+  .rptbtn:hover:not(:disabled) { color:var(--carmine); border-color:var(--carmine); }
+  .rptbtn:disabled { opacity:.45; cursor:default; }
   .filehead .st.ok { color:var(--ok); } .filehead .st.err { color:var(--carmine); }
   .filehead .del { flex-shrink:0; border:none; background:none; cursor:pointer;
                    color:var(--mut); font-size:15px; line-height:1; padding:2px 4px;
@@ -592,6 +600,44 @@ function makeFileEntry(name) {
       st.className = "st" + (cls ? " " + cls : "");
       if (cls) entry.progress(1, cls);          // finished, one way or another
     },
+    // A file that produced nothing is worth reporting, and the extraction
+    // notes already say why — so this sends straight off one click instead of
+    // asking the user to describe what they cannot see.
+    offerReport() {
+      if (head.querySelector(".rptbtn")) return;
+      const b = document.createElement("button");
+      b.className = "rptbtn";
+      b.textContent = "Report";
+      b.title = "Send this file's name and extraction notes for a look";
+      b.addEventListener("click", async ev => {
+        ev.stopPropagation();
+        b.disabled = true; b.textContent = "Sending…";
+        try {
+          const r = await fetch(FLAG_ENDPOINT, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              description: "No extractable data — " + name,
+              reporter: "user (auto)",
+              diagnostics: {
+                version: (localInfo && localInfo.version) || "web",
+                build: localInfo && localInfo.local ? "desktop" : "web",
+                file: name, provider: entry.provider || "unknown",
+                platform: navigator.platform, userAgent: navigator.userAgent,
+                notes: entry.notes || [],
+              },
+            }) });
+          const out = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
+          b.textContent = "Reported";
+          if (out.number) b.title = "sent as report #" + out.number;
+        } catch (err) {
+          b.disabled = false;               // let them try again
+          b.textContent = "Report";
+          b.title = "Could not send: " + err.message;
+        }
+      });
+      head.insertBefore(b, head.querySelector(".del"));
+    },
     // frac 0..1, or null to park the bar. Each file owns its own bar, so a
     // queue shows every report's position at once.
     progress(frac, cls) {
@@ -772,6 +818,7 @@ $("mrun").addEventListener("click", async () => {
                                  : "beside PDF"));
         q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data",
               bits.length ? "ok" : "err");
+        if (!bits.length) q.offerReport();
         // the row only has space for the folder's name — full path on hover
         // (and in the notes panel)
         if (q._outDir) q.head.querySelector(".st").title = "exports written to "
@@ -921,6 +968,7 @@ async function handleFile(f, q, saveDir) {
       bits.push(`${saved} file${saved === 1 ? "" : "s"} saved beside PDF`);
     }
     q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data", bits.length ? "ok" : "err");
+    if (!bits.length) q.offerReport();
   } catch (e) {
     q.set("✗ " + e.message, "err");
   }
