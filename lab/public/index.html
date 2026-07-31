@@ -2541,6 +2541,14 @@ function updateClearAll() {
   $("clearall").hidden = entries.length === 0;
 }
 
+// The middle column belongs to whichever file is open. Clearing a file left
+// its stage/summary rows sitting there, listing a PDF that is no longer in the
+// app — and clicking one had nothing behind it.
+function clearStageList() {
+  $("stages").innerHTML = "";
+  $("viewtoggle").hidden = true;
+}
+
 // remove a single file: its row, its well, its table CSVs, and — if it was
 // the open one — the preview
 function deleteEntry(entry) {
@@ -2556,6 +2564,7 @@ function deleteEntry(entry) {
     if (tableFiles[i].name.startsWith(base + "-stages-table")) tableFiles.splice(i, 1);
   if (current && current.entry === entry) {
     current = null;
+    clearStageList();
     $("previewpane").hidden = true;
     $("empty").hidden = false;
   }
@@ -2570,6 +2579,7 @@ function clearAll() {
   for (const e of entries.slice()) e.el.remove();
   entries.length = 0; wells.length = 0; tableFiles.length = 0;
   current = null;
+  clearStageList();
   manifest = null;
   $("manifestbar").hidden = true;
   $("previewpane").hidden = true;
