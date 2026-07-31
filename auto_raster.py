@@ -54,24 +54,44 @@ def hue_masks(img):
     """Series colors as broad families. Scans smear hue badly (a series'
     digits and curve can sit 60 deg apart), so tight clustering separates a
     series from its own tick numbers; broad channel-dominance rules keep
-    them together. Validated on scanned PSC charts."""
+    them together. Validated on scanned PSC charts.
+
+    The cut-offs adapt to how saturated the page actually is. They were fixed
+    at sat>60 with 40-point channel margins, which suits a vivid scan but not
+    a faded one: on 00273 the tick ink peaks at saturation 66 and averages 30,
+    so 3 pixels out of 1736 qualified, no family was found, no ticks were
+    assigned to any series, and the file reported no extractable data. The
+    reference page (00183) sits at saturation 255 and is unaffected.
+    """
     r = img[..., 0].astype(int); g = img[..., 1].astype(int); b = img[..., 2].astype(int)
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
     sat = mx - mn
+    # how colourful is the ink on this page? measure only non-white pixels, so
+    # the white background does not drag the estimate down
+    ink = (r + g + b) < 600
+    strength = float(np.percentile(sat[ink], 90)) if ink.any() else 255.0
+    k = min(1.0, max(0.28, strength / 255.0))
+    s_min = max(16.0, 60.0 * k)          # saturation floor
+    m1 = max(12.0, 40.0 * k)             # dominant-channel margin
+    m2 = max(14.0, 45.0 * k)
+    m3 = max(16.0, 60.0 * k)
+    m4 = max(10.0, 35.0 * k)             # cyan's green/blue closeness
+    m5 = max(9.0, 30.0 * k)
+    m6 = max(6.0, 20.0 * k)
     # rules validated on scanned/rendered charts; red vs orange split on the
     # green channel (orange carries mid green, true red does not)
     families = {
-        "red":     (sat > 60) & (r > g + 40) & (r > b + 40) & (g < b + 60),
-        "orange":  (sat > 60) & (r > g + 40) & (r > b + 45) & (g > b + 60),
-        "green":   (sat > 50) & (g > r + 30) & (g > b + 20),
-        "magenta": (sat > 60) & (r > g + 40) & (b > g + 40),
-        "blue":    (sat > 60) & (b > g + 40) & (b > r + 40),
-        "cyan":    (sat > 60) & (g > r + 40) & (b > r + 40) & (np.abs(g - b) < 35),
+        "red":     (sat > s_min) & (r > g + m1) & (r > b + m1) & (g < b + m3),
+        "orange":  (sat > s_min) & (r > g + m1) & (r > b + m2) & (g > b + m3),
+        "green":   (sat > s_min * 0.83) & (g > r + m5) & (g > b + m6),
+        "magenta": (sat > s_min) & (r > g + m1) & (b > g + m1),
+        "blue":    (sat > s_min) & (b > g + m1) & (b > r + m1),
+        "cyan":    (sat > s_min) & (g > r + m1) & (b > r + m1) & (np.abs(g - b) < m4),
     }
     families["green"] = families["green"] & ~families["cyan"]
     min_px = max(400, img.shape[0] * img.shape[1] // 5000)
-    return {k: m for k, m in families.items() if m.sum() >= min_px}
+    return {k2: m for k2, m in families.items() if m.sum() >= min_px}
 
 
 # ---------- geometry ----------
