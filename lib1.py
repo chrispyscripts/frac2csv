@@ -257,8 +257,14 @@ def extract_page(page, sample_sec=1.0):
     # naming: "Part I/II" (roman or arabic) -> "Attempt 1/2".
     m = (re.search(r"Stage\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+"
                    r"(?:\s+Part\s+(\w+))?", text, re.I)
-         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?(?:\s*-\s*[A-Z]{2,4})?)\b()",
-                      text, re.I))
+         # A trailing ALL-CAPS token belongs to the stage name — Liberty
+         # prints "Stage 1A HRF" and "Stage 6A PW", and dropping it merged
+         # distinct stages under one label. Uppercase-only and 2-4 letters, so
+         # the lowercase "of" in "Stage 01 of 47" (handled above) and ordinary
+         # words after the name are not swallowed.
+         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?"
+                      r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]+[A-Z]{2,4})?)\b()",
+                      text))
     if m:
         stage = " ".join(m.group(1).split())
         part = m.group(2)

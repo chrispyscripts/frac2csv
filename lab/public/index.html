@@ -186,8 +186,12 @@
   .stagerow.sel { background:var(--panel2); color:var(--ink);
                   border-left:2px solid var(--carmine); padding-left:24px; }
   .stagerow .ch { font-family:var(--mono); font-size:10.5px; color:var(--mut); }
-  /* sequential position, shown next to the chart's printed name */
-  .stagerow .seqno { font-family:var(--mono); font-size:10px; color:var(--mut); }
+  /* the stage name can carry an appended tag, so let it have the room and
+     keep the sequence pinned right */
+  .stagerow .stg { flex:1; min-width:0; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap; }
+  .stagerow .seqno { font-family:var(--mono); font-size:10.5px; color:var(--mut);
+                     flex-shrink:0; margin-left:10px; }
   /* preview */
   .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
   /* title on the left, curve toggles on the right — above the chart */
@@ -1248,14 +1252,11 @@ function selectFile(entry) {
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")
-      // Both numbers, always: the stage is the chart's own printed name and
-      // the sequence its position in the file. They often differ (stage "24A"
-      // is the 2nd chart), both go in the CSV as LABEL and STAGE, and showing
-      // only one is what the old numbering setting used to force a choice
-      // between.
-      row.innerHTML = `<span>Stage ${stageLabel(it)}`
-        + ` <span class="seqno">seq ${it.seq}</span></span>`
-        + `<span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`;
+      // The stage's own printed name on the left — including any tag the
+      // report appends to it ("1A HRF", "2A PW"), which distinguishes stages
+      // that would otherwise read alike — and the sequence flush right.
+      row.innerHTML = `<span class="stg">Stage ${stageLabel(it)}</span>`
+        + `<span class="seqno">${it.seq}</span>`;
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
         + `<span class="ch">${it.group.pages.length} pg</span>`;
