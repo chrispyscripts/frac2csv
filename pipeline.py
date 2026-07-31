@@ -18,6 +18,7 @@ Result shapes (list of dicts):
    "columns": [...], "rows": [[...]], "source": str}
 """
 import re
+from datetime import datetime
 
 import fitz
 
@@ -31,6 +32,7 @@ import calfrac_summary
 import liberty_summary
 import lib1
 import peloton_frac as pel
+import pipeline_export as pe
 import sk_fracr as sk
 import trican2
 
@@ -77,6 +79,59 @@ def _bj_totals(doc):
             if tab:
                 return tab
     return None
+
+
+# ---------- table normalisation ----------
+# Tables come from several parsers, each carrying the source report's own
+# formatting. The seconds export has one house style, and a table sitting
+# beside it in the same folder should read the same way.
+
+_DATE_COL = re.compile(r"(?:^|_)(start|end|date|time|datetime)(?:$|_)", re.I)
+_DT_FORMATS = ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%y %H:%M",
+               "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S",
+               "%Y/%m/%d %H:%M", "%d/%m/%Y %H:%M", "%m/%d/%Y", "%Y-%m-%d")
+
+
+def canon_uwi(raw):
+    """'202/D-069-A/094-G-07/00' -> '202D069A094G0700', matching the UWI the
+    seconds export writes. Separators vary by report; the canonical form does
+    not."""
+    return re.sub(r"[^0-9A-Za-z]", "", str(raw or "")).upper()
+
+
+def _fmt_dt(v):
+    """Report date/time -> 'YYYY-mm-dd HH:MM:SS', the seconds DATETIME format.
+    Anything unparseable is returned untouched: these cells sometimes hold
+    spillover text from the table above rather than a date."""
+    s = str(v or "").strip()
+    if not s:
+        return v
+    for f in _DT_FORMATS:
+        try:
+            return datetime.strptime(s, f).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return v
+
+
+def _normalise_tables(results, filename=None):
+    fallback = pe.filename_uwi(filename) if filename else ""
+    for r in results:
+        if r.get("type") != "table":
+            continue
+        cols = list(r.get("columns") or [])
+        rows = [list(x) for x in (r.get("rows") or [])]
+        for i, c in enumerate(cols):
+            if not _DATE_COL.search(str(c)):
+                continue
+            for row in rows:
+                if i < len(row):
+                    row[i] = _fmt_dt(row[i])
+        if not any(str(c).strip().lower() == "uwi" for c in cols):
+            uwi = canon_uwi(r.get("uwi")) or fallback
+            cols = ["UWI"] + cols
+            rows = [[uwi] + row for row in rows]
+        r["columns"], r["rows"] = cols, rows
 
 
 def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
@@ -369,4 +424,5 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         extra = "" if raster else \
             " (raster/scanned templates need the tesseract OCR engine)"
         notes.append(f"No extractable charts or tables found in {npages} pages{extra}.")
+    _normalise_tables(results, filename)
     return results, notes
