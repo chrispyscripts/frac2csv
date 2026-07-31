@@ -63,3 +63,9 @@ curve.Tr Press = Mainline, Main Pressure
 curve.Slurry Rate = Combined WH, Blender Slurry, Blender 1 Dirty Rate
 curve.WH Prop Conc = Proppant WH, Blender 1 Concentration
 curve.BH Prop Conc = BH Prop. Conc., Btm Prop Conc
+
+Step-1
+chart_headers_include = Treatment Analysis
+chart_stage_tokens = Treatment , Interval
+curve.Tr Press = Surface Pressure, Surface BU
+curve.WH Prop Conc = Surf Total Proppant Conc
