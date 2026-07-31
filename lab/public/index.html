@@ -160,6 +160,15 @@
   .filehead .nm { font-family:var(--mono); font-size:12px; overflow:hidden;
                   text-overflow:ellipsis; white-space:nowrap; flex:1; }
   .filehead .st { font-size:11px; color:var(--mut); font-family:var(--mono); flex-shrink:0; }
+  /* one bar per file, so a queue of reports shows which is where instead of
+     a single line of text for whichever happens to be running */
+  .fprog { height:3px; background:var(--line); border-radius:2px; overflow:hidden;
+           margin:0 14px 8px; }
+  .fprog > i { display:block; height:100%; width:0; background:var(--carmine);
+               border-radius:2px; transition:width .25s ease; }
+  .fprog.ok > i { background:var(--ok); }
+  .fprog.err > i { background:var(--carmine); }
+  .fprog.idle { opacity:.35; }
   .filehead .st.ok { color:var(--ok); } .filehead .st.err { color:var(--carmine); }
   .filehead .del { flex-shrink:0; border:none; background:none; cursor:pointer;
                    color:var(--mut); font-size:15px; line-height:1; padding:2px 4px;
@@ -361,8 +370,8 @@
     <div class="mid">
       <div class="lefthead midhead">
         <div class="seg mini" id="viewtoggle" hidden>
-          <button type="button" data-v="seconds" class="on">Seconds</button>
-          <button type="button" data-v="summary">Summary</button>
+          <button type="button" data-v="seconds" class="on">Charts</button>
+          <button type="button" data-v="summary">Tables</button>
         </div>
       </div>
       <div class="stages" id="stages"></div>
@@ -566,6 +575,10 @@ function makeFileEntry(name) {
     + `<span class="st"><span class="spin"></span>queued</span>`
     + `<button class="del" title="Remove this file">×</button>`;
   el.appendChild(head);
+  const prog = document.createElement("div");
+  prog.className = "fprog idle";
+  prog.innerHTML = "<i></i>";
+  el.appendChild(prog);
   $("files").prepend(el);
   const entry = {
     el, head, name, well: null, notes: [], items: [], provider: "",
@@ -573,6 +586,14 @@ function makeFileEntry(name) {
       const st = head.querySelector(".st");
       st.innerHTML = (cls ? "" : '<span class="spin"></span>') + msg;
       st.className = "st" + (cls ? " " + cls : "");
+      if (cls) entry.progress(1, cls);          // finished, one way or another
+    },
+    // frac 0..1, or null to park the bar. Each file owns its own bar, so a
+    // queue shows every report's position at once.
+    progress(frac, cls) {
+      prog.className = "fprog" + (cls ? " " + cls : "");
+      if (frac == null) { prog.classList.add("idle"); prog.firstChild.style.width = "0"; return; }
+      prog.firstChild.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
     }
   };
   head.addEventListener("click", () => { if (entry.items.length) selectFile(entry); });
@@ -703,15 +724,35 @@ $("mrun").addEventListener("click", async () => {
       q.head.querySelector(".nm").title = row.path;
       busy = busy.then(async () => {
         if (!row.real) { q.set("✗ not found on this machine", "err"); return; }
-        q.set("extracting");
-        const resp = await fetch("/api/process-path", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: row.real, format: settings.format,
-                                 xlsxTabs: settings.xlsxTabs,
-                                 destFolder: settings.destFolder }),
-        });
-        const out = await resp.json();
-        if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
+        q.set("extracting"); q.progress(0.05);
+        // A whole report is one server call, so poll the page counter it keeps
+        // for this job — otherwise the bar can only sit still and then jump.
+        const job = "j" + Date.now() + Math.random().toString(36).slice(2, 8);
+        let polling = true;
+        (async () => {
+          while (polling) {
+            await new Promise(r => setTimeout(r, 350));
+            if (!polling) break;
+            try {
+              const pr = await (await fetch("/api/progress?job=" + job)).json();
+              if (polling && pr.total > 0)
+                q.progress(0.05 + 0.85 * (pr.done / pr.total));
+            } catch (e) { /* the run itself reports failure */ }
+          }
+        })();
+        let out;
+        try {
+          const resp = await fetch("/api/process-path", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: row.real, format: settings.format,
+                                   xlsxTabs: settings.xlsxTabs, job,
+                                   destFolder: settings.destFolder }),
+          });
+          out = await resp.json();
+          if (!resp.ok) { q.set("✗ " + (out.error || resp.status), "err"); return; }
+        } finally {
+          polling = false;
+        }
         q._pdfUrl = "/api/file?path=" + encodeURIComponent(row.real);
         q._srcPath = row.real;   // TXT-batch file: exports go to its own folder
         // ...unless that folder is read-only (Carmine's NTFS drive), in which
@@ -783,6 +824,7 @@ async function saveChunk(src, idx) {
 
 async function splitRange(src, idx, n, q) {
   q.set(`splitting ${idx[0] + 1}–${idx[idx.length - 1] + 1} of ${n}p`);
+  if (q.progress) q.progress(0.05 + 0.1 * (idx[0] / Math.max(1, n)));
   const saved = await saveChunk(src, idx);
   if (b64len(saved) <= SAFE_B64 || idx.length === 1)
     return [{ bytes: saved, start: idx[0] + 1 }];   // 1-based global start page
@@ -815,10 +857,35 @@ async function handleFile(f, q, saveDir) {
     const stages = [], tables = [], notes = [], summary = [];
     for (let i = 0; i < chunks.length; i++) {
       q.set(chunks.length > 1 ? `extracting ${i + 1}/${chunks.length}` : "extracting");
-      const resp = await fetch("/api/extract", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: f.name, data: await b64(chunks[i].bytes) }),
-      });
+      const lo = 0.1 + 0.8 * (i / chunks.length);
+      const hi = 0.1 + 0.8 * ((i + 1) / chunks.length);
+      q.progress(lo);
+      // On the desktop the whole chunk is one call, so poll the server's page
+      // counter to move the bar within it; on the web there is no such
+      // endpoint and the per-chunk steps above carry the progress.
+      const job = "j" + Date.now() + Math.random().toString(36).slice(2, 8);
+      let polling = isLocal();
+      if (polling) (async () => {
+        while (polling) {
+          await new Promise(r => setTimeout(r, 350));
+          if (!polling) break;
+          try {
+            const pr = await (await fetch("/api/progress?job=" + job)).json();
+            if (polling && pr.total > 0)
+              q.progress(lo + (hi - lo) * (pr.done / pr.total));
+          } catch (e) { /* the run itself reports failure */ }
+        }
+      })();
+      let resp;
+      try {
+        resp = await fetch("/api/extract", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: f.name, job,
+                                 data: await b64(chunks[i].bytes) }),
+        });
+      } finally {
+        polling = false;
+      }
       // errors (esp. Vercel's 413) come back as plain text, not JSON
       const raw = await resp.text();
       let out;
@@ -845,7 +912,7 @@ async function handleFile(f, q, saveDir) {
     if (stages.length) bits.push(`${stages.length} stage${stages.length > 1 ? "s" : ""}`);
     if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
     if (bits.length && saveDir) {
-      q.set("saving exports…");
+      q.set("saving exports…"); q.progress(0.93);
       const saved = await saveExports(q, saveDir);
       bits.push(`${saved} file${saved === 1 ? "" : "s"} saved beside PDF`);
     }
@@ -1181,10 +1248,13 @@ function selectFile(entry) {
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")
-      row.innerHTML = `<span>Chart ${stageLabel(it)}`
-        + (String(it.seq) !== String(it.key)
-           ? ` <span class="seqno">#${it.seq}</span>` : "")
-        + `</span>`
+      // Both numbers, always: the stage is the chart's own printed name and
+      // the sequence its position in the file. They often differ (stage "24A"
+      // is the 2nd chart), both go in the CSV as LABEL and STAGE, and showing
+      // only one is what the old numbering setting used to force a choice
+      // between.
+      row.innerHTML = `<span>Stage ${stageLabel(it)}`
+        + ` <span class="seqno">seq ${it.seq}</span></span>`
         + `<span class="ch">${it.channels.length} ch · ${Math.round(it.meta.duration_min)}m</span>`;
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`

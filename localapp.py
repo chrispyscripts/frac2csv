@@ -194,18 +194,39 @@ def serialize(results, notes):
     return stages, tables, notes, summary
 
 
-def process_bytes(data, filename):
+def process_bytes(data, filename, job=""):
     doc = fitz.open(stream=data, filetype="pdf")
-    results, notes = pipeline.extract_document(doc, filename=filename)
+    results, notes = pipeline.extract_document(doc, filename=filename,
+        on_page=lambda d, t: _job_set(job, d, t))
     doc.close()
     return serialize(results, notes)
 
 
-def process_path(path, fmt="both", tabs=True, seq=False, dest_folder=""):
+# Page progress for in-flight extractions, keyed by a job id the client sends.
+# A whole report is one server call, so without this the UI can only show
+# "extracting" and then jump to done — no use on a 200-page filing.
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+
+
+def _job_set(job, done, total):
+    if not job:
+        return
+    with JOBS_LOCK:
+        JOBS[job] = (done, total)
+        if len(JOBS) > 64:              # keep the dict from growing forever
+            for k in list(JOBS)[:-32]:
+                JOBS.pop(k, None)
+
+
+def process_path(path, fmt="both", tabs=True, seq=False, dest_folder="",
+                 job=""):
     doc = fitz.open(path)
     results, notes = pipeline.extract_document(
-        doc, filename=os.path.basename(path))
+        doc, filename=os.path.basename(path),
+        on_page=lambda d, t: _job_set(job, d, t))
     doc.close()
+    _job_set(job, 1, 1)
     stages, tables, notes, summary = serialize(results, notes)
 
     series = [r for r in results if r["type"] == "series"]
@@ -303,6 +324,12 @@ class Handler(BaseHTTPRequestHandler):
             if not shot:
                 return self._json(200, {"ok": False, "error": why})
             return self._json(200, {"ok": True, "image": shot})
+        if p == "/api/progress":
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            m = re.search(r"job=([^&]+)", q)
+            with JOBS_LOCK:
+                done, total = JOBS.get(m.group(1) if m else "", (0, 0))
+            return self._json(200, {"done": done, "total": total})
         if p == "/api/pick-folder":
             return self._json(200, {"path": pick_folder() or ""})
         if p == "/api/file":
@@ -370,7 +397,8 @@ class Handler(BaseHTTPRequestHandler):
                 if data[:5] != b"%PDF-":
                     return self._json(422, {"error": "Not a PDF."})
                 stages, tables, notes, summary = process_bytes(
-                    data, req.get("filename", "file.pdf"))
+                    data, req.get("filename", "file.pdf"),
+                    str(req.get("job", "")))
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "summary": summary})
             if self.path == "/api/manifest":
@@ -403,7 +431,8 @@ class Handler(BaseHTTPRequestHandler):
                     path, req.get("format", "both"),
                     bool(req.get("xlsxTabs", True)),
                     req.get("stageLabel") == "seq",
-                    req.get("destFolder", ""))
+                    req.get("destFolder", ""),
+                    str(req.get("job", "")))
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "written": written,
                                         "summary": summary, "outDir": out_dir})

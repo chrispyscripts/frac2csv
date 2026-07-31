@@ -79,11 +79,15 @@ def _bj_totals(doc):
     return None
 
 
-def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
+def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
+                     on_page=None):
     """Run every template over `doc` (a fitz.Document). -> (results, notes).
 
     `filename` (when known) supplies a chunk-independent year hint for chart
-    systems whose plots label only month-day (BJ-1)."""
+    systems whose plots label only month-day (BJ-1).
+
+    `on_page(done, total)` is called as each page is finished, so a caller can
+    report progress on a long report instead of blocking silently."""
     results, notes = [], []
     npages = len(doc)
     raster = enable_raster and raster_available()
@@ -120,6 +124,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
 
     # --- per-page chart templates ---
     for pno in range(npages):
+        if on_page is not None:
+            try:
+                on_page(pno, npages)
+            except Exception:
+                pass                      # progress must never break a run
         page = doc[pno]
         text = page.get_text()
         if lc.detect(page) or sk.detect(page):
