@@ -118,6 +118,34 @@ def detect_text_meta(page, meta=None):
     return meta
 
 
+def is_chemicals(page):
+    """True for an MView "... Chemicals" chart.
+
+    These plot chemical additives against a Chemical Concentration (L/m3)
+    axis, but this module identifies a curve purely by its COLOUR, so a
+    chemicals page is read as a treatment page: its green "NE/Surf Conc
+    (L/m3)" came out as WH Prop Conc in Kg/m3 on a 0..5 axis, sitting in the
+    same chart as a real BH Prop Conc on 0..500. A stage spans several pages
+    and the chemicals ones are interleaved with Surface/Bottom Hole, so they
+    have to be excluded by type rather than by position.
+
+    The export is defined as the four canonical treatment channels, so there
+    is nothing on these pages that belongs in it.
+    """
+    try:
+        text = page.get_text()
+    except Exception:
+        return False
+    if re.search(r"Chemical\s+Concentration", text, re.I):
+        return True
+    # the title line ends with the chart kind: "... Surface" / "... Bottom
+    # Hole" / "... Chemicals"
+    for line in (l.strip() for l in text.splitlines()):
+        if line:
+            return bool(re.search(r"\bChemicals?\s*$", line, re.I))
+    return False
+
+
 def detect_meta(page, frame):
     """Full metadata: text fields plus axis ranges read from tick labels."""
     meta = detect_text_meta(page)

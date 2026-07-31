@@ -217,6 +217,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None):
             continue
 
         if fc.page_kind(page) == "vector":
+            if fc.is_chemicals(page):
+                notes.append(f"p{pno + 1}: chemicals chart — additive "
+                             f"concentrations, not treatment channels")
+                continue
             try:
                 meta, samples, data = fc.extract_page(page, sample_sec=sample_sec)
                 results.append(_series(_md(meta), samples, data,
