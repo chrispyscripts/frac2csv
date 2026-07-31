@@ -10,6 +10,7 @@ box. Time axis is "Time (min)" numerals; series are color-keyed
 Prop Conc).
 """
 import fitz
+import re
 import numpy as np
 
 import aliases
@@ -36,8 +37,12 @@ def detect(page):
 
 
 def _detect_tiled(page):
-    if page.get_text().strip():
-        return False
+    # The tiling is what identifies this layout — several equal-width images
+    # stacked to make one chart. A text layer is incidental: some of these
+    # pages carry the info table as real text, and requiring the page to be
+    # text-free sent them to _detect_new, which treats each TILE as a whole
+    # chart. A tile is a horizontal slice with no time axis in it, so every
+    # page failed with "time axis unreadable" and the file yielded nothing.
     ims = page.get_images(full=True)
     if len(ims) < 3:
         return False
@@ -319,7 +324,12 @@ def _extract_new(page, sample_sec=1.0):
     doc = page.parent
     text = page.get_text()
     meta = {"stage": None, "interval": "", "kind": "main"}
-    m = re.search(r"Interval\s+(\d+)", text)
+    # These pages number the stage as "Treatment N"; only some spell it
+    # "Interval N". Looking for Interval alone left every page of a file with
+    # stage None, so they all grouped under one nameless stage and the Lab
+    # showed a single "Stage ?". This is the page's real text layer, not OCR.
+    m = (re.search(r"Interval\s+(\d+)", text)
+         or re.search(r"Treatment\s+(\d+)", text))
     if m:
         meta["stage"] = int(m.group(1))
     m = re.search(r"([\d,]+\.\d+)\s*m\s*-\s*([\d,]+\.\d+)\s*m", text)
