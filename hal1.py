@@ -14,6 +14,7 @@ import fitz
 import numpy as np
 
 import auto_raster as ar
+import curve_trace as ct
 from step1 import _frame_bbox
 
 
@@ -118,17 +119,15 @@ def extract_image(img, sample_sec=1.0):
         if cov < 0.05:
             continue
         n_cols = sub.shape[1]
-        py = np.full(n_cols, np.nan)
-        for cx in range(n_cols):
-            ys_ = np.where(sub[:, cx])[0]
-            if len(ys_):
-                py[cx] = np.median(ys_) + y0
+        py = ar.curve_positions(sub) + y0
         vals = a + bb * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
-        ok = ~np.isnan(vals)
-        if ok.sum() < 50:
+        if np.isfinite(vals).sum() < 50:
             continue
-        v = np.interp(samples, t_cols[ok], vals[ok])
+        # No ink means no reading: np.interp with no left/right clamps to the
+        # edge value, so every gap and both tails carried a flat invented line.
+        # ct.resample blanks them instead (see curve_trace.resample).
+        v = ct.resample(samples, t_cols, vals)
         channels.append({"key": label.lower().replace(" ", "-"),
                          "label": label, "unit": unit, "color": "",
                          "values": v, "ticks": ntick, "coverage": cov})

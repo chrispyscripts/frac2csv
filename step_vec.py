@@ -24,6 +24,8 @@ import re
 
 import numpy as np
 
+import curve_trace as ct
+
 NUM = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
 _UNIT = re.compile(r"\(([^)]*)\)\s*$")
 
@@ -188,6 +190,15 @@ def extract_page(page, sample_sec=1.0):
         # Press 41.16 on a 0..40 scale).
         if not ticks:
             continue
+        # One frame for the whole band, spanning every colour's ticks. Ghost
+        # stretches the source page so geom's v0..v1 fills the plot and then
+        # places each curve inside its own frames pair, so the two have to be
+        # quoted at the SAME page coordinates. Reading each channel's frame at
+        # its own tick extent — while geom kept whichever channel happened to
+        # be last — left every other curve sitting a fixed distance off its
+        # ink, the same gap on every one.
+        band_top = min(min(y for _v, y in t) for t in ticks.values()) - 2
+        band_bot = max(max(y for _v, y in t) for t in ticks.values()) + 2
         for c, label in named.items():
             vfit = _fit(ticks.get(c, []))
             pts = strokes.get(c)
@@ -196,7 +207,9 @@ def extract_page(page, sample_sec=1.0):
             va, vb = vfit
             # Clip to THIS colour's own tick ladder. The scales are stacked, so
             # one colour's outermost label sits a few points off another's, and
-            # a shared window let the chemical curves run past their axis.
+            # a shared window let the chemical curves run past their axis. This
+            # stays per-colour: it selects which strokes belong to the curve,
+            # which is a different question from where the frame is.
             own = [y for _v, y in ticks[c]]
             y_top, y_bot = min(own) - 2, max(own) + 2
             arr = np.array([p for p in pts
@@ -217,12 +230,13 @@ def extract_page(page, sample_sec=1.0):
             units[name] = unit.replace("³", "3")
             tv = sorted(v for v, _y in ticks[c])
             axes[name] = (tv[0], tv[-1])
-            # the axis read at the plot's own top and bottom, for the Lab's
-            # ghost overlay — same contract as lib1's axes_frame
-            axes_frame[name] = (float(va + vb * y_top), float(va + vb * y_bot))
+            # this curve's axis read at the BAND's top and bottom — the same
+            # contract as lib1's axes_frame
+            axes_frame[name] = (float(va + vb * band_top),
+                                float(va + vb * band_bot))
         if geom is None:
             geom = {"axis": "x", "ta": float(ta * 60.0), "tb": float(tb * 60.0),
-                    "v0": float(y_top), "v1": float(y_bot)}
+                    "v0": float(band_top), "v1": float(band_bot)}
 
     if not data:
         raise ValueError("step_vec: no series curves matched a legend entry")
@@ -239,12 +253,23 @@ def extract_page(page, sample_sec=1.0):
         keep = np.isfinite(rel) & np.isfinite(vals)
         if keep.sum() < 2:
             continue
-        out[name] = np.interp(samples, rel[keep], vals[keep],
-                              left=np.nan, right=np.nan)
+        # Blank across a real break in the curve, not just past its ends.
+        # np.interp draws a straight line over any hole, so where the chart
+        # showed a channel stopping dead the export carried a long diagonal
+        # gliding down to the next point it could find — data that is not on
+        # the page (00180 chart 18's proppant concentration).
+        out[name] = ct.resample(samples, rel[keep], vals[keep])
     meta.duration_min = span_s / 60.0
     meta.start_time = "00:00:00"
     meta.axes = axes
     meta.axes_frame = axes_frame
     if geom:
+        # The tick fit reads ABSOLUTE minutes into the job ("Time (min)": 115,
+        # 130, ...), but the samples above are rebased so each stage starts at
+        # zero. Ghost mode places the page with (t - ta) / tb, so leaving the
+        # absolute origin in there slid the source page left by however far
+        # into the job the stage sat: a late page mapped to x -1824..-1428 on
+        # a 612-wide page and vanished, an early one only lost its left half.
+        geom["ta"] = float(geom["ta"] - t_lo * 60.0)
         meta.geom = geom
     return meta, samples, out, units

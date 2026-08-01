@@ -74,7 +74,7 @@
   .modalfoot { display:flex; align-items:center; gap:10px; justify-content:flex-end;
                padding:10px 18px 14px; border-top:1px solid var(--line); }
   .modalfoot .sethint { margin-right:auto; }
-  #flagdesc, #flagwho { width:100%; border:1px solid var(--line); border-radius:6px;
+  #flagdesc { width:100%; border:1px solid var(--line); border-radius:6px;
                 background:var(--panel2); color:var(--ink); font:inherit;
                 font-size:12.5px; padding:7px 9px; resize:vertical; }
   .flagshot { border:1px solid var(--line); border-radius:6px; overflow:hidden;
@@ -310,6 +310,13 @@
           </div>
         </div>
         <div class="setrow">
+          <div class="setlabel">Ghost mode</div>
+          <div class="seg" id="ghostmodeseg">
+            <button type="button" data-v="light" class="on">Light</button>
+            <button type="button" data-v="dark">Dark</button>
+          </div>
+        </div>
+        <div class="setrow">
           <div class="setlabel">Theme</div>
           <div class="seg" id="themeseg">
             <button type="button" data-v="light" class="on">Light</button>
@@ -339,15 +346,13 @@
           <textarea id="flagdesc" rows="5" spellcheck="true"
             placeholder="e.g. the end of the pressure curve is missing on this stage"></textarea>
         </div>
-        <div class="setrow col">
-          <div class="setlabel">Your name</div>
-          <input type="text" id="flagwho" placeholder="Carmine" spellcheck="false">
-        </div>
-        <div class="setrow col">
+        <!-- The snapshot still goes with the report; it just isn't shown.
+             Reviewing it here was never the point, and the preview pushed the
+             one field that matters off the top of the dialog. -->
+        <div class="setrow col" hidden>
           <div class="setlabel row">Attached
             <span class="sethint" id="flaghint"></span>
-            <button type="button" class="btn tiny" id="flagcap"
-              title="Grab the whole window or screen instead — useful when the problem involves the original PDF alongside">Capture window…</button>
+            <button type="button" class="btn tiny" id="flagcap">Capture window…</button>
             <button type="button" class="btn tiny" id="flagrecap" hidden>Use chart only</button></div>
           <div class="flagshot"><img id="flagimg" alt="chart snapshot"></div>
         </div>
@@ -405,7 +410,6 @@
             <button type="button" data-layer="ref" class="on"
               title="Show or hide the original chart underneath">Original</button>
           </div>
-          <button type="button" class="btn" id="ghostbtn">Ghost</button>
           <button type="button" class="btn" id="flagbtn"
                   title="Report a problem with this chart — sends your notes plus
 a picture of these panels and the extraction diagnostics">Flag Error</button>
@@ -455,7 +459,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
-                   ghostOurs: true, ghostRef: true,
+                   ghostOurs: true, ghostRef: true, ghostLight: true,
                  };  // toggles
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
@@ -1226,11 +1230,12 @@ const PROVIDERS = [
   [/STEP/i, "STEP"], [/mview/i, "CalFrac"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
 ];
-// validated seconds-data providers — always offered in the menu even before
-// any of their files are loaded, so the supported set is visible up front
-// the only providers offered in the filter. "CalFrac" is the label for the
-// MView-format charts Calfrac reports carry; must match providerOf().
-const WORKED_PROVIDERS = ["CalFrac", "BJ", "Liberty"];
+// The providers offered in the filter — always listed, even before any of
+// their files are loaded, so the supported set is visible up front. Each label
+// must be exactly what providerOf() returns, or the filter hides everything:
+// "CalFrac" is the label for the MView-format charts Calfrac reports carry,
+// and "Halliburton" covers both the IFS charts and the raster treatment plots.
+const WORKED_PROVIDERS = ["CalFrac", "BJ", "Liberty", "STEP", "Halliburton"];
 function providerOf(source) {
   for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
   return "Other";
@@ -1283,7 +1288,11 @@ function render(entry, fname, stages, tables, notes, summary) {
   entry.provider = well ? well.provider : (tables[0] ? providerOf(tables[0].source) : "Other");
   rebuildProviderMenu();
   applyProviderFilter();
-  selectFile(entry);            // list this file's stages in the middle column
+  // Open it only when nothing is on screen yet. With a queue running, every
+  // file that finished used to yank the middle column and the graph over to
+  // itself, so a chart you were reading was replaced mid-look. Later arrivals
+  // now just appear in the file list and wait to be clicked.
+  if (!current) selectFile(entry);
   updateCount();
 }
 
@@ -1544,13 +1553,15 @@ function redrawGraph() {
   const { t0, t1, dsec } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
   const ghost = ghostActive();
-  // Ghost mode is a monochrome blueprint: black paper, the source chart in
-  // glowing white, our curves in one vibrant blue on top.
-  const TC = ghost
+  // Dark ghost is a monochrome blueprint: black paper, the source chart in
+  // glowing white, our curves in one vibrant blue on top. Light ghost keeps
+  // the ordinary chart — every channel in its own colour — and lays the source
+  // underneath as plain black ink, which is how it prints on paper.
+  const TC = ghostMono()
     ? { grid: "rgba(255,255,255,.22)", axisText: "rgba(255,255,255,.75)",
         crosshair: "rgba(255,255,255,.8)" }
     : chartColors();
-  if (ghost) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
+  if (ghostMono()) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
   drawGhostBackdrop(ctx, W, H);
   ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
   ctx.fillStyle = TC.axisText; ctx.font = "11px ui-monospace,Menlo,monospace";
@@ -1583,30 +1594,50 @@ function redrawGraph() {
 // gives no clue what was switched off or how to get it back.
 function drawGhostLegend(ctx, W, H) {
   const { L, T } = GP;
+  const light = !ghostMono();
+  // In light mode our layer is not one colour, so its swatch is the actual
+  // palette on screen, striped. A single blue key there would name a colour
+  // that appears nowhere in the chart.
+  const ours = light
+    ? gState.channels.filter((c, ci) => chanVisible(c, ci))
+                     .map(c => c._color).slice(0, 4)
+    : [GHOST_LINE];
   const rows = [
-    { on: settings.ghostOurs, color: GHOST_LINE, label: "Extracted" },
-    { on: settings.ghostRef && ghostReady(), color: GHOST_INK,
-      label: "Original" },
+    { on: settings.ghostOurs, colors: ours.length ? ours : [GHOST_LINE],
+      label: "Extracted" },
+    { on: settings.ghostRef && ghostReady(),
+      colors: [light ? "#111111" : GHOST_INK], label: "Original" },
   ];
+  const ink = light ? "#14181d" : "#ffffff";
   const x = L + 12, y = T + 12, lh = 15;
   ctx.save();
   ctx.font = "11px ui-monospace,Menlo,monospace";
   ctx.textAlign = "left"; ctx.textBaseline = "middle";
   const w = Math.max(...rows.map(r => ctx.measureText(r.label).width)) + 34;
-  ctx.fillStyle = "rgba(0,0,0,.55)";
+  ctx.fillStyle = light ? "rgba(255,255,255,.82)" : "rgba(0,0,0,.55)";
   ctx.beginPath();
   if (ctx.roundRect) ctx.roundRect(x, y, w, rows.length * lh + 10, 5);
   else ctx.rect(x, y, w, rows.length * lh + 10);
   ctx.fill();
+  if (light) {
+    ctx.strokeStyle = "rgba(0,0,0,.16)"; ctx.lineWidth = 1; ctx.stroke();
+  }
   rows.forEach((r, i) => {
     const cy = y + 12 + i * lh;
     ctx.globalAlpha = r.on ? 1 : 0.38;
-    ctx.strokeStyle = r.color; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x + 8, cy); ctx.lineTo(x + 24, cy); ctx.stroke();
-    ctx.fillStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    const seg = 16 / r.colors.length;
+    r.colors.forEach((col, k) => {
+      ctx.strokeStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(x + 8 + k * seg, cy); ctx.lineTo(x + 8 + (k + 1) * seg, cy);
+      ctx.stroke();
+    });
+    ctx.fillStyle = ink;
     ctx.fillText(r.label, x + 30, cy);
     if (!r.on) {                       // struck through: off, not merely faint
-      ctx.strokeStyle = "rgba(255,255,255,.6)"; ctx.lineWidth = 1;
+      ctx.strokeStyle = light ? "rgba(0,0,0,.55)" : "rgba(255,255,255,.6)";
+      ctx.lineWidth = 1;
       const tw = ctx.measureText(r.label).width;
       ctx.beginPath(); ctx.moveTo(x + 30, cy); ctx.lineTo(x + 30 + tw, cy);
       ctx.stroke();
@@ -1718,8 +1749,20 @@ function chartHasGeom() {
 }
 
 function ghostActive() {
-  if (!settings.ghost || orig.failed) return false;
+  // Ghost is not a mode any more — it is how the chart is drawn whenever the
+  // source page can be placed behind it. Left/Right mute either layer, which
+  // covers everything the old on/off button did.
+  if (orig.failed) return false;
   return chartHasGeom();
+}
+
+// Whether ghost is repainting the whole chart in its one-colour scheme. Light
+// ghost leaves the graph exactly as it looks normally and only adds the source
+// underneath, so every "are we in ghost styling?" test has to ask this rather
+// than ghostActive() — otherwise light mode would still flatten our curves to
+// a single blue and black out the paper.
+function ghostMono() {
+  return ghostActive() && !settings.ghostLight;
 }
 
 // Whether the buffered page actually belongs to the chart on screen. Switching
@@ -1729,6 +1772,33 @@ function ghostReady() {
   return ghostActive() && orig.synced && !!orig.buf && orig.bufSeq === orig.seq;
 }
 
+// Anything darker than this is ink; the rest is paper. Set above the page's
+// gridlines (very light) and below its lightest curve colour.
+const INK_LUM = 220;
+
+// Flatten the source page to solid black on white. Each series is printed in
+// its own colour, and greyscaling maps those to different greys — a dark red
+// comes through almost black while a light green nearly disappears — so the
+// backdrop read as one emphasised curve and several faint ones. Thresholding
+// puts every curve on equal footing, and dark mode's invert then gives them
+// all the same white.
+function binarizedCopy(src, W, H) {
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const bctx = c.getContext("2d");
+  bctx.drawImage(src, 0, 0);
+  try {
+    const im = bctx.getImageData(0, 0, W, H), px = im.data;
+    for (let i = 0; i < px.length; i += 4) {
+      const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      const v = lum < INK_LUM ? 0 : 255;
+      px[i] = px[i + 1] = px[i + 2] = v;
+    }
+    bctx.putImageData(im, 0, 0);
+  } catch (e) { /* unreadable canvas: leave the page as rendered */ }
+  return c;
+}
+
 function drawGhostBackdrop(ctx, W, H) {
   if (!ghostReady() || !settings.ghostRef) return;
   const { L, R, T, B } = GP;
@@ -1736,16 +1806,27 @@ function drawGhostBackdrop(ctx, W, H) {
   ctx.beginPath();
   ctx.rect(L, T, W - L - R, H - T - B);
   ctx.clip();
-  // The source page is dark ink on white paper. Inverting it puts white ink
-  // on black, which is what makes it read underneath a blue curve. Drawing a
-  // blurred pass first and a sharp one over it gives the ink its glow.
-  ctx.globalCompositeOperation = "lighter";
-  ctx.filter = "grayscale(1) invert(1) blur(2.5px)";
-  ctx.globalAlpha = 0.55;
-  ctx.drawImage(orig.buf, 0, 0);
-  ctx.filter = "grayscale(1) invert(1)";
-  ctx.globalAlpha = 0.9;
-  ctx.drawImage(orig.buf, 0, 0);
+  if (settings.ghostLight) {
+    // Light: the page is already dark ink on white paper, so it needs no
+    // inversion — just the colour taken out, so the operator's own coloured
+    // curves can't be confused with ours. "multiply" keeps the ink and drops
+    // the paper, leaving black lines on our normal background.
+    ctx.globalCompositeOperation = "multiply";
+    ctx.filter = "none";               // already thresholded to black on white
+    ctx.globalAlpha = 1;
+    ctx.drawImage(orig.ink || orig.buf, 0, 0);
+  } else {
+    // Dark: inverting puts white ink on black, which is what makes it read
+    // underneath a blue curve. A blurred pass first and a sharp one over it
+    // gives the ink its glow.
+    ctx.globalCompositeOperation = "lighter";
+    ctx.filter = "invert(1) blur(2.5px)";
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(orig.ink || orig.buf, 0, 0);
+    ctx.filter = "invert(1)";
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(orig.ink || orig.buf, 0, 0);
+  }
   ctx.restore();
 }
 
@@ -1804,7 +1885,7 @@ function drawYAxis(ctx, W, H) {
         }
       }
       const txt = v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2);
-      ctx.fillStyle = gh ? GHOST_LINE : a.color;
+      ctx.fillStyle = ghostMono() ? GHOST_LINE : a.color;
       const dy = (ai - (axes.length - 1) / 2) * rowH + rowH / 2 - 1 + shift;
       ctx.fillText(txt, L - 5, y + dy);
     });
@@ -1821,9 +1902,12 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
   const am = alphaMul == null ? 1 : alphaMul;
   const gh = ghostActive();
-  // Muting is a ghost-mode idea only: outside it there is nothing to compare
-  // against, so hiding our own curves would just blank the chart.
-  if (gh && !settings.ghostOurs) return;
+  // Muting is absolute. It used to apply only while ghost was active, so on a
+  // chart with one curve solo'd — or any chart without a source page behind
+  // it — switching the extracted layer off did nothing and the graph could
+  // never be emptied. Blanking it IS the useful answer: it shows what the
+  // source page alone says.
+  if (!settings.ghostOurs) return;
   gState.channels.forEach((c, ci) => {
     if (!chanVisible(c, ci)) return;
     // Both the graph and the ghost place a value inside that curve's own
@@ -1832,7 +1916,7 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     const i0 = Math.max(0, Math.floor(t0 / dsec));
     const i1 = Math.min(vals.length - 1, Math.ceil(t1 / dsec));
     const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
-    ctx.strokeStyle = gh ? GHOST_LINE : c._color;
+    ctx.strokeStyle = ghostMono() ? GHOST_LINE : c._color;
     ctx.lineWidth = hi === ci ? 2.4 : (gh ? 1.6 : 1.3);
     ctx.globalAlpha = ((hi != null && hi !== ci) ? 0.4 : 1) * am;
     ctx.beginPath();
@@ -1875,7 +1959,7 @@ function drawHover(ctx, W, H) {
     if (v == null || !isFinite(v)) return;
     const y = T + (1 - chanFrac(c, v)) * (H - T - B);
     if (!gh || settings.ghostOurs) {    // the dot is part of the muted layer
-      ctx.fillStyle = gh ? GHOST_LINE : c._color;
+      ctx.fillStyle = ghostMono() ? GHOST_LINE : c._color;
       ctx.beginPath(); ctx.arc(x, y, ci === hover.hiIdx ? 4.2 : 2.6, 0, 7); ctx.fill();
     }
     rows.push({ name: chanName(c), v, unit: c.unit || "",
@@ -1910,7 +1994,7 @@ function drawHover(ctx, W, H) {
       ctx.fillStyle = "rgba(255,255,255,.18)";
       ctx.fillRect(bx + 5, yy - 11, tw - 10, 15);
     }
-    ctx.fillStyle = gh ? (r.hi ? "#ffffff" : GHOST_LINE) : r.color;
+    ctx.fillStyle = ghostMono() ? (r.hi ? "#ffffff" : GHOST_LINE) : r.color;
     ctx.fillRect(bx + 10, yy - 8, 10, 3);
     ctx.font = (r.hi ? "bold " : "") + "11px ui-monospace,Menlo,monospace";
     ctx.fillStyle = r.hi ? TC.tipHi : TC.tipInk;
@@ -1940,7 +2024,7 @@ function buildLegend() {
 
 // ---------- "Original chart" mode: render the source PDF page ----------
 const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null,
-               buf: null, synced: false, bufSeq: -1, failed: false };
+               buf: null, ink: null, synced: false, bufSeq: -1, failed: false };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -2053,10 +2137,17 @@ async function syncOrig() {
 async function renderSynced(ctx, cv, page, g, mySeq) {
   const { L, R, T, B } = GP, W = cv.width, H = cv.height;
   const plotW = W - L - R, plotH = H - ORIG_FOOT - T - B;
-  const ph = page.view[3] - page.view[1];       // page height, pdf user units
+  // The geometry arrives in mupdf page coordinates, whose origin is the
+  // CROPBOX corner — mupdf normalises every page to start at (0,0). pdf.js
+  // wants true user space, so the crop offset has to go back on. Most pages
+  // crop at the origin and the two agree, which is why this only showed up on
+  // 00180: its cropbox starts at x -14, and every ghost curve on the file sat
+  // 14 units — about 3.5% of the plot — to one side of its own ink.
+  const vx = page.view[0], vTop = page.view[3];
   const coord = t => (t - g.ta) / g.tb;         // elapsed s -> mupdf axis coord
   const toPdf = (axisC, vC) => g.axis === "y"
-    ? [vC, ph - axisC] : [axisC, ph - vC];      // mupdf(y-down) -> pdf(y-up)
+    ? [vC + vx, vTop - axisC]                   // mupdf(y-down) -> pdf(y-up)
+    : [axisC + vx, vTop - vC];
   const c0 = coord(gState.t0), c1 = coord(gState.t1);
   const vmid = (g.v0 + g.v1) / 2;
   let rot = g.axis === "y" ? 90 : 0;
@@ -2095,6 +2186,11 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   await task.promise.catch(() => { /* cancelled */ });
   bctx.restore();
   if (mySeq !== orig.seq) return;
+  // Two copies from here: orig.buf stays exactly as the page prints, for the
+  // comparison panel below, and orig.ink is the same page flattened to black
+  // for the overlay. One buffer served both, so thresholding the overlay took
+  // the colour out of the panel too.
+  orig.ink = binarizedCopy(orig.buf, W, H);
   bctx.strokeStyle = chartColors().grid;
   bctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
   orig.synced = true;
@@ -2144,17 +2240,8 @@ async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
 function updateOrigBar() {
   const item = current && current.item;
   const pages = (item && item.type === "stage" && item.pages) || [];
-  // Ghost toggles the backdrop on the top chart. Set it before the early
-  // return below so it stays live in every state.
-  const gb = $("ghostbtn");
-  // a chart with no geometry cannot be ghosted, so don't offer it
-  gb.hidden = !(item && item.type === "stage" && pages.length > 0
-                && chartHasGeom());
-  gb.classList.toggle("on", !!settings.ghost);
-  gb.title = settings.ghost
-    ? "Hide the source chart from behind our curves (the comparison panel "
-      + "below is unaffected)"
-    : "Draw the source chart behind our curves to compare them directly";
+  // The layer mutes stand in for the old Ghost button. Set them before the
+  // early return below so they stay live in every state.
   syncGhostLayerUI();
 
   const on = pages.length > 0;
@@ -2168,6 +2255,16 @@ function updateOrigBar() {
   const e = current && current.entry;
   $("origopen").disabled = !(e && (e._pdfFile || e._pdfUrl));
 }
+
+// Light ghost keeps our normal colours and lays the source under them in
+// black; dark ghost repaints everything as the blue-on-black blueprint.
+$("ghostmodeseg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.ghostLight = b.dataset.v === "light";
+  setSeg($("ghostmodeseg"), b.dataset.v);
+  saveSettings();
+  redrawGraph();
+});
 
 $("themeseg").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -2188,6 +2285,7 @@ function loadSettings() {
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
+  setSeg($("ghostmodeseg"), settings.ghostLight ? "light" : "dark");
   syncGhostLayerUI();
 }
 function saveSettings() {
@@ -2196,6 +2294,7 @@ function saveSettings() {
     destFolder: settings.destFolder || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
+    ghostLight: settings.ghostLight,
   }));
 }
 function openSettings() { $("settingsback").hidden = false; }
@@ -2207,6 +2306,92 @@ $("settingsback").addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !$("settingsback").hidden) closeSettings();
+});
+
+// ---------- arrow-key stage navigation ----------
+// Down/Up step through the stage list and roll over into the next/previous
+// report, so a whole drive list can be reviewed without touching the mouse.
+// Files that produced nothing are skipped — there is no stage to land on —
+// and so are files the provider filter is hiding, which would otherwise
+// reappear as soon as you held an arrow down.
+function navigableEntries() {
+  return entries
+    .filter(e => e.items && e.items.length &&
+                 !e.el.classList.contains("prov-hide"))
+    // by position on screen, not load order: a queue finishes out of order
+    .sort((a, b) => (a.el.compareDocumentPosition(b.el)
+                     & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+}
+
+function showLast(entry) {
+  const it = entry.items[entry.items.length - 1];
+  selectItem(entry, entry.well, it, it._row);
+}
+
+function navStage(dir) {
+  const list = navigableEntries();
+  if (!list.length) return;
+  if (!current) {                       // nothing open yet — start at an end
+    const e = dir > 0 ? list[0] : list[list.length - 1];
+    selectFile(e);                      // lands on its first item
+    if (dir < 0) showLast(e);
+  } else {
+    const entry = current.entry;
+    const i = entry.items.indexOf(current.item);
+    const j = i + dir;
+    if (i >= 0 && j >= 0 && j < entry.items.length) {
+      const it = entry.items[j];
+      selectItem(entry, entry.well, it, it._row);
+    } else {
+      // off the end of this file — step to the neighbouring report. If the
+      // current file isn't in the list (filtered out from under us) fall to
+      // the near end rather than doing nothing.
+      const k = list.indexOf(entry);
+      const nxt = k < 0 ? list[dir > 0 ? 0 : list.length - 1] : list[k + dir];
+      if (!nxt) return;                 // stop at the first/last report
+      selectFile(nxt);
+      if (dir < 0) showLast(nxt);
+      nxt.head.scrollIntoView({ block: "nearest" });
+    }
+  }
+  const sel = document.querySelector(".stagerow.sel");
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+
+// Left/Right mute a ghost layer — left the extracted curves, right the source
+// chart — the same toggles as the A/B buttons, so flicking between "is our
+// line right?" and "what does the page actually say?" needs no mouse.
+function toggleGhostLayer(which) {
+  // The extracted layer can always be muted; the source layer only when there
+  // is one to show.
+  if (which !== "ours" && !ghostActive()) return false;
+  if (which === "ours") settings.ghostOurs = !settings.ghostOurs;
+  else settings.ghostRef = !settings.ghostRef;
+  syncGhostLayerUI();
+  saveSettings();
+  redrawGraph();
+  return true;
+}
+
+document.addEventListener("keydown", e => {
+  const k = e.key;
+  if (k !== "ArrowDown" && k !== "ArrowUp" && k !== "Enter" &&
+      k !== "ArrowLeft" && k !== "ArrowRight") return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))
+    return;                             // let the field have its own arrows
+  if (!$("settingsback").hidden || !$("flagback").hidden) return;
+  if (k === "Enter") {                  // raise a report on what's on screen
+    if (!$("flagbtn").hidden && current) { e.preventDefault(); openFlag(); }
+    return;
+  }
+  if (k === "ArrowLeft" || k === "ArrowRight") {
+    if (toggleGhostLayer(k === "ArrowLeft" ? "ours" : "ref")) e.preventDefault();
+    return;
+  }
+  e.preventDefault();                   // otherwise the page scrolls too
+  navStage(k === "ArrowDown" ? 1 : -1);
 });
 
 // destination folder — desktop opens a native picker server-side; web can't
@@ -2241,6 +2426,10 @@ $("destpath").addEventListener("change", () => {
 // ---------- Flag Error: report a problem without leaving the app ----------
 // The desktop build is served from 127.0.0.1, so reports go to the deployed
 // Lab rather than to its own origin. On the web build the relative path wins.
+// Every report comes from Carmine; the name box was one more field to
+// clear before sending. He edits it on the issue in the rare case it
+// was someone else.
+const FLAG_REPORTER = "Carmine";
 const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
                        location.hostname === "localhost")
   ? "https://carmines-lab.vercel.app/api/flag" : "/api/flag";
@@ -2391,27 +2580,28 @@ function setFlagShot(data, kind) {
        : kind === "screen" ? "full screen"
        : kind === "window" ? "window shot" : "chart + details");
 }
-$("flagbtn").addEventListener("click", async () => {
-  // Show the chart composite straight away so the dialog is never empty,
-  // then swap in the full screen once the server returns it.
-  setFlagShot(flagSnapshot(), "chart");
+async function openFlag() {
+  if (!$("flagback").hidden) return;
   $("flagstatus").textContent = "";
+  const seq = ++flagSeq;
+  // Grab the screen BEFORE the dialog is shown. Opening first and capturing
+  // after put the dialog itself in the shot, covering the very chart the
+  // report is about.
+  let shot = null;
+  if (isLocal()) {
+    try { shot = await captureScreenLocal(); }
+    catch (err) {
+      $("flagstatus").textContent =
+        /permission|Screen Recording/i.test(err.message) ? err.message : "";
+    }
+  }
+  if (seq !== flagSeq) return;
+  if (shot) setFlagShot(shot, "screen");
+  else setFlagShot(flagSnapshot(), "chart");
   $("flagback").hidden = false;
   $("flagdesc").focus();
-  if (!isLocal()) return;
-  const seq = ++flagSeq;
-  $("flaghint").textContent = "capturing the screen…";
-  try {
-    const img = await captureScreenLocal();
-    if (seq === flagSeq && !$("flagback").hidden) setFlagShot(img, "screen");
-  } catch (err) {
-    if (seq !== flagSeq) return;
-    setFlagShot(flagSnapshot(), "chart");   // restores the hint too
-    // Not worth an error banner: the chart snapshot still goes with the report.
-    $("flagstatus").textContent = /permission|Screen Recording/i.test(err.message)
-      ? err.message : "";
-  }
-});
+}
+$("flagbtn").addEventListener("click", openFlag);
 $("flagcap").addEventListener("click", async () => {
   const seq = ++flagSeq;
   $("flagstatus").textContent = isLocal()
@@ -2436,6 +2626,13 @@ $("flagclose").addEventListener("click", () => { $("flagback").hidden = true; })
 $("flagback").addEventListener("click", e => {
   if (e.target === $("flagback")) $("flagback").hidden = true;
 });
+// Enter sends. The description is the only thing to fill in, so a second
+// Enter finishes the report; Shift+Enter still breaks a line for a longer one.
+$("flagdesc").addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+  e.preventDefault();
+  if (!$("flagsend").disabled) $("flagsend").click();
+});
 $("flagsend").addEventListener("click", async () => {
   const desc = $("flagdesc").value.trim();
   if (!desc) { $("flagstatus").textContent = "Please describe the problem."; return; }
@@ -2445,7 +2642,7 @@ $("flagsend").addEventListener("click", async () => {
     const r = await fetch(FLAG_ENDPOINT, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description: desc,
-                             reporter: $("flagwho").value.trim() || "user",
+                             reporter: FLAG_REPORTER,
                              diagnostics: { ...flagDiagnostics(),
                                             shot: flagShotKind },
                              screenshot: flagShot }) });
@@ -2489,18 +2686,11 @@ $("orignext").addEventListener("click", () => { orig.pageIdx++; if (applyCompare
 // itself is always on — it is no longer something to switch into.
 // Ghost mode overlays the source chart behind OUR curves in the top graph.
 // It does not touch the comparison panel below, which is always shown.
-$("ghostbtn").addEventListener("click", () => {
-  settings.ghost = !settings.ghost;
-  $("ghostbtn").classList.toggle("on", settings.ghost);
-  syncGhostLayerUI();
-  saveSettings();
-  redrawGraph();
-});
-
 // Independent toggles, not a segmented choice: either layer, both, or neither.
 function syncGhostLayerUI() {
   // follows the Ghost button: pointless on a page that has no source
-  $("ghostlayers").hidden = !settings.ghost || $("ghostbtn").hidden;
+  $("ghostlayers").hidden = !(current && current.item &&
+                              current.item.type === "stage");
   for (const b of $("ghostlayers").children) {
     const on = b.dataset.layer === "ours" ? settings.ghostOurs : settings.ghostRef;
     b.classList.toggle("on", !!on);

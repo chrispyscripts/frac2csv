@@ -15,6 +15,7 @@ import numpy as np
 
 import aliases
 import auto_raster as ar
+import curve_trace as ct
 
 SERIES_NAMES = {
     # treatment chart
@@ -123,6 +124,18 @@ def find_charts(img):
       - the outer 4% of the width is ignored, which is where the page border
         lives; it is also longer than maxlen, but at a loose threshold it can
         break into shorter segments that would otherwise qualify.
+
+    A rule has to be UNBROKEN over 10% of the page to register at all, and on
+    a scan it sometimes is not: on 00274 p61 the treatment chart's right rule
+    is chopped into sub-threshold pieces, so that chart was left with a left
+    edge and nothing to pair it with and the whole box was dropped. The page
+    then yielded ONE box where there are two — and since the survivor was the
+    CHEMICAL chart, and position decides the tag when the title is illegible,
+    its 0..2 L/m3 axis was exported as Surface Pressure (median 0.19 MPa).
+    So a group that finds no partner gets a second look: within its own row
+    band, the outermost columns that are dark over half the band's height. A
+    broken rule is still dark for most of its height, and nothing else on the
+    page is.
     """
     H, W = img.shape[:2]
     dark = img.sum(axis=2) < 300
@@ -148,14 +161,90 @@ def find_charts(img):
         else:
             groups.append({"xs": [x], "y0": ya, "y1": yb})
 
-    out = []
+    # A rule broken in the middle also splits ONE chart into two groups at the
+    # same width and touching heights: 00271 p26 (an offset-analysis page) came
+    # back as the bottom two thirds of its chart alone, and reading a 0..75
+    # frame from its lower 60% gave a 0..50 axis and a 33 MPa median for a
+    # curve printed at 50. Charts on these pages are separated by hundreds of
+    # pixels, so a gap of a few is a break, not a boundary.
+    groups.sort(key=lambda g: (g["y0"], g["y0"] - g["y1"]))
+    merged = []
+    for g in groups:
+        p = merged[-1] if merged else None
+        if p is not None and _xspan_overlap(p["xs"], g["xs"]) >= 0.8:
+            if min(g["y1"], p["y1"]) - g["y0"] >= 0.8 * (g["y1"] - g["y0"]):
+                # a band already held, seen again — one shorter run of the
+                # same rule. Its columns are welcome; its extent is NOT. On
+                # 00269 p49 letting it push the frame bottom down by a single
+                # pixel moved the time-label strip off the labels.
+                p["xs"] += g["xs"]
+                continue
+            if g["y0"] - p["y1"] <= max(20, H * 0.02):
+                p["xs"] += g["xs"]
+                p["y1"] = max(p["y1"], g["y1"])
+                continue
+        merged.append(dict(g))
+    groups = merged
+
+    out, orphans = [], []
     for g in groups:
         x0, x1 = min(g["xs"]), max(g["xs"])
+        if x1 - x0 >= W * 0.3:
+            out.append((x0, g["y0"], x1, g["y1"]))
+        else:
+            orphans.append(g)
+    # Tallest first: the same broken rule also leaves short fragments of its
+    # own chart behind, and a fragment must not become a second box for the
+    # chart it is part of.
+    for g in sorted(orphans, key=lambda g: g["y0"] - g["y1"]):
+        x0, x1 = min(g["xs"]), max(g["xs"])
+        x0, x1 = _band_edges(dark, g["y0"], g["y1"], lo, hi, x0, x1)
         if x1 - x0 < W * 0.3:
             continue                      # too narrow to be a plot
-        out.append((x0, g["y0"], x1, g["y1"]))
+        b = (x0, g["y0"], x1, g["y1"])
+        if any(_covered(b, o) for o in out):
+            continue
+        out.append(b)
     out.sort(key=lambda b: b[1])
     return out
+
+
+def _xspan_overlap(xs_a, xs_b):
+    """How much of the narrower x span the two share, 0..1. A one-column
+    fragment (a broken rule with no partner) has no span of its own and counts
+    as fully overlapping whatever contains it."""
+    a0, a1, b0, b1 = min(xs_a), max(xs_a), min(xs_b), max(xs_b)
+    ov = min(a1, b1) - max(a0, b0)
+    w = min(a1 - a0, b1 - b0)
+    if w <= 0:
+        return 1.0 if ov >= 0 else 0.0
+    return max(0.0, ov / float(w))
+
+
+def _covered(b, o):
+    """Is box b mostly inside box o? Charts on these pages stack, never
+    overlap, so a box sharing most of another's rows AND columns is the same
+    chart seen twice."""
+    vov = min(b[3], o[3]) - max(b[1], o[1])
+    hov = min(b[2], o[2]) - max(b[0], o[0])
+    return (vov > 0.5 * (b[3] - b[1]) and hov > 0.5 * (b[2] - b[0]))
+
+
+def _band_edges(dark, y0, y1, lo, hi, x0, x1):
+    """Widen an unpaired frame edge using column darkness over its own rows.
+
+    Only ever called for a group the run test could not pair, so it cannot
+    move a box that was already found. A frame rule broken by scan noise still
+    covers most of the band; gridlines, curves and text do not.
+    """
+    h = y1 - y0
+    if h < 40:
+        return x0, x1
+    frac = dark[y0:y1, lo:hi].sum(axis=0) / float(h)
+    cols = np.where(frac > 0.5)[0]
+    if len(cols) < 2:
+        return x0, x1
+    return min(x0, int(cols[0]) + lo), max(x1, int(cols[-1]) + lo)
 
 
 def page_meta(img):
@@ -191,18 +280,49 @@ def _frame_bbox(img):
     return int(col_ok[0]), int(row_ok[0]), int(col_ok[-1]), int(row_ok[-1])
 
 
-NEW_SURFACE = {"red": ("Surface Pressure", "MPa", "left"),
-               "blue": ("Slurry Rate", "m3/min", "right1"),
-               "cyan": ("Slurry Rate", "m3/min", "right1"),
-               "green": ("Prop Conc", "kg/m3", "right2"),
-               "orange": ("Btm Prop Conc", "kg/m3", "right2")}
+# colour family -> (series, unit, the QUANTITY its value axis measures).
+# Keyed by quantity, not by axis position: these charts print Concentration as
+# the inner right column and Rate as the outer one, and a position-keyed table
+# ("right1"/"right2") had them exactly backwards — every concentration was
+# exported on the rate scale and every rate on the concentration scale.
+NEW_SURFACE = {"red": ("Surface Pressure", "MPa", "pressure"),
+               "blue": ("Slurry Rate", "m3/min", "rate"),
+               "cyan": ("Slurry Rate", "m3/min", "rate"),
+               "green": ("Prop Conc", "kg/m3", "conc"),
+               "orange": ("Btm Prop Conc", "kg/m3", "conc")}
 
 
-def _extract_new_chart(img, sample_sec=1.0):
-    """New-format chart image: black tick labels on fixed axes —
-    left=Pressure(red), right1=Rate(blue), right2=Concentration."""
+def _right_columns(pts, gap=18):
+    """Right-hand tick labels [(value, x, y)] -> one [(value, y, True)] list
+    per column, cut on x gaps. A rotated axis title is a column of its own
+    here, and drops out later because its OCR speckle admits no linear fit."""
+    out, cur, prev = [], [], None
+    for v, px, py in sorted(pts, key=lambda p: p[1]):
+        if prev is not None and px - prev > gap:
+            out.append(cur)
+            cur = []
+        cur.append((v, py, True))
+        prev = px
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
+    """Chart with black tick labels on stacked value axes, each named by its
+    own rotated title (Pressure / Rate / Concentration).
+
+    `box` gives the plot frame explicitly. The new format renders one chart
+    per image so the frame can be found from the image alone, but the SAME
+    chart style also appears on the TILED layout (Shell 2017: 00269, 00271-4),
+    where one composited page carries two of them and each must be read inside
+    its own rows only. `require_titles` refuses the page when no axis title
+    can be read, which is how the caller tells this style apart from the older
+    tiled charts whose tick labels are colour-keyed instead (00183).
+    """
     img = np.asarray(img).astype(int)
-    box = _frame_bbox(img)
+    if box is None:
+        box = _frame_bbox(img)
     if box is None:
         raise ValueError("step1: no frame")
     x0, y0, x1, y1 = box
@@ -215,9 +335,15 @@ def _extract_new_chart(img, sample_sec=1.0):
     if not (120 < n < 100000):
         raise ValueError(f"step1: implausible duration {n}s")
 
+    # Every strip — ticks and titles alike — is read from THIS chart's rows
+    # and no others. On a tiled page the chart above prints its own numbers in
+    # the very same columns, and they are what a whole-height strip returns.
+    ry0, ry1 = max(0, y0 - 30), min(img.shape[0], y1 + 30)
+    rows = img[ry0:ry1]
+
     def strip_ticks(xa, xb):
         from PIL import Image as _Im
-        strip = img[:, max(0, xa):xb]
+        strip = rows[:, max(0, xa):xb]
         if strip.size == 0:
             return []
         pil = _Im.fromarray(strip.astype(np.uint8))
@@ -229,41 +355,109 @@ def _extract_new_chart(img, sample_sec=1.0):
         for text, cx, cy in words:
             t = text.replace(",", "").strip("-.")
             if _re.fullmatch(r"\d+(\.\d+)?", t):
-                out.append((float(t), int(cx / 3) + max(0, xa), int(cy / 3)))
+                out.append((float(t), int(cx / 3) + max(0, xa),
+                            int(cy / 3) + ry0))
         return [(v, y, True) for v, x, y in
                 ((v, x, y) for v, x, y in out) if y0 - 25 <= y <= y1 + 25]
 
     W = img.shape[1]
-    left = strip_ticks(0, x0)
-    right = []
-    from collections import defaultdict as _dd
-    # right side: split labels into columns by x gap
-    from PIL import Image as _Im
-    strip = img[:, x1 + 3:W]
-    cols = _dd(list)
-    if strip.size:
-        pil = _Im.fromarray(strip.astype(np.uint8))
-        pil = pil.resize((pil.width * 3, pil.height * 3), _Im.LANCZOS)
-        words = ar.ocr_words(np.array(pil).astype(int), psm=6,
-                             whitelist="0123456789.-")
-        import re as _re
+    # Which axis is which comes from the axes' own rotated titles, not from
+    # their order: these charts print Concentration INSIDE Rate, and a title
+    # sits between its own numbers and the next axis, so it both names the
+    # column and delimits it. Each column is then OCR'd on its own: read as one
+    # wide strip the rotated title text lands among the digits, and the "12"
+    # topping the rate axis came back as "42", which no RANSAC fit could use.
+    try:
+        rtitles = ar.read_axis_titles(rows, x1 + 3, W, ccw=True)
+    except Exception:
+        rtitles = []
+    cols = []                       # [(quantity, ticks)], one entry per axis
+    if rtitles:
+        lo = x1 + 3
+        for qty, tx in rtitles:
+            if tx - 4 > lo:
+                cols.append((qty, strip_ticks(lo, tx - 4)))
+            lo = tx + 4
+    else:
+        # Titles unreadable: fall back to reading the whole strip and telling
+        # the columns apart by how far each axis reaches. A rate axis tops out
+        # in the tens of m3/min, a proppant concentration axis in the hundreds
+        # or thousands of kg/m3. A column that admits no fit is dropped rather
+        # than guessed at — half the axes is better than two wrong ones.
         pts = []
-        for text, cx, cy in words:
-            t = text.replace(",", "").strip("-.")
-            if _re.fullmatch(r"\d+(\.\d+)?", t):
-                px, py = int(cx / 3) + x1 + 3, int(cy / 3)
-                if y0 - 25 <= py <= y1 + 25:
-                    pts.append((float(t), px, py))
-        if pts:
-            xs = sorted(p[1] for p in pts)
-            gaps = [(b - a, a, b) for a, b in zip(xs, xs[1:]) if b - a > 40]
-            split = (gaps[0][1] + gaps[0][2]) / 2 if gaps else max(xs) + 1
-            for v, px, py in pts:
-                cols["right1" if px <= split else "right2"].append(
-                    (v, py, True))
-    fits = {"left": ar.fit_ticks_guarded(left)}
-    for k in ("right1", "right2"):
-        fits[k] = ar.fit_ticks_guarded(cols.get(k, []))
+        from PIL import Image as _Im
+        strip = rows[:, x1 + 3:W]
+        if strip.size:
+            pil = _Im.fromarray(strip.astype(np.uint8))
+            pil = pil.resize((pil.width * 3, pil.height * 3), _Im.LANCZOS)
+            import re as _re
+            for text, cx, cy in ar.ocr_words(np.array(pil).astype(int), psm=6,
+                                             whitelist="0123456789.-"):
+                t = text.replace(",", "").strip("-.")
+                if _re.fullmatch(r"\d+(\.\d+)?", t):
+                    px, py = int(cx / 3) + x1 + 3, int(cy / 3) + ry0
+                    if y0 - 25 <= py <= y1 + 25:
+                        pts.append((float(t), px, py))
+        for seg in _right_columns(pts):
+            cal = ar.fit_ticks_guarded(seg)
+            if not cal:
+                continue
+            top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
+            cols.append(("conc" if top >= 50 else "rate", seg))
+    try:
+        ltitles = ar.read_axis_titles(rows, 0, x0, ccw=False)
+    except Exception:
+        ltitles = []
+    if require_titles and not ltitles:
+        # The LEFT title specifically, because the quantity it names is what
+        # decides whether the colour table applies at all (below). With no
+        # left title the code falls back to assuming pressure, which is right
+        # for a surface chart and catastrophic for its chemical twin: 16 pages
+        # exported the Aqucar concentration curve as "Surface Pressure 0.97
+        # MPa". Refusing here sends the chart to the colour-keyed reader,
+        # which names it from the legend and the chart title instead.
+        raise ValueError("step1: left axis title unreadable")
+    # The left side stacks axes too — some pages print "TP Rate (L/min)"
+    # outside "Pressure (MPa)" — and there too the title is on the far side of
+    # its own numbers, so a title's column runs from it to the NEXT title.
+    if len(ltitles) >= 2:
+        edges = [t[1] for t in ltitles] + [x0]
+        lsegs = [(q, strip_ticks(tx + 4, edges[i + 1] - 4))
+                 for i, (q, tx) in enumerate(ltitles)]
+        lsegs = [(q, s) for q, s in lsegs if s]
+    else:
+        lsegs = [(ltitles[0][0] if ltitles else "pressure",
+                  strip_ticks(0, x0))]
+
+    fits = {}
+
+    def _use(qty, seg, only_if_free=False):
+        # fit each axis on its own ticks: an offset chart prints two right-hand
+        # PRESSURE axes, and one fit over both columns' numbers is meaningless
+        if only_if_free and qty in fits:
+            return
+        cal = ar.fit_ticks_guarded(seg) if seg else None
+        if cal and (fits.get(qty) is None or cal[2] > fits[qty][2]):
+            fits[qty] = cal
+
+    for qty, seg in cols:
+        _use(qty, seg)
+    for qty, seg in lsegs[:-1]:
+        # an outer left axis is an auxiliary channel ("TP Rate" in L/min, not
+        # the slurry rate in m3/min) — it only fills a quantity nothing else has
+        _use(qty, seg, only_if_free=True)
+    # The axis nearest the plot on the left is the chart's principal one and
+    # wins its quantity outright. An offset chart carries THREE pressure axes
+    # (0..80 main, 0..40 offset wells, 0..4 abandoned wells) and taking
+    # whichever fitted best put Surface Pressure on the offset scale.
+    lqty, lseg = lsegs[-1]
+    lcal = ar.fit_ticks_guarded(lseg) if lseg else None
+    if lcal is None and len(lsegs) > 1:
+        # a stacked left column is only ~50px wide and tesseract sometimes
+        # reads nothing from it; the whole strip still fits, so use that
+        lcal = ar.fit_ticks_guarded(strip_ticks(0, x0))
+    if lcal:
+        fits[lqty] = lcal
 
     masks = ar.hue_masks(img)
     samples = np.arange(int(n / sample_sec)) * sample_sec
@@ -275,6 +469,13 @@ def _extract_new_chart(img, sample_sec=1.0):
         if conv is None or conv[0] in seen:
             continue
         name, unit, axis = conv
+        # NEW_SURFACE names the colours of the SURFACE chart, which is the one
+        # whose left axis is Pressure. A chemical chart puts Clean Rate there
+        # and its colours mean something else entirely, so only the channel the
+        # left axis itself names is trustworthy — the rest would be exported as
+        # "Prop Conc (kg/m3)" off an L/m3 chemical axis.
+        if lqty != "pressure" and axis != lqty:
+            continue
         cal = fits.get(axis)
         if cal is None:
             continue
@@ -284,11 +485,7 @@ def _extract_new_chart(img, sample_sec=1.0):
         if cov < 0.1:
             continue
         n_cols = sub.shape[1]
-        py = np.full(n_cols, np.nan)
-        for cx in range(n_cols):
-            ys_ = np.where(sub[:, cx])[0]
-            if len(ys_):
-                py[cx] = np.median(ys_) + y0
+        py = ar.curve_positions(sub) + y0
         # same round-bound snap as the tiled path (see auto_raster.snap_axis):
         # applied before values are read so it reaches the exported numbers
         _vt, _vb, _sn = ar.snap_axis(a + b * y0, a + b * y1)
@@ -297,10 +494,12 @@ def _extract_new_chart(img, sample_sec=1.0):
             a = _vt - b * y0
         vals = a + b * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
-        ok = ~np.isnan(vals)
-        if ok.sum() < 50:
+        if np.isfinite(vals).sum() < 50:
             continue
-        v = np.interp(samples, t_cols[ok], vals[ok])
+        # No ink means no reading: np.interp with no left/right clamps to the
+        # edge value, so every gap and both tails carried a flat invented line.
+        # ct.resample blanks them instead (see curve_trace.resample).
+        v = ct.resample(samples, t_cols, vals)
         channels.append({"key": f"series-{fam}", "label": name, "unit": unit,
                          "color": ar.HUE_HEX.get(base, "#555577"),
                          "values": v, "ticks": ntick, "coverage": cov,
@@ -395,10 +594,37 @@ def _extract_new(page, sample_sec=1.0):
     return meta, out
 
 
+def _is_pressure(c):
+    if (c.get("unit") or "").lower() in ("mpa", "kpa", "psi"):
+        return True
+    return "pressure" in (c.get("label") or "").lower()
+
+
+def _drop_impossible_pressure(charts):
+    """Refuse to export a pressure channel read off an axis that cannot be a
+    pressure axis. See auto_raster.plausible_pressure_axis — a wrong number
+    here is invisible downstream, a missing channel is not."""
+    out = []
+    for tag, samples, chans, info in charts:
+        keep = []
+        for c in chans:
+            fr = c.get("axis_frame")
+            if fr and _is_pressure(c) and not ar.plausible_pressure_axis(*fr):
+                info.setdefault("notes", []).append(
+                    f"{c.get('label')}: axis ({fr[0]:.2f}, {fr[1]:.2f}) is "
+                    "not a possible pressure scale — channel dropped")
+                continue
+            keep.append(c)
+        if keep:
+            out.append((tag, samples, keep, info))
+    return out
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, [(chart_tag, samples, channels, info), ...])."""
     if not _detect_tiled(page) and _detect_new(page):
-        return _extract_new(page, sample_sec)
+        meta, out = _extract_new(page, sample_sec)
+        return meta, _drop_impossible_pressure(out)
     img = composite(page)
     # the stacked tiles span the whole page, so one scale converts back
     pr = page.rect
@@ -417,12 +643,46 @@ def extract_page(page, sample_sec=1.0):
         is_chem = "chemical" in title
         tag = "c" if is_chem else ("t" if "treatment" in title else
                                    ("t" if i == 0 else "c"))
+        # Two chart STYLES share this tiled layout. The older one (00183)
+        # prints each value axis' tick labels in that series' own colour, so a
+        # number can be matched to a curve by colour — that is what ar.extract
+        # does. The Shell 2017 wells (00269, 00271-4) print the SAME layout
+        # with BLACK tick labels and a rotated title per axis, and there the
+        # colour match is meaningless: every number on the page lands on
+        # whichever coloured ink is nearest, which is the rotated title, so a
+        # chart's three axes (Pressure 0..75, Rate 0..15, Conc 0..1000) all
+        # arrive as one 'red' pile and RANSAC fits a line through the mixture.
+        # That is where axes like [8.3, 9.4] and [-60, 90] came from. When the
+        # axis titles are readable they say which column is which outright, so
+        # take that reading in preference; require_titles keeps 00183 on the
+        # colour-keyed path, where its titles do not exist.
+        info = None
         try:
-            samples, chans, info = ar.extract(img, sample_sec=sample_sec,
-                                              plot=box)
-        except ValueError:
-            continue
+            samples, chans, info = _extract_new_chart(
+                img, sample_sec, box=box, require_titles=True)
+        except Exception:
+            info = None
+        titled = info is not None
+        if not titled:
+            try:
+                samples, chans, info = ar.extract(img, sample_sec=sample_sec,
+                                                  plot=box)
+            except ValueError:
+                continue
         info["geom"] = _page_geom(info, sx, sy)
+        if titled:
+            # names come from the axis titles plus NEW_SURFACE, which is the
+            # colour table for exactly this chart style — the legend/position
+            # reconciliation below is for the colour-keyed style only
+            for c in chans:
+                # NEW_SURFACE names the TREATMENT chart's colours. On the
+                # chemical twin the rate axis is the clean rate, and exporting
+                # it as "Slurry Rate" would put two different channels of that
+                # name on one stage.
+                if tag == "c" and c["label"] == "Slurry Rate":
+                    c["label"] = "Combined Clean Rate"
+            out.append((tag, samples, chans, info))
+            continue
         # The legend states the colour -> series pairing; SERIES_NAMES only
         # guesses it from (chart position, colour). Measured on real wells the
         # guess is sometimes flatly wrong: 00184/00185 put a SECOND TREATMENT
@@ -490,4 +750,4 @@ def extract_page(page, sample_sec=1.0):
         meta["kind"] = "main"
     elif "casing" in joined:
         meta["kind"] = "casing"
-    return meta, out
+    return meta, _drop_impossible_pressure(out)

@@ -21,6 +21,8 @@ import difflib
 import math
 import numpy as np
 
+import curve_trace as ct
+
 HUE_NAMES = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
 HUE_HEX = {"red": "#c8372d", "orange": "#d07a1f", "yellow": "#a89a17",
            "green": "#1e7a34", "cyan": "#118a8a", "blue": "#1d5bd8",
@@ -483,6 +485,94 @@ def read_legend(img, box):
     return out
 
 
+# A rotated value-axis title names the QUANTITY it measures. Only these three
+# appear on a frac chart's value axes, and each maps to one unit family, which
+# is what lets a colour be matched to an axis.
+# "cone" is not a typo: tesseract reads the axis title "Chem Conc (L/m3)" as
+# "Chem Cone (Uim\")" on every one of these pages, and "cone" scores 0.75
+# against "conc" — just under the cutoff that keeps "rate"/"pressure" honest.
+_AXIS_QTY = {"pressure": "pressure", "rate": "rate",
+             "concentration": "conc", "conc": "conc", "cone": "conc"}
+
+
+def axis_qty(word):
+    """One word of a rotated axis title -> 'pressure' | 'rate' | 'conc' | ''."""
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if len(w) < 4:
+        return ""
+    best, score = "", 0.0
+    for cand, qty in _AXIS_QTY.items():
+        r = difflib.SequenceMatcher(None, w, cand).ratio()
+        if r > score:
+            best, score = qty, r
+    return best if score >= 0.8 else ""
+
+
+def read_axis_titles(img, xa, xb, ccw=True, merge=25):
+    """Rotated value-axis titles in a vertical strip -> [(qty, x)] by x.
+
+    Charts that stack several value axes on one side print, for each axis, a
+    column of tick numbers and then — on the far side of them, away from the
+    plot — that axis's own rotated title. Position alone cannot say which
+    column measures what: STEP's new-format surface chart prints Concentration
+    as the INNER right column and Rate as the OUTER one, the opposite of the
+    order the code assumed. The title says it outright, and because it sits
+    just outside its own numbers it also delimits that column from the next.
+
+    `ccw` rotates the strip counter-clockwise (right-hand axes, which read
+    bottom-to-top); clockwise suits a left-hand axis.
+    """
+    from PIL import Image
+    xa = max(0, xa)
+    strip = img[:, xa:xb]
+    if strip.size == 0:
+        return []
+    wc = strip.shape[1]
+    pil = Image.fromarray(strip.astype(np.uint8)).rotate(90 if ccw else -90,
+                                                         expand=True)
+    scale = 3
+    pil = pil.resize((pil.width * scale, pil.height * scale), Image.LANCZOS)
+    hits = []
+    for text, _cx, cy in ocr_words(np.array(pil).astype(int), psm=6,
+                                   whitelist=""):
+        qty = axis_qty(text)
+        if not qty:
+            continue
+        c = int(cy / scale)
+        hits.append((qty, (wc - 1 - c if ccw else c) + xa))
+    hits.sort(key=lambda t: t[1])
+    # a title is several words on one line ("Chem Conc (L/m3)") and OCRs as
+    # separate boxes a few pixels apart — collapse them into one axis
+    out = []
+    for qty, x in hits:
+        if out and abs(x - out[-1][1]) <= merge:
+            continue
+        out.append((qty, x))
+    return out
+
+
+def plausible_pressure_axis(v0, v1):
+    """Could (v0, v1) be the two ends of a treating-pressure axis?
+
+    A miscalibrated pressure channel is the worst thing this tool can export:
+    a dropped channel is visible, "0.19 MPa" is not. Two shapes of axis are
+    flatly impossible and both were being exported —
+
+      - a span under 5 units. A frac chart's pressure axis is drawn 0..40 at
+        the very least; a [0.0, 2.0] axis is a chemical concentration scale
+        that got mistaken for one.
+      - a floor well below zero. [-60, 90] exported -51 MPa. The small
+        negative that a fit on OCR'd label centroids leaves behind (00183
+        reads -1.18 on a 0..80 axis) is fine and is judged against the span,
+        not against zero.
+    """
+    lo, hi = min(float(v0), float(v1)), max(float(v0), float(v1))
+    span = hi - lo
+    if not np.isfinite(span) or span < 5:
+        return False
+    return lo >= -0.05 * span
+
+
 def fit_ticks_guarded(pts):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
@@ -611,6 +701,93 @@ def time_calibration(img, x0, x1, y1):
     return None
 
 
+# ---------- per-column curve position ----------
+
+def _rolling_median(v, k):
+    """Rolling median that ignores NaN (windows shrink at the ends)."""
+    n = len(v)
+    out = np.full(n, np.nan)
+    h = k // 2
+    for i in range(n):
+        w = v[max(0, i - h):i + h + 1]
+        w = w[np.isfinite(w)]
+        if len(w):
+            out[i] = np.median(w)
+    return out
+
+
+def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
+                    spike_run=8):
+    """One colour mask cropped to the plot -> the curve's row in each column,
+    NaN where the curve is not on the page.
+
+    This was a plain median over EVERY masked pixel in the column, which is
+    only right when the column holds the curve and nothing else. Charts
+    routinely put a second blob of the same colour in the same column:
+
+      - a second series of the same hue. 00183 p40 legends both
+        "Surface BU (MPa)" and "O Well (MPa)" in red, and O Well runs flat on
+        the axis under the left 69% of the plot;
+      - an in-plot legend swatch (00244 p20 draws its key inside the frame);
+      - the anti-aliased fringe of a NEIGHBOURING curve, which lands on the
+        wrong side of the hue split. On 00244 p20 the washed-out edge of the
+        orange step risers, (200,173,143), reads as red.
+
+    With two blobs the median lands BETWEEN them, halfway down the plot, and
+    in the few columns where the curve itself is missing it lands on the
+    contaminant alone -- the narrow plunge-to-zero notches seen on exported
+    STEP charts.
+
+    So split the column into contiguous runs and keep the run nearest a
+    rolling median of the trace, re-derived from the chosen runs. The
+    reference is global, so there is no seed column to get wrong: seeding on
+    column 0 pins the trace to whatever the frame put there and it never
+    recovers. A column holding a single run -- the overwhelming majority on
+    every template -- comes out bit-identical to before.
+    """
+    sub = np.asarray(sub, bool)
+    H, W = sub.shape
+    if H == 0 or W == 0:
+        return np.full(W, np.nan)
+    cols = []                    # per column: ((run median, run height), ...)
+    py = np.full(W, np.nan)
+    for cx in range(W):
+        ys = np.flatnonzero(sub[:, cx])
+        if not len(ys):
+            cols.append(())
+            continue
+        py[cx] = np.median(ys)
+        cuts = np.flatnonzero(np.diff(ys) > gap) + 1
+        cols.append(tuple((float(np.median(r)), int(r[-1] - r[0] + 1))
+                          for r in np.split(ys, cuts)))
+    k = win or (max(31, W // 20) | 1)
+    for _ in range(iters):
+        ref = _rolling_median(py, k)
+        moved = False
+        for cx, rs in enumerate(cols):
+            if len(rs) < 2 or not np.isfinite(ref[cx]):
+                continue
+            best = min(rs, key=lambda t: abs(t[0] - ref[cx]))[0]
+            if best != py[cx]:
+                py[cx] = best
+                moved = True
+        if not moved:
+            break
+    # A column whose only ink is contaminant -- the curve has a gap there --
+    # still reads far off the trace; that is the notch. Drop it and let the
+    # caller's interpolation bridge the hole, which is what the eye reads off
+    # the page. A genuine near-vertical move is a TALL run, so spike_run
+    # keeps it.
+    ref = _rolling_median(py, 31)
+    for cx, rs in enumerate(cols):
+        if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
+            continue
+        hgt = next((h for m, h in rs if m == py[cx]), 1)
+        if hgt <= spike_run and abs(py[cx] - ref[cx]) > spike_tol * H:
+            py[cx] = np.nan
+    return py
+
+
 # ---------- main entry ----------
 
 def extract(img, sample_sec=1.0, plot=None):
@@ -663,17 +840,15 @@ def extract(img, sample_sec=1.0, plot=None):
             # exported values, not just the drawing
             b = (_vb - _vt) / float(y1 - y0)
             a = _vt - b * y0
-        py = np.full(n_cols, np.nan)
-        for cx in range(n_cols):
-            ys_ = np.where(sub[:, cx])[0]
-            if len(ys_):
-                py[cx] = np.median(ys_) + y0
+        py = curve_positions(sub) + y0
         vals = a + b * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
-        ok = ~np.isnan(vals)
-        if ok.sum() < 50:
+        if np.isfinite(vals).sum() < 50:
             continue
-        v = np.interp(samples, t_cols[ok], vals[ok])
+        # No ink means no reading: np.interp with no left/right clamps to the
+        # edge value, so every gap and both tails carried a flat invented line.
+        # ct.resample blanks them instead (see curve_trace.resample).
+        v = ct.resample(samples, t_cols, vals)
         channels.append({"key": f"series-{key}", "label": f"Series ({key})",
                          "unit": "", "color": HUE_HEX.get(key.rstrip("2"), "#555577"),
                          "values": v, "ticks": ntick, "coverage": cov,

@@ -18,7 +18,7 @@ Result shapes (list of dicts):
    "columns": [...], "rows": [[...]], "source": str}
 """
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import fitz
 
@@ -29,6 +29,7 @@ import leucrotta as lc
 import bj1
 import bj_summary
 import calfrac_summary
+import calfrac_progress as cprog
 import liberty_summary
 import lib1
 import peloton_frac as pel
@@ -66,6 +67,129 @@ def _series(meta, samples, data, source, page=None, units=None, labels=None,
             "units": units or {}, "labels": labels or {}, "source": source,
             "page": page, "geom": geom, "scales": scales or {},
             "frames": frames or {}}
+
+
+def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
+                    _last_progress):
+    """One CalFrac "Progress" page -> one (meta, samples, data, geom) per zone.
+
+    The page plots several zones end to end and names none of them, so without
+    this the whole plot lands in build_well's "?" block as a single fused
+    stage. Cuts come from the pumping data; the zone numbers come from the
+    page's "Zones N-M" caption and the clock times from the Multiple-Zone
+    summary table that precedes it.
+    """
+    def whole(zr=None):
+        md = _md(meta)
+        if zr:
+            # Name it for the zones it holds. Left as None it would inherit the
+            # previous page's stage from the fill-down below and quietly append
+            # a whole job's data to one real stage's block.
+            md["stage"] = f"{zr[0]}-{zr[1]}"
+            md["multi_zone"] = True
+        return [(md, samples, data, getattr(meta, "geom", None))]
+
+    zr = cprog.zone_range(page)
+    if not zr:
+        # The Bottom Hole page plots the same window as the Surface page it
+        # sits directly behind, but prints no caption. Borrow that page's
+        # zones — only from the page immediately before, and only when the
+        # spans match. 00004 repeats 200-minute Progress pages throughout the
+        # document, and a looser rule handed a caption to charts 20 pages away.
+        prev = _last_progress[0]
+        if prev and prev[2] == pno - 1 and \
+                abs(len(samples) - prev[1]) <= max(4, 0.02 * prev[1]):
+            zr = prev[0]
+        else:
+            return whole()
+    else:
+        _last_progress[0] = (zr, len(samples), pno)
+    lo, hi = zr
+    nz = hi - lo + 1
+    span_min = len(samples) * sample_sec / 60.0
+    # First choice is the pumping data: where the pumps stopped is not a matter
+    # of opinion. Only when the zones ran continuously, leaving no break to
+    # find, fall back to the times the summary table prints.
+    zones = list(range(lo, hi + 1))
+    bounds = cprog.split_page(samples, data, nz, sample_sec)
+    by_table = False
+    if bounds is None:
+        fallback = cprog.table_split(ztimes, lo, hi, len(samples),
+                                     sample_sec, span_min)
+        if fallback is None:
+            notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but neither "
+                         f"the pumping data nor the summary times separate "
+                         f"{nz} treatments, so the page is left whole rather "
+                         f"than split onto the wrong zones")
+            return whole(zr)
+        bounds, zones = fallback
+        by_table = True
+        if len(zones) != nz:
+            notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but the "
+                         f"summary table times only cover zones "
+                         f"{zones[0]}-{zones[-1]}; split on those")
+
+    geom = getattr(meta, "geom", None)
+    page_date = getattr(meta, "date", "") or cprog.job_date(page) or ""
+    # Fit ONE clock origin for the page and read every zone off the chart's
+    # axis from there. Stamping each zone with its own table entry and the rest
+    # from the axis mixed two clocks in one well — stage 11 at 18:06 and stage
+    # 12 at 03:36. When the table drove the split the origin is exact by
+    # construction: the first zone's printed start.
+    offsets = [a * sample_sec / 60.0 for a, _b in bounds]
+    if by_table:
+        anchor = (cprog.zone_start_minutes(ztimes, zones[0]), len(zones))
+    else:
+        anchor = cprog.anchor_t0(zones, offsets, ztimes)
+        if anchor is None:
+            # Nothing corroborated, but the chart still begins when its first
+            # zone began. On a two-zone page there is no third time to break
+            # the tie, and a page whose zones disagree by an hour is still
+            # better placed on the clock than left at 00:00.
+            first = cprog.zone_start_minutes(ztimes, zones[0])
+            if first is not None:
+                anchor = (first, 1)
+                notes.append(f"p{pno + 1}: zones {lo}-{hi} — the printed start "
+                             f"times disagree with the chart's spacing, so it "
+                             f"is placed on the clock by zone {zones[0]}'s "
+                             f"start alone")
+            elif ztimes:
+                notes.append(f"p{pno + 1}: zones {lo}-{hi} — no usable start "
+                             f"time in the summary table, so the zones are "
+                             f"split but timed from the chart's own axis")
+    out = []
+    for j, (a, b) in enumerate(bounds):
+        zone = zones[j] if j < len(zones) else zones[-1] + (j - len(zones) + 1)
+        label = str(zone)
+        md = _md(meta)
+        md["stage"] = label
+        md["date"] = page_date
+        # how many zones the page this came from was covering — a zone read off
+        # a 12-zone overview is coarser than the same zone on its own chart
+        md["zone_span"] = nz
+        md["duration_min"] = (b - a) * sample_sec / 60.0
+        # seconds from midnight of page_date: the fitted origin (0 when the
+        # table gave nothing usable) plus this zone's place on the axis
+        secs = int(round((anchor[0] * 60 if anchor else 0) + a * sample_sec))
+        md["start_time"] = (f"{secs // 3600 % 24:02d}:"
+                            f"{secs % 3600 // 60:02d}:{secs % 60:02d}")
+        if secs >= 24 * 3600 and page_date:
+            md["date"] = (datetime.strptime(page_date, "%Y-%m-%d")
+                          + timedelta(days=secs // (24 * 3600))
+                          ).strftime("%Y-%m-%d")
+        if not anchor:
+            md["warnings"] = md["warnings"] + [
+                f"zone {label}: no usable start time in the zone summary "
+                f"table — timed from the chart's own axis instead"]
+        # geom maps a page coordinate to seconds from the PAGE's start; this
+        # segment's clock restarts at its own first sample, so slide the origin
+        pgeom = geom
+        if geom and a:
+            pgeom = dict(geom)
+            pgeom["ta"] = geom.get("ta", 0.0) - a * sample_sec
+        out.append((md, samples[a:b] - samples[a],
+                    {k: v[a:b] for k, v in data.items()}, pgeom))
+    return out
 
 
 def raster_available():
@@ -148,6 +272,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     npages = len(doc)
     raster = enable_raster and raster_available()
 
+    # CalFrac multi-zone "Progress" charts need the zone-time tables, but most
+    # documents have none — read them the first time a Progress page turns up
+    _zone_times = [None]
+    # the last captioned Progress page, so its uncaptioned twin can borrow it
+    _last_progress = [None]
+    # schematic/table pages that draw like charts — reported as one line, not
+    # one per page: a 171-page report has dozens and they are not errors
+    _not_charts = []
+
     # year hint from the COMP filename survives client-side page chunking
     yhint = bj1.filename_year(filename)
     if yhint:
@@ -191,10 +324,24 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             continue                                    # handled elsewhere
 
         if "(IFS v" in text:
-            if re.search(r"Interval\s+\d+\s*[-–]\s*Entire Treatment", text) and \
+            # "Entire Treatment" is the v4.3.1 wording; v4.6.3 titles the same
+            # page "Interval 1 – Main Treatment". Requiring the older phrase
+            # dropped every chart in the newer reports — 24 of 36 IFS files
+            # came back "no extractable data" with no note explaining it,
+            # because the skip below is silent. Carmine's alias table already
+            # lists both under Hal-2's chart_headers_include.
+            # The clock-label count stays: it is what rejects the table of
+            # contents, which also names intervals and carries the IFS footer.
+            titled = re.search(
+                r"Interval\s+\d+\s*[-–]\s*(?:Entire|Main)\s+Treatment", text)
+            # v4.2.0 names no interval at all — the section number carries it
+            sect = None if titled else ifs.section_stage(page)
+            if (titled or sect) and \
                len(re.findall(r"\b\d{1,2}:\d{2}\b", text)) >= 3:
                 try:
                     meta, samples, data, chinfo = ifs.extract_page(page)
+                    if sect and not getattr(meta, "stage", None):
+                        meta.stage = str(sect[0])
                     units = {k: v["unit"] for k, v in chinfo.items()}
                     labels = {k: v["label"] for k, v in chinfo.items()}
                     results.append(_series(_md(meta), samples, data,
@@ -296,18 +443,35 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             continue
 
         if fc.page_kind(page) == "vector":
+            if not cprog.is_chart_page(page):
+                _not_charts.append(pno + 1)     # summarised after the loop
+                continue
             if fc.is_chemicals(page):
                 notes.append(f"p{pno + 1}: chemicals chart — additive "
                              f"concentrations, not treatment channels")
                 continue
             try:
                 meta, samples, data = fc.extract_page(page, sample_sec=sample_sec)
-                results.append(_series(_md(meta), samples, data,
-                                       "MView chart", pno + 1,
-                                       geom=getattr(meta, "geom", None),
-                                       scales=getattr(meta, "scales", None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: vector chart failed — {e}")
+                continue
+            geom = getattr(meta, "geom", None)
+            scales = getattr(meta, "scales", None)
+            if data and cprog.detect(page):
+                # a "Progress" page: several zones on one plot, no stage named
+                if _zone_times[0] is None:
+                    _zone_times[0] = cprog.times_for_document(doc)
+                for part in _split_progress(page, meta, samples, data,
+                                            cprog.times_before(_zone_times[0], pno),
+                                            sample_sec, notes, pno, _last_progress):
+                    pmeta, psamples, pdata, pgeom = part
+                    results.append(_series(pmeta, psamples, pdata,
+                                           "MView chart", pno + 1,
+                                           geom=pgeom, scales=scales))
+                continue
+            results.append(_series(_md(meta), samples, data,
+                                   "MView chart", pno + 1,
+                                   geom=geom, scales=scales))
 
     # CalFrac/MView 2013-vintage: a stage's channels are split across several
     # consecutive chart pages, only the FIRST of which carries the stage
@@ -315,12 +479,23 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # Fill the stage number down onto those blank pages so build_well merges
     # the four channels into one stage, and drop the empty whole-job overview
     # pages (no curves) that would otherwise become phantom stages.
+    if _not_charts:
+        notes.append(f"{len(_not_charts)} page(s) skipped as schematics or "
+                     f"tables that draw like charts (p"
+                     f"{', p'.join(str(x) for x in _not_charts[:8])}"
+                     f"{', …' if len(_not_charts) > 8 else ''})")
+
     last_stage, keep = None, []
     for r in results:
         if r.get("source") != "MView chart":
             keep.append(r)
             continue
         if not r["data"]:                       # whole-job overview, no curves
+            continue
+        if r["meta"].get("multi_zone"):
+            # a job-length Progress chart already named for its zone range —
+            # it is not a stage, so it neither takes nor sets the running one
+            keep.append(r)
             continue
         st = r["meta"].get("stage")
         if st:
@@ -329,6 +504,24 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             r["meta"]["stage"] = last_stage     # blank conc page -> its stage
         keep.append(r)
     results[:] = keep
+
+    # A well can chart the same zone twice: once on a job-length overview
+    # ("Zone 1-12") and again on a chart of its own ("Zones 12-14"). Both split
+    # to a zone 12, and build_well would merge them into one block on a
+    # first-writer-wins basis — silently picking whichever page came first in
+    # the file. Prefer the narrower page: fewer zones on a plot means more
+    # resolution per zone, and the wider one contributes nothing extra.
+    best = {}
+    for r in results:
+        span = r.get("meta", {}).get("zone_span")
+        if span is None:
+            continue
+        st = r["meta"].get("stage")
+        best[st] = min(span, best.get(st, span))
+    if best:
+        results[:] = [r for r in results
+                      if r.get("meta", {}).get("zone_span") is None
+                      or r["meta"]["zone_span"] == best[r["meta"]["stage"]]]
 
     # --- SK 'FracR' per-stage engineering tables (document-level) ---
     if any(sk.detect(doc[p]) for p in range(npages)):

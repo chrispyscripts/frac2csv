@@ -9,13 +9,21 @@ curve.Slurry Rate = Combined Rate @ Wellhead, Combined Rate @ Formation, Combine
 curve.WH Prop Conc = Master Conc @ Wellhead, Master Concentration, Master Conc @ Blender
 curve.BH Prop Conc = Master Conc @ Formation, Combined Conc @ Blender, Master Concentration @ Formation , Master Concentration At Formation
 
+Hal-1
+chart_headers_include = TREATMENT PLOT
+chart_stage_tokens = Treatment Interval
+curve.Tr Press = Treating Pressure
+curve.Slurry Rate = Slurry Rate
+curve.WH Prop Conc = Slurry Prop Conc, Slurry Proppant Conc
+curve.BH Prop Conc = BH Prop Conc, Bottom Hole Prop Conc
+
 Hal-2
 chart_headers_include = Main Treatment,Entire Treatment, Treatment
 chart_stage_tokens = Interval
-curve.Tr Press = Annulus Pressure
+curve.Tr Press = Annulus Pressure, Wellhead, Treating Pressure
 curve.Slurry Rate = Slurry Rate
-curve.WH Prop Conc = Surface Conc
-curve.BH Prop Conc = BH Conc
+curve.WH Prop Conc = Surface Conc, Slurry Proppant Conc
+curve.BH Prop Conc = BH Conc, BH Proppant Conc
 curve.Gorv Press = Tubing Pressure
 
 Lib-1

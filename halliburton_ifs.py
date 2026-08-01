@@ -375,3 +375,36 @@ def extract_page(page, sample_sec=1.0):
         s = int(t_min_all % 60)
         meta.start_time = f"{h:02d}:{mnt:02d}:{s:02d}"
     return meta, samples, data, chinfo
+
+
+# The treatment phases that count as a stage's own chart. "Breakdown",
+# "Ball Action", "Stage Summary" and "Chemical Additives" are the other
+# sections of the same interval and are not the treatment.
+TREATMENT_PHASES = ("Main Treatment", "Entire Treatment")
+
+_SECTION = re.compile(r"^(\d{1,2})\.(\d{1,2})$")
+
+
+def section_stage(page):
+    """-> (interval, phase) for IFS v4.2.0 pages, else None.
+
+    v4.3.1 and v4.6.3 title the chart "Interval 7 – Main Treatment". v4.2.0
+    names neither: it prints the section number and the phase on their own
+    lines ("7.3" then "Main Treatment"), leaving the interval implied by the
+    section's major number. The pipeline gate looked for the newer wording, so
+    every chart in these reports was skipped and the file came back with no
+    extractable data (Carmine's report on 00003).
+
+    The phase must follow the section line — a bare "N.M" is also how this
+    template prints ordinary measurements ("56.86"), and taking the first one
+    on the page would match those.
+    """
+    try:
+        lines = [l.strip() for l in page.get_text().splitlines() if l.strip()]
+    except Exception:
+        return None
+    for i, line in enumerate(lines[:-1]):
+        m = _SECTION.match(line)
+        if m and lines[i + 1] in TREATMENT_PHASES:
+            return int(m.group(1)), lines[i + 1]
+    return None
