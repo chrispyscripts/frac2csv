@@ -38,12 +38,30 @@
   <div class="notes">
     <h2>New in this version</h2>
     <ul>
-      <li>Scanned charts read their legend, fixing wrongly named channels</li>
-      <li>Scanned STEP charts read their axes exactly instead of ~1.5% off</li>
-      <li>Ghost mode now works on STEP (scanned) charts</li>
-      <li>Liberty curves now sit exactly on the original instead of a little off</li>
-      <li>Fixed Hydraulic Pressure being drawn upside down on Liberty charts</li>
-      <li>Fixed OCR errors on scanned pages that could drop a page silently</li>
+      <li><b>STEP treating pressure was reading 5× low on some wells</b> — the
+        chart stacks an unlabelled 0–20 axis outside the real 0–100 one and we
+        were fitting the wrong one. Whole wells shift from ~14 MPa to ~73 MPa.</li>
+      <li>STEP stages that came back empty now extract: pages filed at a smaller
+        render had their time labels clipped. 226 charts recovered across four
+        wells, plus several Halliburton plots.</li>
+      <li><b>Gaps in a curve export as blank.</b> Where a chart has no ink — before
+        a curve starts, after it ends, or across a break — the CSV used to carry a
+        flat line at the last value seen. About one reading in eight was filled in
+        this way. Those are empty now, so charts show gaps where the page has none.</li>
+      <li>STEP rate and concentration were read off each other's axis — rate near
+        950 m³/min, concentration near 6 kg/m³. Fixed on 212 channels.</li>
+      <li>STEP traces no longer show narrow spikes dropping toward zero; those were
+        a second curve of the same colour being read as part of the trace.</li>
+      <li>STEP scanned charts: pressure read off the wrong axis on some wells — one
+        stage exported −51 MPa. 81 pages gained a pressure curve they never had.</li>
+      <li>CalFrac reports that draw several zones on one chart are split into a graph
+        per zone, timed from the zone summary table.</li>
+      <li>Halliburton: 24 of 36 IFS reports previously came back "no extractable
+        data"; and WH Prop Conc was missing from every Hal-1 report.</li>
+      <li>Chart view: the original page is always shown behind the curves — up and
+        down arrows move through stages and roll on to the next report, left and
+        right hide either layer. Flag Error is one Enter to open, one to send, and
+        now states what it attached.</li>
     </ul>
   </div>
 </div>

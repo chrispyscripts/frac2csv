@@ -613,11 +613,67 @@ def fit_ticks_guarded(pts):
     return None
 
 
+def _label_band(strip):
+    """The first row band of text under the plot -> that band's rows, or None.
+
+    The time labels are always the first thing under the axis, so the first
+    band of ink is them and nothing else — see time_calibration for why that
+    matters. A sparse leading band is a row of tick marks rather than text and
+    is skipped.
+    """
+    w = strip.shape[1]
+    ink = (strip.sum(axis=2) < 400).sum(axis=1)
+    # a row that is dark right across is the frame rule, not a line of text —
+    # the window starts one pixel under the axis (see time_calibration) and on
+    # a thick scan that pixel is still the rule
+    on = (ink > max(2, w * 0.004)) & (ink < 0.5 * w)
+    bands, start = [], None
+    for i, v in enumerate(on):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            bands.append((start, i)); start = None
+    if start is not None:
+        bands.append((start, len(on)))
+    for b0, b1 in bands:
+        if b1 - b0 >= 3 and ink[b0:b1].max() > w * 0.02:
+            return max(0, b0 - 3), min(len(on), b1 + 3)
+    return None
+
+
 def time_calibration(img, x0, x1, y1):
     """OCR time labels under the plot. HH:MM:SS or plain minutes."""
     H, W, _ = img.shape
     xa, xb = max(0, x0 - 60), min(W, x1 + 60)
-    strip = img[min(y1 + 5, H - 1):min(y1 + 95, H), xa:xb]
+    hi = min(y1 + 95, H)
+    # Two candidate windows, tried in order.
+    #
+    # First, just the row band the labels occupy, measured from ONE pixel under
+    # the axis rather than five. Both parts matter at the 880x680 render that
+    # 01396 files some of its pages at: five pixels take the tops off every
+    # digit ("08:05" OCRs as ":0"), and the fixed 90px window — sized for the
+    # ~920px-tall render — reaches past the labels into the LEGEND, whose long
+    # entries bridge the gaps between them so the column clustering returns one
+    # 900px blob. Stages 25 and 26 had no time axis at all because of it.
+    #
+    # Then the original window, unchanged, so any page that already read
+    # cleanly reads exactly the same way. A candidate only counts if it
+    # survives the duration test every caller applies (120s..100000s): on
+    # 00269 p43/45/73 the band crop fits a 55-second treatment, which is not a
+    # reading, and returning it hid the fit those pages have always had.
+    tight = img[min(y1 + 1, H - 1):hi, xa:xb]
+    band = _label_band(tight) if tight.size else None
+    cands = ([tight[band[0]:band[1]]] if band else []) + \
+            [img[min(y1 + 5, H - 1):hi, xa:xb]]
+    for strip in cands:
+        got = _time_fit(strip, xa, x0, x1)
+        if got and 120 < got[1] * (x1 - x0) < 100000:
+            return got
+    return None
+
+
+def _time_fit(strip, xa, x0, x1):
+    """One candidate label strip -> (t0, seconds-per-pixel), or None."""
     if strip.size == 0:
         return None
     # small renders leave labels below OCR size: upscale 3x

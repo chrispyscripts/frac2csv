@@ -420,14 +420,28 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # The left side stacks axes too — some pages print "TP Rate (L/min)"
     # outside "Pressure (MPa)" — and there too the title is on the far side of
     # its own numbers, so a title's column runs from it to the NEXT title.
-    if len(ltitles) >= 2:
-        edges = [t[1] for t in ltitles] + [x0]
-        lsegs = [(q, strip_ticks(tx + 4, edges[i + 1] - 4))
+    #
+    # ONE readable title still delimits a column, and it has to: 01396/01392
+    # stack Rate (0..20) OUTSIDE Pressure (MPa) (0..100) on the left, and the
+    # outer axis' rotated title is illegible on this scan (tesseract returns
+    # "KA"). Reading the whole left strip as one column then handed RANSAC two
+    # sets of ticks at once and it fitted the 0..20 one — so every page of both
+    # wells exported Surface Pressure off the RATE axis, a 13.7 MPa median for
+    # a curve printed at 68. Delimiting on the single title that IS readable
+    # keeps only the numbers between it and the plot, which are its own.
+    # An empty segment is NOT dropped: which title is innermost is what names
+    # the chart's principal axis, and dropping the innermost one because
+    # tesseract read nothing between it and the frame promoted an OUTER axis
+    # to principal — on 00271 that renamed a chemical chart's whole channel
+    # set (Aqucar 742 Conc became Combined Clean Rate). An empty segment
+    # simply fits nothing, and the whole-strip fallback below covers it.
+    lsegs = []
+    if ltitles:
+        edges = [t[1] - 4 for t in ltitles[1:]] + [x0 - 4]
+        lsegs = [(q, strip_ticks(tx + 4, edges[i]), tx)
                  for i, (q, tx) in enumerate(ltitles)]
-        lsegs = [(q, s) for q, s in lsegs if s]
-    else:
-        lsegs = [(ltitles[0][0] if ltitles else "pressure",
-                  strip_ticks(0, x0))]
+    if not lsegs:
+        lsegs = [("pressure", strip_ticks(0, x0), None)]
 
     fits = {}
 
@@ -442,7 +456,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
 
     for qty, seg in cols:
         _use(qty, seg)
-    for qty, seg in lsegs[:-1]:
+    for qty, seg, _tx in lsegs[:-1]:
         # an outer left axis is an auxiliary channel ("TP Rate" in L/min, not
         # the slurry rate in m3/min) — it only fills a quantity nothing else has
         _use(qty, seg, only_if_free=True)
@@ -450,12 +464,46 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # wins its quantity outright. An offset chart carries THREE pressure axes
     # (0..80 main, 0..40 offset wells, 0..4 abandoned wells) and taking
     # whichever fitted best put Surface Pressure on the offset scale.
-    lqty, lseg = lsegs[-1]
+    lqty, lseg, ltx = lsegs[-1]
     lcal = ar.fit_ticks_guarded(lseg) if lseg else None
-    if lcal is None and len(lsegs) > 1:
-        # a stacked left column is only ~50px wide and tesseract sometimes
-        # reads nothing from it; the whole strip still fits, so use that
-        lcal = ar.fit_ticks_guarded(strip_ticks(0, x0))
+    if ltx is not None:
+        # Delimiting exists to settle a strip that holds MORE THAN ONE axis.
+        # Where the whole strip fits nothing at all there is nothing to settle,
+        # and a column crop that suddenly does fit only changes which reader
+        # owns the chart: on 00271 it handed three chemical charts from the
+        # colour-keyed reader (which names all five curves from the legend) to
+        # this one, which on a non-pressure chart deliberately emits only the
+        # single channel its left axis names. Both readings were right; the
+        # colour-keyed one carried more of the chart.
+        whole = ar.fit_ticks_guarded(strip_ticks(0, x0))
+        if whole is None:
+            lcal = None
+        else:
+            # Where to stop the innermost column is decided by the OCR, not by
+            # a constant. Stopping 4px short of the frame is right on the big
+            # renders — carried closer, 00269's strip picks up a stray "415"
+            # and the 0..75 axis fits as 5..75 — and wrong on the 880x680 one,
+            # where those 4px take the last digit off "60" and "40" and 0..100
+            # fits as 0..10. Both crops read the SAME axis, so read both.
+            #
+            # Tick count alone cannot choose between them: on 00269 p29 and on
+            # 01396 p335 the two crops tie at five ticks and opposite ones are
+            # right. The whole-strip fit settles it. That fit is the ambiguous
+            # reading this code exists to replace, but it is still a reading of
+            # this axis stack, and a crop that lost a digit lands an order of
+            # magnitude away from it while the intact crop lands on top of it.
+            # So: prefer a crop whose span agrees with the whole strip's, then
+            # the one with more ticks, then the tighter (historical) crop.
+            alt = ar.fit_ticks_guarded(strip_ticks(ltx + 4, x0))
+            wspan = abs(whole[1] * (y1 - y0))
+
+            def _rank(cal):
+                span = abs(cal[1] * (y1 - y0))
+                agrees = abs(span - wspan) <= 0.05 * max(span, wspan)
+                return (0 if agrees else 1, -cal[2])
+
+            cands = [c for c in (lcal, alt) if c]
+            lcal = min(cands, key=_rank) if cands else whole
     if lcal:
         fits[lqty] = lcal
 

@@ -345,6 +345,9 @@
           <div class="setlabel">What looks wrong?</div>
           <textarea id="flagdesc" rows="5" spellcheck="true"
             placeholder="e.g. the end of the pressure curve is missing on this stage"></textarea>
+          <!-- Hiding the preview left no way to tell WHAT was attached, so
+               reports were being sent on trust. State it in one line. -->
+          <div class="sethint" id="flagwhat">&nbsp;</div>
         </div>
         <!-- The snapshot still goes with the report; it just isn't shown.
              Reviewing it here was never the point, and the preview pushed the
@@ -2564,14 +2567,32 @@ function flagDiagnostics() {
 }
 
 let flagShot = null, flagShotKind = "chart", flagSeq = 0;
+let flagShotSize = "";
 function setFlagShot(data, kind) {
   flagShot = data; flagShotKind = kind;
+  flagShotSize = "";
+  if (data) {                      // report the real pixel size, not a promise
+    const probe = new Image();
+    probe.onload = () => {
+      flagShotSize = `${probe.naturalWidth}×${probe.naturalHeight}`;
+      if (!$("flagback").hidden) setFlagShot(data, kind);
+    };
+    probe.src = data;
+  }
   const img = $("flagimg");
   if (data) { img.src = data; img.hidden = false; } else { img.hidden = true; }
   $("flagrecap").hidden = (kind === "chart");
   $("flagcap").textContent = kind === "chart"
     ? (isLocal() ? "Capture screen" : "Capture window…")
     : "Recapture";
+  const px = data && data.startsWith("data:image")
+    ? "" : "";
+  $("flagwhat").textContent = !data
+    ? "⚠ nothing attached — the report will have no image"
+    : "Attached: " + (kind === "screen" ? "full screen"
+                    : kind === "window" ? "the chosen window"
+                    : "this chart plus extraction details")
+      + (flagShotSize ? ` · ${flagShotSize}` : "");
   const d = flagDiagnostics();
   $("flaghint").textContent =
     `${d.provider || "chart"} · ${d.file || "file"} · ${d.chart || ""}`
