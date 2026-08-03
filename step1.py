@@ -57,12 +57,38 @@ def _detect_tiled(page):
 
 
 def _detect_new(page):
-    t = page.get_text()
-    if "LSD:" not in t or ("Surface Chart" not in t and "Interval" not in t):
+    big = _big_images(page)
+    if not big:
         return False
-    big = [im for im in page.get_images(full=True)
-           if im[2] >= 500 and im[3] >= 300]
-    return len(big) >= 1
+    t = page.get_text()
+    if "LSD:" in t and ("Surface Chart" in t or "Interval" in t):
+        return True
+    # 2024 filings (01078/01079) print the SAME two charts — same frame, same
+    # colour key, same stacked value axes — under a bare "Interval N.M" title
+    # with no LSD line, so the clause above missed every one of them and both
+    # files reported no extractable data. The two chart captions plus an
+    # Interval title are what identify the page; the surrounding tour text
+    # names other vendors and cannot be used.
+    return ("Surface Chart" in t and "Chemical Chart" in t
+            and re.search(r"Interval\s+\d+", t) is not None)
+
+
+def _big_images(page):
+    """The page's chart-sized images, PLACED ones only, top to bottom.
+
+    get_images lists the whole resource dictionary, which on the 2024 filings
+    holds every chart in the document (83 entries on a page that draws two).
+    An unplaced entry has no rect, and sorting on rect[0] raised IndexError
+    before any chart was read."""
+    out = []
+    for im in page.get_images(full=True):
+        if im[2] < 500 or im[3] < 300:
+            continue
+        rects = page.get_image_rects(im[0])
+        if rects:
+            out.append((rects[0].y0, im))
+    out.sort(key=lambda p: p[0])
+    return [im for _y, im in out]
 
 
 def composite(page):
@@ -595,27 +621,47 @@ def _page_geom(info, scale_x, scale_y, off_x=0.0, off_y=0.0):
 
 
 def _extract_new(page, sample_sec=1.0):
-    import re
     doc = page.parent
     text = page.get_text()
-    meta = {"stage": None, "interval": "", "kind": "main"}
+    meta = {"stage": None, "interval": "", "kind": "main", "uwi": "",
+            "date": "", "clock": False}
     # These pages number the stage as "Treatment N"; only some spell it
     # "Interval N". Looking for Interval alone left every page of a file with
     # stage None, so they all grouped under one nameless stage and the Lab
     # showed a single "Stage ?". This is the page's real text layer, not OCR.
-    m = (re.search(r"Interval\s+(\d+)", text)
-         or re.search(r"Treatment\s+(\d+)", text))
+    #
+    # The 2024 filings number it "Interval N.M": N is the interval and M a
+    # separate treatment OF that interval — 1.1, 1.2 and 1.3 are three
+    # attempts on interval 1, pumped on two different days at three different
+    # clock times, each with its own row in the printed stage summary. Reading
+    # N alone fused all three into one stage, so the sub-number is kept and
+    # the stage becomes the string "1.2". A bare "Interval 7" still yields the
+    # integer 7 exactly as before.
+    m = re.search(r"Interval\s+(\d+)(?:\.(\d+))?", text)
     if m:
-        meta["stage"] = int(m.group(1))
+        meta["stage"] = (int(m.group(1)) if m.group(2) is None
+                         else f"{int(m.group(1))}.{m.group(2)}")
+    else:
+        m = re.search(r"Treatment\s+(\d+)", text)
+        if m:
+            meta["stage"] = int(m.group(1))
     m = re.search(r"([\d,]+\.\d+)\s*m\s*-\s*([\d,]+\.\d+)\s*m", text)
     if m:
         meta["interval"] = f"{m.group(1)}-{m.group(2)} m"
-    ims = [im for im in page.get_images(full=True)
-           if im[2] >= 500 and im[3] >= 300]
-    ims.sort(key=lambda im: page.get_image_rects(im[0])[0].y0)
+    # 2024 layout only: the page prints its own well and date, and its time
+    # axis is a wall clock rather than elapsed minutes.
+    if "Surface Chart" in text and "Chemical Chart" in text:
+        meta["clock"] = True
+        m = re.search(r"UWI\s+(\d{3})/([A-Z])-(\d{3})-([A-Z])/(\d{3})-([A-Z])"
+                      r"-(\d{2})", text)
+        if m:
+            meta["uwi"] = "{}{}{}{}{}{}{}00".format(*m.groups())
+        m = re.search(r"Date\s+(\d{4}-\d{2}-\d{2})", text)
+        if m:
+            meta["date"] = m.group(1)
     out = []
     done = set()
-    for i, im in enumerate(ims):
+    for im in _big_images(page):
         if im[0] in done:
             continue
         done.add(im[0])
@@ -638,6 +684,14 @@ def _extract_new(page, sample_sec=1.0):
                                           pix.height / r.height, r.x0, r.y0)
         except Exception:
             pass
+        if meta["clock"]:
+            # Sample 0 is the plot frame's LEFT EDGE, not the printed start of
+            # pumping, so the clock this stage is stamped with has to be the
+            # edge too — anything else slides every reading along the day.
+            # _page_geom already quotes ta relative to this same instant.
+            s = int(info.get("t0_seconds") or 0) % 86400
+            info["clock_start"] = "%02d:%02d:%02d" % (s // 3600, s // 60 % 60,
+                                                      s % 60)
         out.append((tag, samples, chans, info))
     return meta, out
 

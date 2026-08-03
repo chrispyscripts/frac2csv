@@ -79,6 +79,14 @@ curve.Tr Press = Surface Pressure, Surface BU, Surface Press
 curve.WH Prop Conc = Surf Total Proppant Conc, Surf Total Prop Conc
 curve.Slurry Rate = Surf Total Slurry Rate
 
+Step-2
+chart_headers_include = Surface Chart, Chemical Chart
+chart_stage_tokens = Interval
+curve.Tr Press = Mainline
+curve.Slurry Rate = Slurry Rate
+curve.WH Prop Conc = Prop Conc
+curve.BH Prop Conc = Btm Prop Conc
+
 SanJel-1
 chart_headers_include = Interval
 chart_stage_tokens = Interval

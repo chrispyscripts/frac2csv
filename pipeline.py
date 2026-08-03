@@ -515,12 +515,19 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                         if not data:
                             continue
                         kind = "surface" if tag == "t" else "chemical"
+                        # The scanned STEP layouts carry no well, no date and
+                        # a time axis in elapsed minutes, so those stay blank.
+                        # The 2024 layout prints all three, and step1 fills
+                        # them in — clock_start is the plot frame's left edge,
+                        # which is where sample 0 sits.
                         meta = {"title": f"Interval {md.get('stage') or '?'} "
-                                f"({kind})", "uwi": "",
+                                f"({kind})", "uwi": md.get("uwi") or "",
                                 "stage": str(md.get("stage") or ""),
-                                "date": "", "start_time": "00:00:00",
+                                "date": md.get("date") or "",
+                                "start_time": info.get("clock_start")
+                                or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
-                                "warnings": []}
+                                "warnings": list(info.get("notes") or [])}
                         results.append(_series(
                             meta, samples, data,
                             f"STEP {kind} chart (raster)", pno + 1, units,
