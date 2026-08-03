@@ -2,16 +2,25 @@
 
 One page per stage: Designed vs As-Pumped columns for time, surface
 pressures (breakdown/max/avg/min/ISIP), downhole rate/conc, slurry
-volumes, fluid, chemicals and proppant. Values are label-line then
-as-pumped-line in the text stream. Stage pages carry no stage number, so
-stages are numbered sequentially in document order.
+volumes, fluid, chemicals and proppant. Stage pages carry no stage
+number, so stages are numbered sequentially in document order.
+
+ONLY the As-Pumped column is exported. The page lays the two columns out
+side by side and cells are routinely blank on one side or the other, so
+the columns are told apart by span geometry (each table's "Designed" and
+"As Pumped" headers give the cut), not by position in the text stream.
+Reading the stream instead — label line, then "the next value line" —
+silently promoted a Designed figure to As-Pumped every time the
+As-Pumped cell was empty, which is most PROPPANT rows: e.g. 00056 stage 1
+pumped 0.17 t of 50/140 but the design table lists 5 t Prime Plus + 20 t
+40/70 + 5 t 50/140, and the old reader exported 25.17 t. A blank
+As-Pumped cell must stay blank.
 """
 import csv
 import re
 
 import fitz
 
-VAL = re.compile(r"^-?[\d,.]+\s*(MPa|m³/min|kg/m³|m³|min|tonne|L|kg|%)\s*$")
 SECTIONS = ("TIME", "SURFACE PRESSURE", "DH RATE", "DH CONC",
             "DH SLURRY VOLUME", "FLUID", "CHEMICAL", "PROPPANT")
 
@@ -55,48 +64,103 @@ def _num(s):
         return None
 
 
+def _spans(page):
+    """Flat list of non-empty spans as (y0, x0, x1, text)."""
+    out = []
+    for b in page.get_text("dict")["blocks"]:
+        if b.get("type") != 0:
+            continue
+        for line in b.get("lines", ()):
+            for s in line.get("spans", ()):
+                t = s["text"].strip()
+                if t:
+                    x0, y0, x1, _ = s["bbox"]
+                    out.append((y0, x0, x1, t))
+    return out
+
+
+def _cuts(spans):
+    """Column model for each side-by-side table, as (cut, pitch).
+
+    Trican prints the stage twice over — one table for
+    time/pressure/rate/conc, a second for fluid/chemical/proppant — so
+    there are normally two. Each pair of "Designed" / "As Pumped"
+    headers gives one table: `cut` is the x below which a cell is
+    Designed and at/above which it is As-Pumped, and `pitch` (the
+    header centres' spacing) is how wide the As-Pumped column runs
+    before the next table's Designed column starts.
+    """
+    hdr = sorted(((x0 + x1) / 2.0, t) for _y, x0, x1, t in spans
+                 if t in ("Designed", "As Pumped"))
+    out, i = [], 0
+    while i < len(hdr) - 1:
+        if hdr[i][1] == "Designed" and hdr[i + 1][1] == "As Pumped":
+            out.append(((hdr[i][0] + hdr[i + 1][0]) / 2.0,
+                        hdr[i + 1][0] - hdr[i][0]))
+            i += 2
+        else:
+            i += 1
+    return out
+
+
 def parse_page(page):
-    lines = [l.strip() for l in page.get_text().splitlines() if l.strip()]
+    spans = _spans(page)
+    cuts = _cuts(spans)
+    if not cuts:
+        return {}
+    # Each table is walked on its own. The two tables' rows do NOT line up
+    # — 00041 p52 puts the CHEMICAL row's FR-9 1.2pt above the SURFACE
+    # PRESSURE row's Breakdown/Open — so one shared row grid mis-pairs
+    # them, and the right table's Designed column would be read as the
+    # left table's As-Pumped value.
+    cells = []               # (section, label, [as-pumped span texts])
+    for n, (cut, pitch) in enumerate(cuts):
+        prev = cuts[n - 1][0] if n else -1e9
+        heads, vals = [], []
+        for y, x0, x1, t in spans:
+            if t in ("Designed", "As Pumped"):
+                continue
+            if prev <= x1 < cut:             # label / section heading
+                heads.append((y, t))
+            elif cut <= x0 < cut + pitch:    # As-Pumped cell
+                vals.append((y, x0, t))
+        vals.sort()
+        section = None
+        for y, t in sorted(heads):
+            if t.upper() in SECTIONS:
+                section = t.upper()
+            elif t.endswith(":") and section:
+                cell = [section, t[:-1].strip(),
+                        [vt for vy, _vx, vt in vals if abs(vy - y) <= 3.0]]
+                cells.append(cell)
+
     row = {}
-    section = None
     prop_t = 0.0
     prop_types = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.upper() in SECTIONS:
-            section = line.upper()
-            i += 1
-            continue
-        m = re.match(r"(.+?):\s*(.*)$", line)
-        if m and section:
-            label, designed = m.group(1).strip(), m.group(2).strip()
-            nxt = lines[i + 1] if i + 1 < len(lines) else ""
-            pumped = None
-            if VAL.match(nxt) or re.match(r"^[A-Z][a-z]{2} \d{1,2},", nxt):
-                pumped = nxt
-                i += 1
-            val_src = pumped if pumped is not None else designed
-            if section == "TIME":
-                if label == "Start Time" and pumped:
-                    row["start"] = pumped
-                elif label == "Finish Time" and pumped:
-                    row["finish"] = pumped
-                elif label == "Total Time":
-                    v = _num(val_src)
-                    if v: row["total_time_min"] = v
-            elif section == "PROPPANT":
-                v = _num(val_src)
-                if v is not None and "tonne" in val_src:
-                    prop_t += v
-                    prop_types.append(label)
-            else:
-                key = FIELD_MAP.get((section, label))
-                if key:
-                    v = _num(val_src)
-                    if v is not None:
-                        row[key] = v
-        i += 1
+    for sec, label, parts in cells:
+        pumped = "".join(parts).strip()
+        if not pumped or pumped in ("-", "–", "—"):
+            continue           # blank As-Pumped cell stays blank
+        if sec == "TIME":
+            if label == "Start Time":
+                row["start"] = pumped
+            elif label == "Finish Time":
+                row["finish"] = pumped
+            elif label == "Total Time":
+                v = _num(pumped)
+                if v:
+                    row["total_time_min"] = v
+        elif sec == "PROPPANT":
+            v = _num(pumped)
+            if v is not None and "tonne" in pumped:
+                prop_t += v
+                prop_types.append(label)
+        else:
+            key = FIELD_MAP.get((sec, label))
+            if key:
+                v = _num(pumped)
+                if v is not None:
+                    row[key] = v
     if prop_t:
         row["proppant_t"] = round(prop_t, 2)
         row["proppant_types"] = "; ".join(prop_types)

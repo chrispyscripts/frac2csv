@@ -5,10 +5,13 @@ geometry in a distinct RGB color. Page metadata (UWI, stage/zone, date, axis
 ranges) is auto-detected from the page text; every value can be overridden.
 
 Layout assumptions (MView "Casing Ign Template" and similar):
-  - page content rotated 90 deg: time runs along the PDF y axis
+  - the plot frame is a closed black rectangle covering most of the page
+  - time runs along the PDF y axis on the rotated pages and along x on the
+    unrotated 2024 layout; whichever margin carries the "Time (min)" title
+    settles it
   - all value axes are zero-based and span the full plot frame
-  - series colors: blue = treating pressure, red = slurry rate,
-    green = prop conc @ blender (WH), purple = prop conc @ formation (BH)
+  - which curve is which comes from the page's own legend, not from a fixed
+    colour table: the same colours mean different curves across vintages
 """
 import csv
 import re
@@ -18,7 +21,12 @@ from datetime import datetime, timedelta
 import fitz  # PyMuPDF
 import numpy as np
 
-# stroke color -> (csv column, axis kind)
+import aliases
+
+# stroke color -> (csv column, axis kind). LAST-RESORT fallback only: the
+# template re-uses the same colours for different curves across vintages, so
+# detect_legend() reads the page's own legend first and this table is reached
+# only when a page draws no legend at all. See detect_legend for the specifics.
 SERIES = {
     (0.0, 0.0, 1.0): ("Tr Press", "pressure"),
     (1.0, 0.0, 0.0): ("Slurry Rate", "rate"),
@@ -26,6 +34,8 @@ SERIES = {
     (0.5, 0.0, 0.5): ("BH Prop Conc", "conc"),
 }
 COLUMNS = ["Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"]
+KINDS = {"Tr Press": "pressure", "Slurry Rate": "rate",
+         "WH Prop Conc": "conc", "BH Prop Conc": "conc"}
 UNITS = {"Tr Press": "MPa", "Slurry Rate": "m3/Min",
          "WH Prop Conc": "Kg/m3", "BH Prop Conc": "Kg/m3"}
 
@@ -48,15 +58,113 @@ class PageMeta:
     warnings: list = field(default_factory=list)
 
 
-def _detect_frame(page):
-    """Plot frame = largest black stroked path with >= 4 segments."""
-    best = None
+# Plot-frame geometry. A side must reach both of its corners to within
+# _FRAME_TOL, and the enclosed box must cover _FRAME_MIN_SIDE of the page in
+# both directions -- a chart frame always does, a table rule or a title box
+# never does.
+_FRAME_TOL = 3.0
+_FRAME_MIN_SIDE = 0.45
+
+
+def _black_segments(page):
+    """Axis-aligned near-black stroked segments: [(horizontal, pos, lo, hi)].
+
+    Covers both shapes this template uses: the rotated pages draw the frame
+    as one 4-segment path, the 2024 unrotated ones as four separate
+    single-segment paths. Paths with many segments are skipped -- that is
+    what a curve looks like, and a curve standing in for the frame is the bug
+    this function exists to stop.
+    """
+    segs = []
     for d in page.get_drawings():
-        if d.get("color") == (0.0, 0.0, 0.0) and d["type"] == "s" and len(d["items"]) >= 4:
-            r = d["rect"]
-            if best is None or r.width * r.height > best.width * best.height:
-                best = r
-    return best
+        color = d.get("color")
+        if d.get("type") != "s" or color is None or max(color) > 0.2:
+            continue
+        items = d["items"]
+        if len(items) > 6:
+            continue
+        for item in items:
+            if item[0] == "re":
+                r = item[1]
+                segs += [(True, r.y0, r.x0, r.x1), (True, r.y1, r.x0, r.x1),
+                         (False, r.x0, r.y0, r.y1), (False, r.x1, r.y0, r.y1)]
+                continue
+            if item[0] != "l":
+                continue
+            p1, p2 = item[1], item[2]
+            dx, dy = abs(p1.x - p2.x), abs(p1.y - p2.y)
+            if dy <= 0.5 < dx:
+                segs.append((True, (p1.y + p2.y) / 2,
+                             min(p1.x, p2.x), max(p1.x, p2.x)))
+            elif dx <= 0.5 < dy:
+                segs.append((False, (p1.x + p2.x) / 2,
+                             min(p1.y, p2.y), max(p1.y, p2.y)))
+    return segs
+
+
+def _detect_frame(page):
+    """Plot frame = the largest closed axis-aligned black rectangle.
+
+    The old rule -- largest black stroked path with >= 4 items -- had no test
+    for closure, so on the 2024 Tourmaline layout (which draws the frame as
+    four separate one-segment paths and a black "Tubing Pressure" curve) the
+    CURVE's bounding box became the frame and every axis was fitted from it:
+    a 50-minute stage read as 600 minutes. Returns None when nothing closes,
+    which the caller turns into a page-level failure. Guessing is worse than
+    reporting the page.
+    """
+    box = page.cropbox or page.rect
+    segs = _black_segments(page)
+    # longest first, then capped: a table page can rule a dozen full-width
+    # lines, and the pairing below is quadratic in each list
+    hs = sorted((s for s in segs
+                 if s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.width),
+                key=lambda s: s[2] - s[3])[:16]
+    vs = sorted((s for s in segs
+                 if not s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.height),
+                key=lambda s: s[2] - s[3])[:16]
+    best = None
+    for i, (_h, ytop, *_r) in enumerate(hs):
+        for j in range(i + 1, len(hs)):
+            top, bot = sorted((ytop, hs[j][1]))
+            if bot - top < _FRAME_MIN_SIDE * box.height:
+                continue
+            for k, (_v, xa, *_s) in enumerate(vs):
+                for m in range(k + 1, len(vs)):
+                    left, right = sorted((xa, vs[m][1]))
+                    if right - left < _FRAME_MIN_SIDE * box.width:
+                        continue
+                    sides = (hs[i], hs[j], vs[k], vs[m])
+                    if any(s[2] > (left if s[0] else top) + _FRAME_TOL or
+                           s[3] < (right if s[0] else bot) - _FRAME_TOL
+                           for s in sides):
+                        continue
+                    area = (right - left) * (bot - top)
+                    if best is None or area > best[0]:
+                        best = (area, fitz.Rect(left, top, right, bot))
+    return best[1] if best else None
+
+
+_TIME_LABEL = re.compile(r"time\s*\(\s*min", re.I)
+
+
+def _orientation(page, frame):
+    """'y' when time runs down the PDF y axis, 'x' when it runs along x.
+
+    The 2013-2025 pages are rotated 90 degrees and plot time up the y axis;
+    the 2024 Tourmaline layout is unrotated and plots it along x. Decided by
+    which side of the frame carries the "Time (min)" axis title, because that
+    is what actually labels the axis; page /Rotate is only the fallback.
+    """
+    for bbox, text in _text_spans(page):
+        if not _TIME_LABEL.search(text):
+            continue
+        cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        if cx < frame.x0 or cx > frame.x1:
+            return "y"
+        if cy < frame.y0 or cy > frame.y1:
+            return "x"
+    return "y" if page.rotation in (90, 270) else "x"
 
 
 def _num(s):
@@ -64,6 +172,150 @@ def _num(s):
         return float(s)
     except ValueError:
         return None
+
+
+# --- the page's own legend ------------------------------------------------
+#
+# A legend key is one short stroked segment drawn beside its label: 28.08pt
+# at 1.44-1.5pt wide in every CalFrac vintage seen. The length bounds keep
+# annotation rules (which run half the page) and stray one-segment curve
+# fragments out; the width test keeps out the axis tick marks, which are 8pt
+# hairlines sitting right beside the axis titles and would otherwise be read
+# as keys for them.
+_SWATCH_MIN, _SWATCH_MAX = 16.0, 60.0
+_SWATCH_WIDTH = 0.5
+_LEGEND_GAP = 8.0          # key-to-label clearance, pt
+_LEGEND_TOL = 1.0          # slack when testing "the label covers this key"
+
+
+def _clean_label(text):
+    """'Master Conc @ Wellhead (kg/m³' -> 'Master Conc @ Wellhead'.
+
+    The rotated layout clips the trailing unit mid-token, so the closing
+    bracket is optional.
+    """
+    return re.sub(r"\s*\([^()]*\)?\s*$", "", text.strip()).strip()
+
+
+def _legend_keys(page):
+    """[(rgb, rect, horizontal)] for every legend swatch on the page."""
+    out = []
+    for d in page.get_drawings():
+        if d.get("type") != "s" or d.get("color") is None:
+            continue
+        items = d["items"]
+        if len(items) != 1 or items[0][0] != "l":
+            continue
+        p1, p2 = items[0][1], items[0][2]
+        dx, dy = abs(p2.x - p1.x), abs(p2.y - p1.y)
+        if min(dx, dy) > 1.0 or not _SWATCH_MIN <= max(dx, dy) <= _SWATCH_MAX:
+            continue
+        if (d.get("width") or 0) < _SWATCH_WIDTH:
+            continue
+        out.append((tuple(round(c, 4) for c in d["color"]), d["rect"], dx >= dy))
+    return out
+
+
+def _text_spans(page):
+    """[(bbox, text)] for every span carrying a letter."""
+    out = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                t = span["text"].strip()
+                if t and any(c.isalpha() for c in t):
+                    out.append((span["bbox"], t))
+    return out
+
+
+def _label_for_key(rect, horizontal, spans):
+    """The legend text this key belongs to, or None.
+
+    Rotated pages stack the legend down the PDF x axis and draw each key
+    directly after its label's y1; unrotated pages stack it down y and draw
+    the key directly before the label's x0. Pick the nearest label that both
+    covers the key across the stack and abuts it along it.
+    """
+    best, best_gap = None, None
+    for (x0, y0, x1, y1), text in spans:
+        if horizontal:
+            cy = (rect.y0 + rect.y1) / 2
+            if not y0 - _LEGEND_TOL <= cy <= y1 + _LEGEND_TOL:
+                continue
+            gap = x0 - rect.x1
+        else:
+            cx = (rect.x0 + rect.x1) / 2
+            if not x0 - _LEGEND_TOL <= cx <= x1 + _LEGEND_TOL:
+                continue
+            gap = rect.y0 - y1
+        if not -_LEGEND_TOL <= gap <= _LEGEND_GAP:
+            continue
+        if best_gap is None or gap < best_gap:
+            best, best_gap = text, gap
+    return best
+
+
+def detect_legend(page):
+    """Read colour -> channel off the page's own legend.
+
+    Returns (mapping, blocks) or (None, None) when the page draws no legend:
+      mapping  {rgb: (column, kind)} for the four treatment channels
+      blocks   [[(rgb, label, column|None), ...], ...] — every keyed curve,
+               one list per legend block, in the order the block stacks them.
+
+    A fixed colour table cannot serve this template. The 2013-2016 vintage
+    strokes "Master Conc @ Wellhead" purple and "@ Formation" teal; 2025
+    swaps the two. 2025 Surface pages draw the wellhead concentration in a
+    green (0, 0.5, 0.25) that is in no table at all, so SERIES dropped it
+    silently. And Net Pressure pages stroke "Net Pressure" in exactly the
+    green SERIES reserves for wellhead concentration. Only the legend knows.
+
+    Curve names resolve through Carmine's alias table; anything that is not
+    one of the four treatment channels (Bottom Hole / Deadstring / Net
+    Pressure, chemical concentrations, N2 and pump-down rates) is reported in
+    `blocks` with a None column so callers can tell "deliberately excluded"
+    from "unrecognised colour".
+    """
+    keys = _legend_keys(page)
+    if not keys:
+        return None, None
+    spans = _text_spans(page)
+    named = []
+    for rgb, rect, horizontal in keys:
+        text = _label_for_key(rect, horizontal, spans)
+        if text is None:
+            continue
+        col = aliases.canon(_clean_label(text))
+        named.append((rgb, rect, horizontal, text, col if col in KINDS else None))
+    if not named:
+        return None, None
+
+    # Split into the page's legend blocks (pressure keys sit under the
+    # pressure axis, rate/concentration keys under theirs) and order each
+    # block the way it stacks -- the same order the tick-label columns use.
+    blocks = {}
+    for rgb, rect, horizontal, text, col in named:
+        anchor = rect.x0 if horizontal else rect.y0
+        anchor = next((a for a in blocks if abs(a - anchor) <= 2.0), anchor)
+        sort = rect.y0 if horizontal else rect.x0
+        blocks.setdefault(anchor, []).append((sort, rgb, text, col))
+    ordered = []
+    for anchor in sorted(blocks):
+        ordered.append([(rgb, text, col)
+                        for _s, rgb, text, col in sorted(blocks[anchor],
+                                                         key=lambda r: r[0])])
+
+    mapping, taken = {}, set()
+    for block in ordered:
+        for rgb, _text, col in block:
+            # first key wins: a page that legends the same channel twice
+            # (e.g. a repeated "Master Concentration") would otherwise have
+            # its second curve overwrite the first
+            if col is None or rgb in mapping or col in taken:
+                continue
+            mapping[rgb] = (col, KINDS[col])
+            taken.add(col)
+    return mapping, ordered
 
 
 def page_kind(page):
@@ -146,12 +398,97 @@ def is_chemicals(page):
     return False
 
 
-def detect_meta(page, frame):
+# Tick-label geometry. A value band's labels for one tick are printed as a
+# single run with no gap between them; the gap to the next tick is tens of
+# points. The band pad is generous on purpose: the FIRST label of a run sits
+# up to ~12pt beyond the frame corner, and clipping it (the old +-10pt window
+# did) throws away the whole axis's top tick.
+_TICK_GAP = 1.5
+_BAND_PAD = 30.0
+
+
+def _numeric_spans(page):
+    """[(bbox, value)] for every span that is a bare number."""
+    out = []
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                v = _num(span["text"].strip())
+                if v is not None:
+                    out.append((span["bbox"], v))
+    return out
+
+
+def _axis_columns(page, frame, orient, band):
+    """One value band's tick labels -> [full scale, per axis] in stack order.
+
+    The template prints every value axis's label for a tick as one run: at
+    the top tick of a 2025 Surface page it prints "16 1200 1200 4.0 4.0" side
+    by side -- rate, wellhead conc, formation conc, and two chemical axes, in
+    the order the legend lists them. Read as a flat list of numbers, as the
+    old code did, there is no way to tell the rate axis from the
+    concentration axis (it guessed with a "< 100" test) and no way at all to
+    tell two concentration axes apart when their ranges differ.
+
+    Returns None when the band does not read as a tick column -- the caller
+    then falls back to the flat maximum.
+    """
+    lo_i, hi_i = (0, 2) if orient == "y" else (1, 3)
+    runs = []
+    for bbox, v in _numeric_spans(page):
+        cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        if orient == "y":
+            if not frame.x0 - _BAND_PAD < cx < frame.x1 + _BAND_PAD:
+                continue
+            if band == "pressure" and cy <= frame.y1:
+                continue
+            if band == "value" and cy >= frame.y0:
+                continue
+        else:
+            if not frame.y0 - _BAND_PAD < cy < frame.y1 + _BAND_PAD:
+                continue
+            if band == "pressure" and cx >= frame.x0:
+                continue
+            if band == "value" and cx <= frame.x1:
+                continue
+        runs.append((bbox[lo_i], bbox[hi_i], v))
+    runs.sort()
+    groups = []
+    for lo, hi, v in runs:
+        if groups and lo - groups[-1][-1][1] < _TICK_GAP:
+            groups[-1].append((lo, hi, v))
+        else:
+            groups.append([(lo, hi, v)])
+    if len(groups) < 3:
+        return None
+    # Every tick prints one label per axis, so the number of axes is the
+    # width almost every run has. The odd one out is the zero end, where the
+    # time axis prints its own label hard up against this band's and the two
+    # merge into one run; that run is dropped rather than allowed to shift
+    # the axis indices.
+    widths = [len(g) for g in groups]
+    width = max(set(widths), key=widths.count)
+    full = [g for g in groups if len(g) == width]
+    if len(full) < 3 or len(full) * 2 < len(groups):
+        return None
+    return [max(g[k][2] for g in full) for k in range(width)]
+
+
+def detect_meta(page, frame, orient=None):
     """Full metadata: text fields plus axis ranges read from tick labels."""
     meta = detect_text_meta(page)
+    if orient is None:
+        orient = _orientation(page, frame)
 
-    # axis labels: numeric spans grouped by position relative to the frame
+    # Axis labels: numeric spans grouped by which margin of the frame they sit
+    # in. Which margin carries which axis depends on the layout -- rotated
+    # pages run time up the right edge with the value axes above and below,
+    # unrotated ones run time along the bottom with the value axes left and
+    # right. Time is tested first: the unrotated layout's time labels sit
+    # under the frame's bottom-right corner, inside the concentration
+    # column's own x band.
     time_vals, pressure_vals, top_vals = [], [], []
+    pad = 10
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
@@ -160,22 +497,49 @@ def detect_meta(page, frame):
                     continue
                 x0, y0, x1, y1 = span["bbox"]
                 cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-                if cx > frame.x1 and frame.y0 - 10 < cy < frame.y1 + 10:
-                    time_vals.append(v)          # right of frame: time axis
-                elif cy > frame.y1 and frame.x0 - 10 < cx < frame.x1 + 10:
-                    pressure_vals.append(v)      # below frame: pressure axis
-                elif cy < frame.y0 and frame.x0 - 10 < cx < frame.x1 + 10:
-                    top_vals.append(v)           # above frame: rate + conc axes
+                along_x = frame.x0 - pad < cx < frame.x1 + pad
+                along_y = frame.y0 - pad < cy < frame.y1 + pad
+                if orient == "y":
+                    if cx > frame.x1 and along_y:
+                        time_vals.append(v)
+                    elif cy > frame.y1 and along_x:
+                        pressure_vals.append(v)
+                    elif cy < frame.y0 and along_x:
+                        top_vals.append(v)
+                else:
+                    if cy > frame.y1 and along_x:
+                        time_vals.append(v)
+                    elif cx < frame.x0 and along_y:
+                        pressure_vals.append(v)
+                    elif cx > frame.x1 and along_y:
+                        top_vals.append(v)
 
     if time_vals:
         meta.duration_min = max(time_vals)
     else:
         meta.warnings.append("time axis labels not found")
-    if pressure_vals:
+
+    # Per-axis full scales, one entry per tick-label column in legend order.
+    # extract_page binds them to curves through the legend; the flat maxima
+    # below stay populated for the manual-override path and as the fallback
+    # when a page's tick columns do not parse.
+    meta.axes = {"pressure": _axis_columns(page, frame, orient, "pressure"),
+                 "value": _axis_columns(page, frame, orient, "value")}
+
+    if meta.axes["pressure"]:
+        meta.pressure_max = max(meta.axes["pressure"])
+    elif pressure_vals:
         meta.pressure_max = max(pressure_vals)
     else:
         meta.warnings.append("pressure axis labels not found")
-    if top_vals:
+    value = meta.axes["value"]
+    if value:
+        # first column is the rate axis, the rest are concentrations and
+        # chemical additives
+        meta.rate_max = value[0]
+        conc = [v for v in value[1:] if v > 0]
+        meta.conc_max = max(conc) if conc else 0.0
+    elif top_vals:
         meta.conc_max = max(top_vals)
         small = [v for v in top_vals if v < max(100.0, meta.conc_max / 10)]
         meta.rate_max = max(small) if small else 0.0
@@ -184,17 +548,36 @@ def detect_meta(page, frame):
     return meta
 
 
-def _collect_points(page, frame):
-    """Per-series (y, x) point arrays, clipped to the plot frame."""
-    raw = {}
+def _match(color, table):
+    """The table key this stroke colour is, or None."""
+    if color is None or not table:
+        return None
+    key = min(table, key=lambda c: sum((a - b) ** 2 for a, b in zip(c, color)))
+    if sum((a - b) ** 2 for a, b in zip(key, color)) > 1e-4:
+        return None
+    return key
+
+
+def _collect_points(page, frame, series=None, unclaimed=None, known=()):
+    """Per-series (y, x) point arrays, clipped to the plot frame.
+
+    `series` is the colour table to bind against (the page's legend, or
+    SERIES as a fallback). Colours that stroke a real curve inside the frame
+    but match neither `series` nor `known` (the legend's deliberate
+    exclusions) are appended to `unclaimed` so the caller can warn: silently
+    dropping a curve is how the wellhead concentration went missing from a
+    third of the corpus.
+    """
+    if series is None:
+        series = SERIES
+    raw, orphan = {}, {}
     for d in page.get_drawings():
         color = d.get("color")
-        if color is None:
+        if color is None or d.get("type") != "s":
             continue
-        key = min(SERIES, key=lambda c: sum((a - b) ** 2 for a, b in zip(c, color)))
-        if sum((a - b) ** 2 for a, b in zip(key, color)) > 1e-4:
-            continue
-        pts = raw.setdefault(key, [])
+        key = _match(color, series)
+        pts = raw.setdefault(key, []) if key is not None else \
+            orphan.setdefault(tuple(round(c, 4) for c in color), [])
         for item in d["items"]:
             if item[0] == "l":
                 pts.append((item[1].x, item[1].y))
@@ -202,15 +585,61 @@ def _collect_points(page, frame):
             elif item[0] == "c":
                 pts.append((item[1].x, item[1].y))
                 pts.append((item[4].x, item[4].y))
-    out = {}
-    pad = 1.0
-    for color, pts in raw.items():
+
+    def inside(pts):
         arr = np.array(pts)
+        pad = 1.0
         keep = ((arr[:, 0] >= frame.x0 - pad) & (arr[:, 0] <= frame.x1 + pad) &
                 (arr[:, 1] >= frame.y0 - pad) & (arr[:, 1] <= frame.y1 + pad))
-        arr = arr[keep]
+        return arr[keep]
+
+    out = {}
+    for color, pts in raw.items():
+        arr = inside(pts)
         if len(arr):
             out[color] = arr
+    if unclaimed is not None:
+        for color, pts in orphan.items():
+            # a curve, not chart furniture: many in-frame vertices, and not
+            # the black/grey the frame, grid and annotations are drawn in
+            if len(pts) < 60 or max(color) - min(color) < 0.05:
+                continue
+            if _match(color, known) is not None:
+                continue                    # legended, deliberately excluded
+            if len(inside(pts)) >= 60:
+                unclaimed.append(color)
+    return out
+
+
+def _axes_by_curve(meta, blocks):
+    """{column: full scale} by pairing legend entries with tick columns.
+
+    The legend lists a block's curves in the same order the tick labels stack
+    their columns, so the k-th curve reads against the k-th axis. Blocks are
+    matched to bands by what they hold, not by where they sit: the legend is
+    drawn INSIDE the plot frame, so its position says nothing about which
+    margin its axis is in.
+
+    A block can be longer than its column list -- the two concentrations
+    share one axis on the 2013-2016 pages -- in which case the curves past
+    the last column read against it too.
+    """
+    axes = getattr(meta, "axes", None)
+    if not axes or not blocks:
+        return {}
+    out = {}
+    for block in blocks:
+        kinds = {KINDS[c] for _r, _t, c in block if c}
+        if not kinds:
+            continue
+        band = "pressure" if kinds == {"pressure"} else \
+               ("value" if "pressure" not in kinds else None)
+        cols = axes.get(band) if band else None
+        if not cols:
+            continue
+        for i, (_rgb, _text, col) in enumerate(block):
+            if col and col not in out:
+                out[col] = float(cols[min(i, len(cols) - 1)])
     return out
 
 
@@ -232,28 +661,53 @@ def extract_page(page, meta=None, sample_sec=1.0):
     frame = _detect_frame(page)
     if frame is None:
         raise ValueError("no plot frame found on page")
+    orient = _orientation(page, frame)
     if meta is None:
-        meta = detect_meta(page, frame)
+        meta = detect_meta(page, frame, orient)
     if meta.duration_min <= 0:
         raise ValueError("stage duration unknown (no time axis labels); set it manually")
 
-    # Geometry for the Lab's synced "Compare Original" view. Unlike the other
-    # templates, this page's content is rotated: time runs along the PDF y
-    # axis and increases upward, the value axes along x. The Lab wants
-    # t = ta + tb * coord, so invert the sample mapping used below --
-    #   t = (frame.y1 - y) / H * D   ->   ta = D/H * frame.y1,  tb = -D/H
-    # -- and hand it the frame's x extent as the value axis. Taken from the
-    # detected frame itself, so it lines up edge-to-edge rather than to the
-    # inset tick labels.
-    H = frame.y1 - frame.y0
-    if H > 1e-9:
-        D = meta.duration_min * 60.0
-        meta.geom = {"axis": "y", "ta": float(D / H * frame.y1),
-                     "tb": float(-D / H),
-                     "v0": float(frame.x0), "v1": float(frame.x1)}
+    # Geometry for the Lab's synced "Compare Original" view. Most of this
+    # template's pages are rotated -- time runs up the PDF y axis, the value
+    # axes along x -- but the 2024 layout is unrotated, with time along x and
+    # the value axes up y. The Lab wants t = ta + tb * coord, so invert
+    # whichever sample mapping is used below and hand it the OTHER axis's
+    # frame extent, far edge first. Taken from the detected frame itself, so
+    # it lines up edge-to-edge rather than to the inset tick labels.
+    D = meta.duration_min * 60.0
+    if orient == "y":
+        span, v0, v1 = frame.y1 - frame.y0, frame.x0, frame.x1
+        base, sign = frame.y1, -1.0
+    else:
+        span, v0, v1 = frame.x1 - frame.x0, frame.y0, frame.y1
+        base, sign = frame.x0, 1.0
+    if span > 1e-9:
+        meta.geom = {"axis": orient, "ta": float(-sign * D / span * base),
+                     "tb": float(sign * D / span),
+                     "v0": float(v0), "v1": float(v1)}
 
     fullscale = {"pressure": meta.pressure_max, "rate": meta.rate_max, "conc": meta.conc_max}
-    points = _collect_points(page, frame)
+    series, blocks = detect_legend(page)
+    if blocks is None:
+        # no legend at all: fall back to the fixed colour table. A legend
+        # that names only excluded curves (a Net Pressure page) is NOT a
+        # fallback case -- falling back there is exactly how "Net Pressure
+        # (MPa)", stroked in the same green as the wellhead concentration,
+        # would be exported as a proppant concentration.
+        series, known = SERIES, ()
+    else:
+        known = {rgb for block in blocks for rgb, _t, _c in block}
+        if not series:
+            raise ValueError(
+                "no treatment channel in the page legend (%s)" % ", ".join(
+                    _clean_label(t) for block in blocks for _r, t, _c in block))
+    per_curve = _axes_by_curve(meta, blocks)
+    unclaimed = []
+    points = _collect_points(page, frame, series, unclaimed, known)
+    for rgb in unclaimed:
+        meta.warnings.append(
+            "curve stroked in %s is in the plot but not in the legend, dropped"
+            % (",".join(f"{c:.3g}" for c in rgb)))
     if not points:
         raise ValueError("no series curves found on page")
 
@@ -268,14 +722,20 @@ def extract_page(page, meta=None, sample_sec=1.0):
     # a correctly-aligned chart look wrong.
     meta.scales = {}
     for color, arr in points.items():
-        name, kind = SERIES[color]
-        fs = fullscale[kind]
+        name, kind = series[color]
+        fs = per_curve.get(name) or fullscale[kind]
         if fs <= 0:
             meta.warnings.append(f"{name}: axis scale unknown, channel skipped")
             continue
         meta.scales[name] = float(fs)
-        t = (frame.y1 - arr[:, 1]) / (frame.y1 - frame.y0) * meta.duration_min
-        v = (frame.x1 - arr[:, 0]) / (frame.x1 - frame.x0) * fs
+        if orient == "y":
+            t = ((frame.y1 - arr[:, 1]) / (frame.y1 - frame.y0)
+                 * meta.duration_min)
+            v = (frame.x1 - arr[:, 0]) / (frame.x1 - frame.x0) * fs
+        else:
+            t = ((arr[:, 0] - frame.x0) / (frame.x1 - frame.x0)
+                 * meta.duration_min)
+            v = (frame.y1 - arr[:, 1]) / (frame.y1 - frame.y0) * fs
         order = np.argsort(t, kind="stable")
         data[name] = _resample(t[order], v[order], sample_min)
     return meta, samples, data

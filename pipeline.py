@@ -33,6 +33,7 @@ import calfrac_progress as cprog
 import liberty_summary
 import lib1
 import peloton_frac as pel
+import sanjel
 import step_vec
 import pipeline_export as pe
 import sk_fracr as sk
@@ -42,6 +43,7 @@ try:
     import auto_raster as ar
     import step1
     import hal1
+    import trican_charts as tcharts
     _RASTER_OK = True
 except Exception:                       # pragma: no cover - optional deps
     _RASTER_OK = False
@@ -346,7 +348,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     labels = {k: v["label"] for k, v in chinfo.items()}
                     results.append(_series(_md(meta), samples, data,
                                            "Halliburton IFS chart", pno + 1,
-                                           units, labels))
+                                           units, labels,
+                                           geom=getattr(meta, "geom", None),
+                                           scales=getattr(meta, "axes", None),
+                                           frames=getattr(meta, "axes_frame", None)))
                 except Exception as e:
                     notes.append(f"p{pno + 1}: IFS chart failed — {e}")
             continue
@@ -389,6 +394,31 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 notes.append(f"p{pno + 1}: STEP vector chart failed — {e}")
             continue
 
+        sanjel_role = sanjel.page_role(page)
+        if sanjel_role and sanjel_role != "treatment":
+            # Sanjel's chemical/hydration/pressure-test plots use the same
+            # engine as its treatment charts. Named, not silently dropped.
+            notes.append(f"p{pno + 1}: Sanjel {sanjel_role} plot — not "
+                         f"treatment channels")
+            continue
+
+        if sanjel_role == "treatment":
+            # MUST come before Canyon: a Sanjel plot page prints "Ticket #:"
+            # and legends "Main Pressure (MPa)" / "Blender Dirty Rate
+            # (m3/min)", which is exactly what canyon.detect looks for. It
+            # claimed every one of them and then failed on "no panel titles",
+            # which is why Sanjel filings came back with no data at all.
+            try:
+                meta, samples, data, units = sanjel.extract_page(page, sample_sec)
+                results.append(_series(_md(meta), samples, data,
+                                       "Sanjel chart", pno + 1, units,
+                                       geom=getattr(meta, "geom", None),
+                                       scales=getattr(meta, "axes", None),
+                                       frames=getattr(meta, "axes_frame", None)))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: Sanjel chart failed — {e}")
+            continue
+
         if canyon.detect(page):
             try:
                 meta, samples, data, units = canyon.extract_page(page)
@@ -404,6 +434,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 md, samples, chans, info = hal1.extract_page(page)
                 data = {c["label"]: c["values"] for c in chans}
                 units = {c["label"]: c["unit"] for c in chans}
+                frames = {c["label"]: c["axis_frame"] for c in chans
+                          if c.get("axis_frame")}
                 meta = {"title": f"Treatment interval {md.get('stage') or '?'}",
                         "uwi": md.get("uwi", ""), "stage": str(md.get("stage") or ""),
                         "date": "", "start_time": "00:00:00",
@@ -411,9 +443,64 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 if data:
                     results.append(_series(meta, samples, data,
                                            "Halliburton treatment plot (raster)",
-                                           pno + 1, units))
+                                           pno + 1, units,
+                                           geom=info.get("geom"),
+                                           frames=frames))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Halliburton plot failed — {e}")
+            continue
+
+        if raster and tcharts.detect(page):
+            # Trican POST-FRAC SUMMARY charts. Same documents trican2 reads
+            # for STAGE INFORMATION tables, which stay on the doc-level pass
+            # below: the tables and the curves are different pages.
+            try:
+                md, samples, chans, info = tcharts.extract_page(page,
+                                                                sample_sec)
+                data = {c["label"]: c["values"] for c in chans}
+                units = {c["label"]: c["unit"] for c in chans}
+                frames = {c["label"]: c["axis_frame"] for c in chans
+                          if c.get("axis_frame")}
+                if data:
+                    stage = md.get("stage")
+                    title = ("Whole job (continuous)" if md.get("continuous")
+                             else f"Stage {stage or '?'}")
+                    meta = {"title": title, "uwi": md.get("uwi", ""),
+                            "stage": "" if md.get("continuous")
+                            else str(stage or ""),
+                            "date": "", "start_time": "00:00:00",
+                            "duration_min": len(samples) / 60.0,
+                            "warnings": []}
+                    results.append(_series(
+                        meta, samples, data, "Trican treatment chart (raster)",
+                        pno + 1, units, geom=info.get("geom"), frames=frames))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: Trican chart failed — {e}")
+            continue
+
+        if raster and tcharts.detect_b(page):
+            # Trican "Stage # N" reports (2024/2025). Different render from
+            # the POST-FRAC SUMMARY charts above: three value axes, clock
+            # time, legend under the plot.
+            try:
+                md, samples, chans, info = tcharts.extract_page_b(page,
+                                                                  sample_sec)
+                data = {c["label"]: c["values"] for c in chans}
+                units = {c["label"]: c["unit"] for c in chans}
+                frames = {c["label"]: c["axis_frame"] for c in chans
+                          if c.get("axis_frame")}
+                if data:
+                    stage = md.get("stage")
+                    meta = {"title": f"Stage {stage or '?'}",
+                            "uwi": md.get("uwi", ""), "stage": str(stage or ""),
+                            "date": "", "start_time": "00:00:00",
+                            "duration_min": len(samples) / 60.0,
+                            "warnings": []}
+                    results.append(_series(
+                        meta, samples, data, "Trican treatment chart (raster)",
+                        pno + 1, units, geom=info.get("geom"), frames=frames))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: Trican chart failed — {e}")
             continue
 
         if raster and step1.detect(page):

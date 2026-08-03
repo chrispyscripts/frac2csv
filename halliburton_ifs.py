@@ -325,6 +325,7 @@ def extract_page(page, sample_sec=1.0):
 
     t_min_all, t_max_all = None, None
     series = {}
+    series_axis = {}                 # (name, unit) -> the tick column it reads
     info = {}
     for name, unit, cint, ax in legend:
         pts = pts_by_color.get(cint)
@@ -341,6 +342,7 @@ def extract_page(page, sample_sec=1.0):
         v = col["a"] + col["b"] * arr[:, 1]
         order = np.argsort(t, kind="stable")
         series[(name, unit)] = (t[order], v[order])
+        series_axis[(name, unit)] = col
         lo, hi = t.min(), t.max()
         t_min_all = lo if t_min_all is None else min(t_min_all, lo)
         t_max_all = hi if t_max_all is None else max(t_max_all, hi)
@@ -360,7 +362,38 @@ def extract_page(page, sample_sec=1.0):
                 return std
         return raw[:24]
 
-    data, chinfo = {}, {}
+    # --- chart geometry in PAGE coordinates, for the Lab's synced view ---
+    # Everything above works in the CANONICAL frame, which _unrotate maps a
+    # 90°-filed page into: canonical x is page x when the page is filed
+    # upright and page -y when it is filed rotated, and canonical y is page y
+    # / page x to match. That is exactly the axis "x"/"y" distinction the Lab
+    # encodes, so the rotated case is a sign flip on tb and nothing else.
+    #
+    # Two things this has to get right, both silent when wrong:
+    #  - `ta` is relative to the STAGE start. The samples below begin at
+    #    t_min_all, so quoting the absolute clock fit here would slide the
+    #    backdrop by however far into the job this interval sat.
+    #  - v0/v1 and every channel's axes_frame are read at the SAME page
+    #    coordinates. Quoting a curve against its own tick extent while the
+    #    page is placed by a different pair leaves it a constant distance off
+    #    its own ink (the concentration column labels 100..800, not 0..800,
+    #    so its extent is not the frame's).
+    used = []
+    for c in mapping.values():
+        if c not in used:
+            used.append(c)
+    lo_s = sorted(c["y_lo"] for c in used)
+    hi_s = sorted(c["y_hi"] for c in used)
+    v_top = float(lo_s[len(lo_s) // 2])
+    v_bot = float(hi_s[len(hi_s) // 2])
+    if v_bot < v_top:
+        v_top, v_bot = v_bot, v_top
+    meta.geom = {"axis": "y" if rotated else "x",
+                 "ta": float(ta - t_min_all),
+                 "tb": float(-tb if rotated else tb),
+                 "v0": v_top, "v1": v_bot}
+
+    data, chinfo, axes, axes_frame = {}, {}, {}, {}
     for (name, unit), (t, v) in series.items():
         col = std_name(name)
         if col in data:
@@ -368,6 +401,15 @@ def extract_page(page, sample_sec=1.0):
         vals = _resample(t - t_min_all, v, samples / 60 * 60)
         data[col] = vals
         chinfo[col] = {"label": name, "unit": unit}
+        acol = series_axis.get((name, unit))
+        if acol:
+            p_lo = acol["a"] + acol["b"] * acol["y_hi"]
+            p_hi = acol["a"] + acol["b"] * acol["y_lo"]
+            axes[col] = (float(min(p_lo, p_hi)), float(max(p_lo, p_hi)))
+            axes_frame[col] = (float(acol["a"] + acol["b"] * v_top),
+                               float(acol["a"] + acol["b"] * v_bot))
+    meta.axes = axes
+    meta.axes_frame = axes_frame
     # start time of day for DATETIME column
     if meta.date:
         h = int(t_min_all // 3600) % 24

@@ -648,19 +648,47 @@ def _is_pressure(c):
     return "pressure" in (c.get("label") or "").lower()
 
 
-def _drop_impossible_pressure(charts):
-    """Refuse to export a pressure channel read off an axis that cannot be a
-    pressure axis. See auto_raster.plausible_pressure_axis — a wrong number
-    here is invisible downstream, a missing channel is not."""
+def _is_floored(c):
+    """Concentration or rate — a quantity with a hard floor at zero."""
+    if (c.get("unit") or "").lower() in ("kg/m3", "l/m3", "m3/min", "g/m3",
+                                         "kg/min", "l/min", "%"):
+        return True
+    lab = (c.get("label") or "").lower()
+    return "conc" in lab or "rate" in lab
+
+
+def _axis_note(c, fr, what):
+    return (f"{c.get('label')}: axis ({fr[0]:.2f}, {fr[1]:.2f}) is "
+            f"not a possible {what} scale — channel dropped")
+
+
+def impossible_axis(c):
+    """-> a note if this channel's axis frame cannot be its own axis.
+
+    A wrong number here is invisible downstream, a missing channel is not,
+    so both the pressure test and the can't-go-negative test are refusals.
+    See auto_raster.plausible_pressure_axis / plausible_floor_axis.
+    """
+    fr = c.get("axis_frame")
+    if not fr:
+        return None
+    if _is_pressure(c):
+        if not ar.plausible_pressure_axis(*fr):
+            return _axis_note(c, fr, "pressure")
+    elif _is_floored(c) and not ar.plausible_floor_axis(*fr):
+        return _axis_note(c, fr, "concentration/rate")
+    return None
+
+
+def _drop_impossible_axes(charts):
+    """Refuse to export a channel read off an axis that cannot be its own."""
     out = []
     for tag, samples, chans, info in charts:
         keep = []
         for c in chans:
-            fr = c.get("axis_frame")
-            if fr and _is_pressure(c) and not ar.plausible_pressure_axis(*fr):
-                info.setdefault("notes", []).append(
-                    f"{c.get('label')}: axis ({fr[0]:.2f}, {fr[1]:.2f}) is "
-                    "not a possible pressure scale — channel dropped")
+            note = impossible_axis(c)
+            if note:
+                info.setdefault("notes", []).append(note)
                 continue
             keep.append(c)
         if keep:
@@ -672,7 +700,7 @@ def extract_page(page, sample_sec=1.0):
     """-> (meta, [(chart_tag, samples, channels, info), ...])."""
     if not _detect_tiled(page) and _detect_new(page):
         meta, out = _extract_new(page, sample_sec)
-        return meta, _drop_impossible_pressure(out)
+        return meta, _drop_impossible_axes(out)
     img = composite(page)
     # the stacked tiles span the whole page, so one scale converts back
     pr = page.rect
@@ -798,4 +826,4 @@ def extract_page(page, sample_sec=1.0):
         meta["kind"] = "main"
     elif "casing" in joined:
         meta["kind"] = "casing"
-    return meta, _drop_impossible_pressure(out)
+    return meta, _drop_impossible_axes(out)

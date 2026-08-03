@@ -5,8 +5,8 @@ Calfrac-2
 chart_headers_include = Surface
 chart_stage_tokens = Zone, Stage , Zones , *Zon*
 curve.Tr Press = Treating Pressure
-curve.Slurry Rate = Combined Rate @ Wellhead, Combined Rate @ Formation, Combined Slurry Rate, Blender Slurry Rate
-curve.WH Prop Conc = Master Conc @ Wellhead, Master Concentration, Master Conc @ Blender
+curve.Slurry Rate = Combined Rate @ Wellhead, Combined Rate @ Formation, Combined Slurry Rate, Blender Slurry Rate, Rate @ Formation
+curve.WH Prop Conc = Master Conc @ Wellhead, Master Concentration, Master Conc @ Blender, Prop Conc @ Combined Rate
 curve.BH Prop Conc = Master Conc @ Formation, Combined Conc @ Blender, Master Concentration @ Formation , Master Concentration At Formation
 
 Hal-1
@@ -78,3 +78,11 @@ chart_stage_tokens = Treatment , Interval
 curve.Tr Press = Surface Pressure, Surface BU, Surface Press
 curve.WH Prop Conc = Surf Total Proppant Conc, Surf Total Prop Conc
 curve.Slurry Rate = Surf Total Slurry Rate
+
+SanJel-1
+chart_headers_include = Interval
+chart_stage_tokens = Interval
+curve.Tr Press = Main Pressure, Back-up
+curve.Slurry Rate = Blender Dirty Rate, Blender 1 Dirty Rate, Surf Total Slurry Rate
+curve.WH Prop Conc = Blender Concentration, Blender 1 Concentration, Surf Total Proppant Conc
+curve.BH Prop Conc = Btm Prop Conc

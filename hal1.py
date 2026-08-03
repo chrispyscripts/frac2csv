@@ -15,7 +15,7 @@ import numpy as np
 
 import auto_raster as ar
 import curve_trace as ct
-from step1 import _frame_bbox
+from step1 import _frame_bbox, _page_geom, impossible_axis
 
 
 def detect(page):
@@ -128,9 +128,34 @@ def extract_image(img, sample_sec=1.0):
         # edge value, so every gap and both tails carried a flat invented line.
         # ct.resample blanks them instead (see curve_trace.resample).
         v = ct.resample(samples, t_cols, vals)
-        channels.append({"key": label.lower().replace(" ", "-"),
-                         "label": label, "unit": unit, "color": "",
-                         "values": v, "ticks": ntick, "coverage": cov})
+        # This channel's axis read AT the plot frame's top and bottom edges —
+        # the same two rows geom's v0/v1 quote. Ghost stretches the page
+        # between those edges, so a curve drawn against this pair lands on its
+        # own ink; drawn against the tick range alone it sits a constant
+        # fraction of the plot away, because the outermost tick is not the
+        # frame. Both ends must come off the SAME rows as v0/v1.
+        ch = {"key": label.lower().replace(" ", "-"),
+              "label": label, "unit": unit, "color": "",
+              "values": v, "ticks": ntick, "coverage": cov,
+              "axis_frame": (float(a + bb * y0), float(a + bb * y1))}
+        # An axis that cannot be this channel's own axis is normally a refusal
+        # — a dropped channel is visible in the Lab, a wrong one is not — and
+        # step1 does refuse. Hal-1 only WARNS, deliberately.
+        #
+        # Its concentration tick fit is systematically ~110 kg/m3 low on the
+        # common render: 885 channels across 30 of 40 documents (12.5%) fail
+        # the floor test, 715 of them sharing the identical frame
+        # (1381.4, -111.2). On 00382 p113 the OCR reads six good ticks plus
+        # two misreads (800 as "0.0", 0 as "120500") and the fit follows them.
+        # So these channels are about 7% wrong, not garbage, and refusing them
+        # would delete a eighth of Halliburton's concentration record to avoid
+        # a modest error. Fix the tick fit and this warning goes quiet on its
+        # own; until then the data ships with the axis flagged.
+        bad = impossible_axis(ch)
+        if bad:
+            notes.append(bad)
+            ch["axis_suspect"] = True
+        channels.append(ch)
     if not channels:
         raise ValueError("hal1: no channel calibrated; " + "; ".join(notes[:3]))
     info = {"plot": box, "t0_seconds": float(t_start),
@@ -152,4 +177,17 @@ def extract_page(page, sample_sec=1.0):
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
         pix.height, pix.width, 3)
     samples, channels, info = extract_image(img, sample_sec)
+    # Chart geometry in PAGE units, so the Lab can lay the source page behind
+    # the curves. Everything above works in IMAGE pixels; the page embeds that
+    # image at a known rect, which makes the conversion a plain scale +
+    # offset — exactly step1's raster case, so it uses step1's converter and
+    # inherits its convention (ta relative to the STAGE start, v0/v1 the
+    # frame's top and bottom in mupdf y-down page units).
+    try:
+        r = page.get_image_rects(im[0])[0]
+        if r.width > 1 and r.height > 1:
+            info["geom"] = _page_geom(info, pix.width / r.width,
+                                      pix.height / r.height, r.x0, r.y0)
+    except Exception:
+        pass
     return page_meta(page), samples, channels, info

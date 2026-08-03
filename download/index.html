@@ -38,30 +38,55 @@
   <div class="notes">
     <h2>New in this version</h2>
     <ul>
-      <li><b>STEP treating pressure was reading 5× low on some wells</b> — the
-        chart stacks an unlabelled 0–20 axis outside the real 0–100 one and we
-        were fitting the wrong one. Whole wells shift from ~14 MPa to ~73 MPa.</li>
-      <li>STEP stages that came back empty now extract: pages filed at a smaller
-        render had their time labels clipped. 226 charts recovered across four
-        wells, plus several Halliburton plots.</li>
-      <li><b>Gaps in a curve export as blank.</b> Where a chart has no ink — before
-        a curve starts, after it ends, or across a break — the CSV used to carry a
-        flat line at the last value seen. About one reading in eight was filled in
-        this way. Those are empty now, so charts show gaps where the page has none.</li>
-      <li>STEP rate and concentration were read off each other's axis — rate near
-        950 m³/min, concentration near 6 kg/m³. Fixed on 212 channels.</li>
-      <li>STEP traces no longer show narrow spikes dropping toward zero; those were
-        a second curve of the same colour being read as part of the trace.</li>
-      <li>STEP scanned charts: pressure read off the wrong axis on some wells — one
-        stage exported −51 MPa. 81 pages gained a pressure curve they never had.</li>
-      <li>CalFrac reports that draw several zones on one chart are split into a graph
-        per zone, timed from the zone summary table.</li>
-      <li>Halliburton: 24 of 36 IFS reports previously came back "no extractable
-        data"; and WH Prop Conc was missing from every Hal-1 report.</li>
-      <li>Chart view: the original page is always shown behind the curves — up and
-        down arrows move through stages and roll on to the next report, left and
-        right hide either layer. Flag Error is one Enter to open, one to send, and
-        now states what it attached.</li>
+      <li><b>Trican reports now show charts.</b> They were coming up as tables
+        only — the curves are stored as images, which is why they were missed.
+        347 reports, ~12,900 charts. Checked against the maximums your own stage
+        pages print: pressure and rate within ~1%, concentration 1–4%.</li>
+      <li><b>Sanjel reports now work</b> — they were coming up with no data. There
+        was no Sanjel reader, and the Canyon one was grabbing Sanjel pages and
+        then failing on them. Against the Treatment Details table: pressure
+        0.14%, rate 0.24%, concentration 0.48%.</li>
+      <li><b>CalFrac slurry rate was reading ~11% low on almost every stage</b> —
+        the top tick on the rate axis was being dropped, so the scale was short.
+        Against your Treatment Summary pages, stages more than 10% out went from
+        38% to 5%.</li>
+      <li><b>CalFrac surface concentration was missing from about a third of
+        stages.</b> The colour it is drawn in varies between reports and only one
+        exact shade was recognised; it now reads each page's own legend. Coverage
+        went from 254 pages to 652.</li>
+      <li><b>CalFrac bottom-hole concentration held the wellhead figure again</b>
+        on the 2013–2016 layout — purple and teal are swapped there, so both
+        columns carried the same channel and the formation concentration was
+        thrown away. About 3 in 4 stages affected.</li>
+      <li>CalFrac charts on the 2024 layout were reading a curve as the plot
+        border, giving 600-minute charts and rates like 65 m³/min. Impossible
+        rates went from 28 to zero.</li>
+      <li><b>Treating pressure on some STEP wells was reading 5× low</b> — index
+        01396 and 01392 have an unlabelled 0–20 scale outside the real 0–100 one.
+        Whole wells move from ~14 MPa to ~73.</li>
+      <li>STEP stages that came back empty now read — some pages are saved smaller
+        than the rest of the file and their time labels were being clipped. 226
+        charts recovered across four wells, plus several Halliburton plots.</li>
+      <li><b>Trican tables were showing the Designed figure where the As-Pumped
+        column was blank.</b> 97 stages across 33 reports corrected — one showed
+        25.17 t of proppant where 0.17 t was pumped. Start and finish times now
+        fill in on 1,582 pages that were blank.</li>
+      <li>Trican charts with a misread time axis (81-hour stages) are now dropped
+        rather than exported. Whole-job CONTINUOUS pages are unaffected.</li>
+      <li><b>The original chart now shows behind the curves for Halliburton and
+        Trican</b> — it was never being drawn for either.</li>
+    </ul>
+
+    <h2>Worth knowing</h2>
+    <ul>
+      <li><b>Gaps in a curve come out blank now, not as a flat line.</b> Where a
+        chart has no ink — before a curve starts, after it ends, or across a break
+        — the old CSV carried the last value it saw. About one reading in eight
+        was filled in that way. Charts will show gaps where the page genuinely has
+        none. That is the fix, not a fault.</li>
+      <li>The small spikes on CalFrac treating pressure are <b>real</b> — 85 of 92
+        sit in the shut-down at the end of the stage, and 99.6% of our pressure
+        samples land on printed ink. Nothing to fix there.</li>
     </ul>
   </div>
 </div>

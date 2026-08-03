@@ -573,6 +573,25 @@ def plausible_pressure_axis(v0, v1):
     return lo >= -0.05 * span
 
 
+def plausible_floor_axis(v0, v1):
+    """Could (v0, v1) be the two ends of an axis for a quantity that cannot
+    go below zero — a concentration or a pump rate?
+
+    Same reasoning as plausible_pressure_axis, minus the span test: a
+    chemical axis really is drawn 0..2, so only the floor can be judged.
+    Nothing pumped downhole has a negative concentration or a negative
+    rate, so an axis whose bottom end sits well under zero has been fitted
+    to the wrong ticks — 00269 p70 reads Btm Prop Conc off an (800, -150)
+    axis and exports -147 kg/m3. The small negative a fit on OCR'd label
+    centroids leaves behind is fine and is judged against the span.
+    """
+    lo, hi = min(float(v0), float(v1)), max(float(v0), float(v1))
+    span = hi - lo
+    if not np.isfinite(span) or span <= 0:
+        return False
+    return lo >= -0.05 * span
+
+
 def fit_ticks_guarded(pts):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
