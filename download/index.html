@@ -36,9 +36,21 @@
   <div class="ver" id="ver">&nbsp;</div>
 
   <div class="notes">
-    <h2>New in this version</h2>
+    <h2>v0.9.1</h2>
     <ul>
-      <li>STEP reports on index 01077, 01078 and 01079 now read — they were coming up with no data</li>
+      <li>STEP reports on index 01077, 01078 and 01079 were coming up with no
+        data. Those pages don't print an <code>LSD:</code> line, and the STEP
+        reader was requiring one to recognise a chart page — so 103 charts were
+        never looked at. Nothing was wrong with the charts themselves; they read
+        correctly once the page is recognised. Checked against the Interval
+        Summary table in the same report: pressure, rate and concentration all
+        within about 1–2%.</li>
+      <li>Because there was no chart on screen, the Flag Error button had nothing
+        to attach to and didn't appear. It comes back on those files now.</li>
+    </ul>
+
+    <h2>v0.9.0</h2>
+    <ul>
       <li>Trican reports now show charts</li>
       <li>Sanjel reports now work — they were coming up with no data</li>
       <li>CalFrac slurry rate was reading ~11% low</li>
