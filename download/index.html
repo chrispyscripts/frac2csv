@@ -38,55 +38,26 @@
   <div class="notes">
     <h2>New in this version</h2>
     <ul>
-      <li><b>Trican reports now show charts.</b> They were coming up as tables
-        only — the curves are stored as images, which is why they were missed.
-        347 reports, ~12,900 charts. Checked against the maximums your own stage
-        pages print: pressure and rate within ~1%, concentration 1–4%.</li>
-      <li><b>Sanjel reports now work</b> — they were coming up with no data. There
-        was no Sanjel reader, and the Canyon one was grabbing Sanjel pages and
-        then failing on them. Against the Treatment Details table: pressure
-        0.14%, rate 0.24%, concentration 0.48%.</li>
-      <li><b>CalFrac slurry rate was reading ~11% low on almost every stage</b> —
-        the top tick on the rate axis was being dropped, so the scale was short.
-        Against your Treatment Summary pages, stages more than 10% out went from
-        38% to 5%.</li>
-      <li><b>CalFrac surface concentration was missing from about a third of
-        stages.</b> The colour it is drawn in varies between reports and only one
-        exact shade was recognised; it now reads each page's own legend. Coverage
-        went from 254 pages to 652.</li>
-      <li><b>CalFrac bottom-hole concentration held the wellhead figure again</b>
-        on the 2013–2016 layout — purple and teal are swapped there, so both
-        columns carried the same channel and the formation concentration was
-        thrown away. About 3 in 4 stages affected.</li>
-      <li>CalFrac charts on the 2024 layout were reading a curve as the plot
-        border, giving 600-minute charts and rates like 65 m³/min. Impossible
-        rates went from 28 to zero.</li>
-      <li><b>Treating pressure on some STEP wells was reading 5× low</b> — index
-        01396 and 01392 have an unlabelled 0–20 scale outside the real 0–100 one.
-        Whole wells move from ~14 MPa to ~73.</li>
-      <li>STEP stages that came back empty now read — some pages are saved smaller
-        than the rest of the file and their time labels were being clipped. 226
-        charts recovered across four wells, plus several Halliburton plots.</li>
-      <li><b>Trican tables were showing the Designed figure where the As-Pumped
-        column was blank.</b> 97 stages across 33 reports corrected — one showed
-        25.17 t of proppant where 0.17 t was pumped. Start and finish times now
-        fill in on 1,582 pages that were blank.</li>
-      <li>Trican charts with a misread time axis (81-hour stages) are now dropped
-        rather than exported. Whole-job CONTINUOUS pages are unaffected.</li>
-      <li><b>The original chart now shows behind the curves for Halliburton and
-        Trican</b> — it was never being drawn for either.</li>
+      <li>Trican reports now show charts</li>
+      <li>Sanjel reports now work — they were coming up with no data</li>
+      <li>CalFrac slurry rate was reading ~11% low</li>
+      <li>CalFrac surface concentration was missing from about a third of stages</li>
+      <li>CalFrac bottom-hole concentration held the wellhead figure on 2013–2016 reports</li>
+      <li>CalFrac 2024 layout gave 600-minute charts and 65 m³/min rates</li>
+      <li>STEP treating pressure was reading 5× low on 01396 and 01392</li>
+      <li>STEP stages that came back empty now read — 226 charts recovered</li>
+      <li>Trican tables were showing Designed figures where As-Pumped was blank</li>
+      <li>Trican charts with a misread time axis are dropped rather than exported</li>
+      <li>The original chart now shows behind the curves for Halliburton and Trican</li>
     </ul>
 
     <h2>Worth knowing</h2>
     <ul>
-      <li><b>Gaps in a curve come out blank now, not as a flat line.</b> Where a
-        chart has no ink — before a curve starts, after it ends, or across a break
-        — the old CSV carried the last value it saw. About one reading in eight
-        was filled in that way. Charts will show gaps where the page genuinely has
-        none. That is the fix, not a fault.</li>
-      <li>The small spikes on CalFrac treating pressure are <b>real</b> — 85 of 92
-        sit in the shut-down at the end of the stage, and 99.6% of our pressure
-        samples land on printed ink. Nothing to fix there.</li>
+      <li>Gaps in a curve come out blank now, not as a flat line — about one
+        reading in eight used to be filled in. Charts will show gaps where the
+        page has none.</li>
+      <li>The small spikes on CalFrac treating pressure are real — they are in
+        the printed chart.</li>
     </ul>
   </div>
 </div>
