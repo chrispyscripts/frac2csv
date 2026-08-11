@@ -1604,7 +1604,6 @@ function redrawGraph() {
   // that gets the room.
   const xHot = gState.axisHover === "x";
   const xfs = xHot ? 17 : 12.5;
-  let lastDay = null;
   ctx.fillStyle = TC.axisText;
   ctx.font = (xHot ? "600 " : "") + `${xfs}px ui-monospace,Menlo,monospace`;
   ctx.textAlign = "center";
@@ -1617,17 +1616,14 @@ function redrawGraph() {
       const p = n2 => String(n2).padStart(2, "0");
       ctx.fillText(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
                    x, H - (xHot ? 27 : 26));
-      // The second row carries the calendar date rather than elapsed time.
-      // Printed at the left edge and again only where it CHANGES, so a stage
-      // running through midnight says so at the tick where it happens
-      // instead of repeating one date five times across the axis.
+      // The second row carries the calendar date rather than elapsed time,
+      // under every tick — so the date is readable wherever you are looking
+      // along the axis, and a stage crossing midnight shows the change in
+      // place.
       const day = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-      if (day !== lastDay) {
-        ctx.globalAlpha = xHot ? .85 : .62;
-        ctx.fillText(day, x, H - (xHot ? 10 : 11));
-        ctx.globalAlpha = 1;
-        lastDay = day;
-      }
+      ctx.globalAlpha = xHot ? .85 : .62;
+      ctx.fillText(day, x, H - (xHot ? 10 : 11));
+      ctx.globalAlpha = 1;
     } else {
       ctx.fillText(fmtTime(te), x, H - (xHot ? 10 : 11));
     }
@@ -1635,66 +1631,9 @@ function redrawGraph() {
   ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
   drawYAxis(ctx, W, H);
   drawCurves(ctx, W, H, gState.hover ? gState.hover.hiIdx : null);
-  if (ghost) drawGhostLegend(ctx, W, H);
+  // (the Extracted / Original key that used to sit here is gone — the arrow
+  // keys toggle the two layers and the legend under the chart names them)
   if (gState.hover) drawHover(ctx, W, H);
-}
-
-// Fixed key in the top-left of the ghost plot. Always drawn, including for a
-// muted layer — with both layers in one colour scheme, a blank chart otherwise
-// gives no clue what was switched off or how to get it back.
-function drawGhostLegend(ctx, W, H) {
-  const { L, T } = GP;
-  const light = !ghostMono();
-  // In light mode our layer is not one colour, so its swatch is the actual
-  // palette on screen, striped. A single blue key there would name a colour
-  // that appears nowhere in the chart.
-  const ours = light
-    ? gState.channels.filter((c, ci) => chanVisible(c, ci))
-                     .map(c => c._color).slice(0, 4)
-    : [GHOST_LINE];
-  const rows = [
-    { on: settings.ghostOurs, colors: ours.length ? ours : [GHOST_LINE],
-      label: "Extracted" },
-    { on: settings.ghostRef && ghostReady(),
-      colors: [light ? "#111111" : GHOST_INK], label: "Original" },
-  ];
-  const ink = light ? "#14181d" : "#ffffff";
-  const x = L + 12, y = T + 12, lh = 15;
-  ctx.save();
-  ctx.font = "11px ui-monospace,Menlo,monospace";
-  ctx.textAlign = "left"; ctx.textBaseline = "middle";
-  const w = Math.max(...rows.map(r => ctx.measureText(r.label).width)) + 34;
-  ctx.fillStyle = light ? "rgba(255,255,255,.82)" : "rgba(0,0,0,.55)";
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(x, y, w, rows.length * lh + 10, 5);
-  else ctx.rect(x, y, w, rows.length * lh + 10);
-  ctx.fill();
-  if (light) {
-    ctx.strokeStyle = "rgba(0,0,0,.16)"; ctx.lineWidth = 1; ctx.stroke();
-  }
-  rows.forEach((r, i) => {
-    const cy = y + 12 + i * lh;
-    ctx.globalAlpha = r.on ? 1 : 0.38;
-    ctx.lineWidth = 2;
-    const seg = 16 / r.colors.length;
-    r.colors.forEach((col, k) => {
-      ctx.strokeStyle = col;
-      ctx.beginPath();
-      ctx.moveTo(x + 8 + k * seg, cy); ctx.lineTo(x + 8 + (k + 1) * seg, cy);
-      ctx.stroke();
-    });
-    ctx.fillStyle = ink;
-    ctx.fillText(r.label, x + 30, cy);
-    if (!r.on) {                       // struck through: off, not merely faint
-      ctx.strokeStyle = light ? "rgba(0,0,0,.55)" : "rgba(255,255,255,.6)";
-      ctx.lineWidth = 1;
-      const tw = ctx.measureText(r.label).width;
-      ctx.beginPath(); ctx.moveTo(x + 30, cy); ctx.lineTo(x + 30 + tw, cy);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-  });
-  ctx.restore();
 }
 
 // The ghost is only truthful when every visible curve can be placed in the
@@ -1897,11 +1836,10 @@ function drawYAxis(ctx, W, H) {
     ctx.beginPath(); ctx.moveTo(L - 3, y + .5); ctx.lineTo(L, y + .5); ctx.stroke();
     // Only collapse the bottom row to a single "0" when every axis really
     // is zero-based — printed axes can start anywhere (some are inverted).
-    if (f === 0 && axes.every(a => a.lo === 0)) {
-      ctx.fillStyle = TC.axisText;
-      ctx.fillText("0", L - 5, y - 2);
-      continue;
-    }
+    // Nothing is printed where the axes meet. Every scale starting at zero
+    // is what the plot floor already says, and the lone "0" in the corner
+    // read as a value belonging to one of the curves.
+    if (f === 0 && axes.every(a => a.lo === 0)) continue;
     // The stack is centred on the tick, so at the TOP tick its first row sits
     // above the canvas and the scales get cut off (Carmine hit this). Nudge
     // the whole stack back inside instead of letting it overflow.
