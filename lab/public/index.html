@@ -442,6 +442,9 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
             <button type="button" class="btn" id="origprev">‹</button>
             <span class="origlbl" id="origlbl"></span>
             <button type="button" class="btn" id="orignext">›</button>
+            <button type="button" class="btn" id="origfull"
+                    title="Show the whole source page here instead of just the
+chart region">Full page</button>
             <button type="button" class="btn" id="origopen"
                     title="Open the source PDF in a separate window for
 side-by-side comparison">Open PDF ↗</button>
@@ -1411,6 +1414,7 @@ function showStage(entry, well, item) {
   }
   setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
+  orig.fullPage = false;      // each stage opens on its own chart region
   if (applyCompareSize()) redrawGraph();
   updateOrigBar();
   scheduleOrigSync();
@@ -2013,7 +2017,10 @@ function buildLegend() {
 // ---------- "Original chart" mode: render the source PDF page ----------
 const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null,
                raw: null, buf: null, ink: null,
-               synced: false, bufSeq: -1, failed: false };
+               synced: false, bufSeq: -1, failed: false,
+               // show the WHOLE source page instead of the chart region
+               // cropped and time-locked to the graph
+               fullPage: false };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -2111,7 +2118,10 @@ async function syncOrig() {
     const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)];
     const page = await orig.doc.getPage(src.page);
     if (mySeq !== orig.seq) return;
-    if (src.geom) await renderSynced(ctx, cv, page, src.geom, mySeq);
+    // Full page deliberately bypasses the synced crop: the point is to see
+    // the sheet as printed — title block, tables, legend and all — so it must
+    // not follow the graph's time window.
+    if (src.geom && !orig.fullPage) await renderSynced(ctx, cv, page, src.geom, mySeq);
     else await renderFit(ctx, cv, page, mySeq);
   } catch (e) {
     if (mySeq !== orig.seq) return;
@@ -2256,6 +2266,13 @@ function updateOrigBar() {
   $("orignext").disabled = i >= pages.length - 1;
   const e = current && current.entry;
   $("origopen").disabled = !(e && (e._pdfFile || e._pdfUrl));
+  const ff = $("origfull");
+  ff.classList.toggle("on", orig.fullPage);
+  ff.textContent = orig.fullPage ? "Chart only" : "Full page";
+  if (orig.fullPage) {
+    $("origlbl").textContent = `PDF p.${pages[i]} — whole page` +
+      (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
+  }
 }
 
 // ---------- settings persistence + modal ----------
@@ -2678,6 +2695,19 @@ $("flagsend").addEventListener("click", async () => {
 });
 
 // open the source PDF in its own window (scalable, side-by-side compare)
+$("origfull").addEventListener("click", () => {
+  orig.fullPage = !orig.fullPage;
+  // The whole sheet is not time-locked to the graph, so the backdrop and the
+  // crosshair would both be pointing at nothing. Drop the ghost buffers so
+  // the next redraw cannot composite a full page over the plot.
+  orig.buf = null; orig.ink = null; orig.raw = null;
+  orig.bufSeq = -1; orig.synced = false;
+  gState.hover = null;
+  updateOrigBar();
+  if (applyCompareSize()) redrawGraph();
+  else redrawGraph();
+  syncOrig();
+});
 $("origopen").addEventListener("click", async () => {
   const item = current && current.item, entry = current && current.entry;
   if (!item || !entry) return;
