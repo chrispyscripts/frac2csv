@@ -63,15 +63,47 @@ def pick_folder():
                 encoding="utf-8", errors="replace")
             return out.stdout.strip() or None
         if os.name == "nt":
-            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
-                  "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
-                  "if($f.ShowDialog() -eq 'OK'){$f.SelectedPath}")
+            # Two things this needs that the obvious version does not do.
+            # Windows Forms must run on an STA thread, so -Sta is required or
+            # ShowDialog can throw and nothing appears. And a dialog with no
+            # owner opens BEHIND the browser window, which looks exactly like
+            # the button doing nothing — so it is given a 1px off-screen
+            # topmost owner to pull it to the front.
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "Add-Type -AssemblyName System.Drawing;"
+                "$o=New-Object System.Windows.Forms.Form;"
+                "$o.StartPosition='Manual';"
+                "$o.Location=New-Object System.Drawing.Point(-3000,-3000);"
+                "$o.Size=New-Object System.Drawing.Size(1,1);"
+                "$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.Show();"
+                "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$f.Description='Choose the export destination folder';"
+                "$f.ShowNewFolderButton=$true;"
+                "$r=$f.ShowDialog($o);"
+                "$o.Close();"
+                "if($r -eq [System.Windows.Forms.DialogResult]::OK)"
+                "{[Console]::Out.Write($f.SelectedPath)}"
+            )
             # a folder path with an accented character would otherwise blow
             # up decoding on the locale codepage
-            out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                                 capture_output=True, text=True, timeout=120,
-                                 encoding="utf-8", errors="replace")
-            return out.stdout.strip() or None
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Sta", "-WindowStyle", "Hidden",
+                 "-Command", ps],
+                capture_output=True, text=True, timeout=300,
+                encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            picked = out.stdout.strip()
+            if picked:
+                return picked
+            # Cancel and failure both come back empty, so only shout about the
+            # second one — a silent failure here is indistinguishable from a
+            # dead button, which is the bug this is fixing.
+            if out.returncode:
+                sys.stderr.write(
+                    "pick_folder: powershell exited %s: %s\n"
+                    % (out.returncode, (out.stderr or "").strip()[:400]))
+            return None
         import tkinter
         from tkinter import filedialog
         root = tkinter.Tk()

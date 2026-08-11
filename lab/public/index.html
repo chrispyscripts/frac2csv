@@ -330,7 +330,7 @@
           <div class="destrow">
             <input type="text" id="destpath" placeholder="Browser Downloads folder"
                    spellcheck="false">
-            <button type="button" class="btn" id="destpick">Change…</button>
+            <button type="button" class="btn" id="destpick">Browse…</button>
           </div>
         </div>
       </div>
@@ -2396,14 +2396,21 @@ $("destpick").addEventListener("click", async () => {
   }
   $("destpick").disabled = true;
   try {
+    $("desthint").textContent = "choose a folder in the window that opened…";
     const resp = await fetch("/api/pick-folder");
     const out = await resp.json();
     if (out.path) {
       settings.destFolder = out.path;
       $("destpath").value = out.path;
       saveSettings();
+      $("desthint").textContent = "where exports are saved";
+    } else {
+      // the picker returns empty for BOTH cancel and failure, so say the
+      // neutral thing rather than claiming an error the user did not hit
+      $("desthint").textContent = "no folder chosen — exports still go to "
+        + (settings.destFolder || "the default folder");
     }
-  } catch (e) { $("desthint").textContent = "couldn't open folder picker"; }
+  } catch (e) { $("desthint").textContent = "couldn't open the folder picker"; }
   $("destpick").disabled = false;
 });
 $("destpath").addEventListener("change", () => {
