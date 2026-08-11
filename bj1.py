@@ -104,12 +104,41 @@ def extract_page(page, sample_sec=1.0):
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups()[:6])
         meta.stage = str(int(m.group(7)))
-    meta.title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")[:60]
+    title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")
+    meta.title = title[:60]
+
+    # A stage can be charted MORE THAN ONCE. BJ names the aborted run in the
+    # title — "- Stage 06 Plug Slip", "- Stage 17 HRF", "- Stage 41 Winterize"
+    # — and numbers a re-pump "- Stage 10.1"; the treatment that actually
+    # counts keeps the bare "- Stage 06". Reading the number alone filed both
+    # under one stage, and every consumer merges same-stage charts by sample
+    # index (pipeline_export.build_well, the Lab's stageItems). A 10-minute
+    # plug slip and the 96-minute frac that followed it therefore fused into
+    # one block: rate and pressure came from the slip, the concentrations from
+    # the frac, over a row count belonging to neither — the plot filled a tenth
+    # of a 96-minute grid and the header read "10 min · 5,758 samples".
+    # Keep the printed suffix in the stage key so each treatment stays its own
+    # chart, exactly as Liberty does for "Attempt 1/2" and STEP for "1.2".
+    # Conservative by construction: the suffix must start with a letter and
+    # hold only plain word/number text, and the number must be the one already
+    # read above, or nothing changes. The space before the word is optional —
+    # the operators also type "Stage 36.2HRF" with no gap.
+    ms = re.search(r"-\s*Stage\s*(\d+(?:\.\d+)?)"
+                   r"(?:\s*([A-Za-z][A-Za-z0-9. ]{0,19}))?\s*$", title)
+    if ms:
+        head, _dot, sub = ms.group(1).partition(".")
+        stage = str(int(head)) + (f".{sub}" if sub else "")
+        qual = " ".join((ms.group(2) or "").split())
+        if qual:
+            stage += " " + qual
+        if meta.stage == str(int(head)) and stage != meta.stage:
+            meta.stage = stage
 
     # time axis: slanted "Mon-DD HH:MM" labels; right bbox edge sits on
     # the gridline they annotate
     tpts = []
     daytags = []
+    tlabels = []
     for s in spans:
         m = TIME_RE.fullmatch(s["t"])
         if m:
@@ -120,6 +149,11 @@ def extract_page(page, sample_sec=1.0):
                     + int(hh) * 3600 + int(mm) * 60)
             tpts.append((secs, s["x1"], s["cy"]))
             daytags.append((secs, MONTHS[mon], int(day)))
+            # re-printed, not the raw span text: TIME_RE tolerates "Apr-6"
+            # and a run of spaces, and two pages of ONE chart must not look
+            # different because of typesetting
+            tlabels.append((secs, f"{mon}-{int(day):02d} "
+                                  f"{int(hh):02d}:{mm}"))
     if len(tpts) < 3:
         raise ValueError("bj1: time labels not found")
     # year rollover inside a stage: "Dec-31 ... Jan-01" labels wrap the
@@ -132,10 +166,23 @@ def extract_page(page, sample_sec=1.0):
                 for s, x, cy in tpts]
         daytags = [(s + YEAR, mo, d) if s - lo < 186 * 86400 else (s, mo, d)
                    for s, mo, d in daytags]
+        tlabels = [(s + YEAR, lab) if s - lo < 186 * 86400 else (s, lab)
+                   for s, lab in tlabels]
     # year is absent from the chart — resolve it from the document's tables
     _, start_mon, start_day = min(daytags)
     year = _resolve_year(page.parent, start_mon, start_day)
     meta.date = f"{year:04d}-{start_mon:02d}-{start_day:02d}"
+
+    # A stage can be charted twice with the SAME printed title — a zoomed
+    # detail view beside the full treatment, or two genuinely separate
+    # treatments — so the suffix rule above has nothing to read and both
+    # charts land under one stage key. The only thing on the page that tells
+    # them apart is this axis: every page of ONE chart (the main plot and the
+    # single-series auxiliaries that follow it) prints exactly the same
+    # "Mon-DD HH:MM" label set, and two charts of the same stage never do.
+    # Publish the set so the document-level pass in pipeline can separate
+    # them; a stage charted once is unaffected.
+    meta.axis_window = "|".join(lab for _s, lab in sorted(set(tlabels)))
     tfit = _fit([(v, x) for v, x, _ in tpts])
     if tfit[1] <= 0:
         raise ValueError("bj1: bad time fit")

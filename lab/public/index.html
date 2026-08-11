@@ -309,20 +309,6 @@
             <button type="button" data-v="single">One sheet</button>
           </div>
         </div>
-        <div class="setrow">
-          <div class="setlabel">Ghost mode</div>
-          <div class="seg" id="ghostmodeseg">
-            <button type="button" data-v="light" class="on">Light</button>
-            <button type="button" data-v="dark">Dark</button>
-          </div>
-        </div>
-        <div class="setrow">
-          <div class="setlabel">Theme</div>
-          <div class="seg" id="themeseg">
-            <button type="button" data-v="light" class="on">Light</button>
-            <button type="button" data-v="dark">Dark</button>
-          </div>
-        </div>
         <div class="setrow col">
           <div class="setlabel">Destination folder
             <span class="sethint" id="desthint"></span></div>
@@ -462,7 +448,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
-                   ghostOurs: true, ghostRef: true, ghostLight: true,
+                   ghostOurs: true, ghostRef: true,
                  };  // toggles
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
@@ -494,7 +480,9 @@ const THEMES = {
            tipBg: "rgba(13,17,23,.93)", tipBorder: "#3a4350",
            tipMut: "#8b949e", tipInk: "#c9d1d9", tipHi: "#ffffff" },
 };
-let themeName = localStorage.getItem("frac2csv-theme") || "light";
+// One theme. A second palette meant every canvas path had two versions,
+// and both overlay bugs shipped today came from the pair diverging.
+const themeName = "light";
 
 // ---- resizable file column ----
 const LEFT_MIN = 200, LEFT_MAX = 900;
@@ -537,12 +525,9 @@ function setLeftWidth(px, save) {
     if (widest) setLeftWidth(widest + 92, true);
   });
 })();
-function chartColors() { return THEMES[themeName] || THEMES.light; }
+function chartColors() { return THEMES.light; }
 function applyTheme() {
-  if (themeName === "dark") document.documentElement.dataset.theme = "dark";
-  else delete document.documentElement.dataset.theme;
-  const seg = document.getElementById("themeseg");
-  if (seg) for (const b of seg.children) b.classList.toggle("on", b.dataset.v === themeName);
+  delete document.documentElement.dataset.theme;
 }
 applyTheme();
 
@@ -1564,7 +1549,6 @@ function redrawGraph() {
     ? { grid: "rgba(255,255,255,.22)", axisText: "rgba(255,255,255,.75)",
         crosshair: "rgba(255,255,255,.8)" }
     : chartColors();
-  if (ghostMono()) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H); }
   drawGhostBackdrop(ctx, W, H);
   ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
   ctx.fillStyle = TC.axisText; ctx.font = "11px ui-monospace,Menlo,monospace";
@@ -1765,7 +1749,7 @@ function ghostActive() {
 // than ghostActive() — otherwise light mode would still flatten our curves to
 // a single blue and black out the paper.
 function ghostMono() {
-  return ghostActive() && !settings.ghostLight;
+  return false;              // the blueprint look went with dark mode
 }
 
 // Whether the buffered page actually belongs to the chart on screen. Switching
@@ -1783,8 +1767,7 @@ const INK_LUM = 220;
 // its own colour, and greyscaling maps those to different greys — a dark red
 // comes through almost black while a light green nearly disappears — so the
 // backdrop read as one emphasised curve and several faint ones. Thresholding
-// puts every curve on equal footing, and dark mode's invert then gives them
-// all the same white.
+// puts every curve on equal footing.
 function binarizedCopy(src, W, H) {
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
@@ -1809,27 +1792,15 @@ function drawGhostBackdrop(ctx, W, H) {
   ctx.beginPath();
   ctx.rect(L, T, W - L - R, H - T - B);
   ctx.clip();
-  if (settings.ghostLight) {
-    // Light: the page is already dark ink on white paper, so it needs no
-    // inversion — just the colour taken out, so the operator's own coloured
-    // curves can't be confused with ours. "multiply" keeps the ink and drops
-    // the paper, leaving black lines on our normal background.
-    ctx.globalCompositeOperation = "multiply";
-    ctx.filter = "none";               // already thresholded to black on white
-    ctx.globalAlpha = 1;
-    ctx.drawImage(orig.ink || orig.buf, 0, 0);
-  } else {
-    // Dark: inverting puts white ink on black, which is what makes it read
-    // underneath a blue curve. A blurred pass first and a sharp one over it
-    // gives the ink its glow.
-    ctx.globalCompositeOperation = "lighter";
-    ctx.filter = "invert(1) blur(2.5px)";
-    ctx.globalAlpha = 0.55;
-    ctx.drawImage(orig.ink || orig.buf, 0, 0);
-    ctx.filter = "invert(1)";
-    ctx.globalAlpha = 0.9;
-    ctx.drawImage(orig.ink || orig.buf, 0, 0);
-  }
+  // The page is already dark ink on white paper, so it needs no inversion —
+  // just the colour taken out, so the operator's own coloured curves can't be
+  // confused with ours. "multiply" keeps the ink and drops the paper, leaving
+  // black lines on our normal background. (The dark "blueprint" alternative
+  // went with dark mode; it stayed reachable through a stale saved setting
+  // after the mode switch was removed, which is worse than not having it.)
+  ctx.globalCompositeOperation = "multiply";
+  ctx.globalAlpha = 1;
+  ctx.drawImage(orig.ink || orig.buf, 0, 0);
   ctx.restore();
 }
 
@@ -2027,7 +1998,8 @@ function buildLegend() {
 
 // ---------- "Original chart" mode: render the source PDF page ----------
 const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null,
-               buf: null, ink: null, synced: false, bufSeq: -1, failed: false };
+               raw: null, buf: null, ink: null,
+               synced: false, bufSeq: -1, failed: false };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -2174,21 +2146,34 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
     orig.buf.width = W; orig.buf.height = H;
   }
   const bctx = orig.buf.getContext("2d");
-  bctx.clearRect(0, 0, W, H);
-  bctx.save();
-  // crop hard at the frame top (hides the chart's own legend band) but let
-  // the render spill into the left/bottom margins so the first time label
-  // and the x-axis dates stay fully readable
-  bctx.beginPath(); bctx.rect(0, T, W, H - T); bctx.clip();
-  bctx.fillStyle = "#ffffff"; bctx.fillRect(0, T, W, H - T);
+  // pdf.js must be handed a canvas with NO clip path of ours on it. This used
+  // to clip to the frame top and render straight into orig.buf, and on the
+  // Sanjel template that came back with the whole plot filled BLACK — the page
+  // clips internally (W* n) and pdf.js's clip bookkeeping goes wrong when it
+  // has to nest inside an outer clip, so one of the page's black bar fills
+  // spreads over everything. Measured on the same page, same viewport, same
+  // transform: 89.6% black pixels with the clip, 0.6% without. So render the
+  // page whole into a scratch canvas and blit back only the band we want.
+  if (!orig.raw) orig.raw = document.createElement("canvas");
+  if (orig.raw.width !== W || orig.raw.height !== H) {
+    orig.raw.width = W; orig.raw.height = H;
+  }
+  const rctx = orig.raw.getContext("2d");
+  rctx.setTransform(1, 0, 0, 1, 0, 0);
+  rctx.clearRect(0, 0, W, H);
+  rctx.fillStyle = "#ffffff"; rctx.fillRect(0, 0, W, H);
   const task = page.render({
-    canvasContext: bctx, viewport: vp,
+    canvasContext: rctx, viewport: vp,
     transform: [sx, 0, 0, sy, L - sx * A[0], T - sy * yTop],
   });
   orig.task = task;
   await task.promise.catch(() => { /* cancelled */ });
-  bctx.restore();
   if (mySeq !== orig.seq) return;
+  // crop hard at the frame top (hides the chart's own legend band) but let
+  // the render spill into the left/bottom margins so the first time label
+  // and the x-axis dates stay fully readable
+  bctx.clearRect(0, 0, W, H);
+  bctx.drawImage(orig.raw, 0, T, W, H - T, 0, T, W, H - T);
   // Two copies from here: orig.buf stays exactly as the page prints, for the
   // comparison panel below, and orig.ink is the same page flattened to black
   // for the overlay. One buffer served both, so thresholding the overlay took
@@ -2259,25 +2244,6 @@ function updateOrigBar() {
   $("origopen").disabled = !(e && (e._pdfFile || e._pdfUrl));
 }
 
-// Light ghost keeps our normal colours and lays the source under them in
-// black; dark ghost repaints everything as the blue-on-black blueprint.
-$("ghostmodeseg").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
-  settings.ghostLight = b.dataset.v === "light";
-  setSeg($("ghostmodeseg"), b.dataset.v);
-  saveSettings();
-  redrawGraph();
-});
-
-$("themeseg").addEventListener("click", e => {
-  const b = e.target.closest("button"); if (!b) return;
-  themeName = b.dataset.v;
-  localStorage.setItem("frac2csv-theme", themeName);
-  applyTheme();
-  redrawGraph(); buildLegend();
-  scheduleOrigSync();
-});
-
 // ---------- settings persistence + modal ----------
 function loadSettings() {
   try {
@@ -2288,7 +2254,6 @@ function loadSettings() {
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
-  setSeg($("ghostmodeseg"), settings.ghostLight ? "light" : "dark");
   syncGhostLayerUI();
 }
 function saveSettings() {
@@ -2297,7 +2262,6 @@ function saveSettings() {
     destFolder: settings.destFolder || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
-    ghostLight: settings.ghostLight,
   }));
 }
 function openSettings() { $("settingsback").hidden = false; }

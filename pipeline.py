@@ -54,6 +54,9 @@ def _md(meta):
     return {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
             "date": meta.date, "start_time": meta.start_time,
             "duration_min": meta.duration_min,
+            # the chart's printed time-axis label set, where the template
+            # reports one (BJ) — see _split_bj_windows
+            "axis_window": getattr(meta, "axis_window", ""),
             "warnings": list(getattr(meta, "warnings", []))}
 
 
@@ -192,6 +195,79 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         out.append((md, samples[a:b] - samples[a],
                     {k: v[a:b] for k, v in data.items()}, pgeom))
     return out
+
+
+def _window_tags(windows):
+    """{axis window: printed tag} — unique across the windows given, and
+    every character of it printed on the page.
+
+    The axis START normally separates two charts of one stage; where it does
+    not, widen to start..end (the end's clock alone when both fall on the day
+    the start names). Returns None if even that leaves them indistinguishable,
+    so the caller can leave the stage alone rather than invent a name for it.
+    """
+    for widen in (False, True):
+        tags = {}
+        for w in windows:
+            labs = w.split("|")
+            tag = labs[0]
+            if widen and len(labs) > 1:
+                day, _sp, clock = labs[-1].partition(" ")
+                tag += ".." + (clock if day == labs[0].split(" ")[0]
+                               else labs[-1])
+            tags[w] = tag
+        if len(set(tags.values())) == len(windows):
+            return tags
+    return None
+
+
+def _split_bj_windows(results, notes):
+    """Separate BJ charts that share a stage number but not a time axis.
+
+    BJ names an aborted or re-pumped run in the chart title ("Stage 06 Plug
+    Slip", "Stage 10.1") and bj1 keeps that suffix in the stage key, which is
+    what stops those from merging. A few stages are charted twice with NO
+    printed difference whatsoever — a zoomed detail view beside the full
+    treatment, or two genuinely separate treatments — so there is no suffix to
+    read and both charts land under one key. Every consumer then merges
+    same-stage charts by sample index (pipeline_export.build_well, the Lab's
+    stageItems), taking the row count from the longest and the meta from the
+    first: the short chart's channels win the columns and get padded out to
+    the long chart's length, so the block's duration, sample count and time
+    axis each describe a different chart.
+
+    Every page of ONE chart — the main plot and the single-series auxiliary
+    pages beside it — prints an identical "Mon-DD HH:MM" axis label set, and
+    two charts of one stage never do. So a stage carrying more than one window
+    is more than one chart. Name each for the window it prints; that is the
+    only distinction the report offers, and it beats inventing a "run 2" the
+    report never printed.
+    """
+    by_stage = {}
+    for r in results:
+        if r.get("source") == "BJ chart":
+            by_stage.setdefault(r["meta"].get("stage") or "?", []).append(r)
+    for stage, grp in by_stage.items():
+        wins = []                       # page order, i.e. chronological
+        for r in grp:
+            w = r["meta"].get("axis_window") or ""
+            if w and w not in wins:
+                wins.append(w)
+        if len(wins) < 2:
+            continue
+        tags = _window_tags(wins)
+        if not tags:
+            notes.append(f"Stage {stage}: {len(wins)} charts under one title "
+                         f"whose printed time axes could not be told apart — "
+                         f"left merged")
+            continue
+        for r in grp:
+            w = r["meta"].get("axis_window") or ""
+            if w in tags:
+                r["meta"]["stage"] = f"{stage} {tags[w]}"
+        notes.append(f"Stage {stage} is charted {len(wins)} times under one "
+                     f"title — separated by printed time axis as "
+                     + ", ".join(f'"{stage} {tags[w]}"' for w in wins))
 
 
 def raster_available():
@@ -616,6 +692,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         results[:] = [r for r in results
                       if r.get("meta", {}).get("zone_span") is None
                       or r["meta"]["zone_span"] == best[r["meta"]["stage"]]]
+
+    # a BJ stage charted twice under one title -> one block per printed
+    # time axis, instead of the two fusing into a block that matches neither
+    _split_bj_windows(results, notes)
 
     # --- SK 'FracR' per-stage engineering tables (document-level) ---
     if any(sk.detect(doc[p]) for p in range(npages)):

@@ -24,6 +24,9 @@ import numpy as np
 import curve_trace as ct
 
 HUE_NAMES = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "magenta"]
+# how far a faint pixel must stay clear of crimson ink to count as orange —
+# see hue_masks
+HALO_PX = 3
 HUE_HEX = {"red": "#c8372d", "orange": "#d07a1f", "yellow": "#a89a17",
            "green": "#1e7a34", "cyan": "#118a8a", "blue": "#1d5bd8",
            "purple": "#6d3bb0", "magenta": "#b0329b"}
@@ -51,6 +54,61 @@ def available():
 
 
 # ---------- color discovery ----------
+
+def _grow(mask, k):
+    """Spread a boolean mask k pixels in every direction."""
+    out = mask
+    for _ in range(k):
+        o = out.copy()
+        o[1:] |= out[:-1]
+        o[:-1] |= out[1:]
+        o[:, 1:] |= out[:, :-1]
+        o[:, :-1] |= out[:, 1:]
+        out = o
+    return out
+
+
+def _faint_orange(r, g, b, sat, s_min, red):
+    """Orange ink too faint for the absolute red/orange margin to see.
+
+    hue_masks splits warm ink on `g > b + m3`, an ABSOLUTE margin, and printed
+    ink fades. On 01396 p292 (STEP, Btm Prop Conc) a third of the trace runs at
+    saturation 30-60, where genuine orange pixels — (205,174,146), (194,159,132),
+    (167,118,92) — carry g only 27-28 above b, land under m3 = 31.5 and are
+    filed as RED. Over that file's 112 charts the channel's ink covered a median
+    52% of the plot columns, against 93% for the green Prop Conc beside it.
+
+    The hue itself does not fade; only its amplitude does. Blending ink toward
+    white scales (g-b) and (r-b) by the same factor, so their RATIO is what
+    survives: measured on that page, orange holds (g-b)/(r-b) at 0.46-0.68 in
+    every saturation band while crimson sits at -0.45..+0.06. A 0.30 cut
+    separates them at any strength, where a fixed 31.5 only works while the ink
+    is strong. The upper bound keeps yellow-ish ink (g approaching r) out, which
+    is what the r > g + m1 term used to do.
+
+    The ratio alone is not enough. A crimson stroke on a JPEG-compressed scan
+    is fringed with tan — (255,229,214) sits one pixel from (228,29,41) — which
+    reads as orange by hue and by ratio. One such pixel in a column with no
+    other ink would put a Btm Prop Conc reading on the Treating Pressure trace,
+    which is worse than the gap it fills, so faint ink within HALO_PX of crimson
+    is not eligible. Measured on 16 charts of 01396: without that guard 292
+    recovered columns land on the pressure trace, with it 5.
+
+    The result is ADDED to "orange" and NOT removed from "red". hal1 splits
+    crimson from chocolate inside the red family itself (b >= g for Treating
+    Pressure, g > b + 15 for Slurry Prop Conc); moving the chocolate out would
+    empty Halliburton's concentration channel. Red is left bit-for-bit as it
+    was and the two families simply overlap in the faint band.
+    """
+    gb = g - b
+    rb = r - b
+    # b <= g < r, so rb is this pixel's saturation and gb its position along
+    # the ramp from blue to red — the hue, expressed without a division.
+    warm = (sat > s_min) & (r > g) & (g >= b)
+    hue = warm & (gb * 100 > 30 * rb) & (gb * 100 < 78 * rb)
+    crimson = red & (gb * 100 <= 30 * rb)
+    return hue & ~_grow(crimson, HALO_PX)
+
 
 def hue_masks(img):
     """Series colors as broad families. Scans smear hue badly (a series'
@@ -93,6 +151,24 @@ def hue_masks(img):
     }
     families["green"] = families["green"] & ~families["cyan"]
     min_px = max(400, img.shape[0] * img.shape[1] // 5000)
+    # The faint pass only COMPLETES an orange series this page already shows;
+    # it never introduces one, and it may not become most of one. STEP's
+    # chemical chart draws its additives in a tan the faint rule reads as
+    # orange — 01396 p340 "Secure BIO 108 (L/m3)" at 0.09 — and step1 maps
+    # orange to Btm Prop Conc, so an additive trace would ship as a proppant
+    # concentration in kg/m3. Two conditions keep the recovery on the curves it
+    # was measured on: the strict rule must already have found a family here,
+    # and the recovery may not add more than 1.5x the ink that family holds.
+    # Across the 182 STEP surface charts of six files the faint pass takes
+    # orange to 1.01-2.46x its original size; on the five chemical charts that
+    # carry any orange at all it takes it to 2.97-7.30x, because there it is
+    # drawing a curve rather than filling the gaps in one.
+    base_px = int(families["orange"].sum())
+    if base_px >= min_px:
+        add = (_faint_orange(r, g, b, sat, s_min, families["red"])
+               & ~families["orange"])
+        if int(add.sum()) <= 1.5 * base_px:
+            families["orange"] = families["orange"] | add
     return {k2: m for k2, m in families.items() if m.sum() >= min_px}
 
 
