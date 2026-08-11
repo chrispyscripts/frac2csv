@@ -86,6 +86,13 @@
   .setrow:last-child { border-bottom:0; }
   .setlabel { font-size:12.5px; font-weight:600; color:var(--ink); }
   .sethint { font-weight:400; color:var(--mut); font-size:11px; margin-left:6px; }
+  .imgtag { display:inline-block; padding:1px 7px; border-radius:4px;
+            background:var(--carmine); color:#fff; font-weight:700;
+            font-size:10.5px; letter-spacing:.06em; vertical-align:1px; }
+  .sliderow { display:flex; align-items:center; gap:10px; }
+  .sliderow input[type=range] { width:150px; accent-color:var(--carmine); }
+  .sliderval { font:12px ui-monospace,Menlo,monospace; color:var(--mut);
+               min-width:34px; text-align:right; }
   /* the attachment label carries its own buttons, so it lays out as a row */
   .setlabel.row { display:flex; align-items:center; gap:6px; }
   .setlabel.row .sethint { margin-left:0; margin-right:auto; }
@@ -309,6 +316,14 @@
             <button type="button" data-v="single">One sheet</button>
           </div>
         </div>
+        <div class="setrow">
+          <div class="setlabel">Readout size
+            <span class="sethint">The box that follows the cursor on a chart</span></div>
+          <div class="sliderow">
+            <input type="range" id="tipscale" min="100" max="250" step="10" value="100">
+            <span class="sliderval" id="tipscaleval">1.0×</span>
+          </div>
+        </div>
         <div class="setrow col">
           <div class="setlabel">Destination folder
             <span class="sethint" id="desthint"></span></div>
@@ -448,8 +463,16 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
-                   ghostOurs: true, ghostRef: true,
+                   ghostOurs: true, ghostRef: true, tipScale: 1,
                  };  // toggles
+// Readout-box size. 1 is the original size and the floor of the slider, so
+// nobody's chart changes until they ask for it. Clamped on read because the
+// value is persisted and a hand-edited or older store must not scale the
+// box to something that cannot fit on the plot.
+function tipScale() {
+  const s = Number(settings.tipScale);
+  return isFinite(s) ? Math.min(2.5, Math.max(1, s)) : 1;
+}
 // desktop build: the same UI served by a local server with direct disk
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
 let localInfo = null;
@@ -1349,18 +1372,43 @@ function setPreviewMode(mode) {
   $("sumwrap").hidden = !isSum;
 }
 
+// Only the templates that trace a bitmap say "(raster)" in the source string
+// the pipeline emits (STEP, Halliburton Hal-1, Trican). Keying off the
+// pipeline's own declaration means a new raster template is labelled without
+// touching this file, and BJ — vector, despite the historical "BJ scans"
+// naming — is not mislabelled.
+function fromImage(source) {
+  return /\(raster\)|\braster\b/i.test(String(source || ""));
+}
+
 function showStage(entry, well, item) {
   setPreviewMode("graph");
   const M = item.meta;
   // the full file name, not the UWI — the UWI is already in the sub-line and
   // several files can share one
   $("pv-title").textContent = entry.name + "  —  Chart " + stageLabel(item);
-  $("pv-sub").textContent = [
+  const bits = [
     M.date && (M.date + (M.start_time ? " " + M.start_time : "")),
     Math.round(M.duration_min) + " min",
     item.n.toLocaleString() + " samples",
-    item.channels.length + " channels", item.source || ""
-  ].filter(Boolean).join("   ·   ");
+    item.channels.length + " channels",
+    // "(raster)" is the pipeline's own word for it; the IMAGE tag below says
+    // the same thing in plainer terms, so don't print both.
+    (item.source || "").replace(/\s*\(raster\)\s*$/i, "")
+  ].filter(Boolean);
+  const sub = $("pv-sub");
+  sub.textContent = bits.join("   ·   ");
+  // Curves traced off a picture of a chart, not off drawn vector strokes, are
+  // read by colour and OCR and carry the accuracy that implies. Say so on the
+  // stage itself so nobody has to know which providers scan their reports.
+  if (fromImage(item.source)) {
+    const tag = document.createElement("span");
+    tag.className = "imgtag";
+    tag.textContent = "IMAGE";
+    tag.title = "Traced from a scanned or rasterised chart, not from vector "
+              + "drawing data — read by colour and OCR";
+    sub.append("   ", tag);
+  }
   setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
   if (applyCompareSize()) redrawGraph();
@@ -1478,7 +1526,7 @@ $("sumopen").addEventListener("click", async () => {
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
 const GP = { L: 50, R: 16, T: 14, B: 44 };            // plot padding
 const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
-                 hidden: new Set(), hover: null };
+                 hidden: new Set(), hover: null, axisHover: null };
 
 // curve name per the "Our terms / As extracted" toggle
 function chanName(c) {
@@ -1551,7 +1599,14 @@ function redrawGraph() {
     : chartColors();
   drawGhostBackdrop(ctx, W, H);
   ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
-  ctx.fillStyle = TC.axisText; ctx.font = "11px ui-monospace,Menlo,monospace";
+  // Time labels sit under the plot at a readable size, and grow further while
+  // the cursor is in the time gutter — the axis you are reading is the one
+  // that gets the room.
+  const xHot = gState.axisHover === "x";
+  const xfs = xHot ? 17 : 12.5;
+  let lastDay = null;
+  ctx.fillStyle = TC.axisText;
+  ctx.font = (xHot ? "600 " : "") + `${xfs}px ui-monospace,Menlo,monospace`;
   ctx.textAlign = "center";
   for (let f = 0; f <= 1.0001; f += 0.25) {
     const x = L + f * plotW;
@@ -1561,12 +1616,20 @@ function redrawGraph() {
       const d = new Date(gState.clock0.getTime() + te * 1000);
       const p = n2 => String(n2).padStart(2, "0");
       ctx.fillText(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`,
-                   x, H - 26);
-      ctx.globalAlpha = .62;
-      ctx.fillText("t+" + fmtTime(te), x, H - 11);
-      ctx.globalAlpha = 1;
+                   x, H - (xHot ? 27 : 26));
+      // The second row carries the calendar date rather than elapsed time.
+      // Printed at the left edge and again only where it CHANGES, so a stage
+      // running through midnight says so at the tick where it happens
+      // instead of repeating one date five times across the axis.
+      const day = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      if (day !== lastDay) {
+        ctx.globalAlpha = xHot ? .85 : .62;
+        ctx.fillText(day, x, H - (xHot ? 10 : 11));
+        ctx.globalAlpha = 1;
+        lastDay = day;
+      }
     } else {
-      ctx.fillText(fmtTime(te), x, H - 11);
+      ctx.fillText(fmtTime(te), x, H - (xHot ? 10 : 11));
     }
   }
   ctx.beginPath(); ctx.moveTo(L, H - B); ctx.lineTo(W - R, H - B); ctx.stroke();
@@ -1820,10 +1883,14 @@ function drawYAxis(ctx, W, H) {
   const fracs = axes.length > 5 ? [0, 1]
               : axes.length > 3 ? [0, 0.5, 1]
               : [0, 0.25, 0.5, 0.75, 1];
-  const rowH = 10;
+  // Stacked value scales, one row per axis. Bigger than they were, and bigger
+  // again while the cursor is in the value gutter — the stack is the densest
+  // text on the chart and the hardest to read on a scan.
+  const yHot = gState.axisHover === "y";
+  const rowH = yHot ? 17 : 12;
   ctx.save();
   ctx.textAlign = "right";
-  ctx.font = `${rowH - 1}px ui-monospace,Menlo,monospace`;
+  ctx.font = (yHot ? "600 " : "") + `${rowH - 1}px ui-monospace,Menlo,monospace`;
   for (const f of fracs) {
     const y = T + (1 - f) * plotH;
     ctx.strokeStyle = TC.grid; ctx.lineWidth = 1;
@@ -1940,16 +2007,25 @@ function drawHover(ctx, W, H) {
                 color: c._color, hi: ci === hover.hiIdx });
   });
   if (!rows.length) return;
-  ctx.font = "11px ui-monospace,Menlo,monospace"; ctx.textAlign = "left";
+  // Every dimension of the readout box is derived from one scale factor, so
+  // the box grows as a unit — text, row pitch, swatch and padding together.
+  // s = 1 is the size this always was, and is the bottom of the slider.
+  const s = tipScale();
+  const fs = 11 * s, rh = 16 * s, pad = 10 * s, sw = 10 * s;
+  ctx.font = `${fs}px ui-monospace,Menlo,monospace`; ctx.textAlign = "left";
   const lines = rows.map(r => `${r.name}  ${round2(r.v)}${r.unit ? " " + r.unit : ""}`);
   const tw = Math.max(...lines.map(l => ctx.measureText(l).width),
-                      ctx.measureText(fmtClock(hover.t)).width) + 28;
-  const th = rows.length * 16 + 24;
+                      ctx.measureText(fmtClock(hover.t)).width) + 28 * s;
+  const th = rows.length * rh + 24 * s;
   let bx = x + 12; if (bx + tw > W - R) bx = x - 12 - tw;
+  // A tall box still has to sit inside the plot; clamp rather than let a
+  // scaled-up readout run off the top or bottom edge.
   let by = Math.max(T, Math.min(hover.my - th / 2, H - B - th));
+  if (th > H - T - B) by = T;
   ctx.fillStyle = TC.tipBg; ctx.strokeStyle = TC.tipBorder;
   ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(bx, by, tw, th, 6); else ctx.rect(bx, by, tw, th);
+  const rad = 6 * s;
+  if (ctx.roundRect) ctx.roundRect(bx, by, tw, th, rad); else ctx.rect(bx, by, tw, th);
   ctx.fill(); ctx.stroke();
     {
     let hdr = fmtClock(hover.t);
@@ -1958,21 +2034,21 @@ function drawHover(ctx, W, H) {
       const p = n2 => String(n2).padStart(2, "0");
       hdr = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}  ·  t+` + hdr;
     }
-    ctx.fillStyle = TC.tipMut; ctx.fillText(hdr, bx + 10, by + 15);
+    ctx.fillStyle = TC.tipMut; ctx.fillText(hdr, bx + pad, by + 15 * s);
   }
   rows.forEach((r, i) => {
-    const yy = by + 32 + i * 16;
+    const yy = by + 32 * s + i * rh;
     // ghost: the selected reading gets a white highlight bar behind it, so it
     // reads as picked out rather than merely bolder
     if (gh && r.hi) {
       ctx.fillStyle = "rgba(255,255,255,.18)";
-      ctx.fillRect(bx + 5, yy - 11, tw - 10, 15);
+      ctx.fillRect(bx + 5 * s, yy - 11 * s, tw - 10 * s, 15 * s);
     }
     ctx.fillStyle = ghostMono() ? (r.hi ? "#ffffff" : GHOST_LINE) : r.color;
-    ctx.fillRect(bx + 10, yy - 8, 10, 3);
-    ctx.font = (r.hi ? "bold " : "") + "11px ui-monospace,Menlo,monospace";
+    ctx.fillRect(bx + pad, yy - 8 * s, sw, 3 * s);
+    ctx.font = (r.hi ? "bold " : "") + `${fs}px ui-monospace,Menlo,monospace`;
     ctx.fillStyle = r.hi ? TC.tipHi : TC.tipInk;
-    ctx.fillText(lines[i], bx + 26, yy);
+    ctx.fillText(lines[i], bx + pad + sw + 6 * s, yy);
   });
 }
 
@@ -2254,6 +2330,9 @@ function loadSettings() {
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
+  const ts = $("tipscale");
+  if (ts) { ts.value = String(Math.round(tipScale() * 100));
+            $("tipscaleval").textContent = tipScale().toFixed(1) + "\u00d7"; }
   syncGhostLayerUI();
 }
 function saveSettings() {
@@ -2262,8 +2341,17 @@ function saveSettings() {
     destFolder: settings.destFolder || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
+    tipScale: settings.tipScale,
   }));
 }
+$("tipscale").addEventListener("input", e => {
+  settings.tipScale = Number(e.target.value) / 100;
+  $("tipscaleval").textContent = tipScale().toFixed(1) + "\u00d7";
+  saveSettings();
+  // redraw behind the open modal: the slider is only judgeable against the
+  // actual readout, so the chart has to move while it is being dragged
+  if (gState.channels.length) redrawGraph();
+});
 function openSettings() { $("settingsback").hidden = false; }
 function closeSettings() { $("settingsback").hidden = true; }
 $("settingsbtn").addEventListener("click", openSettings);
@@ -2743,6 +2831,18 @@ $("lblmode").addEventListener("click", e => {
       return;
     }
     const H = cv.height;
+    // Which gutter is the cursor in? The value stack sits left of the plot,
+    // the time labels below it. Checked before the bail-out below, because
+    // that is outside the plot rect by definition.
+    const inY = p.x < GP.L && p.y >= GP.T && p.y <= H - GP.B;
+    const inX = p.y > H - GP.B && p.x >= GP.L && p.x <= cv.width - GP.R;
+    const ax = inY ? "y" : inX ? "x" : null;
+    if (ax !== gState.axisHover) {
+      gState.axisHover = ax;
+      if (gState.hover) gState.hover = null;
+      redrawGraph();
+      return;
+    }
     if (p.x < GP.L || p.x > cv.width - GP.R || p.y < GP.T || p.y > H - GP.B) {
       if (gState.hover) { gState.hover = null; redrawGraph(); }
       return;
@@ -2762,7 +2862,9 @@ $("lblmode").addEventListener("click", e => {
     drawOrigOverlay(t);
   });
   cv.addEventListener("mouseleave", () => {
-    if (gState.hover) { gState.hover = null; redrawGraph(); }
+    const wasAxis = gState.axisHover;
+    gState.axisHover = null;
+    if (gState.hover || wasAxis) { gState.hover = null; redrawGraph(); }
     drawOrigOverlay(null);
   });
 
