@@ -1824,7 +1824,10 @@ const INK_DEV = 255 - INK_LUM;
 // Every curve still saturates to the same solid black, so they keep equal
 // footing; the fractional edges survive as proportional grey, which is exactly
 // what the "multiply" composite in drawGhostBackdrop wants.
-function binarizedCopy(src, W, H) {
+//
+// sx/sy are the render's own scales, handed straight through to narrowInk
+// below — the flattening itself doesn't care about them.
+function binarizedCopy(src, W, H, sx, sy) {
   const c = document.createElement("canvas");
   c.width = W; c.height = H;
   const bctx = c.getContext("2d");
@@ -1837,9 +1840,141 @@ function binarizedCopy(src, W, H) {
       const v = Math.round(255 * (1 - a));
       px[i] = px[i + 1] = px[i + 2] = v;
     }
+    narrowInk(px, W, H, sx, sy);   // no-op unless the page is stretched
     bctx.putImageData(im, 0, 0);
   } catch (e) { /* unreadable canvas: leave the page as rendered */ }
   return c;
+}
+
+// The narrowest and widest pen, in PDF points, we will believe the source
+// chart was drawn with. sx is device pixels per point, so these bound the
+// measurement below and stop a page of solid fills from talking us into
+// eroding the chart away.
+const GHOST_PEN_MIN_PT = 0.5;
+const GHOST_PEN_MAX_PT = 1.5;
+// How tall a column of ink has to be before a run inside it counts as a
+// stroke seen across its width rather than a curve travelling sideways.
+const GHOST_EDGE_ON_PX = 16;
+
+// Narrow the backdrop's ink in proportion to how far the page was stretched
+// to make it.
+//
+// A CalFrac/MView multi-zone sheet prints every zone of the job on ONE chart,
+// and calfrac_progress splits it into a graph per stage — up to 28 of them off
+// one page. renderSynced spreads this stage's slice of that chart across the
+// whole plot, so sx (the horizontal magnification) runs to tens of times sy,
+// which still only has to fit the value axis. pdf.js scales the page's own PEN
+// with that geometry, so a hairline comes back sx/sy times too wide: the
+// printed chart lands as a bank of black bars with our curves buried under
+// them. Carmine asked for the lines narrowed, not the picture shrunk.
+//
+// Dropping the ink's alpha instead would only wash those bars grey — still
+// bars, and now faint ones. What the render actually did was dilate every
+// stroke horizontally by the pen, so the honest inverse is to erode it back
+// horizontally by the same amount: each row's run of ink gives up r pixels
+// from EACH end. That leaves every run centred exactly where it was — this
+// backdrop is the alignment check between our curves and the printed chart,
+// so ink that moves is ink that lies — and it shortens a horizontal line only
+// at its two tips, while a bar loses its whole width. A run that is pen plus
+// travel keeps the travel, which is real: it is where the printed curve
+// actually went.
+//
+// Two rules keep the erosion from erasing anything. An empty backdrop looks
+// fine and is silently nothing to compare against, which is worse than fat
+// lines, so:
+//   - a run too narrow to give up 2r keeps its centre pixel — two of them
+//     when its width is even, so the kept block stays exactly centred — at
+//     the run's own darkest value, and no stroke ever drops below 1px.
+//   - a run lying inside a column of ink at least GHOST_EDGE_ON_PX tall AND
+//     at least twice as tall as the run is wide is a stroke seen across its
+//     width: the chart's frame, its zone rules. None of that width is travel,
+//     so it goes straight down to the same centre pixel. Requiring the WHOLE
+//     run to sit in tall ink keeps a curve that merely crosses such a rule —
+//     and so shares a row-run with it — out of this case.
+//
+// r comes from the ink itself. The median run width across the plot is the
+// page's pen (the bars all print at it), and the share of that width the
+// stretch added is (1 - sy/sx), so r = pen * (1 - sy/sx) / 2. That is 0 when
+// the two scales agree — which is exactly a single-zone page at its natural
+// window, where applyCompareSize has already sized the canvas to the chart's
+// own proportions and the backdrop looks right. Those pages come through
+// untouched, by arithmetic rather than by a special case.
+function narrowInk(px, W, H, sx, sy) {
+  if (!(sx > sy) || !isFinite(sx) || !isFinite(sy)) return 0;
+  const { L, R, T, B } = GP;
+  // measure the pen inside the plot rect only — the margins carry the page's
+  // axis labels, which at this magnification are blobs, not strokes
+  const x0 = Math.max(0, L), x1 = Math.min(W, W - R);
+  const y0 = Math.max(0, T), y1 = Math.min(H, H - ORIG_FOOT - B);
+  if (x1 - x0 < 8 || y1 - y0 < 8) return 0;
+  // a run more than half the plot wide is a gridline or a fill, not a pen
+  // stroke seen across its width. Half rather than a quarter because zooming
+  // hard into a stage pushes sx (and so the pen) up without limit, and a
+  // tighter cap would throw the real strokes out of the sample and leave the
+  // bars it is here to narrow.
+  const cap = Math.max(8, (x1 - x0) >> 1);
+  const runs = [];
+  for (let y = y0; y < y1; y++) {
+    const row = y * W * 4;
+    let x = x0;
+    while (x < x1) {
+      if (px[row + x * 4] === 255) { x++; continue; }
+      const a = x;
+      while (x < x1 && px[row + x * 4] < 255) x++;
+      const n = x - a;
+      if (n >= 3 && n <= cap) runs.push(n);
+    }
+  }
+  if (!runs.length) return 0;
+  runs.sort((p, q) => p - q);
+  const pen = Math.min(Math.max(runs[runs.length >> 1], GHOST_PEN_MIN_PT * sx),
+                       GHOST_PEN_MAX_PT * sx);
+  const r = Math.round(pen * (1 - sy / sx) / 2);
+  if (r < 1) return 0;
+  // how tall the ink runs through each pixel, so the edge-on case above can
+  // be told apart from a curve lying flat
+  const tall = new Uint16Array(W * H);
+  for (let x = 0; x < W; x++) {
+    let y = 0;
+    while (y < H) {
+      if (px[(y * W + x) * 4] === 255) { y++; continue; }
+      const s = y;
+      while (y < H && px[(y * W + x) * 4] < 255) y++;
+      const n = Math.min(65535, y - s);
+      for (let k = s; k < y; k++) tall[k * W + x] = n;
+    }
+  }
+  for (let y = 0; y < H; y++) {
+    const row = y * W * 4, vrow = y * W;
+    let x = 0;
+    while (x < W) {
+      if (px[row + x * 4] === 255) { x++; continue; }
+      const a = x;
+      let dark = 255, minTall = 65535;
+      while (x < W && px[row + x * 4] < 255) {
+        if (px[row + x * 4] < dark) dark = px[row + x * 4];
+        if (tall[vrow + x] < minTall) minTall = tall[vrow + x];
+        x++;
+      }
+      const n = x - a;
+      const edgeOn = minTall >= GHOST_EDGE_ON_PX && minTall >= 2 * n;
+      let k = edgeOn ? 0 : n - 2 * r, core = false;
+      // n - k is even either way, so the kept block lands dead centre: 2r is
+      // even, and the fallback gives k the same parity as n
+      if (k < 1) { k = (n & 1) ? 1 : 2; core = true; }
+      const s = a + ((n - k) >> 1);
+      for (let i = a; i < s; i++) {
+        const o = row + i * 4; px[o] = px[o + 1] = px[o + 2] = 255;
+      }
+      for (let i = s + k; i < x; i++) {
+        const o = row + i * 4; px[o] = px[o + 1] = px[o + 2] = 255;
+      }
+      if (core) for (let i = s; i < s + k; i++) {
+        const o = row + i * 4; px[o] = px[o + 1] = px[o + 2] = dark;
+      }
+    }
+  }
+  return r;
 }
 
 function drawGhostBackdrop(ctx, W, H) {
@@ -2257,7 +2392,7 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   // comparison panel below, and orig.ink is the same page flattened to black
   // for the overlay. One buffer served both, so thresholding the overlay took
   // the colour out of the panel too.
-  orig.ink = binarizedCopy(orig.buf, W, H);
+  orig.ink = binarizedCopy(orig.buf, W, H, sx, sy);
   bctx.strokeStyle = chartColors().grid;
   bctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
   orig.synced = true;
