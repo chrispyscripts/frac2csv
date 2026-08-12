@@ -10,6 +10,7 @@ box. Time axis is "Time (min)" numerals; series are color-keyed
 Prop Conc).
 """
 import fitz
+import math
 import re
 import numpy as np
 
@@ -965,6 +966,65 @@ def impossible_axis(c):
     return None
 
 
+# A channel whose axis is this many times its same-unit siblings' has not
+# found a different axis — it has lost a decimal point.
+DECIMAL_SLIP = 50.0
+
+
+def _fix_decimal_slip(charts):
+    """Rescale a channel whose axis is a power of ten out of step with the
+    channels sharing its unit on the same chart.
+
+    A chemical chart prints every additive against the same small ladder, and
+    tesseract reads "2.000" as "2000" when the decimal point is a single faint
+    pixel. auto_raster already repairs a lost point that shows up as an OUTLIER
+    inside one ladder, but here the WHOLE ladder reads 0, 500, 1000, 1500, 2000
+    and is perfectly self-consistent, so nothing in that column looks wrong.
+    On 00184 chart 17 SSI-3 Conc came out on a 0..2000 axis peaking at 1,244
+    beside Aqucar 742 and SFR-202 B on 0..2 peaking at 0.22 and 0.32.
+
+    It also defeats the plausibility test next door, which asks whether a
+    channel's frame can be its own axis: 1,244 sits comfortably INSIDE 0..2000,
+    so the axis check sees nothing to refuse. The evidence is not in the
+    channel, it is in its siblings — hence a separate pass.
+
+    Deliberately conservative. It needs three channels sharing a unit before a
+    median means anything, the offender must be a clean power of ten out (a
+    dropped point, not a different axis), and the correction must land it near
+    its siblings. Anything else is left alone and, if it is genuinely
+    impossible, refused downstream.
+    """
+    for _tag, _samples, chans, info in charts:
+        by_unit = {}
+        for c in chans:
+            u = (c.get("unit") or "").strip().lower()
+            fr = c.get("axis_frame")
+            if u and fr:
+                by_unit.setdefault(u, []).append(c)
+        for unit, group in by_unit.items():
+            if len(group) < 3:
+                continue
+            spans = [abs(c["axis_frame"][0] - c["axis_frame"][1])
+                     for c in group]
+            med = float(np.median(spans))
+            if med <= 0:
+                continue
+            for c, span in zip(group, spans):
+                if span < DECIMAL_SLIP * med:
+                    continue
+                p = round(math.log10(span / med))
+                if p < 2 or abs(span / med / (10.0 ** p) - 1.0) > 0.05:
+                    continue          # not a clean power of ten: leave it
+                k = 10.0 ** p
+                c["values"] = np.asarray(c["values"], dtype=float) / k
+                c["axis_frame"] = (c["axis_frame"][0] / k,
+                                   c["axis_frame"][1] / k)
+                info.setdefault("notes", []).append(
+                    "{}: axis read {:g}x its {} siblings' — a lost decimal "
+                    "point; rescaled".format(c.get("label", "?"), k, unit))
+    return charts
+
+
 def _drop_impossible_axes(charts):
     """Refuse to export a channel read off an axis that cannot be its own."""
     out = []
@@ -985,7 +1045,7 @@ def extract_page(page, sample_sec=1.0):
     """-> (meta, [(chart_tag, samples, channels, info), ...])."""
     if not _detect_tiled(page) and _detect_new(page):
         meta, out = _extract_new(page, sample_sec)
-        return meta, _drop_impossible_axes(out)
+        return meta, _drop_impossible_axes(_fix_decimal_slip(out))
     img = composite(page)
     # the stacked tiles span the whole page, so one scale converts back
     pr = page.rect
@@ -1108,4 +1168,4 @@ def extract_page(page, sample_sec=1.0):
         meta["kind"] = "main"
     elif "casing" in joined:
         meta["kind"] = "casing"
-    return meta, _drop_impossible_axes(out)
+    return meta, _drop_impossible_axes(_fix_decimal_slip(out))
