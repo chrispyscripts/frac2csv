@@ -397,6 +397,29 @@ function updateReadouts() {
 }
 
 // ---------- interaction ----------
+// Every chart here shares ONE time axis, so a wheel over any of them zooms
+// all of them. The Lab owns the window, so the child asks rather than
+// diverging: it applies the change locally for an immediate response, then
+// posts it, and the Lab's echo is idempotent.
+$("charts").addEventListener("wheel", e => {
+  const cv = e.target.closest("canvas");
+  if (!cv || !state.haveStage || !blocks.length) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const W = r.width, span = Math.max(1e-9, state.t1 - state.t0);
+  const frac = (e.clientX - r.left - PAD.L) / Math.max(1, W - PAD.L - PAD.R);
+  let t = state.t0 + Math.min(1, Math.max(0, frac)) * span;
+  const z = Math.pow(1.0015, e.deltaY);
+  let t0 = t - (t - state.t0) * z, t1 = t + (state.t1 - t) * z;
+  const minSpan = (state.dsec || 1) * 10;
+  if (t1 - t0 < minSpan) { const c = (t0 + t1) / 2; t0 = c - minSpan / 2; t1 = c + minSpan / 2; }
+  state.t0 = Math.max(0, t0);
+  state.t1 = Math.min(state.tMax != null ? state.tMax : t1,
+                      Math.max(t1, state.t0 + minSpan));
+  schedule();
+  toLab({ type: "stacked:zoom", t0: state.t0, t1: state.t1 });
+}, { passive: false });
+
 $("charts").addEventListener("mousemove", e => {
   const cv = e.target.closest("canvas");
   if (!cv || !blocks.length) return;

@@ -2415,6 +2415,18 @@ window.addEventListener("message", e => {
     pushStacked();
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
+  } else if (d.type === "stacked:zoom") {
+    // The child zoomed. Adopt its window and bring the graph and the source
+    // panel with it. Deliberately NOT echoed back with pushStackedView() —
+    // the child already applied this locally, and echoing would fight the
+    // next wheel notch mid-gesture.
+    if (!gState.channels.length) return;
+    if (!isFinite(d.t0) || !isFinite(d.t1) || d.t1 <= d.t0) return;
+    gState.t0 = Math.max(0, d.t0);
+    gState.t1 = Math.min(gState.tMax, d.t1);
+    gState.hover = null;
+    redrawGraph();
+    scheduleOrigSync();
   }
 });
 
@@ -2943,11 +2955,13 @@ $("lblmode").addEventListener("click", e => {
   };
   const tAt = x => gState.t0 + (x - GP.L) / (cv.width - GP.L - GP.R) * (gState.t1 - gState.t0);
   let pan = null;
-  cv.addEventListener("wheel", e => {
+  // One routine for every wheel: the graph, the source panel below it and the
+  // stacked window all show the SAME time window, so zooming has to be one
+  // piece of arithmetic or they drift apart.
+  function zoomAround(t, deltaY) {
     if (!gState.channels.length) return;
-    e.preventDefault();
-    const t = Math.max(gState.t0, Math.min(tAt(pos(e).x), gState.t1));
-    const z = Math.pow(1.0015, e.deltaY);
+    t = Math.max(gState.t0, Math.min(t, gState.t1));
+    const z = Math.pow(1.0015, deltaY);
     let t0 = t - (t - gState.t0) * z, t1 = t + (gState.t1 - t) * z;
     const minSpan = gState.dsec * 10;
     if (t1 - t0 < minSpan) { const c = (t0 + t1) / 2; t0 = c - minSpan / 2; t1 = c + minSpan / 2; }
@@ -2956,6 +2970,11 @@ $("lblmode").addEventListener("click", e => {
     redrawGraph();
     scheduleOrigSync();
     pushStackedView();   // two numbers, not the samples again
+  }
+  cv.addEventListener("wheel", e => {
+    if (!gState.channels.length) return;
+    e.preventDefault();
+    zoomAround(tAt(pos(e).x), e.deltaY);
   }, { passive: false });
   cv.addEventListener("mousedown", e => {
     if (!gState.channels.length) return;
@@ -3037,6 +3056,20 @@ $("lblmode").addEventListener("click", e => {
     redrawGraph();
     drawOrigOverlay(t);
   });
+  // Same scroll-to-zoom on the source panel. Full-page mode is excluded: that
+  // view is not on the graph's time window, so zooming it would move the plot
+  // in response to a gesture over a picture that does not correspond to it.
+  ocv.addEventListener("wheel", e => {
+    // orig.synced is the same gate this panel's mousemove uses: when the
+    // panel is not on the graph's time window (full page, or a page with no
+    // geometry) a wheel here means nothing.
+    if (!gState.channels.length || !orig.synced || orig.fullPage) return;
+    e.preventDefault();
+    const p = opos(e);
+    const t = gState.t0 + (p.x - GP.L) / (ocv.width - GP.L - GP.R) *
+              (gState.t1 - gState.t0);
+    zoomAround(t, e.deltaY);
+  }, { passive: false });
   ocv.addEventListener("mouseleave", () => {
     if (gState.hover) { gState.hover = null; redrawGraph(); }
     drawOrigOverlay(null);
