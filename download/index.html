@@ -38,6 +38,18 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v0.9.8</h2>
+    <ul>
+      <li>STEP stages no longer all start at midnight — 1,004 of 1,006 charts
+        across 12 wells now carry their real start time and date, taken from
+        the chart's own clock where it prints one and from the Daily Stage
+        Summary where it does not</li>
+      <li>More of the trace is kept: a column is read at the end of its ink
+        rather than the middle far more often, so transients survive</li>
+      <li>Each curve now says how much of the stage it actually carries —
+        a badge like "35%" with the gaps and blank time on hover, so a chart
+        that lifts its pen can be told apart from a trace we lost</li>
+    </ul>
     <h2>v0.9.7</h2>
     <ul>
       <li>CalFrac reports from 2013–2017 now produce a stage summary table —
