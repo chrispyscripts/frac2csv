@@ -335,11 +335,46 @@ def _frame_bbox(img):
 # the inner right column and Rate as the outer one, and a position-keyed table
 # ("right1"/"right2") had them exactly backwards — every concentration was
 # exported on the rate scale and every rate on the concentration scale.
+# Above this an axis is not a rate. Slurry rate on these charts tops out at
+# 8-20 m3/min; a concentration axis starts in the hundreds. Used both to tell
+# an unlabelled right-hand column apart and to refuse a rate title the numbers
+# contradict.
+RATE_AXIS_MAX = 50
+
 NEW_SURFACE = {"red": ("Surface Pressure", "MPa", "pressure"),
                "blue": ("Slurry Rate", "m3/min", "rate"),
                "cyan": ("Slurry Rate", "m3/min", "rate"),
                "green": ("Prop Conc", "kg/m3", "conc"),
                "orange": ("Btm Prop Conc", "kg/m3", "conc")}
+
+
+def _name_chemical(tag, chans):
+    """Stop the SURFACE colour table naming a CHEMICAL chart's curves.
+
+    NEW_SURFACE says what red/blue/green/orange mean on the treatment chart.
+    The chemical twin reuses those inks for something else entirely: its left
+    axis is Chem Conc and its green and orange are additive concentrations,
+    not proppant. Named through the surface table they arrive as "Prop Conc"
+    and "Btm Prop Conc", canonicalise to WH/BH Prop Conc, and land in the
+    export beside — or on top of — the real ones off the surface chart. On
+    00199 p37 the chemical chart offered both under a 0..10 axis.
+
+    Rate is the one channel that survives the crossing, because the chemical
+    chart's rate axis really is a rate; it is the CLEAN rate rather than the
+    slurry rate, which is the same rename extract_page makes on the tiled
+    layout. Concentrations get a colour-keyed name and no unit: which additive
+    a curve is takes reading the legend, and this chart carries a dozen. An
+    unnamed extra column is honest; a wrong canonical one is not.
+    """
+    if tag != "c":
+        return
+    for c in chans:
+        if c["label"] == "Slurry Rate":
+            c["label"] = "Combined Clean Rate"
+        elif c["label"] in ("Prop Conc", "Btm Prop Conc"):
+            c["label"] = "Chem Conc ({})".format(
+                str(c.get("key", "")).split("-")[-1] or "?")
+            c["unit"] = ""
 
 
 def _right_columns(pts, gap=18):
@@ -392,21 +427,45 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     rows = img[ry0:ry1]
 
     def strip_ticks(xa, xb):
+        # Read each column with BOTH page-segmentation modes and pool what
+        # they return. They fail differently on these narrow ladders, and
+        # neither alone gets a right-hand axis whole: on 00199 p37 psm 6 reads
+        # the rate ladder as 0, 4, 16, 42 — the "42" is a misread "12", the
+        # same one this file's axis-title comment already records — and only
+        # 300, 900, 1200 of the concentration ladder; psm 11 reads the
+        # concentration ladder complete (0, 300, 600, 900, 1200) and reads the
+        # 12 correctly, but drops most of the rate ladder.
+        #
+        # Neither column could be fitted, so fit_ticks_guarded returned None
+        # for rate AND conc, and every curve hanging off those axes was
+        # dropped: that page exported treating pressure alone, and the client
+        # reported it as "missing full data set" (#89). On 00196 the same
+        # failure left the rate curve calibrated against the concentration
+        # axis, which is the 0..1200 m3/min rate in #88.
+        #
+        # Pooling is safe because it only adds evidence — RANSAC still has to
+        # find a line, and a misread that no line explains is still rejected.
+        # Merged, the rate ladder fits on 0, 4, 12, 16 with the 42 thrown out,
+        # and the concentration ladder on all five labels.
         from PIL import Image as _Im
         strip = rows[:, max(0, xa):xb]
         if strip.size == 0:
             return []
         pil = _Im.fromarray(strip.astype(np.uint8))
         pil = pil.resize((pil.width * 3, pil.height * 3), _Im.LANCZOS)
-        words = ar.ocr_words(np.array(pil).astype(int), psm=6,
-                             whitelist="0123456789.-")
+        arr = np.array(pil).astype(int)
         out = []
         import re as _re
-        for text, cx, cy in words:
-            t = text.replace(",", "").strip("-.")
-            if _re.fullmatch(r"\d+(\.\d+)?", t):
-                out.append((float(t), int(cx / 3) + max(0, xa),
-                            int(cy / 3) + ry0))
+        for psm in (6, 11):
+            try:
+                words = ar.ocr_words(arr, psm=psm, whitelist="0123456789.-")
+            except Exception:
+                continue
+            for text, cx, cy in words:
+                t = text.replace(",", "").strip("-.")
+                if _re.fullmatch(r"\d+(\.\d+)?", t):
+                    out.append((float(t), int(cx / 3) + max(0, xa),
+                                int(cy / 3) + ry0))
         return [(v, y, True) for v, x, y in
                 ((v, x, y) for v, x, y in out) if y0 - 25 <= y <= y1 + 25]
 
@@ -453,7 +512,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             if not cal:
                 continue
             top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
-            cols.append(("conc" if top >= 50 else "rate", seg))
+            cols.append(("conc" if top >= RATE_AXIS_MAX else "rate", seg))
     try:
         ltitles = ar.read_axis_titles(rows, 0, x0, ccw=False)
     except Exception:
@@ -501,6 +560,21 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         if only_if_free and qty in fits:
             return
         cal = ar.fit_ticks_guarded(seg) if seg else None
+        # A title says which quantity a column is; the numbers say whether it
+        # can be. 00196 p90 prints THREE right-hand axes and read_axis_titles
+        # calls two of them "rate", so the concentration ladder — 0, 300, 600,
+        # 900, 1200 — was offered for the rate slot. It fits ten ticks against
+        # the real rate column's four, and the better fit wins, so the rate
+        # curve came out against a 0..1200 axis peaking at 373.93 m3/min (#88).
+        # No slurry rate on these charts reaches 50; the title-less fallback
+        # above already splits rate from conc on exactly that threshold, so
+        # apply it here too rather than trusting a title the numbers refute.
+        # Asymmetric on purpose: a chemical chart's Chem Conc axis legitimately
+        # tops out at 5 or 10, so a small conc axis is NOT suspicious.
+        if cal and qty == "rate":
+            top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
+            if top >= RATE_AXIS_MAX:
+                return
         if cal and (fits.get(qty) is None or cal[2] > fits[qty][2]):
             fits[qty] = cal
 
@@ -824,6 +898,7 @@ def _extract_new(page, sample_sec=1.0):
             samples, chans, info = _extract_new_chart(img, sample_sec)
         except ValueError:
             continue
+        _name_chemical(tag, chans)
         try:
             r = page.get_image_rects(im[0])[0]
             if r.width > 1 and r.height > 1:
@@ -960,13 +1035,10 @@ def extract_page(page, sample_sec=1.0):
             # names come from the axis titles plus NEW_SURFACE, which is the
             # colour table for exactly this chart style — the legend/position
             # reconciliation below is for the colour-keyed style only
-            for c in chans:
-                # NEW_SURFACE names the TREATMENT chart's colours. On the
-                # chemical twin the rate axis is the clean rate, and exporting
-                # it as "Slurry Rate" would put two different channels of that
-                # name on one stage.
-                if tag == "c" and c["label"] == "Slurry Rate":
-                    c["label"] = "Combined Clean Rate"
+            # NEW_SURFACE names the TREATMENT chart's colours; on the chemical
+            # twin the rate axis is the clean rate and the concentrations are
+            # additives, not proppant. See _name_chemical.
+            _name_chemical(tag, chans)
             out.append((tag, samples, chans, info))
             continue
         # The legend states the colour -> series pairing; SERIES_NAMES only
