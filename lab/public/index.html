@@ -2612,7 +2612,14 @@ $("tablebtn").addEventListener("click", () => {
   const msg = $("stackmsg");
   msg.hidden = true;
   if (!tabs.length) return;
-  const w = window.open("", "carmine-tables", "width=1150,height=850");
+  // "popup" is what makes this a WINDOW rather than a tab. Chrome routes an
+  // about:blank open to a tab unless the feature string asks for a popup —
+  // stackbtn gets a window only because it opens a real URL. Sized and placed
+  // so it lands beside the app instead of on top of it.
+  const w = window.open(
+    "", "carmine-tables",
+    `popup=1,width=1150,height=850,left=${Math.max(0, (window.screenX || 0) + 60)},` +
+    `top=${Math.max(0, (window.screenY || 0) + 60)}`);
   if (!w) {
     msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
     msg.hidden = false;
