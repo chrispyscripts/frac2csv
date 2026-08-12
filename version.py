@@ -5,4 +5,4 @@ Keep this in step with the git tag that builds the EXE: the workflow fires on
 through /api/local-info and the Lab shows it beside the wordmark, so a user
 can say which build they are running without opening a terminal.
 """
-VERSION = "0.9.6"
+VERSION = "0.9.7"
