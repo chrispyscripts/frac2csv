@@ -34,9 +34,6 @@
   .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn:disabled { opacity:.35; pointer-events:none; }
   .pglbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
-  .strip { padding:12px 18px 0; }
-  .strip .cap { font-size:11px; color:var(--mut); font-family:var(--mono);
-                margin-top:4px; }
   .charts { padding:12px 18px 22px; }
   .chartblock { margin-bottom:12px; }
   .chartblock.off { opacity:.42; }
@@ -69,16 +66,9 @@
     </div>
     <div class="tools">
       <span class="pglbl" id="pglbl"></span>
-      <button type="button" class="btn on" id="togglepage"
-              title="Show or hide the source PDF page above the charts">Source page</button>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
     </div>
-  </div>
-
-  <div class="strip" id="strip" hidden>
-    <canvas id="pagecv"></canvas>
-    <div class="cap" id="pagecap"></div>
   </div>
 
   <div class="charts" id="charts"></div>
@@ -94,7 +84,7 @@ const $ = id => document.getElementById(id);
 // fall back to "*" there rather than silently dropping every message.
 const ORIGIN = (location.origin && location.origin !== "null") ? location.origin : "*";
 
-// Plot padding. L/R are shared by every chart AND by the source-page strip,
+// Plot padding. L/R are shared by every chart,
 // so one time position is one x position all the way down the window.
 const PAD = { L: 64, R: 14, T: 10, B: 10 };
 const AXIS_H = 28;        // extra bottom room on the last chart for time labels
@@ -104,8 +94,8 @@ const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
 
 const state = {
   channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1, clock0: null,
-  page: null, pageCount: 0, img: null, plot: null, imgSynced: false,
-  imgFull: false, showPage: true, hoverT: null, haveStage: false,
+  page: null, pageCount: 0,
+  hoverT: null, haveStage: false,
 };
 let blocks = [];          // { c, el, cv, ro, last }
 let raf = null;
@@ -186,9 +176,8 @@ setInterval(() => {
 // ---------- incoming state ----------
 function applyNone() {
   state.haveStage = false;
-  state.channels = []; blocks = []; state.img = null; state.hoverT = null;
+  state.channels = []; blocks = []; state.hoverT = null;
   $("charts").innerHTML = "";
-  $("strip").hidden = true;
   $("msg").hidden = false;
   $("msg").textContent = "Pick a stage in the Lab window — this view follows it.";
   $("title").textContent = "—";
@@ -207,7 +196,6 @@ function applyStage(d) {
   // A new stage invalidates the page picture; the Lab sends a fresh one as
   // soon as its own render lands, and until then showing the previous stage's
   // sheet would be a lie.
-  state.img = null;
   $("title").textContent = d.title || "";
   $("sub").textContent = d.sub || "";
   document.title = (d.title || "Stacked charts") + " — stacked";
@@ -216,7 +204,6 @@ function applyStage(d) {
   if (!state.channels.length)
     $("msg").textContent = "This stage has no channels to plot.";
   build();
-  drawPage();
 }
 
 function applyView(d) {
@@ -225,20 +212,13 @@ function applyView(d) {
   schedule();
 }
 
+// The page number still matters — it labels the window and drives Open PDF —
+// but this view no longer renders the sheet, so any bitmap the Lab sends is
+// released rather than kept alive.
 function applyPage(d) {
   state.page = d.page != null ? d.page : state.page;
-  state.imgSynced = !!d.synced;
-  state.imgFull = !!d.full;
+  if (d.bmp && d.bmp.close) { try { d.bmp.close(); } catch (e) { /* noop */ } }
   updatePageLbl();
-  if (d.bmp) { state.img = d.bmp; state.plot = d.plot; drawPage(); return; }
-  if (d.url) {
-    const im = new Image();
-    im.onload = () => { state.img = im; state.plot = d.plot; drawPage(); };
-    im.src = d.url;
-    return;
-  }
-  state.img = null;
-  drawPage();
 }
 
 function updatePageLbl() {
@@ -293,7 +273,7 @@ function sizeCanvas(cv, cssH) {
 // ---------- drawing ----------
 function schedule() {
   if (raf) return;
-  raf = requestAnimationFrame(() => { raf = null; drawAll(); drawPage(); });
+  raf = requestAnimationFrame(() => { raf = null; drawAll(); });
 }
 
 function drawAll() {
@@ -416,48 +396,6 @@ function updateReadouts() {
   }
 }
 
-// ---------- the source page, above the charts ----------
-function drawPage() {
-  const wrap = $("strip"), cv = $("pagecv");
-  const on = state.showPage && !!state.img && state.haveStage;
-  wrap.hidden = !on;
-  if (!on) return;
-  const img = state.img, pl = state.plot || {};
-  // read AFTER un-hiding the wrapper — clientWidth forces the layout we need
-  const cssW = Math.max(80, cv.clientWidth || (cv.parentNode.clientWidth - 36));
-  // Time-synced crop: blit only the plot rect of the page the Lab rendered,
-  // stretched into the same L..W-R band the charts use, so the sheet lines up
-  // column-for-column with the curves under it.
-  let sx = 0, sy = 0, sw = img.width, sh = img.height, dx = 0, dw = cssW, aspect;
-  if (state.imgSynced && pl.w) {
-    sx = pl.L; sy = pl.T;
-    sw = pl.w - pl.L - pl.R;
-    sh = pl.h - pl.foot - pl.T - pl.B;
-    dx = PAD.L; dw = cssW - PAD.L - PAD.R;
-  }
-  aspect = sh / Math.max(1, sw);
-  const h = Math.max(110, Math.min(340, Math.round(dw * aspect)));
-  cv.style.height = h + "px";
-  const dpr = window.devicePixelRatio || 1;
-  cv.width = Math.round(cssW * dpr); cv.height = Math.round(h * dpr);
-  const g = cv.getContext("2d");
-  g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.fillStyle = "#ffffff"; g.fillRect(0, 0, cssW, h);
-  g.drawImage(img, sx, sy, sw, sh, dx, 0, dw, h);
-  if (state.hoverT != null && state.imgSynced &&
-      state.hoverT >= state.t0 && state.hoverT <= state.t1) {
-    const x = xOf(state.hoverT, cssW);
-    g.strokeStyle = C.crosshair; g.lineWidth = 1;
-    g.setLineDash([4, 3]);
-    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-    g.setLineDash([]);
-  }
-  $("pagecap").textContent = state.imgSynced
-    ? "Source PDF p." + state.page + " — the chart region, on the same time window as the charts below"
-    : "Source PDF p." + state.page + (state.imgFull ? " — whole sheet" : "") +
-      " — not time-aligned (the Lab is showing it un-cropped)";
-}
-
 // ---------- interaction ----------
 $("charts").addEventListener("mousemove", e => {
   const cv = e.target.closest("canvas");
@@ -475,20 +413,14 @@ $("charts").addEventListener("mousemove", e => {
 $("charts").addEventListener("mouseleave", () => {
   if (state.hoverT != null) { state.hoverT = null; schedule(); }
 });
-$("togglepage").addEventListener("click", () => {
-  state.showPage = !state.showPage;
-  $("togglepage").classList.toggle("on", state.showPage);
-  drawPage();
-});
 // The Lab owns the PDF bytes (and the blob URL it already made for them), so
 // ask it to open the page rather than shipping the file over here twice.
 $("openpdf").addEventListener("click", () => toLab({ type: "stacked:openpdf" }));
-$("pagecv").addEventListener("click", () => toLab({ type: "stacked:openpdf" }));
 
 let rz = null;
 window.addEventListener("resize", () => {
   clearTimeout(rz);
-  rz = setTimeout(() => { layout(); drawPage(); }, 120);
+  rz = setTimeout(() => { layout(); }, 120);
 });
 </script>
 </body>
