@@ -56,7 +56,11 @@ from calfrac_summary import _rows
 # second number and never match, which is what keeps their pages unsplit.
 ZONES_CAPTION = re.compile(r"\bZones?\s+(\d+)\s*-\s*(\d+)(?!\s*(?:st|nd|rd|th)\b)")
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
-_ZONE_HDR = re.compile(r"^ZONE\s*#", re.I)
+# "ZONE #:" heads the older Multiple-Zone sheet; the 2018-vintage grid heads
+# the same column with a bare "Zone".
+_ZONE_HDR = re.compile(r"^ZONE\s*#|^Zone$", re.I)
+# a zone column label: "7", "24", or a re-treat attempt "9A"
+_ZONE_COL = re.compile(r"\d{1,2}[A-Za-z]?")
 _TIME_ROW = re.compile(r"^\s*(Start|Stop|End)\s*Time", re.I)
 
 
@@ -167,9 +171,54 @@ def job_date(page):
     return f"{year:04d}-{mon:02d}-{day:02d}"
 
 
+_CALFRAC_MARK = re.compile(r"Calfrac\s+Service\s+Line", re.I)
+_ANY_TIME_ROW = re.compile(r"(Start|Stop)\s*Time", re.I)
+
+
+def _is_zone_grid(page):
+    """The 2018-vintage Calfrac zone-major "Treatment Summary" grid.
+
+    Same shape as the Multiple-Zone sheet — zones across the top, fields down
+    the side, Start/Stop Time in hh:mm — but the page leads with the UWI line
+    instead of a title. Every summary test in the app keys on that title, so
+    this whole family of reports (00082, 00087 and their siblings) was read as
+    having no summary page at all: nothing in the Tables tab, and no zone
+    start times for the splitter, which is why 00082's "Zones 1-28" page came
+    back as one fused 1300-minute graph.
+
+    Recognised by the grid itself: a Calfrac page carrying a "Zone" header row
+    with real zone columns under it, and a Start/Stop Time row. Zone labels
+    are one or two digits, so the daily-report sheets — where "Zone" heads a
+    cell holding a phone number — cannot supply a column here.
+    """
+    try:
+        text = page.get_text()
+    except Exception:
+        return False
+    if not (_CALFRAC_MARK.search(text) and _ANY_TIME_ROW.search(text)):
+        return False
+    try:
+        rows = _rows(page)
+    except Exception:
+        return False
+    for _y, cells in rows:
+        if not any(_ZONE_HDR.match(t.strip()) for _x, t in cells):
+            continue
+        # one column is enough: a well's last summary sheet routinely holds
+        # a single leftover zone (00099 puts zones 21-25 on one page and 26
+        # alone on the next), and requiring two dropped that sheet, so the
+        # last zone of the caption had no printed start and table_split
+        # stopped one graph short.
+        if any(_ZONE_COL.fullmatch(t.strip()) for _x, t in cells):
+            return True
+    return False
+
+
 def _is_multizone(page):
     head = next((l.strip() for l in page.get_text().splitlines() if l.strip()), "")
-    return head.startswith("Multiple Zone Frac Treatment Summary")
+    if head.startswith("Multiple Zone Frac Treatment Summary"):
+        return True
+    return _is_zone_grid(page)
 
 
 def zone_times(page):
@@ -189,7 +238,18 @@ def zone_times(page):
     if hdr is None:
         return {}
     hy, hcells = hdr
-    cols = [(x, int(t)) for x, t in hcells if re.fullmatch(r"\d{1,2}", t.strip())]
+    # A re-treated zone is columned per attempt — "9A" and "9B" where every
+    # other zone is a bare number — and requiring a bare number dropped both,
+    # so the zone vanished from the table entirely. table_split walks the
+    # caption's range until a zone has no printed start, so losing the last
+    # zone that way made it stop one short: six files in the CalFrac corpus
+    # split into exactly one fewer graph than their caption named.
+    #
+    # Both attempts map to the one zone the chart draws. Columns run left to
+    # right in pumping order and the fills below use setdefault, so the first
+    # attempt's times are the ones kept.
+    cols = [(x, int(re.match(r"\d+", t.strip()).group(0)))
+            for x, t in hcells if _ZONE_COL.fullmatch(t.strip())]
     if not cols:
         return {}
     # the gap between zone columns sets how far a value may sit from its own

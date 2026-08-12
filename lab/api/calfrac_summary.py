@@ -49,10 +49,121 @@ def find_summary_pages(doc):
     return groups
 
 
+_CALFRAC_MARK = re.compile(r"Calfrac\s+Service\s+Line", re.I)
+# a zone column label: "7", "24", or a re-treat attempt "9A"
+_ZONE_COL = re.compile(r"\d{1,2}[A-Za-z]?")
+
+
 def is_treatment_page(page):
     t = page.get_text()
     head = next((l.strip() for l in t.splitlines() if l.strip()), "")
-    return head == "Treatment Summary" and "Zone" in t
+    if head == "Treatment Summary" and "Zone" in t:
+        return True
+    # The 2018-vintage reports print the same zone-major grid but lead the
+    # page with the UWI line, so the title test misses every one of them and
+    # 00082/00087 came back with no summary at all — no Tables tab, and no
+    # zone times. Fall back to the grid's own shape: a Calfrac page whose
+    # "Zone" header row has real zone columns under it. Zone labels are one or
+    # two digits, so the daily-report sheets (where "Zone" heads a cell
+    # holding a phone number) cannot supply a column here.
+    if not _CALFRAC_MARK.search(t):
+        return False
+    for _y, cells in _rows(page):
+        if not any(c == "Zone" for _x, c in cells):
+            continue
+        # one column is enough — a well's last summary sheet often carries a
+        # single leftover zone, and dropping it loses that zone's whole row
+        if any(_ZONE_COL.fullmatch(c.strip()) for _x, c in cells):
+            return True
+    return False
+
+
+_START_COL = re.compile(r"^Start Time\b", re.I)
+_JOBDATE_COL = re.compile(r"^Job Date\b", re.I)
+_MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+
+
+def _col(columns, pat):
+    for i, c in enumerate(columns):
+        if pat.match(c):
+            return i
+    return None
+
+
+def zone_clock(doc):
+    """-> {zone label: {'start': 'HH:MM:SS', 'date': 'YYYY-MM-DD' | None}}.
+
+    These reports chart one zone per page against an x axis in elapsed minutes
+    with no clock anywhere on the plot, so every stage was exported starting
+    00:00:00 and the stages sharing a day landed on identical date ranges —
+    00304's thirty stages collapsed onto seven, seven of them all claiming
+    2021-04-01 00:00 to 01:00. The zone's real start is printed in the
+    Treatment Summary grid, one column per zone, and so is the date it ran:
+    00304's zone 1 is dated 3/17/2021, ten days before zone 2, so a job date
+    taken once for the whole well would be wrong for 29 of its 30 stages.
+
+    A zone whose start the grid does not print is omitted rather than given a
+    default — the caller is expected to leave such a stage's clock blank, and
+    the time axis to fall back to elapsed time. A wrong clock is worse than
+    no clock.
+    """
+    parsed = parse_treatment_summary(doc)
+    if not parsed:
+        return {}
+    cols = parsed["columns"]
+    si, di = _col(cols, _START_COL), _col(cols, _JOBDATE_COL)
+    if si is None:
+        return {}
+    out = {}
+    for row in parsed["rows"]:
+        raw = str(row[si]).strip() if si < len(row) and row[si] else ""
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+        if not m:
+            continue
+        h, mi = int(m.group(1)), int(m.group(2))
+        if h > 23 or mi > 59:
+            continue
+        date = None
+        if di is not None and di < len(row) and row[di]:
+            d = _MDY.match(str(row[di]).strip())
+            if d:
+                mon, day, yr = int(d.group(1)), int(d.group(2)), int(d.group(3))
+                if 1 <= mon <= 12 and 1 <= day <= 31:
+                    date = f"{yr:04d}-{mon:02d}-{day:02d}"
+        out[str(row[0]).strip()] = {"start": f"{h:02d}:{mi:02d}:00", "date": date}
+    return out
+
+
+def zone_clock_for(clocks, stage):
+    """The entry for a chart's printed stage label, or None.
+
+    Charts label the zone "04" where the grid's row key is "4", and some
+    carry a suffix ("12 Attempt 2"), so match on the leading digits.
+    """
+    if not clocks or stage in (None, ""):
+        return None
+    s = str(stage).strip()
+    if s in clocks:
+        return clocks[s]
+    m = re.match(r"\d+", s)
+    if not m:
+        return None
+    base = int(m.group(0))
+    if str(base) in clocks:
+        return clocks[str(base)]
+    # a re-treated zone is keyed per attempt ("9A", "9B"); the chart draws one
+    # zone 9, so take the first attempt — the order parse_treatment_summary
+    # already sorted the rows into
+    for k, v in clocks.items():
+        km = re.match(r"\d+", k)
+        if km and int(km.group(0)) == base:
+            return v
+    return None
+
+
+def zone_start_times(doc):
+    """-> {zone label: 'HH:MM:SS'} — the start half of zone_clock()."""
+    return {z: v["start"] for z, v in zone_clock(doc).items()}
 
 
 def _rows(page):
@@ -91,7 +202,7 @@ def _parse_page(page):
     for x, t in hcells:
         if t == "U of M":
             uom_x = x
-        elif re.fullmatch(r"\d{1,2}", t):
+        elif _ZONE_COL.fullmatch(t):
             zone_x.append(x); zone_lab.append(t)
     if len(zone_x) < 1:
         return None

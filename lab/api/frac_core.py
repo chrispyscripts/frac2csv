@@ -187,16 +187,50 @@ def _collect_points(page, frame):
 
 
 def _resample(t_min, values, sample_min):
-    t_round = np.round(t_min, 6)
-    uniq, inv = np.unique(t_round, return_inverse=True)
-    v_uniq = np.bincount(inv, weights=values) / np.bincount(inv)
-    v = np.interp(sample_min, uniq, v_uniq)
+    """Curve vertices (already sorted by time) -> the sample grid.
+
+    A chart step is drawn as two vertices at the SAME instant, one at each
+    level. Collapsing those to their mean — which this used to do — does not
+    just soften the edge, it destroys the flat run on either side of it: the
+    run's own endpoints are the step vertices, so both ends of a twenty-minute
+    shut-in at zero concentration came back as half-height points and np.interp
+    drew one long straight ramp between them. That is the "pen up/down" error:
+    00087 p54 reported the wellhead concentration climbing steadily from 0 to
+    25 kg/m³ across the shut-in, where the page prints a flat line at zero.
+
+    So keep both levels. Each instant contributes two knots — the value the
+    curve arrives at and the value it leaves with, in the order the path was
+    stroked — and np.interp reads that pair as the vertical it is: the runs
+    either side stay flat at their own level. Where an instant has only one
+    vertex the two knots are equal and the result is unchanged.
+    """
+    t = np.round(np.asarray(t_min, float), 6)
+    v = np.asarray(values, float)
+    if len(t) == 0:
+        return np.full(len(sample_min), np.nan)
+    # bj1, canyon, halliburton_ifs and lib1 hand this their vertices unsorted —
+    # np.unique used to sort for them. Stable, so that vertices sharing an
+    # instant keep the order they were stroked in, which is what tells the
+    # arriving level from the leaving one.
+    if np.any(t[1:] < t[:-1]):
+        order = np.argsort(t, kind="stable")
+        t, v = t[order], v[order]
+    first = np.empty(len(t), bool)
+    first[0] = True
+    first[1:] = t[1:] != t[:-1]
+    starts = np.flatnonzero(first)
+    ends = np.append(starts[1:], len(t)) - 1     # last vertex at each instant
+    tk = np.repeat(t[starts], 2)
+    vk = np.empty(starts.size * 2)
+    vk[0::2] = v[starts]                         # arriving level
+    vk[1::2] = v[ends]                           # leaving level
+    out = np.interp(sample_min, tk, vk)
     # MView export convention: hold the first value back to t=0 (charts omit
     # the leading flatline), but leave samples after the data ends blank
     tol = sample_min[1] - sample_min[0] if len(sample_min) > 1 else 0.0
-    v[sample_min < uniq[0]] = v_uniq[0]
-    v[sample_min > uniq[-1] + tol] = np.nan
-    return v
+    out[sample_min < tk[0]] = vk[1]
+    out[sample_min > tk[-1] + tol] = np.nan
+    return out
 
 
 def extract_page(page, meta=None, sample_sec=1.0):
