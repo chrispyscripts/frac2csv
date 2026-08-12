@@ -936,6 +936,36 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
         hgt = next((h for m, h in rs if m == py[cx]), 1)
         if hgt <= spike_run and abs(py[cx] - ref[cx]) > spike_tol * H:
             py[cx] = np.nan
+
+    # Report the EXTREME of a swept column, not its middle.
+    #
+    # A column's ink is a run of pixels. Where the run is only as tall as the
+    # pen, its middle IS the curve. But where the curve moved through a range
+    # inside that column — a pressure transient, the oscillation at a step
+    # down — the run spans the whole excursion, and taking its median reports
+    # the centre of a swing the chart never sat at. On 00183 chart 32 the page
+    # shows a band of red several MPa wide through the 21.3-minute transition
+    # and we drew a smooth line down its middle. The client's instruction is
+    # explicit: he wants the spikes, not the averaging.
+    #
+    # So a run taller than the pen is read at whichever END lies further from
+    # the local trend — the top on the way up, the bottom on the way down —
+    # which traces the envelope of the excursion instead of its centre. The
+    # pen's own width is measured from this trace's own runs rather than
+    # assumed, so a heavy line does not turn into a spike generator.
+    heights = [h for rs in cols for _m, h in rs]
+    if heights:
+        pen = float(np.median(heights))
+        swept = max(3.0, 2.5 * pen)
+        for cx, rs in enumerate(cols):
+            if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
+                continue
+            run = next((r for r in rs if r[0] == py[cx]), None)
+            if run is None or run[1] < swept:
+                continue
+            half = run[1] / 2.0
+            lo, hi = py[cx] - half, py[cx] + half
+            py[cx] = lo if abs(lo - ref[cx]) > abs(hi - ref[cx]) else hi
     return py
 
 
