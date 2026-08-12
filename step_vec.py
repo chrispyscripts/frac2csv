@@ -29,6 +29,14 @@ import curve_trace as ct
 NUM = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
 _UNIT = re.compile(r"\(([^)]*)\)\s*$")
 
+# How far past its own outermost tick LABEL a curve's ink may still be that
+# curve. These charts stack one value ladder per colour, so a label's centre
+# sits up to a text row away from the gridline it names — measured at ~3.4pt
+# on 00180 chart 15, against tick spacing of ~117pt. Without the slack a curve
+# drawn at its own zero falls outside its ladder and is discarded; with more
+# than this, a curve reaches ink belonging above its axis. See the clip below.
+LADDER_PAD = 8.0
+
 
 def detect(page):
     """A STEP report page drawn as vector, not scanned."""
@@ -205,13 +213,40 @@ def extract_page(page, sample_sec=1.0):
             if vfit is None or not pts:
                 continue
             va, vb = vfit
-            # Clip to THIS colour's own tick ladder. The scales are stacked, so
-            # one colour's outermost label sits a few points off another's, and
-            # a shared window let the chemical curves run past their axis. This
-            # stays per-colour: it selects which strokes belong to the curve,
-            # which is a different question from where the frame is.
+            # Clip to the BAND, then clamp to this colour's axis.
+            #
+            # This used to clip to the colour's own tick ladder (min..max label
+            # centre, +/- 2pt) to stop a curve running past its axis. But the
+            # scales are STACKED and each colour prints its own "0" at its own
+            # height, so a label centre is not the value it annotates: on 00180
+            # chart 15 the green "0" sits above the orange one, and green's
+            # baseline ink — the stretches where proppant concentration is
+            # genuinely zero — fell below its own last label and was cut. That
+            # deleted 1,650 of 3,716 samples, in three spans at 370.0-384.7,
+            # 415.0-419.0 and 423.1-431.9 minutes: exactly the "missing pieces
+            # of data at beginning, middle and end" in the client's report, and
+            # the whole tail behind "missing end of data" on chart 21. Orange
+            # was untouched on the same page only because its own "0" happens
+            # to sit lower.
+            #
+            # The offset is small and bounded — it is one stacked text row,
+            # measured at ~3.4pt on this page against tick spacing of ~117pt —
+            # so the ladder is widened by LADDER_PAD rather than opened out to
+            # the band. Opening it to the band does fix the zeros, but it also
+            # let the chemical curves reach ink above their own ladder, taking
+            # SSI-1 on this page from 0.27 to 1.95 on a 0..2 axis; that is the
+            # "running past their axis" the original clip was written for.
+            # Values are still clamped into the tick range, which is what lib1
+            # does for the same reason: keep the ink, refuse to report a value
+            # the axis cannot show.
+            # Slack at the BASELINE end only. These ladders also draw a tick
+            # stub in the series' own colour at every label, and widening the
+            # high end admits the topmost stub: on chart 24 that took SSI-1
+            # from 0.797 to the full 2.0 of its axis. The stub at the low end
+            # is admitted too and does no harm — it sits AT zero, which is the
+            # value the baseline ink already reports.
             own = [y for _v, y in ticks[c]]
-            y_top, y_bot = min(own) - 2, max(own) + 2
+            y_top, y_bot = min(own) - 2, max(own) + LADDER_PAD
             arr = np.array([p for p in pts
                             if y_top <= p[1] <= y_bot
                             and x_lo - 12 <= p[0] <= x_hi + 12])
@@ -220,7 +255,8 @@ def extract_page(page, sample_sec=1.0):
             name = _UNIT.sub("", label).strip()
             unit = (_UNIT.search(label).group(1) if _UNIT.search(label) else "")
             t_abs = ta + tb * arr[:, 0]
-            vals = va + vb * arr[:, 1]
+            tv_all = sorted(v for v, _y in ticks[c])
+            vals = np.clip(va + vb * arr[:, 1], tv_all[0], tv_all[-1])
             order = np.argsort(t_abs, kind="stable")
             t_abs, vals = t_abs[order], vals[order]
             lo, hi = float(t_abs.min()), float(t_abs.max())
