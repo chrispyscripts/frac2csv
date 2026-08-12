@@ -149,7 +149,6 @@
   #sumcanvas { width:100%; height:auto; background:#fff; border:1px solid var(--line); }
   .files { flex:1; overflow:auto; }
   .filehead.sel { background:var(--panel2); border-left:2px solid var(--carmine); padding-left:12px; }
-  .fileitem.prov-hide { display:none; }
   .drop { margin:12px; border:1.5px dashed #39414d; border-radius:10px; padding:20px 12px;
           text-align:center; cursor:pointer; color:var(--mut); font-size:12.5px; transition:.15s; }
   /* No fill on hover/drag — a hardcoded dark background went unreadable in
@@ -279,9 +278,6 @@
     <div class="wordmark">Carmine's Lab</div>
     <span class="verbadge" id="verbadge" hidden></span>
     <div class="grow"></div>
-    <select id="provider" class="prov" title="Batch by service provider">
-      <option value="">All service providers</option>
-    </select>
     <div class="exportwrap">
       <button type="button" class="btn primary" id="exportbtn">⬇ Export ▾</button>
       <div class="exportpop" id="exportpop" hidden>
@@ -426,6 +422,9 @@
           <button type="button" class="btn" id="stackbtn"
                   title="Open every channel on its own chart, stacked, in a
 separate window that follows this one">Stacked ↗</button>
+          <button type="button" class="btn" id="tablebtn"
+                  title="Open this file's summary tables in a separate window"
+                  disabled>Table &#8599;</button>
           <span class="stackmsg" id="stackmsg" hidden></span>
           <button type="button" class="btn" id="flagbtn"
                   title="Report a problem with this chart — sends your notes plus
@@ -1257,12 +1256,6 @@ const PROVIDERS = [
   [/STEP/i, "STEP"], [/mview/i, "CalFrac"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
 ];
-// The providers offered in the filter — always listed, even before any of
-// their files are loaded, so the supported set is visible up front. Each label
-// must be exactly what providerOf() returns, or the filter hides everything:
-// "CalFrac" is the label for the MView-format charts Calfrac reports carry,
-// and "Halliburton" covers both the IFS charts and the raster treatment plots.
-const WORKED_PROVIDERS = ["CalFrac", "BJ", "Liberty", "STEP", "Halliburton"];
 function providerOf(source) {
   for (const [re, name] of PROVIDERS) if (re.test(source || "")) return name;
   return "Other";
@@ -1271,17 +1264,6 @@ function wellProvider(well) {
   const c = {};
   for (const st of well.stages) { const p = providerOf(st.source); c[p] = (c[p] || 0) + 1; }
   return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || "Other";
-}
-function rebuildProviderMenu() {
-  const sel = $("provider"), cur = sel.value;
-  const provs = WORKED_PROVIDERS;            // fixed set — only these are offered
-  sel.innerHTML = '<option value="">All service providers</option>' +
-    [...provs].sort().map(p => `<option value="${p}">${p}</option>`).join("");
-  sel.value = provs.includes(cur) ? cur : "";
-}
-function applyProviderFilter() {
-  const p = $("provider").value;
-  for (const e of entries) e.el.classList.toggle("prov-hide", !!p && e.provider !== p);
 }
 
 function render(entry, fname, stages, tables, notes, summary) {
@@ -1313,8 +1295,6 @@ function render(entry, fname, stages, tables, notes, summary) {
   entry.items = secItems.length ? secItems : sumItems;   // active list
   entry._tables = tables || [];
   entry.provider = well ? well.provider : (tables[0] ? providerOf(tables[0].source) : "Other");
-  rebuildProviderMenu();
-  applyProviderFilter();
   // Open it only when nothing is on screen yet. With a queue running, every
   // file that finished used to yank the middle column and the graph over to
   // itself, so a chart you were reading was replaced mid-look. Later arrivals
@@ -1436,6 +1416,7 @@ function showStage(entry, well, item) {
   renderDlbar(well);
   stackPageStale = true;    // the source page for this stage is not drawn yet
   pushStacked();      // the stacked window follows whatever is on screen here
+  updateTableBtn();
 }
 
 function showTable(entry, t) {
@@ -1455,6 +1436,7 @@ function showTable(entry, t) {
   dl.appendChild(b); addZipCount(dl);
   $("pv-notes").textContent = "";
   pushStacked();      // not a stage — the stacked window empties itself
+  updateTableBtn();
 }
 
 // ---------- Summary Data: render a document's table pages from the PDF ----------
@@ -1485,6 +1467,7 @@ function showSummary(entry, item) {
   $("pv-dl").innerHTML = ""; $("pv-table").innerHTML = ""; $("pv-notes").textContent = "";
   renderSummaryPage(entry, item);
   pushStacked();      // not a stage — the stacked window empties itself
+  updateTableBtn();
 }
 
 async function renderSummaryPage(entry, item) {
@@ -2196,6 +2179,7 @@ function buildLegend() {
       gState.hover = null;
       redrawGraph(); buildLegend();
       pushStacked();       // the stacked window dims the same curve
+      updateTableBtn();
     });
     Lg.appendChild(el);
   });
@@ -2588,6 +2572,7 @@ window.addEventListener("message", e => {
   if (d.type === "stacked:ready") {
     stackWin = e.source;              // also re-adopts it after a manual reload
     pushStacked();
+    updateTableBtn();
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
   } else if (d.type === "stacked:zoom") {
@@ -2603,6 +2588,71 @@ window.addEventListener("message", e => {
     redrawGraph();
     scheduleOrigSync();
   }
+});
+
+// The file's own summary tables, in a window of their own. Separate from the
+// Tables tab in the left column so a table can be read BESIDE a chart rather
+// than instead of it — the Totals grid is what a stage's numbers get checked
+// against. Disabled, not hidden, when the file has none: greyed out says "this
+// file has no tables", a missing button says nothing at all.
+function currentTables() {
+  const e = current && current.entry;
+  const tabs = (e && e._tables) ? e._tables.slice() : [];
+  // "Totals" first — it is the one being asked for
+  tabs.sort((a, b) => (/total/i.test(b.title || "") ? 1 : 0)
+                    - (/total/i.test(a.title || "") ? 1 : 0));
+  return tabs;
+}
+function updateTableBtn() {
+  const btn = $("tablebtn");
+  if (btn) btn.disabled = !currentTables().length;
+}
+$("tablebtn").addEventListener("click", () => {
+  const tabs = currentTables();
+  const msg = $("stackmsg");
+  msg.hidden = true;
+  if (!tabs.length) return;
+  const w = window.open("", "carmine-tables", "width=1150,height=850");
+  if (!w) {
+    msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
+    msg.hidden = false;
+    return;
+  }
+  const esc = v => String(v === null || v === undefined ? "" : v)
+    .replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const name = (current && current.entry && current.entry.name) || "tables";
+  const body = tabs.map(t => `<h2>${esc(t.title || "Table")}</h2>
+    <div class="wrap"><table><thead><tr>${
+      (t.columns || []).map(c => `<th>${esc(c)}</th>`).join("")
+    }</tr></thead><tbody>${
+      (t.rows || []).map(r => `<tr>${
+        (r || []).map(c => `<td>${esc(c)}</td>`).join("")
+      }</tr>`).join("")
+    }</tbody></table></div>
+    <p class="cnt">${(t.rows || []).length} rows &middot; ${(t.columns || []).length} columns</p>`
+  ).join("");
+  w.document.open();
+  w.document.write(`<!doctype html><meta charset="utf-8">
+<title>${esc(name)} — tables</title>
+<style>
+ body{font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      margin:18px;color:#1a1a1a;background:#fbfbfa}
+ h1{font-size:15px;margin:0 0 14px;color:#a31631;word-break:break-all}
+ h2{font-size:13px;margin:22px 0 6px}
+ .wrap{overflow-x:auto;border:1px solid #e3e0dd;border-radius:6px}
+ table{border-collapse:collapse;white-space:nowrap;font-size:12px}
+ th,td{padding:4px 9px;border-bottom:1px solid #eee;text-align:right}
+ th{position:sticky;top:0;background:#f3f1ef;text-align:left;font-weight:600}
+ td:first-child,th:first-child{text-align:left}
+ tr:hover td{background:#f7f5f3}
+ .cnt{color:#777;font-size:11px;margin:5px 2px 0}
+ @media (prefers-color-scheme:dark){
+  body{background:#0d1117;color:#e6edf3}h1{color:#ff7b93}
+  .wrap{border-color:#30363d}th{background:#161b22}
+  th,td{border-bottom-color:#21262d}tr:hover td{background:#161b22}}
+</style><h1>${esc(name)}</h1>${body}`);
+  w.document.close();
+  try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
 });
 
 $("stackbtn").addEventListener("click", () => {
@@ -2625,10 +2675,12 @@ $("stackbtn").addEventListener("click", () => {
   // opener never can, so keep pushing over the first couple of seconds. The
   // child is idempotent: each push simply replaces what it is showing.
   pushStacked();
+  updateTableBtn();
   let tries = 0;
   const again = setInterval(() => {
     if (++tries > 6 || !stackAlive()) { clearInterval(again); return; }
     pushStacked();
+    updateTableBtn();
   }, 350);
 });
 
@@ -2683,8 +2735,7 @@ document.addEventListener("keydown", e => {
 // reappear as soon as you held an arrow down.
 function navigableEntries() {
   return entries
-    .filter(e => e.items && e.items.length &&
-                 !e.el.classList.contains("prov-hide"))
+    .filter(e => e.items && e.items.length)
     // by position on screen, not load order: a queue finishes out of order
     .sort((a, b) => (a.el.compareDocumentPosition(b.el)
                      & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
@@ -3118,6 +3169,7 @@ $("lblmode").addEventListener("click", e => {
   redrawGraph();
   buildLegend();
   pushStacked();           // curve names (and which curves) just changed
+  updateTableBtn();
 });
 
 // wheel = zoom around cursor · drag = pan · double-click = reset · move = hover
@@ -3270,10 +3322,8 @@ function renderDlbar(well) {
 }
 
 function exportTotals() {
-  const p = $("provider").value;
-  const w = wells.filter(x => !p || x.provider === p);
-  const t = tableFiles.filter(x => !p || x.provider === p);
-  return { count: w.length * (settings.format === "both" ? 2 : 1) + t.length, prov: p };
+  return { count: wells.length * (settings.format === "both" ? 2 : 1)
+                  + tableFiles.length, prov: "" };
 }
 
 function addZipCount(dl) {
@@ -3321,10 +3371,9 @@ function deleteEntry(entry) {
     $("previewpane").hidden = true;
     $("empty").hidden = false;
     pushStacked();
+    updateTableBtn();
   }
   if (sumState.docKey === entry.name) sumState.docKey = null;
-  rebuildProviderMenu();
-  applyProviderFilter();
   updateCount();
   updateClearAll();
 }
@@ -3338,11 +3387,10 @@ function clearAll() {
   $("manifestbar").hidden = true;
   $("previewpane").hidden = true;
   $("empty").hidden = false;
-  rebuildProviderMenu();
-  applyProviderFilter();
   updateCount();
   updateClearAll();
   pushStacked();
+  updateTableBtn();
 }
 $("clearall").addEventListener("click", clearAll);
 
@@ -3372,14 +3420,6 @@ function relabel() {
     renderDlbar(current.well);
   }
 }
-
-// batch by service provider: the dropdown filters the file list, the download
-// buttons/count, and which wells the .zip includes
-$("provider").addEventListener("change", () => {
-  applyProviderFilter();
-  if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
-  updateCount();
-});
 
 // ---------- Export panel: Seconds/Summary x current/all ----------
 const isLocal = () => !!(localInfo && localInfo.local);
@@ -3446,10 +3486,8 @@ async function emitZip(pairs, zipName) {
   const zipped = fflate.zipSync(files, { level: 6 });
   saveBlob(zipName, new Blob([zipped], { type: "application/zip" }), null);
 }
-function providerFilter() { return $("provider").value; }
 function entriesInScope() {
-  const p = providerFilter();
-  return entries.filter(e => !p || e.provider === p);
+  return entries.filter(e => true);
 }
 
 async function exportSecondsOne() {
@@ -3550,7 +3588,6 @@ $("exSecAll").addEventListener("click", wrapErr(exportSecondsAll));
 $("exSumAll").addEventListener("click", wrapErr(exportSummaryAll));
 
 // seed the provider menu with the validated set before any file loads
-rebuildProviderMenu();
 loadSettings();
 refreshDestUI();
 </script>

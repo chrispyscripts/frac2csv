@@ -418,13 +418,25 @@ def _split_bj_windows(results, notes):
                          f"whose printed time axes could not be told apart — "
                          f"left merged")
             continue
+        # The printed time axis is what TELLS the charts apart, but it is a
+        # clock, and a clock does not belong in a stage name: "Stage 10 May-31
+        # 14:00" reads as a stage called after a date. The client's rule is
+        # that only a printed DESCRIPTION should ever be appended — BJ's own
+        # "Plug Slip" or "10.1" already arrive that way from bj1 and never
+        # reach here. So the axis still decides the grouping and the order,
+        # and the name it produces is a plain occurrence counter.
+        order = {w: i for i, w in enumerate(wins)}      # page order = time order
         for r in grp:
             w = r["meta"].get("axis_window") or ""
             if w in tags:
-                r["meta"]["stage"] = f"{stage} {tags[w]}"
+                n = order[w] + 1
+                r["meta"]["stage"] = stage if n == 1 else f"{stage} ({n})"
         notes.append(f"Stage {stage} is charted {len(wins)} times under one "
-                     f"title — separated by printed time axis as "
-                     + ", ".join(f'"{stage} {tags[w]}"' for w in wins))
+                     f"title with nothing printed to tell them apart — kept "
+                     f"separate in chart order as "
+                     + ", ".join(f'"{stage}"' if i == 0 else f'"{stage} ({i + 1})"'
+                                 for i in range(len(wins)))
+                     + f" (time axes: {', '.join(tags[w] for w in wins)})")
 
 
 def raster_available():
@@ -781,10 +793,20 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
                                 "warnings": list(info.get("notes") or [])}
+                        # STEP reported no `scales` at all, so every STEP
+                        # chart arrived with an empty axis map — and the
+                        # peak-outside-axis check, the one diagnostic that
+                        # cracked both the IFS and the Hal-1 clusters, cannot
+                        # fire without one. An additive channel reading 1,244
+                        # kg/m3 went to the client instead of to a scan.
+                        # step1 fits each axis and snaps it to round bounds,
+                        # so axis_frame IS the axis these values were read
+                        # against — report it as both.
                         results.append(_series(
                             meta, samples, data,
                             f"STEP {kind} chart (raster)", pno + 1, units,
-                            geom=info.get("geom"), frames=frames))
+                            geom=info.get("geom"), scales=frames,
+                            frames=frames))
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue
