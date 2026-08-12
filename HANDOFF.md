@@ -172,10 +172,14 @@ none of this is on carmines-lab.vercel.app yet.
 
 ## What the STEP measurements settled
 
-- **STEP is 100% raster.** `step_vec.detect` fires on ZERO pages across 2017,
-  2020 and 2025 vintages. `step_vec.py` is dead code against everything
-  measurable, which means the uneven-tick fix (below) belongs entirely in
-  `step1` + `auto_raster`.
+- **STEP is raster from 2017 on — but NOT in 2016.** `step_vec.detect` fires on
+  ZERO pages across the 2017, 2020 and 2025 vintages, which is where the
+  uneven-tick fix belongs (`step1` + `auto_raster`). It is NOT dead code, and
+  the earlier claim here that it was is wrong: on 00180 (2016DEC09, Tourmaline
+  Laprise, WA 31976) `step_vec.detect` fires on **27 pages** and
+  `step1.detect` on **none** — those pages carry a text layer and are vector.
+  Client reports #86 and #87 are against that path, not the raster one. Check
+  which detector fires before attributing a STEP report to either.
 - **00183's "missing slurry" is NOT a bug.** Measured at pixel level: the gap
   columns contain zero cyan pixels while good columns contain 162. The chart
   lifts its pen while the pumps are off. An honest gap and a parser failure
