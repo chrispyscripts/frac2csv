@@ -53,7 +53,34 @@ and skipping it shipped v0.9.2 reporting itself as 0.9.1. The version string
 is embedded in every Flag Error report, so a stale one sends diagnosis after
 the wrong build.
 
-## The hosted Lab is NOT the desktop engine
+## DECISION: the hosted Lab is retired (2026-08-12)
+
+Client: "Let's stop using the vercel app altogether and stick to running only
+the local version to stay consistent with the EXE."
+
+**Do not deploy `carmines-lab` again.** The two runtimes that matter are the
+Windows EXE and the local Mac app (`python3 localapp.py` in `frac2csv/`), and
+both have tesseract, so both do raster/OCR. That kills the whole class of
+"works in one place, not the other" confusion — a hosted engine seven releases
+behind was the largest untreated risk in this project.
+
+Consequences worth keeping in mind:
+- No more `lab/api` sync burden. `lab/api/*.py` exists only to serve that
+  deployment; it can stop being maintained, though leaving it in step costs
+  little and keeps the option open.
+- No more `raster_available()` fallbacks written for a platform with no
+  tesseract. Build for raster and trace the real charts.
+- `lab/public/index.html` and `stacked.html` are STILL the live UI — the local
+  app serves them. Retiring the deployment does not retire those files.
+- The download page (`frac2csv-download`) is unaffected and still ships.
+
+The URL still resolves and Carmine may have it bookmarked. It now serves an
+engine that will drift further from the EXE with every release, so if he uses
+it he will file reports against data the desktop app would not produce.
+**Decide whether to replace that page with a pointer to the download, rather
+than leaving a stale tool live.**
+
+## The hosted Lab is NOT the desktop engine (historical — now retired)
 
 `lab/api/version.py` says **0.6.8**. `lab/api/` is missing `step1`, `hal1`,
 `trican_charts`, `auto_raster`, `sanjel`, `calfrac_progress`, `step_vec`, and
