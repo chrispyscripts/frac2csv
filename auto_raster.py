@@ -1062,7 +1062,7 @@ def _rolling_median(v, k):
 
 
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
-                    spike_run=8, glyphs=False):
+                    spike_run=8, glyphs=False, envelope=True):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
 
@@ -1159,7 +1159,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
     # which traces the envelope of the excursion instead of its centre. The
     # pen's own width is measured from this trace's own runs rather than
     # assumed, so a heavy line does not turn into a spike generator.
-    heights = [h for rs in cols for _m, h in rs]
+    heights = [h for rs in cols for _m, h in rs] if envelope else []
     if heights:
         pen = float(np.median(heights))
         swept = max(3.0, 2.5 * pen)
