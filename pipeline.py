@@ -50,10 +50,30 @@ except Exception:                       # pragma: no cover - optional deps
     _RASTER_OK = False
 
 try:
-    # read only for the date a Canyon chart cannot print (see _canyon_dates)
+    # read for the date a Canyon chart cannot print (see _canyon_dates), and
+    # for its own tables
     import canyon_tables
 except Exception:                       # pragma: no cover - not yet deployed
     canyon_tables = None
+
+# Table parsers, each built and verified against the corpus before being
+# wired in here. Optional so a deployment missing one still runs.
+try:
+    import step_summary
+except Exception:                       # pragma: no cover
+    step_summary = None
+try:
+    import hal1_tables
+except Exception:                       # pragma: no cover
+    hal1_tables = None
+try:
+    import ifs_tables
+except Exception:                       # pragma: no cover
+    ifs_tables = None
+try:
+    import sanjel_tables
+except Exception:                       # pragma: no cover
+    sanjel_tables = None
 
 
 def _md(meta):
@@ -1029,6 +1049,93 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             "well": "", "uwi": "", "formation": "",
                             "columns": tab["columns"], "rows": tab["rows"],
                             "source": "Interval summaries"})
+
+    # --- Table parsers built and verified earlier but never wired in ---
+    #
+    # Each is gated on its OWN detector rather than on a chart source. The
+    # older summaries above key off `chart_srcs`, and that is precisely why
+    # 01155's Totals page — which parses cleanly into 22 interval rows —
+    # produced nothing at all: its charts were not recognised, so its tables
+    # were never asked for. A filing that prints a table still prints it
+    # whether or not we can read its plots.
+    def _table(title, tab, well="", uwi=""):
+        if tab and tab.get("rows"):
+            results.append({"type": "table", "title": title, "well": well,
+                            "uwi": uwi, "formation": "",
+                            "columns": tab["columns"], "rows": tab["rows"],
+                            "source": title})
+
+    def _tables_from(mod, name, jobs, gate=None):
+        """gate() -> bool decides whether this document is even a candidate;
+        jobs is [(title, callable)] evaluated lazily so a document that is not
+        this provider's never pays for the parse."""
+        try:
+            if gate is not None and not gate():
+                return
+            try:
+                groups = mod.find_summary_pages(doc)
+            except Exception:
+                groups = []
+            if groups:
+                results.append({"type": "summary", "groups": groups,
+                                "source": name})
+            for title, fn in jobs:
+                try:
+                    _table(title, fn())
+                except Exception as e:
+                    notes.append(f"{title} parse failed — {e}")
+        except Exception as e:                  # pragma: no cover - defensive
+            notes.append(f"{name} tables failed — {e}")
+
+    _tables_from(step_summary, "STEP stage summary",
+                 [("Daily Stage Summary",
+                   lambda: step_summary.parse_stage_summary(doc))],
+                 gate=lambda: step_summary is not None and step_summary.detect(doc))
+
+    _tables_from(canyon_tables, "Canyon tables", [
+        ("Treatment Interval Summary",
+         lambda: canyon_tables.parse_interval_summary(doc)),
+        ("Treatment Summary (Canyon)",
+         lambda: canyon_tables.parse_treatment_summary(doc)),
+        # one row per SUBSTAGE at printed precision — the same quantities the
+        # curves trace, so it doubles as ground truth for the chart side
+        ("Treatment Log",
+         lambda: canyon_tables.parse_treatment_log(doc)),
+    ], gate=lambda: canyon_tables is not None
+                 and bool(canyon_tables.find_summary_pages(doc)))
+
+    _tables_from(ifs_tables, "IFS stage summary", [
+        ("Stage Summary", lambda: ifs_tables.parse_stage_summary(doc)),
+        ("Treatment Summary (IFS)",
+         lambda: ifs_tables.parse_treatment_summary(doc)),
+    ], gate=lambda: ifs_tables is not None and ifs_tables.detect(doc))
+
+    if hal1_tables is not None:
+        def _hal1_sections():
+            # parse_sections returns one (key, title, table) per named section
+            for sec in hal1_tables.parse_sections(doc):
+                tab = next((x for x in sec if isinstance(x, dict)), None)
+                title = next((x for x in sec[1:] if isinstance(x, str)), None)
+                _table(f"{title or 'Section'} (Hal-1)", tab)
+        _tables_from(hal1_tables, "Hal-1 stimulation report", [
+            ("Event log (Hal-1)",
+             lambda: hal1_tables.parse_event_logs(doc)),
+        ], gate=lambda: hal1_tables.detect(doc))
+        try:
+            if hal1_tables.detect(doc):
+                _hal1_sections()
+        except Exception as e:
+            notes.append(f"Hal-1 sections parse failed — {e}")
+
+    if sanjel_tables is not None:
+        try:
+            for tab in sanjel_tables.parse_all(doc) or []:
+                # uwi is left empty on purpose — the printed banner names a
+                # DIFFERENT well on the 2015 vintage, so _normalise_tables
+                # fills it from the filename (see sanjel.py)
+                _table(tab.get("title") or "Sanjel table", tab)
+        except Exception as e:
+            notes.append(f"Sanjel tables parse failed — {e}")
 
     if not results:
         extra = "" if raster else \
