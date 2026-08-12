@@ -31,7 +31,8 @@ def detect(page):
 
 
 def is_entire_treatment(page):
-    return re.search(r"Interval\s+\d+\s*[-–]\s*Entire Treatment",
+    # lettered intervals ("Interval 4A - Entire Treatment") count too
+    return re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*Entire Treatment",
                      page.get_text()) is not None
 
 
@@ -370,11 +371,18 @@ def extract_page(page, sample_sec=1.0):
     m = re.search(r"UWI:\s*(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups())
-    m = re.search(r"Interval\s+(\d+)", text)
+    # An interval identifier is not always a bare number: 00001 files a re-frac
+    # of interval 4 as "Interval 4A" and its first treatment as "Interval 4".
+    # Reading only the digits gave both charts stage "4", so two distinct
+    # treatments merged under one key and one of them was lost \u2014 the same
+    # defect class as BJ's "Stage 06 Plug Slip" and Canyon's re-attempts. The
+    # trailing lookahead keeps a longer number from being cut short: "Interval
+    # 1234" fails to match rather than reporting interval 123.
+    m = re.search(r"Interval\s+(\d{1,3}[A-Za-z]?)(?![A-Za-z0-9])", text)
     if m:
         meta.stage = m.group(1)
     meta.date = date
-    t = re.search(r"Interval\s+\d+\s*[-\u2013]\s*[A-Za-z ]+", text)
+    t = re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-\u2013]\s*[A-Za-z ]+", text)
     meta.title = (t.group(0).strip() if t
                   else " ".join(text.strip().splitlines()[0].split()))[:60]
 
@@ -395,6 +403,7 @@ def extract_page(page, sample_sec=1.0):
 
     t_min_all, t_max_all = None, None
     series = {}
+    series_axis = {}                 # (name, unit) -> the tick column it reads
     info = {}
     for name, unit, cint, ax in legend:
         segs = pts_by_color.get(cint)
@@ -427,6 +436,7 @@ def extract_page(page, sample_sec=1.0):
         t, v = t.reshape(-1), v.reshape(-1)
         order = np.argsort(t, kind="stable")
         series[(name, unit)] = (t[order], v[order], span)
+        series_axis[(name, unit)] = col
         lo, hi = t.min(), t.max()
         t_min_all = lo if t_min_all is None else min(t_min_all, lo)
         t_max_all = hi if t_max_all is None else max(t_max_all, hi)
@@ -446,7 +456,28 @@ def extract_page(page, sample_sec=1.0):
                 return std
         return raw[:24]
 
-    data, chinfo = {}, {}
+    # --- chart geometry in PAGE coordinates, for the Lab's synced view ---
+    # Everything above works in the CANONICAL frame, which _unrotate maps a
+    # 90°-filed page into: canonical x is page x when the page is filed
+    # upright and page -y when it is filed rotated, and canonical y is page y
+    # / page x to match. That is exactly the axis "x"/"y" distinction the Lab
+    # encodes, so the rotated case is a sign flip on tb and nothing else.
+    #
+    # Two things this has to get right, both silent when wrong:
+    #  - `ta` is relative to the STAGE start. The samples below begin at
+    #    t_min_all, so quoting the absolute clock fit here would slide the
+    #    backdrop by however far into the job this interval sat.
+    #  - v0/v1 and every channel's axes_frame are read at the SAME page
+    #    coordinates. Quoting a curve against its own tick extent while the
+    #    page is placed by a different pair leaves it a constant distance off
+    #    its own ink (the concentration column labels 100..800, not 0..800,
+    #    so its extent is not the frame's).
+    meta.geom = {"axis": "y" if rotated else "x",
+                 "ta": float(ta - t_min_all),
+                 "tb": float(-tb if rotated else tb),
+                 "v0": v_top, "v1": v_bot}
+
+    data, chinfo, axes, axes_frame = {}, {}, {}, {}
     for (name, unit), (t, v, span) in series.items():
         col = std_name(name)
         if col in data:
@@ -455,6 +486,15 @@ def extract_page(page, sample_sec=1.0):
                              sample_sec)
         data[col] = vals
         chinfo[col] = {"label": name, "unit": unit}
+        acol = series_axis.get((name, unit))
+        if acol:
+            p_lo = acol["a"] + acol["b"] * acol["y_hi"]
+            p_hi = acol["a"] + acol["b"] * acol["y_lo"]
+            axes[col] = (float(min(p_lo, p_hi)), float(max(p_lo, p_hi)))
+            axes_frame[col] = (float(acol["a"] + acol["b"] * v_top),
+                               float(acol["a"] + acol["b"] * v_bot))
+    meta.axes = axes
+    meta.axes_frame = axes_frame
     # start time of day for DATETIME column
     if meta.date:
         h = int(t_min_all // 3600) % 24
@@ -462,3 +502,36 @@ def extract_page(page, sample_sec=1.0):
         s = int(t_min_all % 60)
         meta.start_time = f"{h:02d}:{mnt:02d}:{s:02d}"
     return meta, samples, data, chinfo
+
+
+# The treatment phases that count as a stage's own chart. "Breakdown",
+# "Ball Action", "Stage Summary" and "Chemical Additives" are the other
+# sections of the same interval and are not the treatment.
+TREATMENT_PHASES = ("Main Treatment", "Entire Treatment")
+
+_SECTION = re.compile(r"^(\d{1,2})\.(\d{1,2})$")
+
+
+def section_stage(page):
+    """-> (interval, phase) for IFS v4.2.0 pages, else None.
+
+    v4.3.1 and v4.6.3 title the chart "Interval 7 – Main Treatment". v4.2.0
+    names neither: it prints the section number and the phase on their own
+    lines ("7.3" then "Main Treatment"), leaving the interval implied by the
+    section's major number. The pipeline gate looked for the newer wording, so
+    every chart in these reports was skipped and the file came back with no
+    extractable data (Carmine's report on 00003).
+
+    The phase must follow the section line — a bare "N.M" is also how this
+    template prints ordinary measurements ("56.86"), and taking the first one
+    on the page would match those.
+    """
+    try:
+        lines = [l.strip() for l in page.get_text().splitlines() if l.strip()]
+    except Exception:
+        return None
+    for i, line in enumerate(lines[:-1]):
+        m = _SECTION.match(line)
+        if m and lines[i + 1] in TREATMENT_PHASES:
+            return int(m.group(1)), lines[i + 1]
+    return None

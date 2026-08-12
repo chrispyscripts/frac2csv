@@ -60,9 +60,20 @@ def extract_page(page, sample_sec=1.0):
             unit_num = unit if unit[:1].isalpha() else f"{int(unit):03d}"
             meta.uwi = (f"200{q.upper()}{unit_num}{blk.upper()}"
                         f"{int(sheet):03d}{letter.upper()}{int(num):02d}00")
-    # labels and values are separated in the text stream; the interval value
-    # has its own distinctive shape: "#N - 3709.32m"
-    m = re.search(r"#(\d+)\s*-\s*[\d,.]+\s*m\b", text)
+    # Labels and values are separated in the text stream, so the interval has
+    # to be found by its own shape rather than by what it sits next to —
+    # reading the span after the "Interval:" LABEL hands back the ticket
+    # number. The 2014 layout prints "#1 - 3709.32m"; the 2017 ones print a
+    # bare "#1" (00204) or drop the "Interval:" label altogether and print the
+    # number alone (00203, Painted Pony). Requiring the depth left every chart
+    # page of both 2017 families with NO stage at all, so nothing could be
+    # joined to a table by interval. Checked across all 92 chart pages of
+    # 00009, 00203 and 00204: each has exactly ONE "#N" on it and the sequence
+    # runs in order, so the bare form is safe to fall back to. A ticket number
+    # is never at risk — those print as "Ticket#: 40-015318", digits separated
+    # from the "#" by the colon.
+    m = (re.search(r"#(\d+)\s*-\s*[\d,.]+\s*m\b", text)
+         or re.search(r"#\s*(\d+)\b", text))
     if m:
         meta.stage = m.group(1)
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)

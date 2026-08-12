@@ -22,10 +22,10 @@ Two vintages, both handled here:
   - per-interval: one PRC Plot per frac interval, the title line naming it
     ("// Interval 7"). 2019-2021, and the bulk of the corpus.
   - whole-job: a single PRC Plot spanning the entire job (30+ hours), no
-    interval in the title. 2018-2021. The per-zone charts in those files are
-    raster images, so this one page is their only vector time series; it is
-    returned as one un-numbered block rather than split, because nothing on
-    the page says where one zone ends and the next begins.
+    interval in the title. 2018-2021. Left whole this reaches build_well
+    with a blank stage and lands in its "?" block — thirty zones fused into
+    one unusable graph — so extract_page_blocks() cuts it into one block per
+    zone at the times the report's own "Zone N Summary" sheets print.
 
 Both draw the same five curves in fixed colours — red Treating Pressure,
 blue Slurry Rate, green Prop Con (wellhead), black BH Prop Con, dark-gold
@@ -46,8 +46,13 @@ leaves `meta.uwi` empty, so the caller's folder/filename UWI stands. (This
 is the defect sanjel.py still has live — task #67.)
 
   - detect(page): a PRC Plot page.
+  - detect_document(doc): the PDF carries an SLB report at all — the gate
+    the TABLES belong on, since a blank plot must not suppress them.
   - extract_page(page, sample_sec): -> (meta, samples, {col: values},
     {col: unit}), the shape pipeline's per-page chart templates return.
+  - extract_page_blocks(page, sample_sec): the same, as a LIST — one entry
+    per stage, so a whole-job plot comes back split per zone.
+  - zone_clock(doc): each zone's printed start/end, from its summary sheet.
   - find_summary_pages(doc): the report's table pages, grouped for viewing.
   - parse_zone_table(doc): the landscape per-zone treatment grid parsed to
     {columns, rows} — one row per zone.
@@ -91,6 +96,29 @@ def is_additives_page(page):
     """True for the companion "Additives Plot" page. Not parsed — see the
     module docstring in parse notes; exposed so a caller can list it."""
     return _head(page) == ADDITIVES_TITLE and "Customer:" in page.get_text()
+
+
+def detect_document(doc):
+    """True when this PDF carries an SLB Stimulation Service Report at all.
+
+    The tables must not be gated on the CHART succeeding. 00117 and 00118
+    each print one PRC page and that page is blank in the source PDF — no
+    frame, no curves — so no chart result appears, and a gate keyed to the
+    chart source suppressed their Interval Summary sheet and job log too.
+    Both wells came back "no extractable data" when the report plainly
+    prints a full interval-29 summary. Whether a plot rendered says nothing
+    about whether the tables are there.
+    """
+    for p in range(doc.page_count):
+        try:
+            page = doc[p]
+        except Exception:
+            continue
+        if detect(page) or is_additives_page(page):
+            return True
+        if _page_kind(page.get_text()) is not None:
+            return True
+    return False
 
 
 # ------------------------------------------------------- canonical geometry
@@ -532,7 +560,17 @@ def extract_page(page, sample_sec=1.0):
     """One PRC Plot page -> (meta, samples, {col: values}, {col: unit}).
 
     `samples` is the elapsed-minute grid the values are sampled on, the same
-    contract bj1/lib1/halliburton_ifs return.
+    contract bj1/lib1/halliburton_ifs return. A whole-job plot comes back as
+    one block; use extract_page_blocks() to get it split per zone.
+    """
+    meta, samples, out, units, _t0 = _extract_core(page, sample_sec)
+    return meta, samples, out, units
+
+
+def _extract_core(page, sample_sec=1.0):
+    """extract_page() plus `t0_abs` — the clock position of samples[0] in
+    minutes from midnight of the chart's first-labelled day, which is what
+    the per-zone split needs to line the printed zone times up with the ink.
     """
     rot = _rotated(page)
     frame = _frame(page, rot)
@@ -621,11 +659,261 @@ def extract_page(page, sample_sec=1.0):
         meta.warnings.append(
             "curve(s) not named by this template, left unextracted: "
             + ", ".join(sorted(set(skipped))))
-    if not meta.stage:
+    return meta, samples, out, units, float(tmin_all)
+
+
+# ------------------------------------------------- splitting a whole-job plot
+#
+# 57 pages in 55 files chart the ENTIRE treatment on one plot and name no
+# interval. Left whole they reach build_well with a blank stage and land in
+# its "?" block: thirty zones fused into one unusable graph. Those same
+# reports print a "Zone N Summary" sheet per zone — 1,569 of them, one for
+# every row of the per-zone grid in all 47 files that have both — and each
+# sheet prints START DATE / START TIME / END DATE / END TIME.
+#
+# So the cut is not inferred, it is read. This differs from CalFrac's
+# multi-zone Progress pages (calfrac_progress.split_page), which have to find
+# their boundaries in the pumping data because their x axis is elapsed
+# minutes with no clock on it anywhere and their printed times were shown to
+# be inconsistent. An SLB PRC plot's x axis is absolute clock time, already
+# fitted here to a median of +0.09% against the reports' own printed maxima,
+# and the printed zone windows tile it: on 00023 all 30 windows and on 00035
+# all 20 fall inside the plot, each zone's END TIME being the next zone's
+# START TIME. Reading the cut off the page beats inferring it, and it keeps
+# the vector accuracy that tracing the per-zone RASTER charts on those same
+# sheets would have thrown away for an OCR pass the Lab cannot even run.
+
+# Three date conventions occur on these sheets: "11/14/2018" (2018),
+# "3/12/2019" (2019 on) and ISO "2019-07-17" on the 2019 Black Swan reports.
+# Accepting only the US form left nine wells with no readable zone times and
+# their charts fused.
+_MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_ISO = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})$")
+_ZONE_TITLE = re.compile(r"^Zone (\d+) Summary$", re.M)
+_TIME_LABELS = ("START DATE", "END DATE", "START TIME", "END TIME")
+
+# The sheets print the time in whichever convention their vintage used —
+# "09:14:44" on the 2018 reports, "2:47:00 AM" from 2019 on. Matching only
+# the 24-hour form found the times in four files out of forty-seven and
+# quietly left the other forty-three fused. _clock_minutes is the same
+# AM/PM-aware reader the time axis already uses.
+_tod_minutes = _clock_minutes
+
+
+def _is_date(text):
+    return _MDY.match(text) is not None or _ISO.match(text) is not None
+
+
+def _date(text):
+    m = _ISO.match(text)
+    if m:
+        y, mo, dy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = _MDY.match(text)
+        if not m:
+            return None
+        y, mo, dy = int(m.group(3)), int(m.group(1)), int(m.group(2))
+    try:
+        return datetime(y, mo, dy).date()
+    except ValueError:
+        return None
+
+
+def _zone_sheet_times(page):
+    """The four printed timestamps on one Zone N Summary sheet.
+
+    Taken positionally: the value is the first cell to the right of the label
+    on the label's own printed row. The text stream on these sheets is
+    ordered by drawing order, so the four dates and times arrive nowhere near
+    their labels in it.
+    """
+    got = {}
+    for _y, cells in _rows_by_y(page):
+        for lx, lt in cells:
+            if lt not in _TIME_LABELS or lt in got:
+                continue
+            for x, t in cells:
+                if x <= lx:
+                    continue
+                if lt.endswith("DATE") and _is_date(t):
+                    got[lt] = t
+                    break
+                if lt.endswith("TIME") and _CLOCK.match(t):
+                    got[lt] = t
+                    break
+    return got
+
+
+def zone_clock(doc):
+    """-> {zone number: (start datetime, end datetime)} from the Zone N
+    Summary sheets, or {} when the report prints none.
+
+    A zone whose sheet is missing any of the four fields, or whose window
+    cannot be made sense of, is left out rather than given a guessed
+    boundary.
+    """
+    out = {}
+    for p in range(doc.page_count):
+        page = doc[p]
+        m = _ZONE_TITLE.search(page.get_text())
+        if not m:
+            continue
+        t = _zone_sheet_times(page)
+        if len(t) != 4:
+            continue
+        sd, ed = _date(t["START DATE"]), _date(t["END DATE"])
+        st, et = _tod_minutes(t["START TIME"]), _tod_minutes(t["END TIME"])
+        if sd is None or ed is None or st is None or et is None:
+            continue
+        start = datetime.combine(sd, datetime.min.time()) + \
+            timedelta(minutes=st)
+        end = datetime.combine(ed, datetime.min.time()) + timedelta(minutes=et)
+        if end <= start:
+            # A zone that runs through midnight is printed with the same date
+            # on both lines — 00065's zone 16 starts 11:54:56 PM and ends
+            # 12:36:56 AM, both stamped 10/9/2018 — so the end lands twelve
+            # hours before the start and the zone was being dropped. Roll the
+            # end into the next day, but only accept the result if it makes a
+            # treatment-length window: 00129 has sheets reading 1:44 PM to
+            # 2:25 AM, and a rollover there would hand one zone twelve hours
+            # covering four of its neighbours. The corpus's longest real
+            # interval is seven hours.
+            rolled = end + timedelta(days=1)
+            if (rolled - start) > timedelta(hours=8):
+                continue
+            end = rolled
+        out[int(m.group(1))] = (start, end)
+    return out
+
+
+def _drop_out_of_order(rel):
+    """Keep the largest set of zones whose starts rise with the zone number.
+
+    Zones are numbered in the order they ran, so a start that goes backwards
+    is a misprinted sheet: 00040's zone 32 is stamped twelve hours before
+    zone 31, and cutting on it would hand zone 31's data to zone 32.
+
+    The outlier has to be removed without disturbing what follows it, which
+    is why this takes the longest non-decreasing run rather than sweeping
+    forward and dropping everything after the first disagreement. A forward
+    sweep anchors on whatever came first: on 00547 one bad sheet at zone 10
+    invalidated zones 11 to 39 behind it, and a well that had been splitting
+    into 18 stages collapsed back to a single fused block.
+    """
+    if len(rel) < 2:
+        return rel
+    starts = [r[1] for r in rel]
+    best = [1] * len(rel)
+    prev = [-1] * len(rel)
+    for i in range(len(rel)):
+        for j in range(i):
+            if starts[j] <= starts[i] and best[j] + 1 > best[i]:
+                best[i], prev[i] = best[j] + 1, j
+    end = max(range(len(rel)), key=lambda i: best[i])
+    keep = []
+    while end != -1:
+        keep.append(end)
+        end = prev[end]
+    return [rel[i] for i in reversed(keep)]
+
+
+def _zone_windows(clocks, t0_abs, duration_min):
+    """Printed zone windows mapped onto the chart's elapsed-minute grid.
+
+    -> [(zone, lo_min, hi_min, start_datetime)] sorted, or None if the
+    printed times do not fit the plot.
+
+    The chart's clock is minutes from midnight of the day its first tick
+    falls on; the sheets carry real dates. The two are tied together by
+    trying whole-day shifts and keeping the one that lands the most zones
+    inside the plot — a job whose plot opens before midnight sits a day
+    earlier than its first zone, and without the shift every window would
+    fall off the end.
+    """
+    if not clocks:
+        return None
+    base = min(v[0] for v in clocks.values()).date()
+    base_dt = datetime.combine(base, datetime.min.time())
+    rel = [(z, (s - base_dt).total_seconds() / 60.0,
+            (e - base_dt).total_seconds() / 60.0, s)
+           for z, (s, e) in sorted(clocks.items())]
+    rel = _drop_out_of_order(rel)
+    if len(rel) < 2:
+        return None
+    hi_abs = t0_abs + duration_min
+    best, best_n = None, 0
+    for shift in (0, -1440, 1440, -2880, 2880):
+        wins = [(z, lo + shift, hi + shift, s) for z, lo, hi, s in rel]
+        n = sum(1 for _z, lo, hi, _s in wins
+                if lo >= t0_abs - 1 and hi <= hi_abs + 1)
+        if n > best_n:
+            best_n, best = n, wins
+    if not best or best_n < 2:
+        return None
+    inside = [(z, lo, hi, s) for z, lo, hi, s in best
+              if hi > t0_abs and lo < hi_abs]
+    if len(inside) < 2:
+        return None
+    return inside
+
+
+def extract_page_blocks(page, sample_sec=1.0):
+    """One PRC Plot page -> [(meta, samples, {col: values}, {col: unit})].
+
+    One block for an interval-titled plot. For a whole-job plot, one block
+    per zone, each carrying its real zone number, start clock and date, cut
+    at the times the report's own Zone N Summary sheets print.
+    """
+    meta, samples, data, units, t0_abs = _extract_core(page, sample_sec)
+    if meta.stage:
+        return [(meta, samples, data, units)]
+
+    doc = getattr(page, "parent", None)
+    clocks = {}
+    if doc is not None:
+        try:
+            clocks = zone_clock(doc)
+        except Exception:
+            clocks = {}
+    wins = _zone_windows(clocks, t0_abs, meta.duration_min)
+    if not wins:
+        # Nothing to cut on. Do not ship it blank: a blank stage becomes the
+        # "?" block, which is what made these unusable in the first place.
+        meta.stage = "job overview"
         meta.warnings.append(
             "whole-job PRC plot: this page charts the entire treatment and "
-            "names no interval, so it is not split into stages")
-    return meta, samples, out, units
+            "the report prints no per-zone start/end times to split it on, "
+            "so it is reported as one job-overview block")
+        return [(meta, samples, data, units)]
+
+    step = sample_sec / 60.0
+    blocks = []
+    for z, lo, hi, start_dt in wins:
+        i0 = max(0, int(round((lo - t0_abs) / step)))
+        i1 = min(len(samples), int(round((hi - t0_abs) / step)) + 1)
+        if i1 - i0 < 10:
+            continue                      # too short to be a treatment
+        zmeta = PageMeta()
+        zmeta.stage = str(z)
+        zmeta.uwi = ""                    # never the printed one; see module doc
+        zmeta.start_time = start_dt.strftime("%H:%M:%S")
+        zmeta.date = start_dt.strftime("%Y-%m-%d")
+        zmeta.duration_min = float(hi - lo)
+        zmeta.title = re.sub(r"^" + re.escape(PRC_TITLE),
+                             f"{PRC_TITLE} — Zone {z}", meta.title, count=1)
+        zmeta.warnings = list(meta.warnings)
+        zsamples = samples[i0:i1] - samples[i0]
+        zdata = {c: v[i0:i1] for c, v in data.items()}
+        blocks.append((zmeta, zsamples, zdata, units))
+    if not blocks:
+        meta.stage = "job overview"
+        return [(meta, samples, data, units)]
+    missing = sorted(set(clocks) - {int(b[0].stage) for b in blocks})
+    if missing:
+        blocks[0][0].warnings.append(
+            "zone(s) the report times but this plot does not cover, left "
+            "unsplit: " + ", ".join(str(z) for z in missing))
+    return blocks
 
 
 # ------------------------------------------------------ summary table pages
