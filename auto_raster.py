@@ -31,6 +31,15 @@ HUE_HEX = {"red": "#c8372d", "orange": "#d07a1f", "yellow": "#a89a17",
            "green": "#1e7a34", "cyan": "#118a8a", "blue": "#1d5bd8",
            "purple": "#6d3bb0", "magenta": "#b0329b"}
 
+# How much taller than the pen a column's ink must be before it is read as a
+# SWEPT column — one where the curve moved through a range inside that column —
+# and reported at the end of the run rather than its middle. See
+# curve_positions. Lower keeps more detail; the reducer never invents a value,
+# because both ends of a run are ink the page actually printed, so the cost of
+# lowering it is only that a heavy flat line reports alternate edges of its own
+# pen. The client's instruction is explicit: less smooth the better.
+SWEPT_FACTOR = 1.4
+
 
 def tesseract_path():
     """Locate tesseract: bundled (PyInstaller) first, then PATH."""
@@ -1062,7 +1071,8 @@ def _rolling_median(v, k):
 
 
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
-                    spike_run=8, glyphs=False, envelope=True):
+                    spike_run=8, glyphs=False, envelope=True,
+                    swept_factor=None):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
 
@@ -1162,7 +1172,8 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
     heights = [h for rs in cols for _m, h in rs] if envelope else []
     if heights:
         pen = float(np.median(heights))
-        swept = max(3.0, 2.5 * pen)
+        swept = max(3.0, (SWEPT_FACTOR if swept_factor is None
+                          else swept_factor) * pen)
         for cx, rs in enumerate(cols):
             if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
                 continue
