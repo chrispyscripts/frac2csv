@@ -852,6 +852,200 @@ def _time_fit(strip, xa, x0, x1):
     return None
 
 
+# ---------- printed graphics inside the plot ----------
+
+# A chart's plot area is not always curves and gridlines. FracPro prints its
+# own logo INSIDE the frame — on STEP's tiled reports it lands in the top 6% of
+# the plot, and its lettering is drawn in the same inks the series use:
+# 00184 p37 carries 2,048 red pixels (the "PRO"), 2,421 cyan ("FRAC") and 366
+# green (the swoosh) between rows 12 and 43 of a 672-row plot. Orange is the
+# one series colour absent from the logo, and orange was the one channel on
+# that page the client did not report as wrong.
+#
+# It defeats curve_positions outright. That routine keeps the run nearest a
+# rolling median of the trace, which is the right rule for a second blob a few
+# columns wide — but this blob spans 400 columns against a 70-column window, so
+# the median itself moves into the logo and then every run near it looks
+# correct. Measured on 00184 stage 17: Tr Press exported 78.51 MPa against
+# 58.34 filed with the regulator, Prop Conc 965 kg/m3 on a 0..1000 axis, and
+# Combined Clean Rate 15.69 on a 0..16 axis — three channels reading ~98% of
+# full scale because the logo sits just under the frame's top edge.
+#
+# Shape tells the two apart, and position does not. Components, measured on
+# that page:
+#
+#   curve       w 55-99.6% of the plot, fill 0.013-0.016
+#   logo glyph  w 2.3-7.0%,             fill 0.185-0.600
+#
+# A pen stroke fills ~1.5% of its own bounding box; a letter fills a third of
+# it. But DENSITY ALONE IS NOT ENOUGH, and this is the trap: a genuine
+# near-vertical move is also narrow and solid — the end-of-job pressure drop on
+# that same page is 6 columns wide with fill 0.361, and the client asked
+# explicitly for those spikes to survive (see the reducer in curve_positions).
+# What separates them is that a spike belongs to its curve and a logo does not:
+# the drop's rows meet the trace's rows where they share columns, while the
+# logo sits ~180 rows clear of the pressure curve beneath it. So density only
+# nominates a candidate; distance from the trace convicts it.
+#
+# A curve that runs THROUGH the logo merges with it into one wide component and
+# is left alone — no test fires, and the contamination survives on that page.
+# That is deliberate: splitting a merged component means guessing where the
+# curve goes under the ink, and inventing it is worse than reporting it.
+GLYPH_WIDTH = 0.12       # of plot width: wider than this is a curve, not a mark
+GLYPH_FILL = 0.15        # lit / bounding box; curves measured <= 0.094
+GLYPH_NEAR = 0.05        # of plot height: how close to the trace still belongs
+GLYPH_PAD = 0.03         # of plot width: how far to look sideways for the trace
+
+
+def _components(sub):
+    """8-connected components of a boolean mask -> [(cols, rows, count)].
+
+    numpy has no labeller and scipy is not a dependency of this project, but
+    the ink is sparse — a plot column holds one or two runs — so union-find
+    over column runs settles it in a few thousand operations instead of a
+    million-pixel flood fill.
+    """
+    H, W = sub.shape
+    runs = []                       # (col, row0, row1)
+    per_col = []
+    for c in range(W):
+        ys = np.flatnonzero(sub[:, c])
+        idx = []
+        if len(ys):
+            for r in np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1):
+                idx.append(len(runs))
+                runs.append((c, int(r[0]), int(r[-1])))
+        per_col.append(idx)
+    if not runs:
+        return []
+    parent = list(range(len(runs)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for c in range(1, W):
+        for i in per_col[c]:
+            _, a0, a1 = runs[i]
+            for j in per_col[c - 1]:
+                _, b0, b1 = runs[j]
+                if a0 <= b1 + 1 and b0 <= a1 + 1:      # 8-connected
+                    ra, rb = find(i), find(j)
+                    if ra != rb:
+                        parent[rb] = ra
+    agg = {}
+    for i, (c, y0, y1) in enumerate(runs):
+        k = find(i)
+        a = agg.get(k)
+        if a is None:
+            agg[k] = [c, c, y0, y1, y1 - y0 + 1, [i]]
+        else:
+            a[0] = min(a[0], c)
+            a[1] = max(a[1], c)
+            a[2] = min(a[2], y0)
+            a[3] = max(a[3], y1)
+            a[4] += y1 - y0 + 1
+            a[5].append(i)
+    return [{"c0": v[0], "c1": v[1], "y0": v[2], "y1": v[3], "n": v[4],
+             "runs": v[5]} for v in agg.values()], runs
+
+
+def drop_glyph_islands(sub):
+    """Clear printed marks (a logo, a stamp) from a plot-cropped colour mask.
+
+    Returns a copy with the offending pixels cleared, or the input untouched
+    when nothing qualifies — which is the overwhelming majority of charts.
+    See the note above for what qualifies and why a spike does not.
+    """
+    sub = np.asarray(sub, bool)
+    H, W = sub.shape
+    if H < 8 or W < 8 or not sub.any():
+        return sub
+    found = _components(sub)
+    if not found:
+        return sub
+    comps, runs = found
+    if len(comps) < 2:
+        return sub                      # one blob is the curve, whatever it is
+    cand, keep = [], []
+    for cp in comps:
+        w = cp["c1"] - cp["c0"] + 1
+        h = cp["y1"] - cp["y0"] + 1
+        fill = cp["n"] / float(w * h)
+        if w <= GLYPH_WIDTH * W and fill >= GLYPH_FILL:
+            cand.append(cp)
+        else:
+            keep.append(cp)
+    if not cand or not keep:
+        return sub                      # nothing to judge, or nothing to judge against
+    # Per-column extent of the ink we are sure about, so a candidate can be
+    # asked whether the trace passes anywhere near it.
+    lo = np.full(W, np.nan)
+    hi = np.full(W, np.nan)
+    for cp in keep:
+        for i in cp["runs"]:
+            c, y0, y1 = runs[i]
+            lo[c] = y0 if not np.isfinite(lo[c]) else min(lo[c], y0)
+            hi[c] = y1 if not np.isfinite(hi[c]) else max(hi[c], y1)
+    have = np.flatnonzero(np.isfinite(lo))
+    if not len(have):
+        return sub
+    pad = max(4, int(GLYPH_PAD * W))
+    near = max(4.0, GLYPH_NEAR * H)
+
+    # Reprieve chains, not just single components. A steep move is torn into
+    # several narrow dense pieces by anti-aliasing — the opening pressure drop
+    # on 00184 p37 arrives as rows 289-349 over cols 1-23 and rows 356-470 over
+    # cols 20-25, with the curve proper not starting until col 28. Judged once
+    # each, the lower piece touches the curve and the upper piece is 151 rows
+    # clear of it and would be destroyed, taking the top of the transient with
+    # it. So a candidate that is cleared joins the trace and the rest are asked
+    # again, until nothing more is reprieved: ink that chains back to the curve
+    # IS the curve. The logo never chains — nothing bridges the ~180 rows
+    # between it and the pressure trace — so the loop settles with it still
+    # condemned.
+    pending = list(cand)
+    while pending:
+        spared = []
+        for cp in pending:
+            a = max(0, cp["c0"] - pad)
+            b = min(W - 1, cp["c1"] + pad)
+            cols = have[(have >= a) & (have <= b)]
+            if not len(cols):
+                # No trace beside it at all: fall back to the nearest columns
+                # that do carry one, so a real spike standing off on its own —
+                # the green needles at the left of 00184 p37 — is still
+                # measured against the curve it belongs to rather than
+                # condemned for being alone.
+                j = int(np.argmin(np.abs(have - (cp["c0"] + cp["c1"]) // 2)))
+                cols = have[j:j + 1]
+            t0 = float(np.nanmin(lo[cols]))
+            t1 = float(np.nanmax(hi[cols]))
+            gap = max(t0 - cp["y1"], cp["y0"] - t1, 0.0)
+            if gap <= near:
+                spared.append(cp)
+        if not spared:
+            break
+        for cp in spared:
+            pending.remove(cp)
+            for i in cp["runs"]:
+                c, y0, y1 = runs[i]
+                lo[c] = y0 if not np.isfinite(lo[c]) else min(lo[c], y0)
+                hi[c] = y1 if not np.isfinite(hi[c]) else max(hi[c], y1)
+        have = np.flatnonzero(np.isfinite(lo))
+
+    if not pending:
+        return sub
+    out = sub.copy()
+    for cp in pending:
+        for i in cp["runs"]:
+            c, y0, y1 = runs[i]
+            out[y0:y1 + 1, c] = False
+    return out
+
+
 # ---------- per-column curve position ----------
 
 def _rolling_median(v, k):
@@ -868,7 +1062,7 @@ def _rolling_median(v, k):
 
 
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
-                    spike_run=8):
+                    spike_run=8, glyphs=False):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
 
@@ -900,6 +1094,18 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
     H, W = sub.shape
     if H == 0 or W == 0:
         return np.full(W, np.nan)
+    # A printed mark inside the frame is not a second blob to choose against —
+    # it is wider than the window that does the choosing. Clear it first.
+    #
+    # Off by default, and deliberately so. It is measured on STEP's tiled
+    # reports and nowhere else: run over Halliburton 00784 it also clears 38%
+    # of the magenta mask (anti-aliased flecks of the dashed pressure line,
+    # the contamination hal1's own _drop_orphans exists for) and moves one
+    # stage's BH Prop Conc peak by 2.8%, which may well be an improvement but
+    # has not been scored against that template's printed tables. Templates
+    # opt in one at a time, each with its own validation.
+    if glyphs:
+        sub = drop_glyph_islands(sub)
     cols = []                    # per column: ((run median, run height), ...)
     py = np.full(W, np.nan)
     for cx in range(W):
@@ -971,7 +1177,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
 
 # ---------- main entry ----------
 
-def extract(img, sample_sec=1.0, plot=None):
+def extract(img, sample_sec=1.0, plot=None, glyphs=False):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -1021,7 +1227,7 @@ def extract(img, sample_sec=1.0, plot=None):
             # exported values, not just the drawing
             b = (_vb - _vt) / float(y1 - y0)
             a = _vt - b * y0
-        py = curve_positions(sub) + y0
+        py = curve_positions(sub, glyphs=glyphs) + y0
         vals = a + b * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
         if np.isfinite(vals).sum() < 50:
