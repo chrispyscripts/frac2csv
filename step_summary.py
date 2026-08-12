@@ -61,6 +61,7 @@ only job-level Well/Product Information.  The cover sheet is still listed by
 find_summary_pages() so it can be viewed.
 """
 import re
+from datetime import datetime, timedelta
 
 TITLE = "Treatment Report - Daily Stage Summary"
 
@@ -432,7 +433,7 @@ def stage_clock(doc):
     if i_start is None:
         return {}
     i_date = find("date")
-    out = {}
+    out, prev = {}, None
     for row in table["rows"]:
         stage = str(row[0]).strip()
         m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?",
@@ -442,8 +443,28 @@ def stage_clock(doc):
         h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
         if h > 23 or mi > 59 or s > 59:
             continue
-        out[stage] = {"date": _iso_date(row[i_date]) if i_date is not None
-                      else "", "start": f"{h:02d}:{mi:02d}:{s:02d}"}
+        day = _iso_date(row[i_date]) if i_date is not None else ""
+        secs = h * 3600 + mi * 60 + s
+        # The sheet is filled in per TOUR, so a stage pumped after midnight is
+        # dated to the day the shift began: 01077 files interval 11 as
+        # 2024-04-25 00:57 between interval 10 at 18:31 the same day and
+        # interval 12 at 07:14 the next — 00:57 there is the 26th by the
+        # calendar, and BCER files it as the 25th too. That convention is fine
+        # in a summary and wrong in a DATETIME column, where it would put a
+        # stage's rows a day before the ones it ran after. A row that steps
+        # BACKWARDS by less than a day has wrapped midnight; carry it forward.
+        # Only one day, and only on that signature, so a genuine multi-day gap
+        # (00196 runs 12-06 then 12-09) and a second job stapled into the same
+        # book are both left exactly as printed.
+        if day and prev is not None:
+            here = datetime.strptime(day, "%Y-%m-%d") + timedelta(seconds=secs)
+            if 0 <= (prev - here).total_seconds() < 86400:
+                here += timedelta(days=1)
+                day = here.strftime("%Y-%m-%d")
+            prev = here
+        elif day:
+            prev = datetime.strptime(day, "%Y-%m-%d") + timedelta(seconds=secs)
+        out[stage] = {"date": day, "start": f"{h:02d}:{mi:02d}:{s:02d}"}
     return out
 
 
