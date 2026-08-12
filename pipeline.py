@@ -37,6 +37,7 @@ import sanjel
 import step_vec
 import pipeline_export as pe
 import sk_fracr as sk
+import slb
 import trican2
 
 try:
@@ -579,6 +580,14 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     notes.append(f"p{pno + 1}: IFS chart failed — {e}")
             continue
 
+        if slb.detect(page):
+            try:
+                meta, samples, data, units = slb.extract_page(page, sample_sec)
+                results.append(_series(_md(meta), samples, data,
+                                       "SLB PRC chart", pno + 1, units))
+            except Exception as e:
+                notes.append(f"p{pno + 1}: SLB PRC chart failed — {e}")
+            continue
         if lib1.detect(page):
             try:
                 meta, samples, data, units = lib1.extract_page(page)
@@ -999,6 +1008,25 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
              "Stimulation Summary", liberty_summary.parse_stimulation)
     _summary(calfrac_summary, "MView chart" in chart_srcs,
              "Treatment Summary", calfrac_summary.parse_treatment_summary)
+
+    # SLB prints two tables worth having. The zone grid is the only place in
+    # the corpus carrying minimum slurry rate, ball size and interval length
+    # per stage. Both return uwi "" on purpose so _normalise_tables fills it
+    # from the filename — ~39 of these files print a UWI belonging to a
+    # NEIGHBOURING well, and on some pads two reports carry each other's.
+    _summary(slb, "SLB PRC chart" in chart_srcs,
+             "Per-zone treatment summary", slb.parse_zone_table)
+    if "SLB PRC chart" in chart_srcs:
+        try:
+            tab = slb.parse_interval_summaries(doc)
+        except Exception as e:
+            tab = None
+            notes.append(f"Interval summaries parse failed — {e}")
+        if tab and tab.get("rows"):
+            results.append({"type": "table", "title": "Interval summaries",
+                            "well": "", "uwi": "", "formation": "",
+                            "columns": tab["columns"], "rows": tab["rows"],
+                            "source": "Interval summaries"})
 
     if not results:
         extra = "" if raster else \
