@@ -198,8 +198,35 @@ def _channels_payload(data, units=None, labels=None, scales=None,
                          else None)((frames or {}).get(key)),
             "values": [None if (v is None or not np.isfinite(v))
                        else round(float(v), 4) for v in vals],
+            # How much of the stage this channel actually carries, and in how
+            # many pieces. A hole in a curve has two completely different
+            # causes and they look identical in the Lab: the chart lifted its
+            # pen while the pumps were off, or the trace was lost. Three
+            # client reports in one evening — 00183 "Missing Data for Slurry",
+            # 00180 "missing pieces at beginning, middle and end", 00664's
+            # bottom-hole concentration sitting 65% empty because the green
+            # curve is painted over it — were all read as parser failures, and
+            # only one of them was. Saying so per channel is what tells them
+            # apart, and it costs one pass over values we already have.
+            **_coverage(vals),
         })
     return out
+
+
+def _coverage(vals):
+    """-> {filled, gaps, gapSamples} for one channel's resampled values."""
+    a = np.asarray([np.nan if v is None else v for v in vals], dtype=float)
+    n = int(a.size)
+    if not n:
+        return {"filled": 0.0, "gaps": 0, "gapSamples": 0}
+    bad = ~np.isfinite(a)
+    miss = int(bad.sum())
+    runs = 0
+    idx = np.flatnonzero(bad)
+    if len(idx):
+        runs = 1 + int((np.diff(idx) > 1).sum())
+    return {"filled": round(1.0 - miss / float(n), 4),
+            "gaps": runs, "gapSamples": miss}
 
 
 def serialize(results, notes):

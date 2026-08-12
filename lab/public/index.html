@@ -233,6 +233,11 @@
                  cursor:pointer; user-select:none; border-radius:5px; padding:2px 6px;
                  border:1px solid transparent; }
   .legend span:hover { border-color:var(--line); }
+  /* how much of the stage this channel actually carries — shown only when it
+     is short of it, so a full trace stays uncluttered. Hover for the detail. */
+  .legend span .gapb { color:var(--carmine); border:1px solid var(--carmine);
+      border-radius:8px; padding:0 5px; font-size:10px; font-weight:700;
+      opacity:.85; }
   /* every curve is ON by default; clicking a chip switches that one OFF, and
      any number can be off at once */
   .legend span.off { opacity:.4; text-decoration:line-through;
@@ -2178,16 +2183,45 @@ function drawHover(ctx, W, H) {
   });
 }
 
+// A hole in a curve has two causes that look identical on screen: the chart
+// lifted its pen while the pumps were off, or we lost the trace. Only the
+// channel's own numbers tell them apart, so quote them rather than leaving him
+// to guess — three reports in one evening were holes, and only one was ours.
+// Silent below GAP_QUIET: every trace has a few blank samples at its ends.
+const GAP_QUIET = 0.95;
+
+function gapText(c) {
+  if (c.filled === undefined || c.filled === null) return "";
+  if (c.filled >= GAP_QUIET) return "";
+  const secs = c.gapSamples || 0;
+  const m = Math.floor(secs / 60), s = secs % 60;
+  const dur = m ? `${m}m` + (s ? ` ${s}s` : "") : `${s}s`;
+  return `${Math.round(c.filled * 100)}% of stage · ` +
+         `${c.gaps} gap${c.gaps === 1 ? "" : "s"} · ${dur} blank`;
+}
+
+function gapBadge(c) {
+  const t = gapText(c);
+  return t ? ` <span class="gapb">${Math.round(c.filled * 100)}%</span>` : "";
+}
+
+function gapTitle(c) {
+  const t = gapText(c);
+  return t ? `\n${chanName(c)}: ${t}\nThe chart draws no curve there — either ` +
+             `the pen was up, or another curve is painted over it.` : "";
+}
+
 function buildLegend() {
   const Lg = $("pv-legend"); Lg.innerHTML = "";
   gState.channels.forEach((c, ci) => {
     if (!inMode(c)) return;             // hidden by "Our terms" filter
     const el = document.createElement("span");
     el.innerHTML = `<i style="background:${c._color}"></i>${chanName(c)}` +
-      ` <span style="color:var(--mut)">${round2(c._vmax)}${c.unit ? " " + c.unit : ""}</span>`;
+      ` <span style="color:var(--mut)">${round2(c._vmax)}${c.unit ? " " + c.unit : ""}</span>` +
+      gapBadge(c);
     const off = gState.hidden.has(ci);
     if (off) el.classList.add("off");
-    el.title = off ? "Show this curve" : "Hide this curve";
+    el.title = (off ? "Show this curve" : "Hide this curve") + gapTitle(c);
     el.addEventListener("click", () => {
       if (gState.hidden.has(ci)) gState.hidden.delete(ci);
       else gState.hidden.add(ci);
