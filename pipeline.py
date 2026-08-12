@@ -582,9 +582,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
         if slb.detect(page):
             try:
-                meta, samples, data, units = slb.extract_page(page, sample_sec)
-                results.append(_series(_md(meta), samples, data,
-                                       "SLB PRC chart", pno + 1, units))
+                for meta, samples, data, units in \
+                        slb.extract_page_blocks(page, sample_sec):
+                    results.append(_series(_md(meta), samples, data,
+                                           "SLB PRC chart", pno + 1, units))
             except Exception as e:
                 notes.append(f"p{pno + 1}: SLB PRC chart failed — {e}")
             continue
@@ -1014,9 +1015,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # per stage. Both return uwi "" on purpose so _normalise_tables fills it
     # from the filename — ~39 of these files print a UWI belonging to a
     # NEIGHBOURING well, and on some pads two reports carry each other's.
-    _summary(slb, "SLB PRC chart" in chart_srcs,
+    _slb_doc = slb.detect_document(doc)
+    _summary(slb, _slb_doc,
              "Per-zone treatment summary", slb.parse_zone_table)
-    if "SLB PRC chart" in chart_srcs:
+    if _slb_doc:
         try:
             tab = slb.parse_interval_summaries(doc)
         except Exception as e:
