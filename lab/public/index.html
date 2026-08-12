@@ -1787,6 +1787,19 @@ function ghostReady() {
 // above the page's gridlines (very light) and below its lightest curve colour.
 const INK_LUM = 220;
 const INK_DEV = 255 - INK_LUM;
+// Below this many levels off white, a pixel is compression noise rather than
+// ink. Several vintages print their chart as a LOSSY JPEG (every chart page of
+// 00196 and 00197 is one), and JPEG rings around every stroke: a halo of pixels
+// 1-6 levels off white, 83% of them within 6px of real ink. Proportional
+// coverage has no threshold to hide that behind, so it painted the halo as
+// visible grey and the chart grew a dirty shadow — Carmine's "grainy black
+// smudge" (#88), measured at 22.9% of the plot rect against 11.4% of real ink.
+// Pages whose chart is stored losslessly (00183, 00184) carry no such halo, so
+// a floor costs them almost nothing: it removes 73% of the grain on a JPEG page
+// and 0.6% of the ink on a PNG one. It sits far below a genuinely antialiased
+// edge — half-covering a black stroke lands near 128 — so the fractional edges
+// #61 was about still survive.
+const INK_FLOOR = 6;
 
 // Flatten the source page to black ink on white paper, keeping how much of
 // each pixel the ink actually covers.
@@ -1819,7 +1832,9 @@ function binarizedCopy(src, W, H, sx, sy) {
     const im = bctx.getImageData(0, 0, W, H), px = im.data;
     for (let i = 0; i < px.length; i += 4) {
       const dev = 255 - Math.min(px[i], px[i + 1], px[i + 2]);
-      const a = dev >= INK_DEV ? 1 : dev / INK_DEV;
+      const a = dev <= INK_FLOOR ? 0
+              : dev >= INK_DEV ? 1
+              : (dev - INK_FLOOR) / (INK_DEV - INK_FLOOR);
       const v = Math.round(255 * (1 - a));
       px[i] = px[i + 1] = px[i + 2] = v;
     }
