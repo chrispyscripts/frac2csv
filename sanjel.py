@@ -389,8 +389,21 @@ def extract_page(page, sample_sec=1.0):
     meta.stage = m.group("n") if m else None
     meta.title = f"Interval {meta.stage or '?'}"
     meta.date = _page_date(spans, text)
+    # The printed UWI is reported, not trusted — the same rule sanjel_tables
+    # already follows. On the 2015 vintage the banner names a DIFFERENT well
+    # than the filing it sits in: 00013 (WA 27522) prints 104/05-17-080-18
+    # inside 103031708018W600, 00014 prints 102/04-17-080-18 inside
+    # 102031708018W600, 00019 prints 100/05-15-080-18 inside 107031708018W600
+    # — while the banner's License # matches the filing's WA number every
+    # time. Stamping it on the curves shipped every traced series under the
+    # wrong well, and disagreeing with this file's own tables, which are
+    # right. Leave `uwi` empty so the authoritative filename/folder UWI is
+    # used (pipeline_export.build_well's fallback_uwi, and the Lab's own
+    # filename patch), and carry the printed value alongside for reference.
     m = _LSD.search(title) or _LSD.search(text)
-    meta.uwi = "".join(m.groups()[:5]) + "W" + m.group(6) + "00" if m else ""
+    meta.banner_uwi = ("".join(m.groups()[:5]) + "W" + m.group(6) + "00"
+                       if m else "")
+    meta.uwi = ""
 
     # --- the time axis, and which way it runs --------------------------
     axis, pairs = _time_axis(spans, text, xs, ys, (x0, x1, y0, y1))

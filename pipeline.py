@@ -57,6 +57,10 @@ def _md(meta):
             # the chart's printed time-axis label set, where the template
             # reports one (BJ) — see _split_bj_windows
             "axis_window": getattr(meta, "axis_window", ""),
+            # a UWI the page prints that we deliberately do NOT trust as the
+            # filing's own (Sanjel's banner names another well) — carried for
+            # reference, the way sanjel_tables carries it on the table side
+            "banner_uwi": getattr(meta, "banner_uwi", ""),
             "warnings": list(getattr(meta, "warnings", []))}
 
 
@@ -75,7 +79,7 @@ def _series(meta, samples, data, source, page=None, units=None, labels=None,
 
 
 def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
-                    _last_progress):
+                    _last_progress, zclocks=None):
     """One CalFrac "Progress" page -> one (meta, samples, data, geom) per zone.
 
     The page plots several zones end to end and names none of them, so without
@@ -95,6 +99,7 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         return [(md, samples, data, getattr(meta, "geom", None))]
 
     zr = cprog.zone_range(page)
+    borrowed = None
     if not zr:
         # The Bottom Hole page plots the same window as the Surface page it
         # sits directly behind, but prints no caption. Borrow that page's
@@ -102,84 +107,122 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         # spans match. 00004 repeats 200-minute Progress pages throughout the
         # document, and a looser rule handed a caption to charts 20 pages away.
         prev = _last_progress[0]
-        if prev and prev[2] == pno - 1 and \
-                abs(len(samples) - prev[1]) <= max(4, 0.02 * prev[1]):
-            zr = prev[0]
+        if prev and prev["page"] == pno - 1 and \
+                abs(len(samples) - prev["n"]) <= max(4, 0.02 * prev["n"]):
+            zr = prev["range"]
+            borrowed = prev
         else:
             return whole()
     else:
-        _last_progress[0] = (zr, len(samples), pno)
+        _last_progress[0] = {"range": zr, "n": len(samples), "page": pno,
+                             "cuts": None, "zones": None, "anchor": None}
     lo, hi = zr
     nz = hi - lo + 1
     span_min = len(samples) * sample_sec / 60.0
-    # First choice is the pumping data: where the pumps stopped is not a matter
-    # of opinion. Only when the zones ran continuously, leaving no break to
-    # find, fall back to the times the summary table prints.
     zones = list(range(lo, hi + 1))
-    bounds = cprog.split_page(samples, data, nz, sample_sec)
-    by_table = False
-    if bounds is None:
-        fallback = cprog.table_split(ztimes, lo, hi, len(samples),
-                                     sample_sec, span_min)
-        if fallback is None:
-            notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but neither "
-                         f"the pumping data nor the summary times separate "
-                         f"{nz} treatments, so the page is left whole rather "
-                         f"than split onto the wrong zones")
-            return whole(zr)
-        bounds, zones = fallback
-        by_table = True
-        if len(zones) != nz:
-            notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but the "
-                         f"summary table times only cover zones "
-                         f"{zones[0]}-{zones[-1]}; split on those")
+    # Reuse the twin's cuts only if it HAS cuts. Requiring them — leaving this
+    # page whole when the captioned one could not be split — cost 00070 19 of
+    # its 24 stages: its captioned page finds no gaps and is left whole, while
+    # this page splits cleanly on its own data. Falling through preserves that.
+    if borrowed is not None and borrowed["cuts"] and len(samples):
+        # Splitting this page independently cut it in slightly different places
+        # than its Surface twin — measured across 17 two-page stages, mean
+        # 27.1 s of skew and 40 s at worst. build_well then takes t0 from the
+        # first page and unions the channels, so a stage's BH Prop Conc was
+        # written against the Surface page's clock, half a minute out. The two
+        # pages draw the same window, so reusing the twin's cuts as fractions
+        # of its own length removes the skew by construction.
+        n = len(samples)
+        bounds = [(int(round(a * n)), int(round(b * n)))
+                  for a, b in borrowed["cuts"]]
+        zones = borrowed["zones"]
+        anchor = borrowed["anchor"]
+    else:
+        # First choice is the pumping data: where the pumps stopped is not a
+        # matter of opinion. Only when the zones ran continuously, leaving no
+        # break to find, fall back to the times the summary table prints.
+        bounds = cprog.split_page(samples, data, nz, sample_sec)
+        by_table = False
+        if bounds is None:
+            fallback = cprog.table_split(ztimes, lo, hi, len(samples),
+                                         sample_sec, span_min)
+            if fallback is None:
+                notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but "
+                             f"neither the pumping data nor the summary times "
+                             f"separate {nz} treatments, so the page is left "
+                             f"whole rather than split onto the wrong zones")
+                return whole(zr)
+            bounds, zones = fallback
+            by_table = True
+            if len(zones) != nz:
+                notes.append(f"p{pno + 1}: captioned 'Zones {lo}-{hi}' but the "
+                             f"summary table times only cover zones "
+                             f"{zones[0]}-{zones[-1]}; split on those")
+
+        # Fit ONE clock origin for the page and read every zone off the chart's
+        # axis from there. Stamping each zone with its own table entry and the
+        # rest from the axis mixed two clocks in one well — stage 11 at 18:06
+        # and stage 12 at 03:36. When the table drove the split the origin is
+        # exact by construction: the first zone's printed start.
+        offsets = [a * sample_sec / 60.0 for a, _b in bounds]
+        if by_table:
+            anchor = (cprog.zone_start_minutes(ztimes, zones[0]), len(zones))
+        else:
+            anchor = cprog.anchor_t0(zones, offsets, ztimes)
+            if anchor is None:
+                # Nothing corroborated, but the chart still begins when its
+                # first zone began. On a two-zone page there is no third time
+                # to break the tie, and a page whose zones disagree by an hour
+                # is still better placed on the clock than left at 00:00.
+                first = cprog.zone_start_minutes(ztimes, zones[0])
+                if first is not None:
+                    anchor = (first, 1)
+                    notes.append(f"p{pno + 1}: zones {lo}-{hi} — the printed "
+                                 f"start times disagree with the chart's "
+                                 f"spacing, so it is placed on the clock by "
+                                 f"zone {zones[0]}'s start alone")
+                elif ztimes:
+                    notes.append(f"p{pno + 1}: zones {lo}-{hi} — no usable "
+                                 f"start time in the summary table, so the "
+                                 f"zones are split but timed from the chart's "
+                                 f"own axis")
+        # Only a CAPTIONED page's cuts are worth lending: this record belongs to
+        # the page whose caption named the zones, and its uncaptioned twin
+        # follows it.
+        if borrowed is None and _last_progress[0] is not None and len(samples):
+            _last_progress[0].update(
+                {"cuts": [(a / len(samples), b / len(samples))
+                          for a, b in bounds],
+                 "zones": zones, "anchor": anchor})
 
     geom = getattr(meta, "geom", None)
     page_date = getattr(meta, "date", "") or cprog.job_date(page) or ""
-    # Fit ONE clock origin for the page and read every zone off the chart's
-    # axis from there. Stamping each zone with its own table entry and the rest
-    # from the axis mixed two clocks in one well — stage 11 at 18:06 and stage
-    # 12 at 03:36. When the table drove the split the origin is exact by
-    # construction: the first zone's printed start.
-    offsets = [a * sample_sec / 60.0 for a, _b in bounds]
-    if by_table:
-        anchor = (cprog.zone_start_minutes(ztimes, zones[0]), len(zones))
-    else:
-        anchor = cprog.anchor_t0(zones, offsets, ztimes)
-        if anchor is None:
-            # Nothing corroborated, but the chart still begins when its first
-            # zone began. On a two-zone page there is no third time to break
-            # the tie, and a page whose zones disagree by an hour is still
-            # better placed on the clock than left at 00:00.
-            first = cprog.zone_start_minutes(ztimes, zones[0])
-            if first is not None:
-                anchor = (first, 1)
-                notes.append(f"p{pno + 1}: zones {lo}-{hi} — the printed start "
-                             f"times disagree with the chart's spacing, so it "
-                             f"is placed on the clock by zone {zones[0]}'s "
-                             f"start alone")
-            elif ztimes:
-                notes.append(f"p{pno + 1}: zones {lo}-{hi} — no usable start "
-                             f"time in the summary table, so the zones are "
-                             f"split but timed from the chart's own axis")
     out = []
     for j, (a, b) in enumerate(bounds):
         zone = zones[j] if j < len(zones) else zones[-1] + (j - len(zones) + 1)
         label = str(zone)
         md = _md(meta)
         md["stage"] = label
-        md["date"] = page_date
+        # The footer date job_date() reads is the date MView EXPORTED the
+        # chart, not the day the zone ran: 00082's footer says 10/11/2018 for
+        # 28 zones the Treatment Summary grid dates 10/10, and 00087's zones
+        # 1-3 ran on the 4th and were stamped the 5th. Where the grid prints a
+        # Job Date for this zone, it is the authority.
+        zentry = (calfrac_summary.zone_clock_for(zclocks, label)
+                  if zclocks else None)
+        zone_date = (zentry or {}).get("date") or page_date
+        md["date"] = zone_date
         # how many zones the page this came from was covering — a zone read off
         # a 12-zone overview is coarser than the same zone on its own chart
         md["zone_span"] = nz
         md["duration_min"] = (b - a) * sample_sec / 60.0
-        # seconds from midnight of page_date: the fitted origin (0 when the
+        # seconds from midnight of zone_date: the fitted origin (0 when the
         # table gave nothing usable) plus this zone's place on the axis
         secs = int(round((anchor[0] * 60 if anchor else 0) + a * sample_sec))
         md["start_time"] = (f"{secs // 3600 % 24:02d}:"
                             f"{secs % 3600 // 60:02d}:{secs % 60:02d}")
-        if secs >= 24 * 3600 and page_date:
-            md["date"] = (datetime.strptime(page_date, "%Y-%m-%d")
+        if secs >= 24 * 3600 and zone_date:
+            md["date"] = (datetime.strptime(zone_date, "%Y-%m-%d")
                           + timedelta(days=secs // (24 * 3600))
                           ).strftime("%Y-%m-%d")
         if not anchor:
@@ -353,8 +396,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # CalFrac multi-zone "Progress" charts need the zone-time tables, but most
     # documents have none — read them the first time a Progress page turns up
     _zone_times = [None]
-    # the last captioned Progress page, so its uncaptioned twin can borrow it
+    # the last captioned Progress page, so its uncaptioned twin can borrow its
+    # zones AND its cut positions
     _last_progress = [None]
+    # the Treatment Summary grid's per-zone start time and Job Date, read once
+    # per document and only when a CalFrac chart actually needs it
+    _zone_clocks = [None]
     # schematic/table pages that draw like charts — reported as one line, not
     # one per page: a 171-page report has dozens and they are not errors
     _not_charts = []
@@ -410,8 +457,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # lists both under Hal-2's chart_headers_include.
             # The clock-label count stays: it is what rejects the table of
             # contents, which also names intervals and carries the IFS footer.
+            # The interval identifier can carry a letter — a re-frac is filed
+            # as "Interval 4A". Matching bare digits here did not merge those
+            # charts, it DROPPED them: 00001 prints intervals 1, 2, 3, 4A, 4B,
+            # 5A, 5B, 6A, 6B and 7, and only 1, 2, 3 and 7 came out — six of
+            # its ten intervals produced nothing at all, silently, through the
+            # same no-note skip the comment above describes.
             titled = re.search(
-                r"Interval\s+\d+\s*[-–]\s*(?:Entire|Main)\s+Treatment", text)
+                r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*(?:Entire|Main)\s+"
+                r"Treatment", text)
             # v4.2.0 names no interval at all — the section number carries it
             sect = None if titled else ifs.section_stage(page)
             if (titled or sect) and \
@@ -631,9 +685,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 # a "Progress" page: several zones on one plot, no stage named
                 if _zone_times[0] is None:
                     _zone_times[0] = cprog.times_for_document(doc)
+                if _zone_clocks[0] is None:
+                    _zone_clocks[0] = calfrac_summary.zone_clock(doc)
                 for part in _split_progress(page, meta, samples, data,
                                             cprog.times_before(_zone_times[0], pno),
-                                            sample_sec, notes, pno, _last_progress):
+                                            sample_sec, notes, pno, _last_progress,
+                                            _zone_clocks[0]):
                     pmeta, psamples, pdata, pgeom = part
                     results.append(_series(pmeta, psamples, pdata,
                                            "MView chart", pno + 1,
@@ -674,6 +731,51 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             r["meta"]["stage"] = last_stage     # blank conc page -> its stage
         keep.append(r)
     results[:] = keep
+
+    # A CalFrac chart of ONE zone plots elapsed minutes with no clock printed
+    # anywhere on it, so every such stage exported 00:00:00 — 932 pages across
+    # 39 of the 120 files in the CalFrac corpus — and stages sharing a day
+    # collapsed onto identical date ranges. The zone's real start, and the day
+    # it ran, are printed in the Treatment Summary grid; it supplies one for
+    # 931 of those 932. Runs after the fill-down above so a blank concentration
+    # page has its stage number to look itself up by.
+    #
+    # A zone the grid does not name is left BLANK rather than defaulted: this
+    # is exactly where a wrong clock is worse than no clock. Documents with no
+    # grid at all are left alone — there is nothing to say about them.
+    if any(r.get("source") == "MView chart" for r in results):
+        if _zone_clocks[0] is None:
+            _zone_clocks[0] = calfrac_summary.zone_clock(doc)
+        clocks = _zone_clocks[0]
+        if clocks:
+            restamped, blanked = 0, []
+            for r in results:
+                md = r.get("meta", {})
+                if r.get("source") != "MView chart" or \
+                        md.get("zone_span") is not None or \
+                        md.get("multi_zone"):
+                    continue        # a split zone is already on the clock
+                if (md.get("start_time") or "") not in ("", "00:00:00"):
+                    continue        # the chart printed its own start
+                entry = calfrac_summary.zone_clock_for(clocks, md.get("stage"))
+                if not entry:
+                    md["start_time"] = ""
+                    if md.get("stage"):
+                        blanked.append(str(md["stage"]))
+                    continue
+                md["start_time"] = entry["start"]
+                if not md.get("date") and entry.get("date"):
+                    md["date"] = entry["date"]
+                restamped += 1
+            if restamped:
+                notes.append(f"{restamped} stage(s) placed on the clock from "
+                             f"the Treatment Summary grid — the charts "
+                             f"themselves print no start time.")
+            if blanked:
+                notes.append(f"stage(s) {', '.join(sorted(set(blanked))[:8])} "
+                             f"have no start time in the Treatment Summary "
+                             f"grid, so their clock is left blank rather than "
+                             f"defaulted to midnight.")
 
     # A well can chart the same zone twice: once on a job-length overview
     # ("Zone 1-12") and again on a chart of its own ("Zones 12-14"). Both split

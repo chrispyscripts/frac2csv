@@ -31,7 +31,8 @@ def detect(page):
 
 
 def is_entire_treatment(page):
-    return re.search(r"Interval\s+\d+\s*[-–]\s*Entire Treatment",
+    # lettered intervals ("Interval 4A - Entire Treatment") count too
+    return re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*Entire Treatment",
                      page.get_text()) is not None
 
 
@@ -370,11 +371,18 @@ def extract_page(page, sample_sec=1.0):
     m = re.search(r"UWI:\s*(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups())
-    m = re.search(r"Interval\s+(\d+)", text)
+    # An interval identifier is not always a bare number: 00001 files a re-frac
+    # of interval 4 as "Interval 4A" and its first treatment as "Interval 4".
+    # Reading only the digits gave both charts stage "4", so two distinct
+    # treatments merged under one key and one of them was lost \u2014 the same
+    # defect class as BJ's "Stage 06 Plug Slip" and Canyon's re-attempts. The
+    # trailing lookahead keeps a longer number from being cut short: "Interval
+    # 1234" fails to match rather than reporting interval 123.
+    m = re.search(r"Interval\s+(\d{1,3}[A-Za-z]?)(?![A-Za-z0-9])", text)
     if m:
         meta.stage = m.group(1)
     meta.date = date
-    t = re.search(r"Interval\s+\d+\s*[-\u2013]\s*[A-Za-z ]+", text)
+    t = re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-\u2013]\s*[A-Za-z ]+", text)
     meta.title = (t.group(0).strip() if t
                   else " ".join(text.strip().splitlines()[0].split()))[:60]
 
