@@ -358,6 +358,127 @@ def _canyon_dates(doc, results, notes):
                      f"date the page header prints.")
 
 
+def _day_shift(day, ours_secs, printed_secs):
+    """`day` moved to the side of midnight our own clock sits on."""
+    delta = ours_secs - printed_secs
+    if delta < -12 * 3600:
+        return (datetime.strptime(day, "%Y-%m-%d")
+                + timedelta(days=1)).strftime("%Y-%m-%d")
+    if delta > 12 * 3600:
+        return (datetime.strptime(day, "%Y-%m-%d")
+                - timedelta(days=1)).strftime("%Y-%m-%d")
+    return day
+
+
+def _hms(t):
+    m = re.match(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", str(t or ""))
+    if not m:
+        return None
+    return (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+            + int(m.group(3) or 0))
+
+
+def _step_clock(doc, results, notes):
+    """Give a STEP chart that prints no clock the start time its own report
+    files for that stage, and check the ones that do print one against it.
+
+    THE CHARTS DISAGREE ABOUT WHAT THEY PLOT AGAINST. The 2017 Shell books
+    (00196, 00199) and the 2024 ones draw a wall clock — 19:30, 19:35 … — and
+    step1 now reads it. The tiled 2017 books (00183/4/5) and the vector ones
+    (00180) draw "Time (min)" against an acquisition clock that restarts
+    between job files and whose origin is printed NOWHERE on the page: on
+    00184 it runs 615..660 for a stage the report dates 22:32, and 615 minutes
+    is not 22:32 past anything the page names. Those pages have no clock to
+    read, and read none.
+
+    What every one of these books does print is the Daily Stage Summary's
+    "Start Time (hh:mm)" column, one row per stage. That is the filed number —
+    for 00664 it matches BCER's FRAC START TIME on all 36 stages to the minute
+    — so it is the report's own answer to when the stage began, and stamping
+    it beats leaving the file at midnight.
+
+    It is not the same instant as sample 0, and the note says so. Sample 0 is
+    where the plot window opens, and on the books that print both, the window
+    opens within about a quarter of an hour of the filed start (00199 stage
+    12: window 19:26:12, filed 19:19; 00664 stage 20: window 12:06:06, filed
+    12:10). So a chart that read its own clock KEEPS it — this only fills a
+    blank — and the summary's date is used to catch a chart whose date OCR
+    slipped a digit.
+    """
+    if step_summary is None:
+        return
+    step = [r for r in results
+            if str(r.get("source") or "").startswith("STEP")
+            and r.get("type") == "series"]
+    if not step:
+        return
+    try:
+        clocks = step_summary.stage_clock(doc)
+    except Exception as e:                      # pragma: no cover - defensive
+        notes.append(f"STEP stage summary unreadable, so charts keep whatever "
+                     f"clock they print themselves — {e}")
+        return
+    if not clocks:
+        return
+    filled, redated, missing = 0, 0, []
+    for r in step:
+        md = r["meta"]
+        entry = step_summary.stage_clock_for(clocks, md.get("stage"))
+        ours = _hms(md.get("start_time"))
+        on_clock = (md.get("start_time") or "") not in ("", "00:00:00")
+        if entry is None:
+            if not on_clock:
+                missing.append(str(md.get("stage") or "?"))
+            continue
+        if on_clock:
+            # The chart read its own clock; only its DATE can still be filled
+            # or corrected, and the sheet is allowed to do that ONLY when the
+            # two agree about the time of day. They usually do to within a few
+            # minutes — but 00664 p130 is titled Interval 22 while plotting a
+            # window its own footer dates 07/05 10:57:23, three minutes after
+            # interval 21's and three HOURS from the 13:55 the sheet files for
+            # 22. Taking the sheet's day there moved a correctly dated chart
+            # onto the wrong day. A row that far from the chart is not that
+            # chart's row, whatever the numbering says, so it says nothing
+            # about its date either.
+            day = entry.get("date")
+            if not day:
+                continue
+            printed = _hms(entry["start"]) or 0
+            want = _day_shift(day, ours or 0, printed)
+            if not md.get("date"):
+                md["date"] = want       # nothing printed a day; this is it
+                redated += 1
+                continue
+            gap = abs((ours or 0) - printed)
+            if min(gap, 86400 - gap) > 90 * 60:
+                continue                # not this chart's row — leave its own
+            if md["date"] != want:
+                md["date"] = want
+                redated += 1
+            continue
+        md["start_time"] = entry["start"]
+        if entry.get("date"):
+            md["date"] = entry["date"]
+        filled += 1
+    if filled:
+        notes.append(
+            f"{filled} STEP chart(s) placed on the clock from the report's "
+            f"Daily Stage Summary — their time axis is elapsed minutes and "
+            f"prints no start of day. That column is the stage's FILED start, "
+            f"which the charts that do print a clock show opening within "
+            f"about 15 minutes of it, so read these as the stage's start "
+            f"time, not as the exact instant of the first sample.")
+    if redated:
+        notes.append(f"{redated} STEP chart(s) re-dated from the Daily Stage "
+                     f"Summary — the day printed under the chart did not "
+                     f"match the day the stage is filed under.")
+    if missing:
+        notes.append(f"stage(s) {', '.join(sorted(set(missing))[:8])} are not "
+                     f"in the Daily Stage Summary, so their clock is left "
+                     f"blank rather than defaulted to midnight.")
+
+
 def _window_tags(windows):
     """{axis window: printed tag} — unique across the windows given, and
     every character of it printed on the page.
@@ -789,10 +910,17 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                         # The 2024 layout prints all three, and step1 fills
                         # them in — clock_start is the plot frame's left edge,
                         # which is where sample 0 sits.
+                        # The date the CHART prints under itself beats the
+                        # page's: a page carries one Date for a stage that can
+                        # straddle midnight, and the two charts on it can land
+                        # on different days. Without a date the Lab's clock
+                        # axis stays off and the CSV dates from 2000-01-01,
+                        # so a start time alone only half-answers this.
                         meta = {"title": f"Interval {md.get('stage') or '?'} "
                                 f"({kind})", "uwi": md.get("uwi") or "",
                                 "stage": str(md.get("stage") or ""),
-                                "date": md.get("date") or "",
+                                "date": (info.get("clock_date")
+                                         or md.get("date") or ""),
                                 "start_time": info.get("clock_start")
                                 or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
@@ -925,6 +1053,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                              f"have no start time in the Treatment Summary "
                              f"grid, so their clock is left blank rather than "
                              f"defaulted to midnight.")
+
+    _step_clock(doc, results, notes)
 
     # A well can chart the same zone twice: once on a job-length overview
     # ("Zone 1-12") and again on a chart of its own ("Zones 12-14"). Both split

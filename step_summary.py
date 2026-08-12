@@ -379,3 +379,88 @@ def parse_stage_summary(doc):
 
     rows = [[s] + [data[s].get(n) for n in order] for s in sorted(seq, key=_key)]
     return {"columns": cols, "rows": rows}
+
+
+# ---------- the per-stage clock this sheet prints ----------
+
+def _iso_date(t):
+    """The sheet's date cell -> 'YYYY-MM-DD', or ''.
+
+    Two spellings are in the corpus and the header names which: 2017 prints
+    'Date (yyyy/mm/dd)' over 2017/04/10, the 2024 layout 'Date (YYYY-MM-DD)'
+    over 2024-06-14. Both are year-first, so no d/m ambiguity arises."""
+    t = str(t or "").strip()
+    m = re.fullmatch(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", t)
+    if not m:
+        return ""
+    y, mo, d = (int(x) for x in m.groups())
+    if not (1990 <= y <= 2100 and 1 <= mo <= 12 and 1 <= d <= 31):
+        return ""
+    return f"{y:04d}-{mo:02d}-{d:02d}"
+
+
+def stage_clock(doc):
+    """-> {stage label: {'date': 'YYYY-MM-DD'|'', 'start': 'HH:MM:SS'}}.
+
+    The Daily Stage Summary is the only place these books print when a stage
+    ran. Every generation of the sheet carries 'Start Time (hh:mm)', and every
+    one from 2017 on carries a Date column beside it; 00180 (2016) prints the
+    time alone and its charts print their own date, so the date is optional
+    here.
+
+    This is the filed number, not our reading of one: for 00664 the column
+    matches BCER's FRAC START TIME for all 36 of that well's stages to the
+    minute (stage 1 18:34 against 18:34:34, stage 20 12:10 against 12:10:05).
+    It is NOT the instant a chart's plot window opens — measured against the
+    span the same vendor's newer charts print under themselves, the window
+    opens within about a quarter of an hour either side of it. So it belongs
+    to a chart that prints no clock of its own, and nowhere else.
+    """
+    table = parse_stage_summary(doc)
+    if not table:
+        return {}
+    cols = table["columns"]
+
+    def find(*words):
+        for i, c in enumerate(cols):
+            lc = c.lower()
+            if all(w in lc for w in words):
+                return i
+        return None
+
+    i_start = find("start time")
+    if i_start is None:
+        return {}
+    i_date = find("date")
+    out = {}
+    for row in table["rows"]:
+        stage = str(row[0]).strip()
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?",
+                         str(row[i_start] or "").strip())
+        if not stage or not m:
+            continue
+        h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if h > 23 or mi > 59 or s > 59:
+            continue
+        out[stage] = {"date": _iso_date(row[i_date]) if i_date is not None
+                      else "", "start": f"{h:02d}:{mi:02d}:{s:02d}"}
+    return out
+
+
+def stage_clock_for(clocks, stage):
+    """The entry for a chart's stage label, matching the sheet's spelling.
+
+    A chart says 17 or '17'; the sheet says '17'. The 2024 books number a
+    re-treated interval '4.1'/'4.2' on both sides, and a book that staples two
+    jobs together has step_summary tag the second '4 (2)' — that suffix is not
+    something a chart prints, so a bare number is only matched to a bare
+    column and an ambiguous label is left alone."""
+    if not clocks or stage in (None, ""):
+        return None
+    key = str(stage).strip()
+    if key in clocks:
+        return clocks[key]
+    m = re.fullmatch(r"(\d+)\.0+", key)
+    if m and m.group(1) in clocks:
+        return clocks[m.group(1)]
+    return None
