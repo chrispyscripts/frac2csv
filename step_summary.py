@@ -412,10 +412,14 @@ def stage_clock(doc):
     This is the filed number, not our reading of one: for 00664 the column
     matches BCER's FRAC START TIME for all 36 of that well's stages to the
     minute (stage 1 18:34 against 18:34:34, stage 20 12:10 against 12:10:05).
-    It is NOT the instant a chart's plot window opens — measured against the
-    span the same vendor's newer charts print under themselves, the window
-    opens within about a quarter of an hour either side of it. So it belongs
+    It is NOT the instant a chart's plot window opens. Measured against the
+    span the same vendor's newer charts print under themselves, over the 140
+    stages of 00196/00199/00664 that carry both, the window opens within 15
+    minutes of this column on 88% of them and within 30 on 98%. So it belongs
     to a chart that prints no clock of its own, and nowhere else.
+
+    Dates are returned on the CALENDAR, not on the tour the sheet writes
+    them against — see the midnight carry below.
     """
     table = parse_stage_summary(doc)
     if not table:

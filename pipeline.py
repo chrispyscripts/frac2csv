@@ -398,12 +398,14 @@ def _step_clock(doc, results, notes):
     it beats leaving the file at midnight.
 
     It is not the same instant as sample 0, and the note says so. Sample 0 is
-    where the plot window opens, and on the books that print both, the window
-    opens within about a quarter of an hour of the filed start (00199 stage
-    12: window 19:26:12, filed 19:19; 00664 stage 20: window 12:06:06, filed
-    12:10). So a chart that read its own clock KEEPS it — this only fills a
-    blank — and the summary's date is used to catch a chart whose date OCR
-    slipped a digit.
+    where the plot window opens, and across the 140 stages in 00196/00199/
+    00664 where the chart prints its own clock AND the sheet files one, the
+    window opens within 15 minutes of the filed start on 88% of them and
+    within 30 on 98% (00199 stage 12: window 19:26:12, filed 19:19; 00664
+    stage 20: window 12:06:06, filed 12:10). So a chart that read its own
+    clock KEEPS it — the sheet only fills a blank — and the sheet's DATE is
+    taken only where the chart printed none, or where the two already agree
+    about the time of day.
     """
     if step_summary is None:
         return
