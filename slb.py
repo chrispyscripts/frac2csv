@@ -17,15 +17,26 @@ they are real vector polylines, not a raster:
                  <time ticks: h:mm AM/PM>
   <swatch> Treating Pressure  <swatch> Slurry Rate x 10  ...
 
-Two vintages, both handled here:
+Two vintages, and the SECOND OF THEM IS MIXED INSIDE ONE DOCUMENT:
 
   - per-interval: one PRC Plot per frac interval, the title line naming it
-    ("// Interval 7"). 2019-2021, and the bulk of the corpus.
-  - whole-job: a single PRC Plot spanning the entire job (30+ hours), no
-    interval in the title. 2018-2021. Left whole this reaches build_well
-    with a blank stage and lands in its "?" block — thirty zones fused into
-    one unusable graph — so extract_page_blocks() cuts it into one block per
-    zone at the times the report's own "Zone N Summary" sheets print.
+    ("// Interval 7"). 2019-2021, 150 files, vector from end to end.
+  - whole-job: 47 files whose only PRC Plot spans the entire job (30+
+    hours) and names no interval. That page is not what the report offers
+    per stage. The SAME document prints a "Zone N Summary" sheet per zone,
+    and each of those sheets carries that zone's own chart as a 1572x1033
+    RASTER image. On 00023, 30 raster sheets against 4 pages in the whole
+    109 that carry any long vector path at all.
+
+    So the branch here is PER PAGE, not per file: `page_chart_kind` decides
+    vector-or-raster from what the page is made of, and a document is free
+    to hold both. The whole-job plot is dropped — the client's own reading
+    of it is that "all of the data necessary should be available in
+    individual charts" — and the per-zone sheets are traced instead.
+
+    Which zone a sheet belongs to is read from the page's VECTOR TEXT, so
+    labelling needs no OCR; only the curve tracing does. Both shipping
+    runtimes (the Windows EXE and the local Mac app) carry tesseract.
 
 Both draw the same five curves in fixed colours — red Treating Pressure,
 blue Slurry Rate, green Prop Con (wellhead), black BH Prop Con, dark-gold
@@ -45,14 +56,16 @@ identity; `extract_page` puts it in `meta.title` as reference text only and
 leaves `meta.uwi` empty, so the caller's folder/filename UWI stands. (This
 is the defect sanjel.py still has live — task #67.)
 
-  - detect(page): a PRC Plot page.
+  - page_chart_kind(page): 'vector' | 'raster' | None — what this ONE page
+    carries. Structural, not keyed on print wording.
+  - detect(page): a page this template extracts, of either kind.
   - detect_document(doc): the PDF carries an SLB report at all — the gate
     the TABLES belong on, since a blank plot must not suppress them.
   - extract_page(page, sample_sec): -> (meta, samples, {col: values},
     {col: unit}), the shape pipeline's per-page chart templates return.
-  - extract_page_blocks(page, sample_sec): the same, as a LIST — one entry
-    per stage, so a whole-job plot comes back split per zone.
-  - zone_clock(doc): each zone's printed start/end, from its summary sheet.
+  - extract_page_blocks(page, sample_sec): the same, as a LIST. One entry
+    for a per-interval vector plot or a per-zone raster sheet; EMPTY for a
+    whole-job plot, which this template no longer exports.
   - find_summary_pages(doc): the report's table pages, grouped for viewing.
   - parse_zone_table(doc): the landscape per-zone treatment grid parsed to
     {columns, rows} — one row per zone.
@@ -71,15 +84,23 @@ ADDITIVES_TITLE = "Additives Plot"
 
 
 def _head(page):
+    """The page's first printed line, with runs of whitespace collapsed.
+
+    The collapse is not cosmetic. This report prints its titles with
+    NO-BREAK SPACE (U+00A0) between the words on some vintages, and a
+    comparison against a literal " " then fails on pages that print exactly
+    the expected title — the defect that cost another template in this tree
+    143 pages. Nothing downstream cares which space character was used.
+    """
     for line in page.get_text().splitlines():
-        s = line.strip()
+        s = re.sub(r"\s+", " ", line).strip()
         if s:
             return s
     return ""
 
 
-def detect(page):
-    """True for an SLB "PRC Plot" treatment-curve page.
+def detect_prc(page):
+    """True for an SLB "PRC Plot" treatment-curve page — the VECTOR kind.
 
     The title alone is enough — no other template in the corpus prints it —
     but the Customer/License pair is checked too so that a table of contents
@@ -90,6 +111,113 @@ def detect(page):
         return False
     return ("Customer:" in text and re.search(r"^License:", text, re.M)
             is not None)
+
+
+# ------------------------------------------------- per-page classification
+#
+# A whole-job document is NOT "a raster document". 00023 is 109 pages: four
+# of them carry a vector path long enough to be a plotted curve (two schematic
+# sheets and the whole-job PRC pair at the end) and thirty carry a per-zone
+# chart as an embedded image. Deciding vector-or-raster once for the file gets
+# one of those two groups wrong whichever way it is decided, so the decision is
+# made per page, from what the page is made of.
+#
+# The tests below are on STRUCTURE — how long the stroked paths are, how big
+# the embedded image is and how much of the page it covers. The one thing read
+# out of the text is the zone number, and that is not detection: it is the
+# stage label, which has to be read anyway and is a printed number the report
+# stakes its own tables on.
+
+# A plotted curve is thousands of segments; a table rule or a tick column is
+# tens. 200 is far above the furniture (473 on 00023's busiest schematic) and
+# far below a real trace (39,441 on its Additives plot).
+_PLOT_PATH_ITEMS = 200
+_PLOT_PATH_FRAC = (0.40, 0.25)      # of page width, height
+
+# The per-zone charts render at 1530-1572 x 1027-1033 px across all 47 files
+# and are placed about 513 x 292 pt on a 612 x 792 page. The floors are set
+# well under that so a different render still qualifies, and well over the
+# report's letterhead logo (199 x 42) and its inline icons.
+_CHART_IMG_PX = (600, 400)
+_CHART_IMG_FRAC = (0.30, 0.15)
+
+# "Zone 12 Summary". Whitespace-tolerant for the same reason _head is: \s
+# matches U+00A0, a literal space does not.
+_ZONE_SHEET = re.compile(r"\bZone\s+(\d{1,3})\s+Summary\b", re.I)
+
+
+def _has_vector_plot(page):
+    """True when a stroked path on this page is long enough and wide enough
+    to be a plotted curve rather than a rule, a box or a column of ticks."""
+    pw, ph = page.rect.width, page.rect.height
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return False
+    for d in drawings:
+        if _ink(d) is None or len(d["items"]) < _PLOT_PATH_ITEMS:
+            continue
+        r = d["rect"]
+        if ((r.x1 - r.x0) >= _PLOT_PATH_FRAC[0] * pw
+                and (r.y1 - r.y0) >= _PLOT_PATH_FRAC[1] * ph):
+            return True
+    return False
+
+
+def _chart_image(page):
+    """-> (xref, page rect) of the biggest chart-sized image placed on this
+    page, or None. Size is judged in BOTH pixels and printed area: the
+    letterhead logo is small in both, a scanned cover page is large in pixels
+    but portrait and page-filling, and neither is a chart."""
+    best = None
+    pw, ph = page.rect.width, page.rect.height
+    try:
+        images = page.get_images(full=True)
+    except Exception:
+        return None
+    for im in images:
+        w, h = im[2], im[3]
+        if w < _CHART_IMG_PX[0] or h < _CHART_IMG_PX[1] or w <= h:
+            continue                    # a chart of this report is landscape
+        try:
+            rects = page.get_image_rects(im[0])
+        except Exception:
+            continue
+        for r in rects:
+            if (r.width < _CHART_IMG_FRAC[0] * pw
+                    or r.height < _CHART_IMG_FRAC[1] * ph):
+                continue
+            if best is None or w * h > best[2]:
+                best = (im[0], r, w * h)
+    return (best[0], best[1]) if best else None
+
+
+def zone_number(page):
+    """The zone this Zone N Summary sheet reports, as an int, or None."""
+    m = _ZONE_SHEET.search(page.get_text())
+    return int(m.group(1)) if m else None
+
+
+def page_chart_kind(page):
+    """'vector', 'raster' or None — the kind of treatment chart on THIS page.
+
+    A vector PRC page is the titled plot — that test is left exactly as it
+    was, so no page that reads today stops reading. A raster per-zone sheet
+    is a chart-sized image on a page that names a zone and strokes no long
+    path; the last clause is the structural half of the branch, and it is
+    what stops a page that draws its own curves being traced as a picture.
+    """
+    if detect_prc(page):
+        return "vector"
+    if (zone_number(page) is not None and not _has_vector_plot(page)
+            and _chart_image(page) is not None):
+        return "raster"
+    return None
+
+
+def detect(page):
+    """True for any page this template extracts a chart from."""
+    return page_chart_kind(page) is not None
 
 
 def is_additives_page(page):
@@ -172,6 +300,37 @@ def _near_black(color):
     return color is not None and max(color) <= 0.15
 
 
+def _ink(d):
+    """The colour a path paints with, whichever operator drew it.
+
+    One SLB vintage draws its whole plot with FILLS instead of strokes: the
+    frame, the gridlines, the legend keys and every curve come back as type
+    "f" carrying a `fill` colour and no `color` at all. 00117 and 00118 have
+    ZERO stroked paths on their PRC page — which is why the frame search
+    found nothing and both files reported "no extractable data" across 157
+    and 148 pages (issues #79, #80). The curves themselves were never the
+    problem: that page holds a 10,119-item blue path, a 9,211-item red, a
+    9,077-item green and a 6,175-item black, all fully traceable.
+
+    Reading either operator costs nothing on the stroked vintages, where
+    `fill` is absent.
+    """
+    if d.get("type") == "s":
+        return d.get("color")           # stroked vintages: unchanged, exactly
+    fill = d.get("fill") or d.get("color")
+    if fill is None:
+        return None
+    # On the stroked vintages the gridlines are pale grey STROKES, which the
+    # existing per-caller filters already reject. Here they arrive as fills
+    # and would be admitted as another curve colour, so grey and white are
+    # ruled out at the source: a curve is either near-black or saturated,
+    # never 0.83 grey. (Letting them through raised a bare colour tuple out
+    # of a colour lookup — "SLB PRC chart failed — (0.827, 0.827, 0.827)".)
+    if _near_black(fill):
+        return fill
+    return fill if (max(fill) - min(fill)) > 0.15 else None
+
+
 def _frame(page, rot):
     """The plot rectangle, in canonical coordinates.
 
@@ -183,9 +342,14 @@ def _frame(page, rot):
     best, best_area = None, 0.0
     pw, ph = page.rect.width, page.rect.height
     for d in page.get_drawings():
-        if d["type"] != "s" or not _near_black(d.get("color")):
+        if not _near_black(_ink(d)):
             continue
-        if len(d["items"]) > 8:
+        # A stroked frame is four lines or one "re". The filled vintage draws
+        # the same rectangle as an outline path of up to sixteen segments
+        # (each corner arrives as a curve), so it needs the looser cap — but
+        # a curve on that page carries thousands of items, so nothing that
+        # could be data gets in either way.
+        if len(d["items"]) > (8 if d.get("type") == "s" else 24):
             continue
         r = d["rect"]
         if (r.x1 - r.x0) < 0.40 * pw or (r.y1 - r.y0) < 0.30 * ph:
@@ -339,9 +503,13 @@ def _legend(page, rot, frame, spans):
     """
     out = []
     for d in page.get_drawings():
-        if d["type"] != "s" or len(d["items"]) != 1:
+        # A stroked key is one segment. The filled vintage draws the same
+        # 20.8 x 1.6pt sliver as a closed outline of six items, so it needs
+        # the looser count — the swatch width and height tests below are what
+        # actually keep curves and rules out.
+        if len(d["items"]) > (1 if d.get("type") == "s" else 8):
             continue
-        color = d.get("color")
+        color = _ink(d)
         if color is None:
             continue
         r = d["rect"]
@@ -484,9 +652,9 @@ def _curves(page, rot, frame, colors):
     out = {}
     span_min = 0.20 * (frame[2] - frame[0])
     for d in page.get_drawings():
-        if d["type"] != "s" or len(d["items"]) < 50:
+        if len(d["items"]) < 50:
             continue
-        color = d.get("color")
+        color = _ink(d)                 # the filled vintage paints, not strokes
         if color is None:
             continue
         r = d["rect"]
@@ -557,14 +725,18 @@ def page_stage(page):
 
 
 def extract_page(page, sample_sec=1.0):
-    """One PRC Plot page -> (meta, samples, {col: values}, {col: unit}).
+    """One chart page -> (meta, samples, {col: values}, {col: unit}).
 
     `samples` is the elapsed-minute grid the values are sampled on, the same
-    contract bj1/lib1/halliburton_ifs return. A whole-job plot comes back as
-    one block; use extract_page_blocks() to get it split per zone.
+    contract bj1/lib1/halliburton_ifs return. Dispatches on what the page
+    actually is, so a caller holding a page needs to know nothing about the
+    vintage; extract_page_blocks() is the same thing in list form, and is
+    what a caller iterating a document should use.
     """
-    meta, samples, out, units, _t0 = _extract_core(page, sample_sec)
-    return meta, samples, out, units
+    blocks = extract_page_blocks(page, sample_sec)
+    if not blocks:
+        raise ValueError("slb: this page yields no chart")
+    return blocks[0]
 
 
 def _extract_core(page, sample_sec=1.0):
@@ -662,26 +834,37 @@ def _extract_core(page, sample_sec=1.0):
     return meta, samples, out, units, float(tmin_all)
 
 
-# ------------------------------------------------- splitting a whole-job plot
+# ------------------------------------------- the per-zone Zone Summary sheet
 #
-# 57 pages in 55 files chart the ENTIRE treatment on one plot and name no
-# interval. Left whole they reach build_well with a blank stage and land in
-# its "?" block: thirty zones fused into one unusable graph. Those same
-# reports print a "Zone N Summary" sheet per zone — 1,569 of them, one for
-# every row of the per-zone grid in all 47 files that have both — and each
-# sheet prints START DATE / START TIME / END DATE / END TIME.
+# WHAT THIS REPLACED, AND WHY
 #
-# So the cut is not inferred, it is read. This differs from CalFrac's
-# multi-zone Progress pages (calfrac_progress.split_page), which have to find
-# their boundaries in the pumping data because their x axis is elapsed
-# minutes with no clock on it anywhere and their printed times were shown to
-# be inconsistent. An SLB PRC plot's x axis is absolute clock time, already
-# fitted here to a median of +0.09% against the reports' own printed maxima,
-# and the printed zone windows tile it: on 00023 all 30 windows and on 00035
-# all 20 fall inside the plot, each zone's END TIME being the next zone's
-# START TIME. Reading the cut off the page beats inferring it, and it keeps
-# the vector accuracy that tracing the per-zone RASTER charts on those same
-# sheets would have thrown away for an OCR pass the Lab cannot even run.
+# 47 files chart the ENTIRE treatment on one whole-job plot and name no
+# interval. That page used to be sliced into one block per zone at the times
+# the "Zone N Summary" sheets print — 1,513 blocks, and accurate, because the
+# ink being cut was vector.
+#
+# It was also the wrong page. Every one of those 47 reports prints a per-zone
+# chart of its own, on the zone summary sheet, and the client's instruction is
+# plain: "there shouldn't be any splitting happening. That combined chart at
+# the end isn't relevant as all of the data necessary should be available in
+# individual charts." A block cut out of the job plot is this template's
+# arithmetic; a per-zone sheet is what the report published. When they
+# disagree the published sheet is the answer, and only the sheet has a
+# printed start, end and title of its own.
+#
+# WHAT IT COSTS
+#
+# These sheets are pictures, so the curves have to be traced instead of read.
+# Measured against each report's own per-zone grid (Maximum Pressure, Maximum
+# Slurry Rate, Maximum Prop Con) the tracing lands within a few tenths of a
+# percent of the vector split it replaces — see the measurements in the task
+# notes — because the image is a clean 1572x1033 render of pure ink on white,
+# not a scan. It is not free: the time axis and the two value axes are OCR'd,
+# and a report that would not OCR would lose these charts entirely. Both
+# shipping runtimes carry tesseract, which is what makes that acceptable.
+#
+# The date helpers below are kept because the sheet's printed START DATE is
+# still the best source for a zone's date — vector text, exact, no OCR.
 
 # Three date conventions occur on these sheets: "11/14/2018" (2018),
 # "3/12/2019" (2019 on) and ISO "2019-07-17" on the 2019 Black Swan reports.
@@ -744,178 +927,588 @@ def _zone_sheet_times(page):
     return got
 
 
-def zone_clock(doc):
-    """-> {zone number: (start datetime, end datetime)} from the Zone N
-    Summary sheets, or {} when the report prints none.
+def _zone_sheet_start(page):
+    """(date, minutes-of-day) as printed on this Zone N Summary sheet.
 
-    A zone whose sheet is missing any of the four fields, or whose window
-    cannot be made sense of, is left out rather than given a guessed
-    boundary.
+    Vector text, so it is exact and costs no OCR. The chart's own time axis
+    says where sample 0 sits; this says which DAY that clock belongs to, which
+    is the one thing a clock-only axis cannot tell you.
     """
-    out = {}
+    t = _zone_sheet_times(page)
+    d = _date(t["START DATE"]) if "START DATE" in t else None
+    m = _tod_minutes(t["START TIME"]) if "START TIME" in t else None
+    if d is None or m is None:
+        return None
+    return d, m
+
+
+# ------------------------------------------------ tracing the zone's chart
+#
+# These images are renders, not scans: pure (255,0,0), (0,0,255), (0,128,0)
+# and black strokes on white, with pale grey gridlines, at 1572x1033. That is
+# why the tracing lands as close to the printed grid as the vector split did.
+#
+# COLOURS ARE NOT GUESSED. The document's own PRC page legends every curve
+# with its exact RGB, so the ink to look for is read out of vector text and
+# only the WHERE is traced. Two things in the corpus make a fixed colour
+# table wrong: 00547 legends a fifth curve, GORV Pressure, in burlywood
+# (0.871, 0.722, 0.529), and 00129 legends "Injection Rate" in a light grey
+# (0.827, 0.827, 0.827) that is the same ink as the gridlines. The first has
+# to be picked up, the second has to be refused — see _traceable.
+
+# A pixel belongs to a curve when it sits on the ray from white towards that
+# curve's colour: alpha is how far along, resid how far off. Anti-aliasing
+# moves a pixel along the ray; a different colour moves it off. Measured on
+# 00023/00547 the greatest confusion left is a grey gridline pixel against
+# red, at alpha 0.17 — under the floor twice over.
+_INK_ALPHA_MIN = 0.50
+_INK_ALPHA_MAX = 1.35
+_INK_RESID_MAX = 40.0
+
+# A legend colour this washed out cannot be told from the gridlines, whatever
+# the rule: light grey ink IS the gridline ink. 00129's "Injection Rate" is
+# refused here rather than traced as 20,940 pixels of chart furniture.
+_PALE_SAT = 40.0
+_PALE_LIGHT = 120.0
+
+# The report's fixed palette, used only when the document's own PRC page
+# cannot be read (a blank plot, a missing frame). Named exactly as the legend
+# names them so _classify sees the same strings either way.
+_DEFAULT_SERIES = [((1.0, 0.0, 0.0), "Treating Pressure"),
+                   ((0.0, 0.0, 1.0), "Slurry Rate"),
+                   ((0.0, 0.502, 0.0), "Prop Con"),
+                   ((0.0, 0.0, 0.0), "BH Prop Con")]
+
+
+def _traceable(rgb):
+    r, g, b = (c * 255.0 for c in rgb)
+    hi, lo = max(r, g, b), min(r, g, b)
+    return not (hi - lo <= _PALE_SAT and hi > _PALE_LIGHT)
+
+
+def document_series(doc):
+    """[(rgb, legend label)] for the curves this report draws.
+
+    Read off the document's vector PRC page, which every whole-job file has
+    exactly one of. Cached on the document: the answer is a property of the
+    report, and re-reading a 40,000-segment path once per zone sheet would
+    cost more than everything else here put together.
+    """
+    got = getattr(doc, "_slb_series", None)
+    if got is not None:
+        return got
+    series = []
     for p in range(doc.page_count):
-        page = doc[p]
-        m = _ZONE_TITLE.search(page.get_text())
-        if not m:
-            continue
-        t = _zone_sheet_times(page)
-        if len(t) != 4:
-            continue
-        sd, ed = _date(t["START DATE"]), _date(t["END DATE"])
-        st, et = _tod_minutes(t["START TIME"]), _tod_minutes(t["END TIME"])
-        if sd is None or ed is None or st is None or et is None:
-            continue
-        start = datetime.combine(sd, datetime.min.time()) + \
-            timedelta(minutes=st)
-        end = datetime.combine(ed, datetime.min.time()) + timedelta(minutes=et)
-        if end <= start:
-            # A zone that runs through midnight is printed with the same date
-            # on both lines — 00065's zone 16 starts 11:54:56 PM and ends
-            # 12:36:56 AM, both stamped 10/9/2018 — so the end lands twelve
-            # hours before the start and the zone was being dropped. Roll the
-            # end into the next day, but only accept the result if it makes a
-            # treatment-length window: 00129 has sheets reading 1:44 PM to
-            # 2:25 AM, and a rollover there would hand one zone twelve hours
-            # covering four of its neighbours. The corpus's longest real
-            # interval is seven hours.
-            rolled = end + timedelta(days=1)
-            if (rolled - start) > timedelta(hours=8):
+        try:
+            page = doc[p]
+            if not detect_prc(page):
                 continue
-            end = rolled
-        out[int(m.group(1))] = (start, end)
+            rot = _rotated(page)
+            frame = _frame(page, rot)
+            if frame is None:
+                continue
+            legend = _legend(page, rot, frame, _spans(page, rot))
+        except Exception:
+            continue
+        if legend:
+            series = legend
+            break
+    if not series:
+        series = list(_DEFAULT_SERIES)
+    try:
+        doc._slb_series = series
+    except Exception:
+        pass
+    return series
+
+
+def _page_image(page):
+    """The zone chart as an HxWx3 int array, plus its rect on the page."""
+    import fitz
+
+    found = _chart_image(page)
+    if found is None:
+        raise ValueError("slb: no chart image on this zone sheet")
+    xref, rect = found
+    pix = fitz.Pixmap(page.parent, xref)
+    if pix.colorspace is None:
+        raise ValueError("slb: the zone chart is a stencil mask, not a chart")
+    if pix.alpha or pix.colorspace.n != 3:
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        pix.height, pix.width, 3).astype(int)
+    return img, rect
+
+
+def _image_frame(img):
+    """The plot rectangle in image pixels, as (x0, y0, x1, y1).
+
+    The frame is the only BLACK full-length rule on the page; the gridlines
+    render at 201-236 grey and never reach the 400 sum this admits, so the
+    box cannot close on a gridline the way a brightness-relative test would.
+    """
+    dark = img.sum(axis=2) < 400
+    h, w = dark.shape
+    cols = np.flatnonzero(dark.sum(axis=0) > 0.5 * h)
+    rows = np.flatnonzero(dark.sum(axis=1) > 0.5 * w)
+    if not len(cols) or not len(rows):
+        return None
+    box = int(cols[0]), int(rows[0]), int(cols[-1]), int(rows[-1])
+    if (box[2] - box[0]) < 0.40 * w or (box[3] - box[1]) < 0.35 * h:
+        return None
+    return box
+
+
+def _ocr(sub, psm=6, whitelist="0123456789.-", scale=3):
+    """OCR a crop, returning [(text, cx, cy)] in the crop's own pixels."""
+    import auto_raster as ar
+    from PIL import Image
+
+    if sub.size == 0:
+        return []
+    pil = Image.fromarray(sub.astype(np.uint8))
+    pil = pil.resize((pil.width * scale, pil.height * scale), Image.LANCZOS)
+    return [(t, cx / scale, cy / scale)
+            for t, cx, cy in ar.ocr_words(np.array(pil).astype(int), psm=psm,
+                                          whitelist=whitelist)]
+
+
+def _tick_column(img, xa, xb, y0, y1):
+    """[(value, image row)] for the numeric labels in one gutter.
+
+    The strip is cut to the plot's own rows: the time labels under the chart
+    would otherwise arrive as ticks, which is the exact defect hal1 documents
+    at _ocr_column and which biased a whole channel there.
+    """
+    pad = 10
+    ya, yb = max(0, y0 - pad), min(img.shape[0], y1 + pad + 1)
+    out = []
+    for text, _cx, cy in _ocr(img[ya:yb, max(0, xa):xb]):
+        t = text.replace(",", "").strip("-. ")
+        if re.fullmatch(r"\d+(\.\d+)?", t):
+            out.append((float(t), cy + ya))
     return out
 
 
-def _drop_out_of_order(rel):
-    """Keep the largest set of zones whose starts rise with the zone number.
+_RASTER_CLOCK = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?([AP]M)?$")
 
-    Zones are numbered in the order they ran, so a start that goes backwards
-    is a misprinted sheet: 00040's zone 32 is stamped twelve hours before
-    zone 31, and cutting on it would hand zone 31's data to zone 32.
 
-    The outlier has to be removed without disturbing what follows it, which
-    is why this takes the longest non-decreasing run rather than sweeping
-    forward and dropping everything after the first disagreement. A forward
-    sweep anchors on whatever came first: on 00547 one bad sheet at zone 10
-    invalidated zones 11 to 39 behind it, and a well that had been splitting
-    into 18 stages collapsed back to a single fused block.
+def _time_label_passes(img, y1):
+    """Yields [(image column, minutes of day)] for the row of clock labels,
+    cheapest reading first."""
+    h = img.shape[0]
+    band = img[min(y1 + 2, h - 1):min(y1 + 62, h), :]
+    if band.size == 0:
+        return
+
+    def parse(words, dx=0.0):
+        pts = []
+        for text, cx, _cy in words:
+            m = _RASTER_CLOCK.match(text.replace(" ", ""))
+            if not m:
+                continue
+            hh, mm = int(m.group(1)), int(m.group(2))
+            ss = int(m.group(3) or 0)
+            ap = m.group(4)
+            if ap:
+                if hh < 1 or hh > 12 or mm > 59:
+                    continue
+                hh = hh % 12 + (12 if ap == "PM" else 0)
+            elif hh > 23 or mm > 59:
+                continue
+            pts.append((cx + dx, hh * 60.0 + mm + ss / 60.0))
+        return pts
+
+    yield parse(_ocr(band, psm=6, whitelist="0123456789:AMP "))
+
+    # Per-label fallback: split the row on its own ink gaps and read each
+    # label alone. Worth its four-times cost, and worth trying even when the
+    # cheap pass returned plenty of points — 00023's zone 23 is labelled
+    # 8:14 AM through 8:53 AM and the one-shot read returned nine points of
+    # which six had the leading 8 as a 5 or a 3. Nine wrong points pass any
+    # test that counts them, so the caller retries on a failed FIT, not on a
+    # thin one.
+    dark = (band.sum(axis=2) < 450).any(axis=0)
+    runs, start, gap = [], None, 0
+    for i, on in enumerate(dark):
+        if on:
+            if start is None:
+                start = i
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap > 30:
+                runs.append((start, i - gap))
+                start = None
+    if start is not None:
+        runs.append((start, len(dark) - 1))
+    out = []
+    for c0, c1 in runs:
+        if c1 - c0 < 20:
+            continue
+        words = _ocr(band[:, max(0, c0 - 6):c1 + 7], psm=7,
+                     whitelist="0123456789:AMP")
+        joined = [("".join(w[0] for w in words), (c0 + c1) / 2.0, 0.0)]
+        out += parse(joined)
+    yield out
+
+
+# How far the chart's left edge may sit from the START TIME the sheet prints
+# beside it. Measured over 00023 and 00035 the two agree to under two minutes
+# on every zone; an hour-digit misread that survives the vote moves the fit by
+# a whole hour, so this separates the two cleanly without being tight enough
+# to reject a chart that simply opens a little early.
+_CLOCK_TOL_MIN = 20.0
+
+
+def _fit_time_labels(pts, x0, x1):
+    """RANSAC one reading of the label row -> (a, b, inliers) or None.
+
+    RANSAC, not least squares. The labels themselves are crisp but OCR is
+    not: over 00023's thirty sheets it turned 11:07 into 1:07, 11:11 into
+    11011 and 9:44 into 9:49, and a least-squares fit that also has to
+    unwrap midnight takes a single misread and runs the whole chart hours
+    long — four of those thirty zones came out with durations of 30 to 64
+    HOURS and four more with a fitted residual near a thousand minutes.
+    With the outliers voted out all thirty read their true 30-90 minutes.
+
+    Midnight is handled inside the vote rather than before it: a candidate
+    pair may put the later label a day on, and every point is scored against
+    whichever day lands nearest. 00023's zone 16 runs 11:21 PM to 12:07 AM
+    and needs that; the misreads must not be allowed to trigger it.
     """
-    if len(rel) < 2:
-        return rel
-    starts = [r[1] for r in rel]
-    best = [1] * len(rel)
-    prev = [-1] * len(rel)
-    for i in range(len(rel)):
-        for j in range(i):
-            if starts[j] <= starts[i] and best[j] + 1 > best[i]:
-                best[i], prev[i] = best[j] + 1, j
-    end = max(range(len(rel)), key=lambda i: best[i])
-    keep = []
-    while end != -1:
-        keep.append(end)
-        end = prev[end]
-    return [rel[i] for i in reversed(keep)]
+    if len(pts) < 4:
+        return None
+    pts = sorted(pts)
+    xs = np.array([p[0] for p in pts], float)
+    vs = np.array([p[1] for p in pts], float)
+    span = float(x1 - x0)
+    best = (0, None, None)
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            dx = xs[j] - xs[i]
+            if dx < 80:
+                continue
+            for day in (0.0, 1440.0):
+                b = (vs[j] + day - vs[i]) / dx
+                if b <= 0:
+                    continue
+                dur = b * span
+                if not (0.5 < dur < 12 * 60):
+                    continue
+                a = vs[i] - b * xs[i]
+                pred = a + b * xs
+                off = np.round((pred - vs) / 1440.0)
+                inl = np.abs(pred - (vs + 1440.0 * off)) <= max(0.6,
+                                                                0.015 * dur)
+                if int(inl.sum()) > best[0]:
+                    best = (int(inl.sum()), inl, off)
+    n, inl, off = best
+    if inl is None or n < 4 or n < 0.6 * len(pts):
+        return None
+    x, y = xs[inl], vs[inl] + 1440.0 * off[inl]
+    A = np.vstack([np.ones(len(x)), x]).T
+    (a, b), *_ = np.linalg.lstsq(A, y, rcond=None)
+    if b <= 0:
+        return None
+    return float(a), float(b), n
 
 
-def _zone_windows(clocks, t0_abs, duration_min):
-    """Printed zone windows mapped onto the chart's elapsed-minute grid.
+def _raster_time_axis(img, x0, x1, y1, printed_start=None):
+    """-> (a, b, inliers, drift) for minutes-of-day = a + b*column, or None.
 
-    -> [(zone, lo_min, hi_min, start_datetime)] sorted, or None if the
-    printed times do not fit the plot.
+    Two things guard this. A reading that admits no fit is re-read label by
+    label, because a bad reading can be plentiful as well as thin — 00023's
+    zone 23 returns nine points from the cheap pass and six of them have the
+    leading 8 read as a 5 or a 3; nine wrong points pass any test that counts
+    them, so the retry is keyed on the FIT failing, not on the count.
 
-    The chart's clock is minutes from midnight of the day its first tick
-    falls on; the sheets carry real dates. The two are tied together by
-    trying whole-day shifts and keeping the one that lands the most zones
-    inside the plot — a job whose plot opens before midnight sits a day
-    earlier than its first zone, and without the shift every window would
-    fall off the end.
+    Then the surviving fit is weighed against the START TIME the sheet prints
+    in VECTOR TEXT next to the chart — the one piece of this page needing no
+    OCR at all. It is used to CHOOSE between readings, not to veto them.
+    Vetoing looks right until a sheet is simply wrong about itself: 00023's
+    zone 21 is stamped 02:44:05 to 04:36:34 and its chart is labelled 3:41 AM
+    to 4:40 AM, ten labels out of ten agreeing across both passes. The chart
+    is legible and says what it says; `drift` is returned so the caller can
+    say so too.
     """
-    if not clocks:
-        return None
-    base = min(v[0] for v in clocks.values()).date()
-    base_dt = datetime.combine(base, datetime.min.time())
-    rel = [(z, (s - base_dt).total_seconds() / 60.0,
-            (e - base_dt).total_seconds() / 60.0, s)
-           for z, (s, e) in sorted(clocks.items())]
-    rel = _drop_out_of_order(rel)
-    if len(rel) < 2:
-        return None
-    hi_abs = t0_abs + duration_min
-    best, best_n = None, 0
-    for shift in (0, -1440, 1440, -2880, 2880):
-        wins = [(z, lo + shift, hi + shift, s) for z, lo, hi, s in rel]
-        n = sum(1 for _z, lo, hi, _s in wins
-                if lo >= t0_abs - 1 and hi <= hi_abs + 1)
-        if n > best_n:
-            best_n, best = n, wins
-    if not best or best_n < 2:
-        return None
-    inside = [(z, lo, hi, s) for z, lo, hi, s in best
-              if hi > t0_abs and lo < hi_abs]
-    if len(inside) < 2:
-        return None
-    return inside
+    best = None
+    for pts in _time_label_passes(img, y1):
+        fit = _fit_time_labels(pts, x0, x1)
+        if fit is None:
+            continue
+        if printed_start is None:
+            return fit + (None,)
+        drift = abs(((fit[0] + fit[1] * x0) - printed_start + 720.0)
+                    % 1440.0 - 720.0)
+        if drift <= _CLOCK_TOL_MIN:
+            return fit + (drift,)
+        if best is None or fit[2] > best[2]:
+            best = fit + (drift,)
+    return best
+
+
+def _axis_title(img, xa, xb):
+    """The rotated axis title in a gutter, upright and OCR'd.
+
+    Both titles read bottom-to-top, so both want the same quarter turn; the
+    other turn is tried second because it costs one OCR to be sure rather
+    than to assume, and a title read upside down comes back as noise
+    ("OL X (ulmjeu) ayey") that no pattern here would match anyway.
+    """
+    from PIL import Image
+
+    sub = img[:, max(0, xa):xb]
+    if sub.size == 0:
+        return ""
+    letters = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+               "0123456789()/. x")
+    for turn in (-90, 90):
+        pil = Image.fromarray(sub.astype(np.uint8)).rotate(turn, expand=True)
+        words = _ocr(np.array(pil).astype(int), psm=6, whitelist=letters)
+        text = " ".join(w[0] for w in sorted(words, key=lambda w: w[1]))
+        if re.search(r"press|rate|prop\s*con", text, re.I):
+            return text
+    return ""
+
+
+def _colour_masks(img, colours):
+    """{rgb: mask} — every pixel given to the legend colour whose white->ink
+    ray it lies on, or to none of them."""
+    ink = 255.0 - img.astype(float)
+    resid_best = np.full(img.shape[:2], _INK_RESID_MAX)
+    idx = np.full(img.shape[:2], -1, int)
+    for i, rgb in enumerate(colours):
+        u = np.array([255.0 * (1.0 - c) for c in rgb], float)
+        nu = float(u.dot(u))
+        if nu <= 0.0:
+            continue
+        # einsum, not `ink @ u`. The two agree bit for bit, but on macOS the
+        # matmul is dispatched to Accelerate, which raises overflow / invalid
+        # / divide-by-zero flags off the padding lanes of its SIMD tail and
+        # so prints three RuntimeWarnings per zone sheet on a run that is
+        # arithmetically clean — thirty of them per report, straight to the
+        # EXE's console. Reproduced on an array of literal 1.0 at this size
+        # and silent at 100x100x3, so it is the array's shape that trips it,
+        # not its contents; alpha comes back finite either way. einsum takes
+        # its own loop and is the same speed here.
+        alpha = np.einsum("ijk,k->ij", ink, u) / nu
+        resid = np.linalg.norm(ink - alpha[..., None] * u, axis=2)
+        take = ((alpha >= _INK_ALPHA_MIN) & (alpha <= _INK_ALPHA_MAX)
+                & (resid < resid_best))
+        resid_best = np.where(take, resid, resid_best)
+        idx = np.where(take, i, idx)
+    return {rgb: (idx == i) for i, rgb in enumerate(colours)}
+
+
+# The frame is stroked in the same black as the bottom-hole concentration
+# trace, so it lands in that channel's mask. It is removed as STRUCTURE, not
+# as colour: a rule is a line that runs the length of the plot, and only the
+# few pixels at each edge can hold one. Clearing every long run instead would
+# delete a rate trace that holds one value for most of the chart, which is
+# what a steady stage looks like.
+_RULE_EDGE = 6
+_RULE_FILL = 0.5
+
+
+def _drop_frame_rules(sub):
+    h, w = sub.shape
+    if h < 2 * _RULE_EDGE or w < 2 * _RULE_EDGE:
+        return sub
+    for r in list(range(_RULE_EDGE)) + list(range(h - _RULE_EDGE, h)):
+        if sub[r].mean() > _RULE_FILL:
+            sub[r] = False
+    for c in list(range(_RULE_EDGE)) + list(range(w - _RULE_EDGE, w)):
+        if sub[:, c].mean() > _RULE_FILL:
+            sub[:, c] = False
+    return sub
+
+
+# A traced channel covering less of the plot than this is a stray, not a
+# curve; matches the floor hal1 uses.
+_MIN_COVERAGE = 0.05
+
+
+def extract_zone_page(page, sample_sec=1.0):
+    """One Zone N Summary sheet -> (meta, samples, {col: values}, {col: unit}).
+
+    The zone number, the start date and the customer come off the page as
+    vector text. Only the curves, the two value axes and the clock labels
+    are read from the picture.
+    """
+    import auto_raster as ar
+    import curve_trace as ct
+
+    zone = zone_number(page)
+    if zone is None:
+        raise ValueError("slb: this page names no zone")
+    if not ar.available():
+        raise ValueError(
+            "slb: zone %d's chart is a raster image and tesseract is not "
+            "installed, so its curves cannot be traced" % zone)
+
+    img, rect = _page_image(page)
+    box = _image_frame(img)
+    if box is None:
+        raise ValueError("slb: no plot frame in zone %d's chart image" % zone)
+    x0, y0, x1, y1 = box
+
+    printed = _zone_sheet_start(page)
+    tfit = _raster_time_axis(img, x0, x1, y1, printed[1] if printed else None)
+    if tfit is None:
+        raise ValueError("slb: zone %d's chart prints no readable time axis"
+                         % zone)
+    ta, tb, _n_labels, drift = tfit
+    t0_abs = ta + tb * x0
+    duration = tb * (x1 - x0)
+
+    warnings = []
+    if drift is not None and drift > _CLOCK_TOL_MIN:
+        warnings.append(
+            "this chart's own time axis opens %.0f minutes from the START "
+            "TIME printed on the same sheet; the chart's axis is what is "
+            "used, and the two disagree about this zone" % drift)
+    left = ar.fit_ticks(_tick_column(img, 0, max(1, x0 - 2), y0, y1),
+                        min_inliers=4)
+    right = ar.fit_ticks(_tick_column(img, x1 + 3, img.shape[1], y0, y1),
+                         min_inliers=4)
+    left_title = _axis_title(img, 0, max(1, x0 - 50))
+    right_title = _axis_title(img, x1 + 50, img.shape[1])
+    axes = []
+    if left:
+        axes.append({"side": "left", "key": 0.0, "title": left_title,
+                     "fit": (left[0], left[1]),
+                     "lo": left[0] + left[1] * y1, "hi": left[0] + left[1] * y0})
+    if right:
+        axes.append({"side": "right", "key": 1.0, "title": right_title,
+                     "fit": (right[0], right[1]),
+                     "lo": right[0] + right[1] * y1,
+                     "hi": right[0] + right[1] * y0})
+    if not axes:
+        raise ValueError("slb: no value axis readable on zone %d's chart"
+                         % zone)
+
+    # The multiplier is read from THIS page and no other. 00547's whole-job
+    # plot prints its shared axis as "Pressure (MPa) / Rate (m3/min)" while
+    # every one of its 39 per-zone charts prints the same axis as "... x 10";
+    # borrowing the document's answer would have shipped that well's rates ten
+    # times over. When the title cannot be read the rate is dropped rather
+    # than guessed — a missing channel is visible, a tenfold one is not.
+    rate_scale_known = bool(re.search(r"rate", left_title or "", re.I))
+
+    series = document_series(page.parent)
+    wanted, skipped, pale = {}, [], []
+    for rgb, label in series:
+        hit = _classify(label)
+        if hit is None:
+            skipped.append(label)
+            continue
+        if not _traceable(rgb):
+            pale.append(label)
+            continue
+        col, kind, mult = hit
+        if col in [v[0] for v in wanted.values()]:
+            continue
+        wanted[rgb] = (col, kind, mult, label)
+    if not wanted:
+        raise ValueError("slb: no curve on zone %d's chart is a channel this "
+                         "template names" % zone)
+
+    masks = _colour_masks(img, list(wanted))
+    n = max(2, int(round(duration * 60.0 / sample_sec)) + 1)
+    samples_s = np.arange(n) * float(sample_sec)
+    col_s = np.arange(x1 - x0 + 1) * tb * 60.0
+
+    out, units = {}, {}
+    for rgb, (col, kind, mult, label) in wanted.items():
+        sub = _drop_frame_rules(masks[rgb][y0:y1 + 1, x0:x1 + 1].copy())
+        if not sub.any():
+            continue
+        ax = _pick_axis(axes, kind)
+        if ax is None:
+            continue
+        mult = mult * _axis_multiplier(ax["title"], kind)
+        if kind == "rate" and not rate_scale_known:
+            warnings.append(
+                "%s not exported: this chart's shared value axis is a "
+                "picture and its title could not be read, so the 'x 10' the "
+                "report prints on it cannot be confirmed" % label)
+            continue
+        py = ct.column_track(sub)
+        if py is None:
+            py = ar.curve_positions(sub)
+        vals = (ax["fit"][0] + ax["fit"][1] * (py + y0)) / mult
+        if float(np.isfinite(vals).mean()) < _MIN_COVERAGE:
+            continue
+        out[col] = ct.resample(samples_s, col_s, vals)
+        units[col] = _UNITS.get(col, "")
+    if not out:
+        raise ValueError("slb: no curve traced on zone %d's chart" % zone)
+
+    meta = PageMeta()
+    meta.stage = str(zone)
+    meta.uwi = ""                       # never the printed one; see module doc
+    meta.duration_min = float(duration)
+    clock = t0_abs % 1440.0
+    meta.start_time = "%02d:%02d:%02d" % (int(clock // 60), int(clock % 60),
+                                          int(round(clock * 60)) % 60)
+    if printed:
+        day, printed_min = printed
+        # the chart opens within a minute or two of the printed start; more
+        # than half a day apart means the two sit either side of midnight
+        drift = clock - printed_min
+        if drift > 720.0:
+            day = day - timedelta(days=1)
+        elif drift < -720.0:
+            day = day + timedelta(days=1)
+        meta.date = day.strftime("%Y-%m-%d")
+    text = page.get_text()
+    cust = _CUSTOMER.search(text)
+    printed_uwi = _UWI_LINE.search(text)
+    bits = ["%s — Zone %d" % (PRC_TITLE, zone)]
+    if cust:
+        bits.append(cust.group(1))
+    if printed_uwi:
+        bits.append("report UWI %s" % printed_uwi.group(1))
+    meta.title = " — ".join(bits)
+    if skipped:
+        meta.warnings.append(
+            "curve(s) not named by this template, left untraced: "
+            + ", ".join(sorted(set(skipped))))
+    if pale:
+        meta.warnings.append(
+            "curve(s) drawn in an ink too pale to tell from the chart's own "
+            "gridlines, left untraced: " + ", ".join(sorted(set(pale))))
+    meta.warnings += warnings
+    return meta, samples_s / 60.0, out, units
 
 
 def extract_page_blocks(page, sample_sec=1.0):
-    """One PRC Plot page -> [(meta, samples, {col: values}, {col: unit})].
+    """One chart page -> [(meta, samples, {col: values}, {col: unit})].
 
-    One block for an interval-titled plot. For a whole-job plot, one block
-    per zone, each carrying its real zone number, start clock and date, cut
-    at the times the report's own Zone N Summary sheets print.
+    One block for a per-interval vector plot and one for a per-zone raster
+    sheet. A whole-job plot yields none: see the section header above.
     """
-    meta, samples, data, units, t0_abs = _extract_core(page, sample_sec)
-    if meta.stage:
-        return [(meta, samples, data, units)]
-
-    doc = getattr(page, "parent", None)
-    clocks = {}
-    if doc is not None:
-        try:
-            clocks = zone_clock(doc)
-        except Exception:
-            clocks = {}
-    wins = _zone_windows(clocks, t0_abs, meta.duration_min)
-    if not wins:
-        # Nothing to cut on. Do not ship it blank: a blank stage becomes the
-        # "?" block, which is what made these unusable in the first place.
-        meta.stage = "job overview"
-        meta.warnings.append(
-            "whole-job PRC plot: this page charts the entire treatment and "
-            "the report prints no per-zone start/end times to split it on, "
-            "so it is reported as one job-overview block")
-        return [(meta, samples, data, units)]
-
-    step = sample_sec / 60.0
-    blocks = []
-    for z, lo, hi, start_dt in wins:
-        i0 = max(0, int(round((lo - t0_abs) / step)))
-        i1 = min(len(samples), int(round((hi - t0_abs) / step)) + 1)
-        if i1 - i0 < 10:
-            continue                      # too short to be a treatment
-        zmeta = PageMeta()
-        zmeta.stage = str(z)
-        zmeta.uwi = ""                    # never the printed one; see module doc
-        zmeta.start_time = start_dt.strftime("%H:%M:%S")
-        zmeta.date = start_dt.strftime("%Y-%m-%d")
-        zmeta.duration_min = float(hi - lo)
-        zmeta.title = re.sub(r"^" + re.escape(PRC_TITLE),
-                             f"{PRC_TITLE} — Zone {z}", meta.title, count=1)
-        zmeta.warnings = list(meta.warnings)
-        zsamples = samples[i0:i1] - samples[i0]
-        zdata = {c: v[i0:i1] for c, v in data.items()}
-        blocks.append((zmeta, zsamples, zdata, units))
-    if not blocks:
-        meta.stage = "job overview"
-        return [(meta, samples, data, units)]
-    missing = sorted(set(clocks) - {int(b[0].stage) for b in blocks})
-    if missing:
-        blocks[0][0].warnings.append(
-            "zone(s) the report times but this plot does not cover, left "
-            "unsplit: " + ", ".join(str(z) for z in missing))
-    return blocks
-
-
+    kind = page_chart_kind(page)
+    if kind == "raster":
+        return [extract_zone_page(page, sample_sec)]
+    if kind != "vector":
+        raise ValueError("slb: not a chart page")
+    if page_stage(page) is None:
+        doc = getattr(page, "parent", None)
+        sheets = 0
+        if doc is not None:
+            try:
+                sheets = sum(1 for p in range(doc.page_count)
+                             if zone_number(doc[p]) is not None)
+            except Exception:
+                sheets = 0
+        raise ValueError(
+            "whole-job PRC plot not exported — this page charts the entire "
+            "treatment on one axis and names no interval; the report's own "
+            "%d per-zone chart(s) are read instead" % sheets)
+    meta, samples, data, units, _t0 = _extract_core(page, sample_sec)
+    return [(meta, samples, data, units)]
 # ------------------------------------------------------ summary table pages
 
 SUMMARY_KINDS = [
