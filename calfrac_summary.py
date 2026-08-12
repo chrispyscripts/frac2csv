@@ -78,6 +78,19 @@ def is_treatment_page(page):
     return False
 
 
+def detect(doc):
+    """True when the document prints the modern zone-major grid.
+
+    This module's OWN gate. The dispatch used to ask for these tables only
+    where the chart side had already recognised an MView plot, which reads
+    the summary out of a filing's plots rather than out of the summary.
+    """
+    for p in range(doc.page_count):
+        if is_treatment_page(doc[p]):
+            return True
+    return False
+
+
 _START_COL = re.compile(r"^Start Time\b", re.I)
 _JOBDATE_COL = re.compile(r"^Job Date\b", re.I)
 _MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")

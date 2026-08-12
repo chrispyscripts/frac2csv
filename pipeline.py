@@ -74,6 +74,10 @@ try:
     import sanjel_tables
 except Exception:                       # pragma: no cover
     sanjel_tables = None
+try:
+    import calfrac_legacy
+except Exception:                       # pragma: no cover
+    calfrac_legacy = None
 
 
 def _md(meta):
@@ -1049,7 +1053,17 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
              lambda d: _bj_totals(d))
     _summary(liberty_summary, "Liberty chart" in chart_srcs,
              "Stimulation Summary", liberty_summary.parse_stimulation)
-    _summary(calfrac_summary, "MView chart" in chart_srcs,
+    # Calfrac printed three different summary layouts across the corpus and
+    # only the newest one was ever read, so most Calfrac wells came back with
+    # charts and no engineering table at all. Gate on Calfrac's OWN pages as
+    # well as on the chart source: the older sheets carry the summary and the
+    # plot side by side, and a filing prints its tables whether or not we can
+    # read its plots. Keeping the chart test in the OR leaves the documents
+    # that already produced a table exactly as they were.
+    _calfrac_legacy_doc = calfrac_legacy is not None and calfrac_legacy.detect(doc)
+    _summary(calfrac_summary,
+             "MView chart" in chart_srcs or _calfrac_legacy_doc
+             or calfrac_summary.detect(doc),
              "Treatment Summary", calfrac_summary.parse_treatment_summary)
 
     # SLB prints two tables worth having. The zone grid is the only place in
@@ -1125,6 +1139,16 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
          lambda: canyon_tables.parse_treatment_log(doc)),
     ], gate=lambda: canyon_tables is not None
                  and bool(canyon_tables.find_summary_pages(doc)))
+
+    # Calfrac's two pre-2024 layouts, one row per zone — the same grain as the
+    # modern grid parsed above. Only one of the two fires on a given well:
+    # they are alternative vintages of the same sheet, not companions.
+    _tables_from(calfrac_legacy, "Calfrac legacy summary", [
+        ("Multiple Zone Frac Treatment Summary",
+         lambda: calfrac_legacy.parse_multizone(doc)),
+        ("Treatment Summary (per-stage sheets)",
+         lambda: calfrac_legacy.parse_datasheets(doc)),
+    ], gate=lambda: _calfrac_legacy_doc)
 
     _tables_from(ifs_tables, "IFS stage summary", [
         ("Stage Summary", lambda: ifs_tables.parse_stage_summary(doc)),
