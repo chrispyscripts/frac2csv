@@ -18,15 +18,9 @@ Two rules earned the hard way, and both caught real defects tonight:
 
 ## In flight right now
 
-**Schlumberger template** (task #64) — an agent is surveying
-`/Volumes/CNC2X1TB/BCER-Frac/Spud-2019-2023/__SCHLUM/` (199 PDFs, 2018-2021).
-Briefed to report the layout survey BEFORE building. Owns `slb.py` +
-`lab/api/slb.py` only; reports the `pipeline.py` hook rather than applying it.
-If it has already reported, its findings are the starting point.
-
-`slb.py` and `lab/api/slb.py` now exist and are UNCOMMITTED — that agent's
-work, deliberately left alone by the session that landed 9811e8e/55462e6.
-Its report is in the previous session's transcript, not in the task list.
+Nothing is running. A raster corpus scan (`rasterscan.py` in the session
+scratchpad) finished STEP — 51 files, 1,959 surface + 169 chemical charts —
+and its SLB/Hal-1/Trican legs were staged but not aggregated.
 
 ## Two drives, and they drop
 
@@ -157,6 +151,40 @@ none of this is on carmines-lab.vercel.app yet.
   layouts print a bare "#1"); 17 of 00009's 25 charts were dated to the job's
   first day. Both fixed, dates now taken from the printed TREATMENT INTERVAL
   SUMMARY, choosing between re-attempt rows by the chart's own clock.
+
+## Landed 2026-08-12, second session (5c6bdc5, 0455617, 12330c9, 54028cd)
+
+- **SLB per-zone sheets** trace, and the whole-job plot is dropped per client
+  direction. Also fixed the vintage whose curves are painted, not stroked.
+- **Peak-preserving reducer** (`0455617`): a swept column is read at whichever
+  END lies further from the local trend, not at its median. The client asked
+  for the spikes, not the averaging, and this is corpus-wide, not STEP-only.
+- **Five table parsers wired** (`12330c9`): STEP, Hal-1, Canyon, IFS, Sanjel.
+  Gated on each module's OWN detector, not on a chart source — gating tables
+  on charts is why 01155's 22 clean rows emitted nothing.
+- **STEP now reports its axes** (`54028cd`). It reported none at all, so the
+  peak-outside-axis check — the diagnostic that cracked IFS and Hal-1 — has
+  been silently skipping STEP entirely.
+- **BJ stage names** no longer carry a date (client #85): "10 May-31 14:00"
+  became "10 (2)".
+- **Lab UI**: provider dropdown removed; a "Table" button beside Stacked opens
+  the file's summary tables in their own window, Totals first.
+
+## What the STEP measurements settled
+
+- **STEP is 100% raster.** `step_vec.detect` fires on ZERO pages across 2017,
+  2020 and 2025 vintages. `step_vec.py` is dead code against everything
+  measurable, which means the uneven-tick fix (below) belongs entirely in
+  `step1` + `auto_raster`.
+- **00183's "missing slurry" is NOT a bug.** Measured at pixel level: the gap
+  columns contain zero cyan pixels while good columns contain 162. The chart
+  lifts its pen while the pumps are off. An honest gap and a parser failure
+  look identical in the Lab — that is the real defect, and a per-channel note
+  ("4 gaps totalling 12.8 min where the chart draws no curve") would have
+  prevented the client report.
+- **A wrong axis defeats the axis check.** 00184's SSI-3 Conc peaks at 1,244
+  beside siblings at 0.11-1.95, but its axis was ALSO fitted as 0-2000, so the
+  peak sits inside it. Needs a sibling-consistency test, not a range test.
 
 ## Open, highest value first
 
