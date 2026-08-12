@@ -224,6 +224,11 @@
                  background:var(--panel);
                  border:1px solid var(--line); border-radius:8px; display:block; }
   .legendrow { display:flex; align-items:flex-start; gap:14px; padding:2px 18px 10px; }
+  /* Controls that appear and disappear between stages keep their box, so the
+     row stays put instead of reflowing under the cursor. visibility also
+     takes them out of the tab order and out of reach of the mouse, which
+     display:none did for free and opacity would not. */
+  .reserved { visibility:hidden; }
   .legend { display:flex; flex-wrap:wrap; gap:8px 16px; flex:1; }
   .legend span { display:inline-flex; align-items:center; gap:6px; font-size:11.5px;
                  cursor:pointer; user-select:none; border-radius:5px; padding:2px 6px;
@@ -243,7 +248,8 @@
   .stackmsg { align-self:center; font-size:11.5px; color:var(--carmine);
               font-weight:600; max-width:26ch; line-height:1.25; }
   .origbar .btn:disabled { opacity:.35; pointer-events:none; }
-  .origlbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
+  .origlbl { min-width:118px; display:inline-block; text-align:center;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; color:var(--mut); font-family:var(--mono); }
   #graph { cursor:grab; }
   #graph.panning { cursor:grabbing; }
   .dlbar { padding:6px 18px 16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -411,7 +417,7 @@
             <div class="title" id="pv-title">&mdash;</div>
             <div class="sub" id="pv-sub"></div>
           </div>
-          <div class="seg mini" id="ghostlayers" hidden>
+          <div class="seg mini reserved" id="ghostlayers">
             <button type="button" data-layer="ours" class="on"
               title="Show or hide our extracted curves">Extracted</button>
             <button type="button" data-layer="ref" class="on"
@@ -445,7 +451,7 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
             <button type="button" data-v="canon" class="on">Our terms</button>
             <button type="button" data-v="raw">As extracted</button>
           </div>
-          <div class="origbar" id="origbar" hidden>
+          <div class="origbar reserved" id="origbar">
             <button type="button" class="btn" id="origprev">‹</button>
             <span class="origlbl" id="origlbl"></span>
             <button type="button" class="btn" id="orignext">›</button>
@@ -2276,7 +2282,7 @@ function updateOrigBar() {
   syncGhostLayerUI();
 
   const on = pages.length > 0;
-  $("origbar").hidden = !on;
+  $("origbar").classList.toggle("reserved", !on);
   if (!on) return;
   const i = Math.min(orig.pageIdx, pages.length - 1);
   $("origlbl").textContent = `PDF p.${pages[i]}` +
@@ -2919,8 +2925,8 @@ $("orignext").addEventListener("click", () => { orig.pageIdx++; if (applyCompare
 // Independent toggles, not a segmented choice: either layer, both, or neither.
 function syncGhostLayerUI() {
   // follows the Ghost button: pointless on a page that has no source
-  $("ghostlayers").hidden = !(current && current.item &&
-                              current.item.type === "stage");
+  $("ghostlayers").classList.toggle("reserved",
+    !(current && current.item && current.item.type === "stage"));
   for (const b of $("ghostlayers").children) {
     const on = b.dataset.layer === "ours" ? settings.ghostOurs : settings.ghostRef;
     b.classList.toggle("on", !!on);
