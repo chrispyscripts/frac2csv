@@ -41,7 +41,13 @@ Both have disconnected mid-run and killed agents. **Always copy the PDFs you
 need to scratchpad first.** `00374` on the old drive is truncated to 49 KB and
 will throw — it needs re-copying from source.
 
-## Three deploy targets — "shipped" means all three
+## Deploy targets — "shipped" means the EXE
+
+The client uses the EXE and nothing else. A release is the `version.py` bump,
+the `v*` tag that builds it, and the download page that serves it. The hosted
+Lab is retired (see below); local testing is `python3 localapp.py`.
+
+## Historical: three deploy targets
 
 1. `frac2csv-download` → https://frac2csv-download.vercel.app (download page
    + `/data.html` coverage page)
@@ -74,11 +80,10 @@ Consequences worth keeping in mind:
   app serves them. Retiring the deployment does not retire those files.
 - The download page (`frac2csv-download`) is unaffected and still ships.
 
-The URL still resolves and Carmine may have it bookmarked. It now serves an
-engine that will drift further from the EXE with every release, so if he uses
-it he will file reports against data the desktop app would not produce.
-**Decide whether to replace that page with a pointer to the download, rather
-than leaving a stale tool live.**
+Nobody is affected: the client has only ever used the EXE, and the hosted Lab
+was only ever used by Chris. So it needs no redirect and no takedown — it just
+stops being deployed. If it is ever wanted again, deploying it means syncing
+`lab/api` to the desktop engine first, or it will serve stale results.
 
 ## The hosted Lab is NOT the desktop engine (historical — now retired)
 
