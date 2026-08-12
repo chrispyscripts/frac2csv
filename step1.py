@@ -56,11 +56,22 @@ def _detect_tiled(page):
     return len(widths) == 1 and widths.pop() > page.rect.width * 0.9
 
 
+def _page_text(page):
+    """Page text with the separators these filings actually use.
+
+    STEP's own generator sets every space in its captions as a NO-BREAK SPACE
+    (U+00A0) and every hyphen as a non-breaking hyphen (U+2011), so a literal
+    "Surface Treatment Plot" never matches the text layer. Normalise once,
+    here, rather than in each caller."""
+    return (page.get_text().replace(" ", " ").replace("‑", "-")
+            .replace("‐", "-"))
+
+
 def _detect_new(page):
     big = _big_images(page)
     if not big:
         return False
-    t = page.get_text()
+    t = _page_text(page)
     if "LSD:" in t and ("Surface Chart" in t or "Interval" in t):
         return True
     # 2024 filings (01078/01079) print the SAME two charts — same frame, same
@@ -69,7 +80,20 @@ def _detect_new(page):
     # files reported no extractable data. The two chart captions plus an
     # Interval title are what identify the page; the surrounding tour text
     # names other vendors and cannot be used.
-    return ("Surface Chart" in t and "Chemical Chart" in t
+    if ("Surface Chart" in t and "Chemical Chart" in t
+            and re.search(r"Interval\s+\d+", t) is not None):
+        return True
+    # Pacific Canbriam 2020 (00322, 00337): the SAME renderer again — two
+    # 989x764 chart images, the same colour key, the same stacked value axes,
+    # the same clock time axis — but the page carries no info table at all, so
+    # there is no "LSD:" line, and the two captions are worded "<operator>
+    # Surface Treatment Plot" / "... Chemical Treatment Plot" instead of
+    # "Surface Chart" / "Chemical Chart" (those two words are printed INSIDE
+    # the image, where no text search can see them). Both files reported no
+    # extractable data across 376 pages for that wording alone.
+    return ("STEP Energy Services" in t
+            and "Surface Treatment Plot" in t
+            and "Chemical Treatment Plot" in t
             and re.search(r"Interval\s+\d+", t) is not None)
 
 
@@ -559,7 +583,9 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         if cov < 0.1:
             continue
         n_cols = sub.shape[1]
-        py = ar.curve_positions(sub) + y0
+        py = ar.curve_positions(sub)
+        cx, py = _keep_excursions(sub, py)
+        py = py + y0
         # same round-bound snap as the tiled path (see auto_raster.snap_axis):
         # applied before values are read so it reaches the exported numbers
         _vt, _vb, _sn = ar.snap_axis(a + b * y0, a + b * y1)
@@ -567,7 +593,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             b = (_vb - _vt) / float(y1 - y0)
             a = _vt - b * y0
         vals = a + b * py
-        t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
+        t_cols = (ta + tb * (cx + x0)) - t_start
         if np.isfinite(vals).sum() < 50:
             continue
         # No ink means no reading: np.interp with no left/right clamps to the
@@ -585,6 +611,118 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     info = {"plot": box, "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": []}
     return samples, channels, info
+
+
+def _chosen_run(sub, py, gap=2):
+    """Top and bottom row of the run curve_positions settled on, per column.
+
+    curve_positions reports that run's MEDIAN row and nothing else, so the
+    caller cannot tell a 3px stroke from a 300px near-vertical one. Rebuilt
+    here with the same run split (contiguous ink, `gap`-pixel tolerance) and
+    matched back by the median it returned, so a column whose ink was
+    rejected as a contaminant stays rejected."""
+    n = sub.shape[1]
+    top = np.full(n, np.nan)
+    bot = np.full(n, np.nan)
+    for c in range(n):
+        if not np.isfinite(py[c]):
+            continue
+        ys = np.flatnonzero(sub[:, c])
+        if not len(ys):
+            continue
+        for r in np.split(ys, np.flatnonzero(np.diff(ys) > gap) + 1):
+            if abs(float(np.median(r)) - py[c]) < 1e-9:
+                top[c], bot[c] = float(r[0]), float(r[-1])
+                break
+    return top, bot
+
+
+def _despeckle(py, join=2, island=3, need=40):
+    """Blank islands of one to three columns standing on their own.
+
+    hue_masks classifies the anti-aliased fringe where two curves cross, so a
+    chart routinely carries a two-pixel fleck of one series' colour sitting in
+    another series' territory. curve_positions keeps it — it is the only run
+    in that column, and the rolling median it is checked against is built from
+    the fleck itself when its neighbours are blank — and ct.resample then
+    reports it as a reading. On 00322 that fleck IS the exported peak: Btm
+    Prop Conc came out at 652 kg/m3 on stage 1 from two pixels at column 244,
+    27 columns clear of where the curve actually starts, while the curve
+    itself never passes 155. A plotted curve is hundreds of columns wide; an
+    island three columns wide is not a reading of one.
+    """
+    out = np.array(py, dtype=float, copy=True)
+    fin = np.flatnonzero(np.isfinite(out))
+    if len(fin) < need:
+        return out
+    for grp in np.split(fin, np.flatnonzero(np.diff(fin) > join) + 1):
+        if len(grp) <= island:
+            out[grp] = np.nan
+    return out
+
+
+def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
+    """Curve rows -> (column positions, rows), splitting near-vertical strokes.
+
+    One reading per column is right while the curve is drawn as a stroke: the
+    run is the pen's thickness and its median is the value. It is wrong the
+    moment the curve moves faster than the render's resolution. STEP's charts
+    are ~6 seconds per pixel column (00030 stage 30: 4,937 s across 827
+    columns), so a spike, a step riser or the ramp at the start of pumping is
+    drawn as ONE tall run — and its median is the MIDDLE of that move. The
+    export then shows a spike half as deep as the page draws it, which is the
+    flattening reported in #66: on that page the green Prop Conc needle at
+    07:59 reads 223 kg/m3 where the chart draws it running from 407 down to 3.
+
+    So where the run is much taller than this chart's own stroke, emit BOTH
+    of its ends — a quarter of a column apart, in the order that continues
+    the trace — instead of their midpoint. Nothing is invented: both rows are
+    ink the page actually printed, and the pair spans the same column it
+    always did. Ordinary columns are untouched and come out bit-identical.
+    """
+    n = sub.shape[1]
+    py = _despeckle(py)
+    top, bot = _chosen_run(sub, py)
+    height = bot - top + 1.0
+    med = float(np.nanmedian(height)) if np.isfinite(height).any() else 1.0
+    tall = max(min_px, factor * med)
+    # nearest finite reading on each side, to say which end continues the trace
+    prev = np.full(n, np.nan)
+    nxt = np.full(n, np.nan)
+    last = np.nan
+    for c in range(n):
+        prev[c] = last
+        if np.isfinite(py[c]):
+            last = py[c]
+    last = np.nan
+    for c in range(n - 1, -1, -1):
+        nxt[c] = last
+        if np.isfinite(py[c]):
+            last = py[c]
+    xs, rows = [], []
+    for c in range(n):
+        if not np.isfinite(py[c]):
+            continue
+        if not np.isfinite(height[c]) or height[c] < tall:
+            xs.append(float(c))
+            rows.append(py[c])
+            continue
+        hi, lo = top[c], bot[c]
+        if np.isfinite(prev[c]):
+            first, second = ((hi, lo) if abs(hi - prev[c]) <= abs(lo - prev[c])
+                             else (lo, hi))
+        elif np.isfinite(nxt[c]):
+            second, first = ((hi, lo) if abs(hi - nxt[c]) <= abs(lo - nxt[c])
+                             else (lo, hi))
+        else:
+            xs.append(float(c))
+            rows.append(py[c])
+            continue
+        xs.append(c - split)
+        rows.append(first)
+        xs.append(c + split)
+        rows.append(second)
+    return np.asarray(xs, dtype=float), np.asarray(rows, dtype=float)
 
 
 def _page_geom(info, scale_x, scale_y, off_x=0.0, off_y=0.0):
@@ -651,6 +789,13 @@ def _extract_new(page, sample_sec=1.0):
     # 2024 layout only: the page prints its own well and date, and its time
     # axis is a wall clock rather than elapsed minutes.
     if "Surface Chart" in text and "Chemical Chart" in text:
+        meta["clock"] = True
+    # Pacific Canbriam 2020 (00322/00337) plots the same wall clock — the
+    # axis reads 23:15, 23:20 … and the chart footer prints the calendar span
+    # — so sample 0 is a time of day here too. The page names no well and no
+    # date, so only the clock is taken.
+    elif ("Surface Treatment Plot" in _page_text(page)
+            and "Chemical Treatment Plot" in _page_text(page)):
         meta["clock"] = True
         m = re.search(r"UWI\s+(\d{3})/([A-Z])-(\d{3})-([A-Z])/(\d{3})-([A-Z])"
                       r"-(\d{2})", text)
@@ -731,6 +876,15 @@ def impossible_axis(c):
             return _axis_note(c, fr, "pressure")
     elif _is_floored(c) and not ar.plausible_floor_axis(*fr):
         return _axis_note(c, fr, "concentration/rate")
+    # A PROPPANT concentration is printed in the hundreds of kg/m3 — every
+    # STEP chart in the corpus tops that axis at 800 or 1,000. A chemical
+    # chart's left axis is an ADDITIVE concentration in L/m3 topping out at 1
+    # or 2, and because the colour table only knows the surface chart's
+    # colours, its curves came out named "Prop Conc (kg/m3)" reading 0.83 —
+    # 00322/00337 ship 143 such pages. No proppant axis is that small, so the
+    # frame itself says the name cannot belong to it.
+    if (c.get("unit") or "").lower() == "kg/m3" and abs(fr[0] - fr[1]) < 10:
+        return _axis_note(c, fr, "proppant-concentration")
     return None
 
 

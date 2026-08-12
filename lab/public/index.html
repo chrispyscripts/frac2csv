@@ -1564,11 +1564,29 @@ function setGraph(channels, n, sampleSec, meta) {
   gState.tMax = Math.max(1, (n - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
   gState.hidden = new Set(); gState.hover = null;
+  // Two curves must never share a colour. PALETTE's first five entries ARE
+  // the five SERIES_COLORS values, so indexing it by channel position handed
+  // e.g. WH Slurry Rate the same green as WH Prop Conc — the rate curve and
+  // the concentration steps drawn as one colour, which reads as one bleeding
+  // into the other. Named channels claim their colour first, then the rest
+  // take the next palette entry nobody has.
+  const taken = new Set();
+  channels.forEach(c => { if (SERIES_COLORS[c.key]) taken.add(SERIES_COLORS[c.key]); });
+  let nextPal = 0;
   channels.forEach((c, ci) => {
     let vmax = 0;
     for (const v of c.values) if (v != null && isFinite(v)) vmax = Math.max(vmax, Math.abs(v));
     c._vmax = vmax;
-    c._color = SERIES_COLORS[c.key] || PALETTE[ci % PALETTE.length];
+    if (SERIES_COLORS[c.key]) { c._color = SERIES_COLORS[c.key]; return; }
+    let col = null;
+    for (let k = 0; k < PALETTE.length; k++) {
+      const cand = PALETTE[(nextPal + k) % PALETTE.length];
+      if (!taken.has(cand)) { col = cand; nextPal = (nextPal + k + 1) % PALETTE.length; break; }
+    }
+    // more channels than distinct colours: fall back to position rather than
+    // leaving a curve unpainted
+    c._color = col || PALETTE[ci % PALETTE.length];
+    taken.add(c._color);
   });
   redrawGraph(); buildLegend();
 }

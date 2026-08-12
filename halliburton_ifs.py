@@ -15,7 +15,7 @@ from collections import defaultdict
 import fitz
 import numpy as np
 
-from frac_core import PageMeta, _resample
+from frac_core import PageMeta
 
 STD_NAMES = [
     (("treating pressure",), "Tr Press"),
@@ -142,6 +142,17 @@ def _axis_columns(spans):
         out.append({"x": float(np.mean([s["cx"] for s in best_chain])),
                     "a": a, "b": b, "n": len(best_chain),
                     "y_lo": min(ys), "y_hi": max(ys)})
+    # A value axis is labelled the full height of the plot. IFS also numbers
+    # the EVENT MARKERS down the right-hand side, 1..N, and once an interval
+    # runs past sixteen events four of those numbers ("17 18 19 20") sit in
+    # their own column, evenly spaced, arithmetic — indistinguishable from a
+    # tick ladder except that they cover a fifth of the frame. On 00001
+    # interval 3 (41 events) that phantom column took axis B, which pushed
+    # Slurry Rate onto a 17..20 scale and BOTH concentrations onto the rate
+    # axis: WH Prop Conc came back as 16.59 kg/m3 on a 0..16 scale (#77).
+    if out:
+        tallest = max(c["y_hi"] - c["y_lo"] for c in out)
+        out = [c for c in out if c["y_hi"] - c["y_lo"] >= 0.6 * tallest]
     out.sort(key=lambda c: c["x"])
     return out
 
@@ -225,6 +236,47 @@ def _color_close(stroke, legend_int):
     return sum((a - b) ** 2 for a, b in zip(stroke, (lr, lg, lb))) < 0.02
 
 
+def _pen_resample(t, v, spans, samples, sample_sec=1.0):
+    """Stroked segments -> the sample grid, WITHOUT inventing anything.
+
+    frac_core._resample is written for MView, where every series is drawn
+    across the whole plot and the chart merely omits the leading flatline. It
+    does two things that are wrong on an IFS page:
+
+      * np.interp draws a straight line across ANY hole in the curve. An IFS
+        concentration series is pen-down only while proppant is being pumped,
+        so the hole is most of the interval and the export carried a straight
+        ramp through it — Carmine's "straight line extending past the chart"
+        (#75-#77) and "pen up down issues" (#65);
+      * it holds the first value back to t=0. The grid starts when the FIRST
+        series starts (pressure), so a concentration curve that begins 38
+        minutes later was exported as a flat line at its opening value for
+        those 38 minutes — 00001 stage 1 drew exactly that at 0.19 kg/m3.
+
+    A segment IS the pen being down, so the union of the segments' time spans
+    is where this series has data. Everything else is blank, which the
+    exporter writes as an empty cell.
+    """
+    uniq, inv = np.unique(np.round(t, 6), return_inverse=True)
+    vu = np.bincount(inv, weights=v) / np.bincount(inv)
+    out = np.interp(samples, uniq, vu, left=np.nan, right=np.nan)
+    if not len(spans):
+        return out
+    tol = max(float(sample_sec), 1.0)
+    order = np.argsort(spans[:, 0], kind="stable")
+    cov = np.zeros(len(samples), dtype=bool)
+    lo, hi = spans[order[0]]
+    for a, b in spans[order[1:]]:
+        if a <= hi + tol:                     # same pen-down stretch
+            hi = max(hi, b)
+            continue
+        cov |= (samples >= lo - tol) & (samples <= hi + tol)
+        lo, hi = a, b
+    cov |= (samples >= lo - tol) & (samples <= hi + tol)
+    out[~cov] = np.nan
+    return out
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {column: values}, channel_info) for an IFS chart page."""
     rotated = page_rotated(page)
@@ -251,7 +303,10 @@ def extract_page(page, sample_sec=1.0):
     for i, ax in enumerate(rest):
         mapping[ax] = right[min(i, len(right) - 1)]
 
-    # collect stroked points per legend color
+    # collect stroked SEGMENTS per legend color. Segments, not loose points:
+    # a segment is one stretch of pen-down, and the union of their time spans
+    # is the only honest statement of where this series has data at all. See
+    # _pen_resample.
     pts_by_color = defaultdict(list)
     for d in page.get_drawings():
         c = d.get("color")
@@ -279,7 +334,7 @@ def extract_page(page, sample_sec=1.0):
                         continue
                     if rotated:
                         pp = [_unrotate(x, y) for x, y in pp]
-                    lst.extend(pp)
+                    lst.append(pp)
                 break
 
     # plot time-range: clip to the plot FRAME, not the time-label span. IFS
@@ -323,25 +378,56 @@ def extract_page(page, sample_sec=1.0):
     meta.title = (t.group(0).strip() if t
                   else " ".join(text.strip().splitlines()[0].split()))[:60]
 
+    # The PLOT FRAME, in the same coordinates the points are read in. Every
+    # tick column brackets the same frame vertically except where its labels
+    # stop short of it, so the median pair is the frame and an individual
+    # column's extent is not.
+    used = []
+    for c in mapping.values():
+        if c not in used:
+            used.append(c)
+    lo_s = sorted(c["y_lo"] for c in used)
+    hi_s = sorted(c["y_hi"] for c in used)
+    v_top = float(lo_s[len(lo_s) // 2])
+    v_bot = float(hi_s[len(hi_s) // 2])
+    if v_bot < v_top:
+        v_top, v_bot = v_bot, v_top
+
     t_min_all, t_max_all = None, None
     series = {}
     series_axis = {}                 # (name, unit) -> the tick column it reads
     info = {}
     for name, unit, cint, ax in legend:
-        pts = pts_by_color.get(cint)
+        segs = pts_by_color.get(cint)
         col = mapping.get(ax)
-        if not pts or col is None:
+        if not segs or col is None:
             continue
-        arr = np.array(pts)
-        keep = ((arr[:, 0] >= x_lo) & (arr[:, 0] <= x_hi) &
-                (arr[:, 1] >= col["y_lo"] - 12) & (arr[:, 1] <= col["y_hi"] + 12))
-        arr = arr[keep]
-        if len(arr) < 30:
+        # Clip to the FRAME, not to this column's own tick extent ±12pt. That
+        # slack was wrong in both directions on every IFS file sampled:
+        #  - too generous above. The legend key is drawn in the series' own
+        #    colour a few points above the frame, so its swatch line entered
+        #    the data as two points at a value ABOVE the axis maximum — which
+        #    is how 00001 stage 1 reported WH Prop Conc 829.85 on a 0..800
+        #    scale (#75), and why the Lab drew a straight line diving in from
+        #    off the top of the chart: np.interp ran from that phantom point
+        #    to the first real one.
+        #  - too strict below. The concentration column labels 100..800, so
+        #    y_hi is the 100 gridline and everything the curve does under
+        #    ~44 kg/m3 fell outside the window: 622 and 704 real points cut
+        #    from the two concentration series on that page alone, each cut
+        #    leaving a hole np.interp then bridged with a straight line.
+        arr = np.array(segs, dtype=float)          # (m, 2, 2)
+        inside = ((arr[:, :, 0] >= x_lo) & (arr[:, :, 0] <= x_hi) &
+                  (arr[:, :, 1] >= v_top - 2) & (arr[:, :, 1] <= v_bot + 2))
+        arr = arr[inside.all(axis=1)]
+        if arr.size < 60:
             continue
-        t = ta + tb * arr[:, 0]
-        v = col["a"] + col["b"] * arr[:, 1]
+        t = ta + tb * arr[:, :, 0]
+        v = col["a"] + col["b"] * arr[:, :, 1]
+        span = np.stack([t.min(axis=1), t.max(axis=1)], axis=1)
+        t, v = t.reshape(-1), v.reshape(-1)
         order = np.argsort(t, kind="stable")
-        series[(name, unit)] = (t[order], v[order])
+        series[(name, unit)] = (t[order], v[order], span)
         series_axis[(name, unit)] = col
         lo, hi = t.min(), t.max()
         t_min_all = lo if t_min_all is None else min(t_min_all, lo)
@@ -378,27 +464,18 @@ def extract_page(page, sample_sec=1.0):
     #    page is placed by a different pair leaves it a constant distance off
     #    its own ink (the concentration column labels 100..800, not 0..800,
     #    so its extent is not the frame's).
-    used = []
-    for c in mapping.values():
-        if c not in used:
-            used.append(c)
-    lo_s = sorted(c["y_lo"] for c in used)
-    hi_s = sorted(c["y_hi"] for c in used)
-    v_top = float(lo_s[len(lo_s) // 2])
-    v_bot = float(hi_s[len(hi_s) // 2])
-    if v_bot < v_top:
-        v_top, v_bot = v_bot, v_top
     meta.geom = {"axis": "y" if rotated else "x",
                  "ta": float(ta - t_min_all),
                  "tb": float(-tb if rotated else tb),
                  "v0": v_top, "v1": v_bot}
 
     data, chinfo, axes, axes_frame = {}, {}, {}, {}
-    for (name, unit), (t, v) in series.items():
+    for (name, unit), (t, v, span) in series.items():
         col = std_name(name)
         if col in data:
             continue
-        vals = _resample(t - t_min_all, v, samples / 60 * 60)
+        vals = _pen_resample(t - t_min_all, v, span - t_min_all, samples,
+                             sample_sec)
         data[col] = vals
         chinfo[col] = {"label": name, "unit": unit}
         acol = series_axis.get((name, unit))
