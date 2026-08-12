@@ -24,6 +24,10 @@ Briefed to report the layout survey BEFORE building. Owns `slb.py` +
 `lab/api/slb.py` only; reports the `pipeline.py` hook rather than applying it.
 If it has already reported, its findings are the starting point.
 
+`slb.py` and `lab/api/slb.py` now exist and are UNCOMMITTED — that agent's
+work, deliberately left alone by the session that landed 9811e8e/55462e6.
+Its report is in the previous session's transcript, not in the task list.
+
 ## Two drives, and they drop
 
 - `/Volumes/For-Chris-CnC-1TB/BCER-Frac/` — original corpus, 1451 folders,
@@ -94,17 +98,50 @@ Halliburton IFS and Hal-1 clusters.
   axis, IMAGE tag on raster-traced stages, Full page, scroll-to-zoom
   everywhere, stable control row, collision-free curve colours.
 
+## Landed since this file was written (9811e8e, 55462e6)
+
+Not yet deployed — no version bump, no tag, and `lab/api` is NOT synced, so
+none of this is on carmines-lab.vercel.app yet.
+
+- **#70 CLOCKS/DATES/SKEW.** Applied and measured over all 120 CalFrac files:
+  stages exporting `00:00:00` **1,681 → 30** (165 left deliberately blank
+  where the grid names no zone), 1,583 rows re-dated across 77 files, 3,303
+  re-clocked across 117. Cross-page skew **27.1 s mean → 0** by construction.
+  Verified against the printed grid page, not the parser. One regression the
+  corpus run caught before commit: requiring a twin's cuts cost 00070 19 of
+  its 24 stages, so a twin whose captioned page could not be split still
+  splits on its own data.
+- **#70 GHOST.** Proportional ink coverage instead of a 0/255 snap — the
+  threshold was erasing 10.3% of the page's inked pixels (measured in the
+  browser on 00304). The canvas-sizing half is NOT done; see the new task.
+- **#67 SANJEL UWI.** Charts now leave `uwi` empty and report `banner_uwi`,
+  so the filename UWI wins. 00013 and 00019 were exporting another well's
+  UWI on every chart.
+- **#66 IFS LETTERED INTERVALS.** Bigger than reported: the pipeline's own
+  IFS gate matched bare digits and skips silently, so 00001's intervals 4A,
+  4B, 5A, 5B, 6A, 6B produced **nothing at all** — 8 charts became 20, over
+  10 intervals, validated against the report's printed Max Treating Pressure.
+- **#65 CANYON.** All 32 chart pages of 00204 had NO interval number (2017
+  layouts print a bare "#1"); 17 of 00009's 25 charts were dated to the job's
+  first day. Both fixed, dates now taken from the printed TREATMENT INTERVAL
+  SUMMARY, choosing between re-attempt rows by the chart's own clock.
+
 ## Open, highest value first
 
-- **#70** — four `pipeline.py` changes reported and NOT applied (held back so
-  concurrent agents could not clobber the file). Includes the CalFrac clock
-  fix: **932 stages export 00:00:00 and the printed grid supplies a real start
-  for 931 of them.** The client called this a common issue. All four were
-  verified in simulation. Apply these.
-- **#67** — `sanjel.py` stamps charts with the **wrong well's UWI**, live and
-  shipping. The table side is already fixed; tables and curves now disagree.
-- **#66, #65** — paired chart/table fixes that must land together or a join
-  breaks.
+- **Deploy what landed.** `version.py` bump + `v*` tag + the `lab/api` sync
+  below, or Carmine is running an EXE and a hosted Lab that predate all of it.
+- **`lab/api` sync.** `lab/api/pipeline.py` and `lab/api/halliburton_ifs.py`
+  are now stale against the root, and there is no `lab/api/sanjel.py` at all,
+  so the hosted Lab has none of the fixes above. `lab/api/canyon_tables.py`
+  and `lab/api/ifs_tables.py` were kept in step by hand. Part of the larger
+  engine-drift problem, but do at least this much before any Lab deploy.
+- **Lab canvases.** `#graph`/`#origgraph` carry `width="1120"` with CSS
+  `width:100%`; measured at a 1600px window that is a 770px CSS box on a
+  dpr-2 display, so the backing store is stretched over 1540 device pixels.
+  The report's claim that the hit-testing "needs no change" is wrong if a
+  compensating `setTransform` is added — pick one coordinate system and
+  convert all ~20 uses of `cv.width` as a logical width, plus GP margins and
+  every font size. `renderSynced` is the delicate one.
 - **#69** — STEP uneven axis spacing (client-reported, cancelled mid-run when
   a drive was swapped; no code changed).
 - **#72** — STEP rate read off an `L/min` axis instead of `m3/min`, ~2.5x out.
