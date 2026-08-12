@@ -48,6 +48,12 @@ try:
 except Exception:                       # pragma: no cover - optional deps
     _RASTER_OK = False
 
+try:
+    # read only for the date a Canyon chart cannot print (see _canyon_dates)
+    import canyon_tables
+except Exception:                       # pragma: no cover - not yet deployed
+    canyon_tables = None
+
 
 def _md(meta):
     """PageMeta -> plain dict the consumers share."""
@@ -238,6 +244,93 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         out.append((md, samples[a:b] - samples[a],
                     {k: v[a:b] for k, v in data.items()}, pgeom))
     return out
+
+
+def _canyon_dates(doc, results, notes):
+    """Date each Canyon chart from the report's printed interval summary.
+
+    A Canyon chart page prints one date in its header — the day the JOB began,
+    repeated on every interval page — and a time axis that carries the clock
+    but not the day. On a job that runs a week that dates most intervals to
+    day one: 17 of 00009's 25 charts claimed 2014-10-12 when the report's own
+    TREATMENT INTERVAL SUMMARY dates them 10-13 and later. Any join on date,
+    and any export a client sorts by date, is wrong by days.
+
+    The summary prints each interval's start as a full timestamp, and our
+    clock already agrees with it to within a couple of minutes (interval 9:
+    00:49:22 read off the axis against a printed 00:47:50), so only the DAY is
+    taken from it. An interval the summary does not print keeps the header
+    date — there is nothing better to say about it.
+    """
+    if canyon_tables is None:
+        return
+    charts = [r for r in results if r.get("source") == "Canyon chart"
+              and r["meta"].get("stage")]
+    if not charts:
+        return
+    try:
+        summary = canyon_tables.parse_interval_summary(doc)
+    except Exception as e:                      # pragma: no cover - defensive
+        notes.append(f"Canyon interval summary unreadable, so chart dates "
+                     f"stay as the page header printed them — {e}")
+        return
+    if not summary or "Start Time" not in summary["columns"]:
+        return
+    ic = summary["columns"].index("Interval")
+    sc = summary["columns"].index("Start Time")
+    # A re-treated interval prints one row per attempt ("3 (attempt 1)",
+    # "3 (attempt 2)") days apart, while the chart is titled with the bare
+    # number — so keep every attempt and let the chart's own clock say which
+    # one it is. 00204 re-attempts 3, 8, 11 and 26; taking the wrong row would
+    # move those charts by one to four days.
+    printed = {}
+    for row in summary["rows"]:
+        key = re.match(r"\d+", str(row[ic] or "").strip())
+        stamp = str(row[sc] or "").strip()
+        m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})", stamp)
+        if key and m:
+            printed.setdefault(key.group(0), []).append(
+                (m.group(1), int(m.group(2)) * 3600 + int(m.group(3)) * 60))
+    if not printed:
+        return
+    fixed, unmatched = 0, []
+    for r in charts:
+        st = re.match(r"\d+", str(r["meta"]["stage"]))
+        attempts = printed.get(st.group(0)) if st else None
+        if not attempts:
+            unmatched.append(str(r["meta"]["stage"]))
+            continue
+        ours_m = re.match(r"(\d{2}):(\d{2})", r["meta"].get("start_time") or "")
+        if len(attempts) > 1 and ours_m:
+            mine = int(ours_m.group(1)) * 3600 + int(ours_m.group(2)) * 60
+            # nearest on the clock face, so a chart pumped at 15:48 does not
+            # take the 07:14 re-attempt's day
+            attempts = sorted(attempts, key=lambda a: min(
+                abs(mine - a[1]), 24 * 3600 - abs(mine - a[1])))
+        day, printed_secs = attempts[0]
+        ours = re.match(r"(\d{2}):(\d{2})", r["meta"].get("start_time") or "")
+        if ours:
+            # a chart whose window opens either side of midnight from the
+            # printed start belongs to the neighbouring day
+            delta = (int(ours.group(1)) * 3600 + int(ours.group(2)) * 60
+                     - printed_secs)
+            if delta < -12 * 3600:
+                day = (datetime.strptime(day, "%Y-%m-%d")
+                       + timedelta(days=1)).strftime("%Y-%m-%d")
+            elif delta > 12 * 3600:
+                day = (datetime.strptime(day, "%Y-%m-%d")
+                       - timedelta(days=1)).strftime("%Y-%m-%d")
+        if r["meta"].get("date") != day:
+            r["meta"]["date"] = day
+            fixed += 1
+    if fixed:
+        notes.append(f"{fixed} Canyon chart(s) re-dated from the printed "
+                     f"interval summary — the chart pages all carry the job's "
+                     f"start date, not the day the interval ran.")
+    if unmatched:
+        notes.append(f"interval(s) {', '.join(unmatched[:8])} are not in the "
+                     f"printed interval summary, so their charts keep the "
+                     f"date the page header prints.")
 
 
 def _window_tags(windows):
@@ -798,6 +891,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # a BJ stage charted twice under one title -> one block per printed
     # time axis, instead of the two fusing into a block that matches neither
     _split_bj_windows(results, notes)
+
+    # a Canyon chart page dates itself from the job, not from the interval
+    _canyon_dates(doc, results, notes)
 
     # --- SK 'FracR' per-stage engineering tables (document-level) ---
     if any(sk.detect(doc[p]) for p in range(npages)):
