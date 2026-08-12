@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stacked charts — Carmine's Lab</title>
+<style>
+  /* Same palette and type as the Lab window it hangs off. Light only — the
+     dark theme was removed there, and a second one here would be a second
+     set of canvas colours to keep in step. */
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  body { background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .top { display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;
+         padding:11px 18px; border-bottom:1px solid var(--line);
+         position:sticky; top:0; background:var(--bg); z-index:5; }
+  .top .meta { flex:1 1 260px; min-width:0; }
+  .wordmark { font-size:13px; font-weight:700; letter-spacing:-0.01em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .title { font-size:14px; font-weight:600; margin-top:1px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .tools { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+         color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+         padding:3px 10px; cursor:pointer; }
+  .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn:disabled { opacity:.35; pointer-events:none; }
+  .pglbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
+  .strip { padding:12px 18px 0; }
+  .strip .cap { font-size:11px; color:var(--mut); font-family:var(--mono);
+                margin-top:4px; }
+  .charts { padding:12px 18px 22px; }
+  .chartblock { margin-bottom:12px; }
+  .chartblock.off { opacity:.42; }
+  .chead { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .chead .nm { font-size:13px; font-weight:600; flex-shrink:0; }
+  .chead .nm i { display:inline-block; width:14px; height:3px; border-radius:2px;
+                 vertical-align:middle; margin-right:6px; }
+  .chead .nm .u { color:var(--mut); font-weight:400; font-size:11.5px; }
+  .chead .rng { font-size:11px; color:var(--mut); font-family:var(--mono);
+                flex-shrink:0; }
+  .chead .ro { font-size:11.5px; color:var(--mut); font-family:var(--mono);
+               margin-left:auto; text-align:right; min-height:17px;
+               overflow:hidden; white-space:nowrap; }
+  .chead .ro b { color:var(--ink); }
+  canvas { width:100%; display:block; background:var(--panel);
+           border:1px solid var(--line); border-radius:8px; }
+  .charts canvas { cursor:crosshair; }
+  .msg { color:var(--mut); font-size:13px; padding:56px 24px; text-align:center;
+         max-width:56ch; margin:0 auto; }
+  .foot { color:var(--mut); font-size:11.5px; padding:0 18px 22px; }
+  .foot b { color:var(--carmine); }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="meta">
+      <div class="wordmark">Carmine's Lab &mdash; stacked charts</div>
+      <div class="title" id="title">&mdash;</div>
+      <div class="sub" id="sub">Waiting for the Lab window&hellip;</div>
+    </div>
+    <div class="tools">
+      <span class="pglbl" id="pglbl"></span>
+      <button type="button" class="btn on" id="togglepage"
+              title="Show or hide the source PDF page above the charts">Source page</button>
+      <button type="button" class="btn" id="openpdf"
+              title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
+    </div>
+  </div>
+
+  <div class="strip" id="strip" hidden>
+    <canvas id="pagecv"></canvas>
+    <div class="cap" id="pagecap"></div>
+  </div>
+
+  <div class="charts" id="charts"></div>
+  <div class="msg" id="msg">Pick a stage in the Lab window &mdash; this view follows it.</div>
+  <div class="foot" id="foot">Linked to the Lab window: cycling stages there
+    (&uarr;/&darr;, or clicking a stage) redraws this view.</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+// Same-origin by construction — this page is only ever opened by the Lab.
+// file:// gives origin "null", which is not a valid postMessage target, so
+// fall back to "*" there rather than silently dropping every message.
+const ORIGIN = (location.origin && location.origin !== "null") ? location.origin : "*";
+
+// Plot padding. L/R are shared by every chart AND by the source-page strip,
+// so one time position is one x position all the way down the window.
+const PAD = { L: 64, R: 14, T: 10, B: 10 };
+const AXIS_H = 28;        // extra bottom room on the last chart for time labels
+const ROW_H = 128;        // css px per chart body
+const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
+            ink: "#14181d", mut: "#697077" };
+
+const state = {
+  channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1, clock0: null,
+  page: null, pageCount: 0, img: null, plot: null, imgSynced: false,
+  imgFull: false, showPage: true, hoverT: null, haveStage: false,
+};
+let blocks = [];          // { c, el, cv, ro, last }
+let raf = null;
+
+const esc = s => String(s).replace(/[&<>"]/g,
+  ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const p2 = n => String(n).padStart(2, "0");
+const round2 = v => Math.round(v * 100) / 100;
+function fmtV(v) {
+  if (v == null || !isFinite(v)) return "—";
+  const a = Math.abs(v);
+  // A frame edge read at -0.0004 printed as "-0.00", which reads as a sign
+  // error rather than as the zero it is.
+  if (a < 0.005) return "0";
+  return a >= 10 ? v.toFixed(0) : a >= 1 ? v.toFixed(1) : v.toFixed(2);
+}
+// The Lab's own two time formats, re-stated here because a function cannot
+// cross a window boundary. Both are small and must read the same as the
+// combined chart, so they are kept deliberately identical.
+function fmtTime(t) {
+  const span = state.t1 - state.t0, m = t / 60;
+  if (span < 120) return m.toFixed(2) + "m";
+  if (span < 1200) return m.toFixed(1) + "m";
+  return Math.round(m) + "m";
+}
+function fmtClock(t) {
+  const s = Math.round(t);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+  return "t+" + h + ":" + p2(m) + ":" + p2(ss);
+}
+function stamp(t) {
+  if (state.clock0 == null) return fmtClock(t);
+  const d = new Date(state.clock0 + t * 1000);
+  return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
+}
+
+// ---------- talking to the Lab window ----------
+// The Lab is normally our opener. Fall back to a parent frame for the case
+// where this page is embedded rather than popped (and where a browser hands
+// back a window with no opener), and to nothing at all when we are on our own
+// — the Lab pushes to its own handle either way, so a missing back-channel
+// costs only the handshake and the Open-PDF button.
+function lab() {
+  try {
+    if (window.opener && !window.opener.closed) return window.opener;
+  } catch (e) { /* cross-origin or gone */ }
+  if (window.parent && window.parent !== window) return window.parent;
+  return null;
+}
+function toLab(msg) {
+  const o = lab();
+  try { if (o) o.postMessage(msg, ORIGIN); } catch (e) { /* gone */ }
+}
+window.addEventListener("message", e => {
+  if (ORIGIN !== "*" && e.origin !== ORIGIN) return;
+  const d = e.data;
+  if (!d || typeof d.type !== "string") return;
+  if (d.type === "stacked:stage") applyStage(d);
+  else if (d.type === "stacked:none") applyNone();
+  else if (d.type === "stacked:view") applyView(d);
+  else if (d.type === "stacked:page") applyPage(d);
+});
+// Announce ourselves on load. This is what makes the order not matter: opened
+// before a stage is picked, opened after one is, or reloaded by hand — the Lab
+// answers a ready with the stage that is on screen right now.
+toLab({ type: "stacked:ready" });
+
+// If the Lab is closed, say so instead of leaving a stale chart that silently
+// stops following anything.
+setInterval(() => {
+  const gone = !lab();
+  $("foot").innerHTML = gone
+    ? "<b>The Lab window is closed</b> — this view is frozen at the last stage it received."
+    : "Linked to the Lab window: cycling stages there (↑/↓, or clicking a stage) redraws this view.";
+  $("openpdf").disabled = gone;
+}, 1500);
+
+// ---------- incoming state ----------
+function applyNone() {
+  state.haveStage = false;
+  state.channels = []; blocks = []; state.img = null; state.hoverT = null;
+  $("charts").innerHTML = "";
+  $("strip").hidden = true;
+  $("msg").hidden = false;
+  $("msg").textContent = "Pick a stage in the Lab window — this view follows it.";
+  $("title").textContent = "—";
+  $("sub").textContent = "no stage selected";
+  $("pglbl").textContent = "";
+  document.title = "Stacked charts — Carmine's Lab";
+}
+
+function applyStage(d) {
+  state.haveStage = true;
+  state.channels = d.channels || [];
+  state.n = d.n; state.dsec = d.dsec || 1; state.tMax = d.tMax || 1;
+  state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
+  state.page = d.page; state.pageCount = d.pageCount || 0;
+  state.hoverT = null;
+  // A new stage invalidates the page picture; the Lab sends a fresh one as
+  // soon as its own render lands, and until then showing the previous stage's
+  // sheet would be a lie.
+  state.img = null;
+  $("title").textContent = d.title || "";
+  $("sub").textContent = d.sub || "";
+  document.title = (d.title || "Stacked charts") + " — stacked";
+  updatePageLbl();
+  $("msg").hidden = state.channels.length > 0;
+  if (!state.channels.length)
+    $("msg").textContent = "This stage has no channels to plot.";
+  build();
+  drawPage();
+}
+
+function applyView(d) {
+  if (!state.haveStage) return;
+  state.t0 = d.t0; state.t1 = d.t1;
+  schedule();
+}
+
+function applyPage(d) {
+  state.page = d.page != null ? d.page : state.page;
+  state.imgSynced = !!d.synced;
+  state.imgFull = !!d.full;
+  updatePageLbl();
+  if (d.bmp) { state.img = d.bmp; state.plot = d.plot; drawPage(); return; }
+  if (d.url) {
+    const im = new Image();
+    im.onload = () => { state.img = im; state.plot = d.plot; drawPage(); };
+    im.src = d.url;
+    return;
+  }
+  state.img = null;
+  drawPage();
+}
+
+function updatePageLbl() {
+  $("pglbl").textContent = state.page ? ("PDF p." + state.page) : "";
+  $("openpdf").disabled = !state.page || !lab();
+}
+
+// ---------- layout ----------
+function build() {
+  const host = $("charts");
+  host.innerHTML = "";
+  blocks = state.channels.map((c, i) => {
+    const el = document.createElement("div");
+    el.className = "chartblock" + (c.off ? " off" : "");
+    el.innerHTML =
+      '<div class="chead">' +
+        '<span class="nm"><i style="background:' + esc(c.color) + '"></i>' +
+          esc(c.name) + (c.unit ? ' <span class="u">' + esc(c.unit) + "</span>" : "") +
+        "</span>" +
+        '<span class="rng">' + fmtV(c.lo) + " – " + fmtV(c.hi) +
+          (c.printed ? " · chart axis" : " · auto") +
+          (c.off ? " · hidden in the Lab" : "") + "</span>" +
+        '<span class="ro"></span>' +
+      "</div><canvas></canvas>";
+    host.appendChild(el);
+    return { c, el, cv: el.querySelector("canvas"),
+             ro: el.querySelector(".ro"), last: i === state.channels.length - 1 };
+  });
+  layout();
+}
+
+function layout() {
+  for (const b of blocks) {
+    const h = ROW_H + (b.last ? AXIS_H : 0);
+    b.cv.style.height = h + "px";
+    sizeCanvas(b.cv, h);
+  }
+  drawAll();
+}
+
+// Canvas at device resolution, drawn in CSS pixels.
+function sizeCanvas(cv, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.max(80, cv.clientWidth || cv.parentNode.clientWidth);
+  cv.width = Math.round(cssW * dpr);
+  cv.height = Math.round(cssH * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, W: cssW, H: cssH };
+}
+
+// ---------- drawing ----------
+function schedule() {
+  if (raf) return;
+  raf = requestAnimationFrame(() => { raf = null; drawAll(); drawPage(); });
+}
+
+function drawAll() {
+  for (const b of blocks) drawChart(b);
+  updateReadouts();
+}
+
+function xOf(t, W) {
+  const span = Math.max(1e-9, state.t1 - state.t0);
+  return PAD.L + (t - state.t0) / span * (W - PAD.L - PAD.R);
+}
+
+function drawChart(b) {
+  const cv = b.cv, dpr = window.devicePixelRatio || 1;
+  const W = cv.width / dpr, H = cv.height / dpr;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const bot = H - PAD.B - (b.last ? AXIS_H : 0);
+  const plotH = bot - PAD.T, plotW = W - PAD.L - PAD.R;
+  if (plotH <= 4 || plotW <= 4) return;
+  const c = b.c;
+  const span = Math.max(1e-9, c.hi - c.lo);
+  const yOf = v => PAD.T + (1 - (v - c.lo) / span) * plotH;
+
+  // grid + per-chart value scale
+  g.strokeStyle = C.grid; g.lineWidth = 1;
+  g.fillStyle = C.axisText;
+  g.font = "10.5px ui-monospace,Menlo,monospace";
+  g.textAlign = "right"; g.textBaseline = "middle";
+  for (let f = 0; f <= 1.0001; f += 0.25) {
+    const y = Math.round(PAD.T + (1 - f) * plotH) + 0.5;
+    g.beginPath(); g.moveTo(PAD.L, y); g.lineTo(W - PAD.R, y); g.stroke();
+    g.fillText(fmtV(c.lo + (c.hi - c.lo) * f), PAD.L - 6, y);
+  }
+  g.beginPath();
+  for (let f = 0; f <= 1.0001; f += 0.25) {
+    const x = Math.round(PAD.L + f * plotW) + 0.5;
+    g.moveTo(x, PAD.T); g.lineTo(x, bot);
+  }
+  g.stroke();
+
+  // the curve, decimated to about two samples per pixel
+  const vals = c.values;
+  const len = vals.length;
+  const i0 = Math.max(0, Math.floor(state.t0 / state.dsec));
+  const i1 = Math.min(len - 1, Math.ceil(state.t1 / state.dsec));
+  const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
+  g.save();
+  g.beginPath(); g.rect(PAD.L, 0, plotW, bot); g.clip();
+  g.strokeStyle = c.color; g.lineWidth = 1.4;
+  g.lineJoin = "round";
+  g.beginPath();
+  let pen = false;
+  for (let i = i0; i <= i1; i += step) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { pen = false; continue; }
+    const x = xOf(i * state.dsec, W), y = yOf(v);
+    if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+  }
+  g.stroke();
+  g.restore();
+
+  // shared time axis, printed under the bottom chart only
+  if (b.last) {
+    g.strokeStyle = C.grid;
+    g.beginPath(); g.moveTo(PAD.L, bot + 0.5); g.lineTo(W - PAD.R, bot + 0.5); g.stroke();
+    g.fillStyle = C.axisText; g.textAlign = "center"; g.textBaseline = "top";
+    g.font = "11px ui-monospace,Menlo,monospace";
+    for (let f = 0; f <= 1.0001; f += 0.25) {
+      const t = state.t0 + f * (state.t1 - state.t0);
+      const x = PAD.L + f * plotW;
+      g.fillText(stamp(t), x, bot + 5);
+      if (state.clock0 != null) {
+        const d = new Date(state.clock0 + t * 1000);
+        g.globalAlpha = .62;
+        g.fillText(d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()),
+                   x, bot + 17);
+        g.globalAlpha = 1;
+      } else {
+        g.globalAlpha = .62;
+        g.fillText(fmtTime(t), x, bot + 17);
+        g.globalAlpha = 1;
+      }
+    }
+  }
+
+  // crosshair + the sample under it
+  if (state.hoverT != null && state.hoverT >= state.t0 && state.hoverT <= state.t1) {
+    const x = xOf(state.hoverT, W);
+    g.strokeStyle = C.crosshair; g.lineWidth = 1;
+    g.setLineDash([4, 3]);
+    g.beginPath(); g.moveTo(x, PAD.T); g.lineTo(x, bot); g.stroke();
+    g.setLineDash([]);
+    const v = sampleAt(c, state.hoverT);
+    if (v != null) {
+      g.fillStyle = c.color;
+      g.beginPath(); g.arc(x, yOf(v), 3.2, 0, 7); g.fill();
+    }
+  }
+}
+
+function sampleAt(c, t) {
+  const i = Math.round(t / state.dsec);
+  if (i < 0 || i >= c.values.length) return null;
+  const v = c.values[i];
+  return (v == null || !isFinite(v)) ? null : v;
+}
+
+// Per-chart readout, as the original demo had: the value on THIS chart at the
+// cursor, next to that chart's own title.
+function updateReadouts() {
+  const t = state.hoverT;
+  for (const b of blocks) {
+    if (t == null) { b.ro.textContent = ""; continue; }
+    const v = sampleAt(b.c, t);
+    b.ro.innerHTML = stamp(t) + (state.clock0 != null ? " · " + fmtClock(t) : "") +
+      " · <b>" + (v == null ? "—" : round2(v)) + "</b>" +
+      (v != null && b.c.unit ? " " + esc(b.c.unit) : "");
+  }
+}
+
+// ---------- the source page, above the charts ----------
+function drawPage() {
+  const wrap = $("strip"), cv = $("pagecv");
+  const on = state.showPage && !!state.img && state.haveStage;
+  wrap.hidden = !on;
+  if (!on) return;
+  const img = state.img, pl = state.plot || {};
+  // read AFTER un-hiding the wrapper — clientWidth forces the layout we need
+  const cssW = Math.max(80, cv.clientWidth || (cv.parentNode.clientWidth - 36));
+  // Time-synced crop: blit only the plot rect of the page the Lab rendered,
+  // stretched into the same L..W-R band the charts use, so the sheet lines up
+  // column-for-column with the curves under it.
+  let sx = 0, sy = 0, sw = img.width, sh = img.height, dx = 0, dw = cssW, aspect;
+  if (state.imgSynced && pl.w) {
+    sx = pl.L; sy = pl.T;
+    sw = pl.w - pl.L - pl.R;
+    sh = pl.h - pl.foot - pl.T - pl.B;
+    dx = PAD.L; dw = cssW - PAD.L - PAD.R;
+  }
+  aspect = sh / Math.max(1, sw);
+  const h = Math.max(110, Math.min(340, Math.round(dw * aspect)));
+  cv.style.height = h + "px";
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, cssW, h);
+  g.drawImage(img, sx, sy, sw, sh, dx, 0, dw, h);
+  if (state.hoverT != null && state.imgSynced &&
+      state.hoverT >= state.t0 && state.hoverT <= state.t1) {
+    const x = xOf(state.hoverT, cssW);
+    g.strokeStyle = C.crosshair; g.lineWidth = 1;
+    g.setLineDash([4, 3]);
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    g.setLineDash([]);
+  }
+  $("pagecap").textContent = state.imgSynced
+    ? "Source PDF p." + state.page + " — the chart region, on the same time window as the charts below"
+    : "Source PDF p." + state.page + (state.imgFull ? " — whole sheet" : "") +
+      " — not time-aligned (the Lab is showing it un-cropped)";
+}
+
+// ---------- interaction ----------
+$("charts").addEventListener("mousemove", e => {
+  const cv = e.target.closest("canvas");
+  if (!cv || !blocks.length) return;
+  const r = cv.getBoundingClientRect();
+  const x = e.clientX - r.left, W = r.width;
+  if (x < PAD.L || x > W - PAD.R) {
+    if (state.hoverT != null) { state.hoverT = null; schedule(); }
+    return;
+  }
+  const span = state.t1 - state.t0;
+  state.hoverT = state.t0 + (x - PAD.L) / (W - PAD.L - PAD.R) * span;
+  schedule();
+});
+$("charts").addEventListener("mouseleave", () => {
+  if (state.hoverT != null) { state.hoverT = null; schedule(); }
+});
+$("togglepage").addEventListener("click", () => {
+  state.showPage = !state.showPage;
+  $("togglepage").classList.toggle("on", state.showPage);
+  drawPage();
+});
+// The Lab owns the PDF bytes (and the blob URL it already made for them), so
+// ask it to open the page rather than shipping the file over here twice.
+$("openpdf").addEventListener("click", () => toLab({ type: "stacked:openpdf" }));
+$("pagecv").addEventListener("click", () => toLab({ type: "stacked:openpdf" }));
+
+let rz = null;
+window.addEventListener("resize", () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { layout(); drawPage(); }, 120);
+});
+</script>
+</body>
+</html>

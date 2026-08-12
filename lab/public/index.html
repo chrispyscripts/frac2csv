@@ -239,6 +239,9 @@
   .origbar { display:flex; align-items:center; gap:8px; }
   .origbar .btn, .previewhead > .btn { padding:2px 9px; font-size:12px; }
   .previewhead > .btn { flex-shrink:0; align-self:center; }
+  /* a blocked pop-up has to say so somewhere the user is already looking */
+  .stackmsg { align-self:center; font-size:11.5px; color:var(--carmine);
+              font-weight:600; max-width:26ch; line-height:1.25; }
   .origbar .btn:disabled { opacity:.35; pointer-events:none; }
   .origlbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
   #graph { cursor:grab; }
@@ -414,6 +417,10 @@
             <button type="button" data-layer="ref" class="on"
               title="Show or hide the original chart underneath">Original</button>
           </div>
+          <button type="button" class="btn" id="stackbtn"
+                  title="Open every channel on its own chart, stacked, in a
+separate window that follows this one">Stacked ↗</button>
+          <span class="stackmsg" id="stackmsg" hidden></span>
           <button type="button" class="btn" id="flagbtn"
                   title="Report a problem with this chart — sends your notes plus
 a picture of these panels and the extraction diagnostics">Flag Error</button>
@@ -1421,6 +1428,8 @@ function showStage(entry, well, item) {
   $("pv-table").innerHTML = "";
   $("pv-notes").textContent = (entry.notes || []).join("\n");
   renderDlbar(well);
+  stackPageStale = true;    // the source page for this stage is not drawn yet
+  pushStacked();      // the stacked window follows whatever is on screen here
 }
 
 function showTable(entry, t) {
@@ -1439,6 +1448,7 @@ function showTable(entry, t) {
   b.addEventListener("click", () => $("exportbtn").click());
   dl.appendChild(b); addZipCount(dl);
   $("pv-notes").textContent = "";
+  pushStacked();      // not a stage — the stacked window empties itself
 }
 
 // ---------- Summary Data: render a document's table pages from the PDF ----------
@@ -1468,6 +1478,7 @@ function showSummary(entry, item) {
   $("pv-sub").textContent = `${n} page${n > 1 ? "s" : ""}  ·  rendered from the source PDF`;
   $("pv-dl").innerHTML = ""; $("pv-table").innerHTML = ""; $("pv-notes").textContent = "";
   renderSummaryPage(entry, item);
+  pushStacked();      // not a stage — the stacked window empties itself
 }
 
 async function renderSummaryPage(entry, item) {
@@ -2009,6 +2020,7 @@ function buildLegend() {
       else gState.hidden.add(ci);
       gState.hover = null;
       redrawGraph(); buildLegend();
+      pushStacked();       // the stacked window dims the same curve
     });
     Lg.appendChild(el);
   });
@@ -2095,11 +2107,13 @@ async function syncOrig() {
   if (!entry._pdfFile && !entry._pdfUrl) {
     orig.failed = true;
     origMsg(ctx, cv, "original PDF not kept for this entry — re-add the file");
+    pushStackedPage();
     return;
   }
   if (!srcs.length) {
     orig.failed = true;
     origMsg(ctx, cv, "source page unknown for this stage");
+    pushStackedPage();
     return;
   }
   try {
@@ -2128,6 +2142,7 @@ async function syncOrig() {
     orig.failed = true;
     origMsg(ctx, cv, "couldn't render original: " + e.message);
     redrawGraph();               // drop out of ghost styling, don't strand it
+    pushStackedPage();           // tell the stacked window there is no page
   }
 }
 
@@ -2209,6 +2224,8 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   orig.bufSeq = mySeq;
   drawOrigOverlay(gState.hover ? gState.hover.t : null);
   redrawGraph();       // the backdrop only became valid now
+  stackPageStale = false;
+  pushStackedPage();   // the stacked window shows this same rendered page
 }
 
 // blit the buffered original + the shared crosshair (both panels track the
@@ -2247,6 +2264,8 @@ async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
   bctx.fillStyle = "#ffffff"; bctx.fillRect(x, y, w, h);
   bctx.drawImage(off, x, y, w, h);
   drawOrigOverlay(null);
+  stackPageStale = false;
+  pushStackedPage();
 }
 
 function updateOrigBar() {
@@ -2274,6 +2293,157 @@ function updateOrigBar() {
       (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
   }
 }
+
+// ---------- Stacked charts: a linked second window ----------
+// The original proof-of-concept view, back as a companion to the combined
+// plot: one chart per channel, stacked, sharing this window's time axis, each
+// with its own value scale. On the combined plot a low-range channel is a flat
+// line beside a high-range one — separating them is the whole point.
+//
+// LINKING. We keep the handle window.open() hands back and talk over
+// postMessage. Not BroadcastChannel: the relationship is one-to-one, and a
+// broadcast would also reach a second Lab tab, so two mains would fight over
+// one child. Not writing into the child's document directly either: that dies
+// the moment the child is reloaded, and it would put every drawing decision in
+// this file. The child announces itself with a "ready" as it loads — which is
+// what makes the order not matter (opened before a stage is picked, after one
+// is, or reloaded by hand) — and every send is guarded on `closed`, so a shut
+// window is a no-op instead of a throw.
+//
+// Two message weights, because a stage can carry 14,000+ samples: the heavy
+// "stage" (the values) goes only when the stage changes, and zoom/pan send a
+// two-number "view" that the child redraws from the values it already holds.
+const STACK_ORIGIN = (location.origin && location.origin !== "null")
+  ? location.origin : "*";
+let stackWin = null;
+// orig.buf still holds the PREVIOUS stage's sheet until the new render lands
+// (it is kicked off on the next frame), so a page push in that window would
+// put the wrong page under the new charts. Send no picture until the render
+// that belongs to this stage has finished.
+let stackPageStale = false;
+
+function stackAlive() {
+  try { return !!stackWin && !stackWin.closed; } catch (e) { return false; }
+}
+function stackPost(msg, transfer) {
+  if (!stackAlive()) return false;
+  try { stackWin.postMessage(msg, STACK_ORIGIN, transfer || []); return true; }
+  catch (e) { return false; }         // navigating, or gone since we checked
+}
+
+function stackPayload() {
+  const it = current && current.item;
+  if (!it || it.type !== "stage" || !gState.channels.length)
+    return { type: "stacked:none" };
+  const chans = [];
+  gState.channels.forEach((c, ci) => {
+    if (!inMode(c) || !(c._vmax > 0)) return;
+    const r = axisRange(c);            // the chart's own axis when it prints one
+    // Float64Array with NaN for a gap: structured-clones as a block copy
+    // instead of 14,000 boxed numbers, and the child needs no null checks.
+    const src = c.values, len = src.length;
+    const vals = new Float64Array(len);
+    for (let i = 0; i < len; i++) {
+      const v = src[i];
+      vals[i] = (v == null || !isFinite(v)) ? NaN : v;
+    }
+    chans.push({ name: chanName(c), unit: c.unit || "", color: c._color,
+                 lo: r.lo, hi: r.hi, printed: !!r.printed,
+                 vmax: round2(c._vmax), off: gState.hidden.has(ci),
+                 values: vals });
+  });
+  const pages = it.pages || [];
+  return {
+    type: "stacked:stage",
+    title: $("pv-title").textContent, sub: $("pv-sub").textContent,
+    n: gState.n, dsec: gState.dsec, tMax: gState.tMax,
+    t0: gState.t0, t1: gState.t1,
+    clock0: gState.clock0 ? gState.clock0.getTime() : null,
+    page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
+    pageCount: pages.length,
+    channels: chans,
+  };
+}
+
+function pushStacked() {
+  if (!stackAlive()) return;
+  stackPost(stackPayload());
+  pushStackedPage();
+}
+function pushStackedView() {
+  if (!stackAlive()) return;
+  stackPost({ type: "stacked:view", t0: gState.t0, t1: gState.t1 });
+}
+
+// "Linked to the original page": send the page WE ALREADY RENDERED rather than
+// have the child load pdf.js and render the same sheet a second time. Same
+// pixels, no second copy of the renderer, no second PDF in memory — and when
+// the crop is time-synced it is already stretched to this window's time
+// window, so it lines up with the stacked charts under it. The child's
+// "Open PDF" asks us to open the file, for the same reason.
+function pushStackedPage() {
+  if (!stackAlive()) return;
+  const it = current && current.item;
+  const pages = (it && it.type === "stage" && it.pages) || [];
+  const base = { type: "stacked:page",
+                 page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
+                 synced: !!orig.synced, full: !!orig.fullPage,
+                 failed: !!orig.failed };
+  if (stackPageStale || !orig.buf || orig.failed) { stackPost(base); return; }
+  const plot = { L: GP.L, T: GP.T, R: GP.R, B: GP.B, foot: ORIG_FOOT,
+                 w: orig.buf.width, h: orig.buf.height };
+  const buf = orig.buf;
+  Promise.resolve()
+    .then(() => createImageBitmap(buf))
+    .then(bmp => {
+      // transferred, so nothing is copied; if the window shut while we were
+      // decoding, drop the bitmap rather than leak it
+      if (!stackPost({ ...base, bmp, plot }, [bmp])) bmp.close();
+    })
+    .catch(() => {
+      try { stackPost({ ...base, url: buf.toDataURL("image/png"), plot }); }
+      catch (e) { stackPost(base); }
+    });
+}
+
+window.addEventListener("message", e => {
+  if (STACK_ORIGIN !== "*" && e.origin !== STACK_ORIGIN) return;
+  const d = e.data;
+  if (!d || typeof d.type !== "string" || d.type.indexOf("stacked:") !== 0) return;
+  if (d.type === "stacked:ready") {
+    stackWin = e.source;              // also re-adopts it after a manual reload
+    pushStacked();
+  } else if (d.type === "stacked:openpdf") {
+    $("origopen").click();            // one place knows how to open the file
+  }
+});
+
+$("stackbtn").addEventListener("click", () => {
+  const msg = $("stackmsg");
+  msg.hidden = true;
+  // Nothing may be awaited above this line: a window.open() that is not
+  // directly inside the click handler is treated as unrequested and blocked.
+  const w = window.open("stacked.html", "carmine-stacked",
+                        "width=980,height=1000");
+  if (!w) {
+    msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
+    msg.hidden = false;
+    return;
+  }
+  stackWin = w;
+  try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
+  // An already-open window does not reload, so it sends no second "ready" —
+  // push at it straight away. A freshly opened one is not listening yet and
+  // will normally handshake, but a browser that hands back a window with no
+  // opener never can, so keep pushing over the first couple of seconds. The
+  // child is idempotent: each push simply replaces what it is showing.
+  pushStacked();
+  let tries = 0;
+  const again = setInterval(() => {
+    if (++tries > 6 || !stackAlive()) { clearInterval(again); return; }
+    pushStacked();
+  }, 350);
+});
 
 // ---------- settings persistence + modal ----------
 function loadSettings() {
@@ -2760,6 +2930,7 @@ $("lblmode").addEventListener("click", e => {
     x.classList.toggle("on", x.dataset.v === b.dataset.v);
   redrawGraph();
   buildLegend();
+  pushStacked();           // curve names (and which curves) just changed
 });
 
 // wheel = zoom around cursor · drag = pan · double-click = reset · move = hover
@@ -2784,6 +2955,7 @@ $("lblmode").addEventListener("click", e => {
     gState.t1 = Math.min(gState.tMax, Math.max(t1, gState.t0 + minSpan));
     redrawGraph();
     scheduleOrigSync();
+    pushStackedView();   // two numbers, not the samples again
   }, { passive: false });
   cv.addEventListener("mousedown", e => {
     if (!gState.channels.length) return;
@@ -2803,6 +2975,7 @@ $("lblmode").addEventListener("click", e => {
       gState.hover = null;
       redrawGraph();
       scheduleOrigSync();
+      pushStackedView();
       return;
     }
     const H = cv.height;
@@ -2872,6 +3045,7 @@ $("lblmode").addEventListener("click", e => {
     gState.t0 = 0; gState.t1 = gState.tMax;
     redrawGraph();
     scheduleOrigSync();
+    pushStackedView();
   });
 })();
 
@@ -2938,6 +3112,7 @@ function deleteEntry(entry) {
     clearStageList();
     $("previewpane").hidden = true;
     $("empty").hidden = false;
+    pushStacked();
   }
   if (sumState.docKey === entry.name) sumState.docKey = null;
   rebuildProviderMenu();
@@ -2959,6 +3134,7 @@ function clearAll() {
   applyProviderFilter();
   updateCount();
   updateClearAll();
+  pushStacked();
 }
 $("clearall").addEventListener("click", clearAll);
 
