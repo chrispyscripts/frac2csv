@@ -835,6 +835,157 @@ def _page_geom(info, scale_x, scale_y, off_x=0.0, off_y=0.0):
             "v1": float(off_y + y1 / scale_y)}
 
 
+# ---------- the span the chart prints under itself ----------
+
+# "11/21/2017 19:26:12 - 11/21/2017 20:32:46. Range: 1 hr. 6 min."
+_SPAN = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})\s*(\d{1,2}):(\d{2}):(\d{2})")
+
+# How far the printed start may sit from the time axis' own fitted origin and
+# still be a reading of the same instant. Measured across 00199 pages 17-40:
+# the fit lands 9-16s EARLY on every chart (the frame's black border is a few
+# pixels wide, and x0 is its outer edge), never further. 120s leaves room for
+# a coarser render while still refusing a coincidence.
+CLOCK_TOL = 120.0
+
+
+def _last_ink_rows(band, floor=0.002):
+    """(top, bottom) of the LAST text line in `band`, or None. A run of rows
+    carrying any ink at all, no taller than a line of type."""
+    dark = band.sum(axis=2) < 400
+    hit = dark.mean(axis=1) > floor
+    runs, start = [], None
+    for i, v in enumerate(hit):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            runs.append((start, i))
+            start = None
+    if start is not None:
+        runs.append((start, len(hit)))
+    runs = [r for r in runs if 4 <= r[1] - r[0] <= 40]
+    return runs[-1] if runs else None
+
+
+def _footer_strip(img, box):
+    """The one text line under a plot that could be its printed span, ready
+    to OCR, or None.
+
+    The strip below the frame holds the tick labels, then the legend, then —
+    on the layouts that print one — the chart's own date-time span, always
+    last. Cropping to that last line keeps the OCR to a few hundred pixels
+    and keeps the legend's "(L/m³)" clutter out of it."""
+    if not box:
+        return None
+    x0, y0, x1, y1 = box
+    H, W = img.shape[:2]
+    ph = max(1, y1 - y0)
+    band = img[min(H - 1, y1 + 2):min(H, y1 + int(0.32 * ph)),
+               0:min(W, x0 + int(0.60 * (x1 - x0)))]
+    if band.size == 0:
+        return None
+    row = _last_ink_rows(band)
+    if row is None:
+        return None
+    crop = band[max(0, row[0] - 4):min(band.shape[0], row[1] + 4)]
+    if crop.size == 0:
+        return None
+    from PIL import Image as _Im
+    pil = _Im.fromarray(crop.astype(np.uint8))
+    pil = pil.resize((pil.width * 3, pil.height * 3), _Im.LANCZOS)
+    return np.array(pil).astype(int)
+
+
+def _printed_span(strip, psm):
+    """-> (iso_date, start_seconds, span_seconds|None), or None.
+
+    FracPro stamps the plotted window under every chart it draws — the two
+    calendar instants and a "Range: N hr M min" restating them. That line is
+    the report's own answer to "when did this stage run", printed to the
+    second, and on the 2024 layout it is the only place a date appears at
+    all. It is also seven pixels tall, and no page-segmentation mode reads it
+    reliably: psm 6 read 00199 p37's chemical chart as 19:20:30 and psm 11 as
+    19:28:30 against a printed 19:29:30, and on 00664 p128 psm 6 lost a digit
+    where psm 11 did not. Nothing this returns is trusted on its own — the
+    caller checks it against the time axis it fitted independently, and asks
+    for the other mode when it fails.
+    """
+    if strip is None:
+        return None
+    try:
+        text = " ".join(t for t, _cx, _cy in ar.ocr_words(
+            strip, psm=psm, whitelist="0123456789/:.- "))
+    except Exception:
+        return None
+    got = _SPAN.findall(text)
+    if not got:
+        return None
+    a = got[0]
+    mo, dy, yr = int(a[0]), int(a[1]), int(a[2])
+    if not (1 <= mo <= 12 and 1 <= dy <= 31 and 1990 <= yr <= 2100):
+        return None
+    s0 = int(a[3]) * 3600 + int(a[4]) * 60 + int(a[5])
+    if not 0 <= s0 < 86400:
+        return None
+    # The closing instant is the weaker read of the two — one eaten separator
+    # ("07104/2024") takes the whole of it — so the span it implies is
+    # corroboration where it survives, not a condition of reporting a start.
+    span = None
+    if len(got) > 1:
+        b = got[1]
+        s1 = int(b[3]) * 3600 + int(b[4]) * 60 + int(b[5])
+        if 0 <= s1 < 86400:
+            span = (s1 - s0) % 86400
+    return (f"{yr:04d}-{mo:02d}-{dy:02d}", s0, span)
+
+
+def _place_on_clock(img, info):
+    """Stamp a chart with the calendar instant its own footer prints.
+
+    Only when the time axis agrees. The axis fit and the footer are two
+    independent readings of the same left-hand edge, so agreement inside
+    CLOCK_TOL is what says the axis is a wall clock rather than elapsed
+    minutes — and on a chart whose axis IS elapsed minutes they cannot agree
+    except by a coincidence a 120-second window will not supply.
+
+    The axis fit, not the footer, is what the clock is set to. It is the same
+    number geom and sample 0 are already quoted against, it is fitted from
+    every tick on the axis rather than OCR'd from one 7-pixel line, and it is
+    what the 2024 layout has always reported. The footer's contribution is
+    the DATE — which no other part of these pages prints — and the proof.
+    """
+    t0 = float(info.get("t0_seconds") or 0) % 86400
+    dur = float(info.get("duration_s") or 0)
+    strip = _footer_strip(img, info.get("plot"))
+    ok = []
+    # psm 11 is only paid for when psm 6 came back with nothing usable. Every
+    # chart in the corpus is one of these calls, and a whole 2024 book is 250
+    # of them.
+    for psm in (6, 11):
+        got = _printed_span(strip, psm)
+        if got is not None:
+            date, s0, span = got
+            off = min(abs(s0 - t0), 86400 - abs(s0 - t0))
+            # Where the closing instant was read too, the range it implies
+            # must be the range we measured — otherwise one of the two was
+            # misread, and the date printed beside them is no more
+            # trustworthy than they are.
+            if off <= CLOCK_TOL and not (
+                    span is not None and dur > 0
+                    and abs(span - dur) > max(90.0, 0.05 * dur)):
+                ok.append(date)
+        if ok:
+            break
+    already = bool(info.get("clock_start"))
+    if not ok:
+        return already
+    info["clock_date"] = ok[0]
+    if not already:
+        s = int(float(info.get("t0_seconds") or 0)) % 86400
+        info["clock_start"] = "%02d:%02d:%02d" % (s // 3600, s // 60 % 60,
+                                                  s % 60)
+    return True
+
+
 def _extract_new(page, sample_sec=1.0):
     doc = page.parent
     text = page.get_text()
@@ -915,6 +1066,16 @@ def _extract_new(page, sample_sec=1.0):
             s = int(info.get("t0_seconds") or 0) % 86400
             info["clock_start"] = "%02d:%02d:%02d" % (s // 3600, s // 60 % 60,
                                                       s % 60)
+        # The wording tests above are the only thing that has ever set that
+        # flag, and they are a list of the captions we happened to have seen:
+        # "Surface Chart"/"Chemical Chart" (2024), "Surface Treatment Plot"
+        # (Pacific Canbriam). The Shell 2017 books head the very same charts
+        # "Shell Canada Limited Treatment Analysis", so 00196 and 00199 never
+        # matched and exported 00:00:00 on every page — while their axes read
+        # 19:30, 19:35 … 20:30, a wall clock already fitted to the second and
+        # then thrown away. Ask the CHART instead of the caption.
+        if _place_on_clock(img, info):
+            meta["clock"] = True
         out.append((tag, samples, chans, info))
     return meta, out
 
@@ -1091,6 +1252,12 @@ def extract_page(page, sample_sec=1.0):
             except ValueError:
                 continue
         info["geom"] = _page_geom(info, sx, sy)
+        # These books print "Time (min)" and an info table where the newer
+        # ones print the calendar span, so this finds nothing on 00183/4/5 —
+        # but it costs one small OCR and it is what would read the span on a
+        # tiled book that does print one. See _place_on_clock; a chart whose
+        # axis is elapsed minutes cannot pass its agreement test.
+        _place_on_clock(img, info)
         if titled:
             # names come from the axis titles plus NEW_SURFACE, which is the
             # colour table for exactly this chart style — the legend/position
