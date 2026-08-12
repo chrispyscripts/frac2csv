@@ -38,6 +38,19 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v0.9.6</h2>
+    <ul>
+      <li>STEP treating pressure was reading about a third too high — the
+        FracPro logo printed inside the chart was being traced as curve data.
+        On one stage it gave 78.5 MPa where the well file says 58.3</li>
+      <li>Concentration and rate on those same STEP charts were reading close
+        to full scale for the same reason</li>
+      <li>STEP 2016 reports were dropping every stretch where a curve sits at
+        zero — the missing pieces at the beginning, middle and end of
+        proppant concentration</li>
+      <li>The original chart no longer shows a grainy black smudge on reports
+        built from compressed images</li>
+    </ul>
     <h2>v0.9.5</h2>
     <ul>
       <li>Schlumberger reports now work — they were coming up with no data</li>
