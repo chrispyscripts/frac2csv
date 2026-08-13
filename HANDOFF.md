@@ -1,222 +1,164 @@
 # Frac2CSV — session handoff
 
-Written 2026-08-12. Repo: `frac-pdf-extract/frac2csv` (the git repo is that
-directory, **not** the parent). Shipped: **v0.9.4**, live on the download page
-and built as a Windows EXE.
+Rewritten 2026-08-13. Repo: `frac-pdf-extract/frac2csv` (the git repo is that
+directory, **not** the parent). Shipped: **v0.9.10**, tagged and building as a
+Windows EXE, notes live on the download page.
 
 ## Read this first
 
-Two rules earned the hard way, and both caught real defects tonight:
+Two rules earned the hard way, and both caught real defects again tonight:
 
-1. **Verify against the report's own printed numbers**, never against the
-   parser's output. Every wrong diagnosis this session survived until someone
-   compared to the printed table.
-2. **A confident diagnosis is usually partly wrong.** Of the briefs written
-   this session, roughly half named the wrong cause. Agents that measured
-   first found things nobody predicted — 25% of a document's rows silently
-   missing, intervals past 99 dropped while the parse *looked* complete.
+1. **Verify against the report's own printed numbers**, or against BCER's
+   filing — never against the parser's output.
+2. **A confident diagnosis is usually partly wrong.** The Trican conc fix
+   below is the clean example: the previous session found a genuine 32% gap in
+   the colour rules, fixed it, and the channel barely moved. The real cause was
+   somewhere else entirely. Measure the thing you are about to blame, and
+   measure it again after the fix.
+
+A corollary worth its own line: **check your harness before you trust its
+result.** The first before/after run this session reported "no change on every
+channel" because the harness unpacked four return values as three and silently
+recorded 103 errors. The number that looks like a null result is often a bug in
+how you measured.
 
 ## In flight right now
 
-Nothing is running. A raster corpus scan (`rasterscan.py` in the session
-scratchpad) finished STEP — 51 files, 1,959 surface + 169 chemical charts —
-and its SLB/Hal-1/Trican legs were staged but not aggregated.
+Nothing is running. The CalFrac corpus pass that was live at the last handoff
+finished; its result is in the v0.9.10 numbers below.
 
 ## Two drives, and they drop
 
 - `/Volumes/For-Chris-CnC-1TB/BCER-Frac/` — original corpus, 1451 folders,
-  `<index>-<uwi>_<wa>/` each holding a PDF.
+  `<index>-<uwi>_<wa>/` each holding a PDF. **Not mounted as of this writing.**
 - `/Volumes/CNC2X1TB/BCER-Frac/Spud-2019-2023/` — Carmine's newer set,
   **pre-sorted by provider** into `__CALFRAC` (120), `__HAL` (56),
-  `__SCHLUM` (199), `__STEP` (51), `__TRICAN` (192), plus 618 loose PDFs and
-  his own notes file mapping files to providers.
+  `__SCHLUM` (199), `__STEP` (51), `__TRICAN` (192), plus 618 loose PDFs.
 
 Both have disconnected mid-run and killed agents. **Always copy the PDFs you
 need to scratchpad first.** `00374` on the old drive is truncated to 49 KB and
-will throw — it needs re-copying from source.
+will throw — it needs re-copying from source. Note the two drives use different
+index schemes, so a file number in a client report may not exist on the drive
+you have mounted.
+
+## Preserved off-drive, outside the repo
+
+- `frac-pdf-extract/carmine-notes/` — Carmine's own hand-written corpus notes
+  (five per-provider files plus screenshots): the SCHLUM date-sourcing cascade,
+  casing-test exclusions, the `x10`/`x5` slurry multipliers, and 20 open `??`
+  questions. **This is the client's spec.** Read it before extracting from his
+  set — it may already say what he expects to see. Deliberately outside the git
+  repo, because `frac2csv` is public and this is client data.
+- `frac-pdf-extract/validation-tools/` — `validate_step.py` (scores extraction
+  against BCER's filing), `capcheck.py`, `smooth.py`, `regress.py`,
+  `steprepro.py`, `gapaudit.py`, `logoprobe.py`, `glyphproto.py`. These encode
+  the measurement methods behind the fixes; recreating them means re-deriving
+  the approach.
 
 ## Deploy targets — "shipped" means the EXE
 
 The client uses the EXE and nothing else. A release is the `version.py` bump,
-the `v*` tag that builds it, and the download page that serves it. The hosted
-Lab is retired (see below); local testing is `python3 localapp.py`.
+the `v*` tag that builds it, and the download page that serves it.
+**`version.py` must match the tag** — its own docstring says so, and skipping
+it shipped v0.9.2 reporting itself as 0.9.1. The version string is embedded in
+every Flag Error report, so a stale one sends diagnosis after the wrong build.
 
-## Historical: three deploy targets
+Local testing is `python3 localapp.py` in `frac2csv/`.
 
-1. `frac2csv-download` → https://frac2csv-download.vercel.app (download page
-   + `/data.html` coverage page)
-2. `carmines-lab` → https://carmines-lab.vercel.app (the hosted Lab)
-3. The Windows EXE, built by GitHub Actions on a `v*` tag
-
-**`version.py` must be bumped to match the tag** — its own docstring says so,
-and skipping it shipped v0.9.2 reporting itself as 0.9.1. The version string
-is embedded in every Flag Error report, so a stale one sends diagnosis after
-the wrong build.
-
-## DECISION: the hosted Lab is retired (2026-08-12)
+### The hosted Lab is retired (2026-08-12)
 
 Client: "Let's stop using the vercel app altogether and stick to running only
 the local version to stay consistent with the EXE."
 
-**Do not deploy `carmines-lab` again.** The two runtimes that matter are the
-Windows EXE and the local Mac app (`python3 localapp.py` in `frac2csv/`), and
-both have tesseract, so both do raster/OCR. That kills the whole class of
-"works in one place, not the other" confusion — a hosted engine seven releases
-behind was the largest untreated risk in this project.
-
-Consequences worth keeping in mind:
-- No more `lab/api` sync burden. `lab/api/*.py` exists only to serve that
-  deployment; it can stop being maintained, though leaving it in step costs
-  little and keeps the option open.
-- No more `raster_available()` fallbacks written for a platform with no
-  tesseract. Build for raster and trace the real charts.
-- `lab/public/index.html` and `stacked.html` are STILL the live UI — the local
-  app serves them. Retiring the deployment does not retire those files.
-- The download page (`frac2csv-download`) is unaffected and still ships.
-
-Nobody is affected: the client has only ever used the EXE, and the hosted Lab
-was only ever used by Chris. So it needs no redirect and no takedown — it just
-stops being deployed. If it is ever wanted again, deploying it means syncing
-`lab/api` to the desktop engine first, or it will serve stale results.
-
-## The hosted Lab is NOT the desktop engine (historical — now retired)
-
-`lab/api/version.py` says **0.6.8**. `lab/api/` is missing `step1`, `hal1`,
-`trican_charts`, `auto_raster`, `sanjel`, `calfrac_progress`, `step_vec`, and
-its `pipeline.py` predates them. So on carmines-lab.vercel.app: **STEP,
-Halliburton Hal-1, Trican charts and Sanjel produce nothing**, CalFrac
-multi-zone charts do not split, and there is no OCR at all (the raster import
-sits in a `try:` and fails silently to `_RASTER_OK = False`).
-
-The UI there is current; the engine is not. **Fine for showing the interface,
-unreliable for judging data.** Now that Carmine has the URL this is the most
-likely way to mislead someone. Closing this drift is the largest piece of
-unaddressed debt in the project.
+**Do not deploy `carmines-lab` again.** `lab/api/version.py` says **0.9.5** and
+its module set is well behind the root, so it would serve stale results.
+`lab/public/index.html` and `stacked.html` are STILL the live UI — the local app
+serves them; retiring the deployment does not retire those files. The download
+page (`frac2csv-download`) is unaffected and still ships.
 
 ## Where the client's reports come from
 
 Flag Error posts to GitHub issues: `gh issue list --repo chrispyscripts/frac2csv`.
 Each body carries provider / file / chart / stage / pdfPage / version plus a
 per-channel table of unit, axis and peak — **that channel table is the best
-diagnostic in the project.** A peak outside its own axis means something not
-on the curve is being read as data; that single observation cracked both the
-Halliburton IFS and Hal-1 clusters.
+diagnostic in the project.** A peak outside its own axis means something not on
+the curve is being read as data; that observation cracked both the Halliburton
+IFS and Hal-1 clusters.
 
-## Landed this session (all committed)
+**Issues are a running log, not a to-do state.** Nothing is closed except the
+early test issues, and several open ones (#100, #102, #110) are Carmine saying
+something *works*. Read the body before treating a number as a defect.
 
-- **hal1**: concentration axis was fitted to 21.34-1490.30 instead of 0-1500
-  because OCR read the page's time labels; axis furniture printed inside the
-  plot frame was read as data on 92 of 97 pages. WH Prop Conc mean absolute
-  error vs printed **92.1% → 6.9%**. Also proved display and CSV export are
-  bit-identical — the "export bias" report was the axis fit.
-- **frac_core**: `_resample` averaged the two vertices of a step into a
-  mid-level point, corrupting both ends of every flat run. Mean ink error
-  **1.008 → 0.004**. This was also why CalFrac stages would not separate:
-  files failing **59% → 15%**.
-- **halliburton_ifs**: legend key lines admitted as curve points (829.85 on an
-  800 axis); event-marker numbers taken for a tick column. Charts with a
-  channel over its own axis, corpus-wide: **40 → 0**.
-- **step1**: two more layouts detected (they failed on wording — no `LSD:`
-  table and U+00A0 spaces); near-vertical spikes were reported at their
-  midpoint.
-- **Lab UI**: stacked per-channel window (`stacked.html`) linked by
-  postMessage, readout-size slider, larger axis labels, dates on the time
-  axis, IMAGE tag on raster-traced stages, Full page, scroll-to-zoom
-  everywhere, stable control row, collision-free curve colours.
+## Landed in v0.9.10
 
-## Landed since this file was written (9811e8e, 55462e6)
-
-Not yet deployed — no version bump, no tag, and `lab/api` is NOT synced, so
-none of this is on carmines-lab.vercel.app yet.
-
-- **#70 CLOCKS/DATES/SKEW.** Applied and measured over all 120 CalFrac files:
-  stages exporting `00:00:00` **1,681 → 30** (165 left deliberately blank
-  where the grid names no zone), 1,583 rows re-dated across 77 files, 3,303
-  re-clocked across 117. Cross-page skew **27.1 s mean → 0** by construction.
-  Verified against the printed grid page, not the parser. One regression the
-  corpus run caught before commit: requiring a twin's cuts cost 00070 19 of
-  its 24 stages, so a twin whose captioned page could not be split still
-  splits on its own data.
-- **#70 GHOST.** Proportional ink coverage instead of a 0/255 snap — the
-  threshold was erasing 10.3% of the page's inked pixels (measured in the
-  browser on 00304). The canvas-sizing half is NOT done; see the new task.
-- **#67 SANJEL UWI.** Charts now leave `uwi` empty and report `banner_uwi`,
-  so the filename UWI wins. 00013 and 00019 were exporting another well's
-  UWI on every chart.
-- **#66 IFS LETTERED INTERVALS.** Bigger than reported: the pipeline's own
-  IFS gate matched bare digits and skips silently, so 00001's intervals 4A,
-  4B, 5A, 5B, 6A, 6B produced **nothing at all** — 8 charts became 20, over
-  10 intervals, validated against the report's printed Max Treating Pressure.
-- **#65 CANYON.** All 32 chart pages of 00204 had NO interval number (2017
-  layouts print a bare "#1"); 17 of 00009's 25 charts were dated to the job's
-  first day. Both fixed, dates now taken from the printed TREATMENT INTERVAL
-  SUMMARY, choosing between re-attempt rows by the chart's own clock.
-
-## Landed 2026-08-12, second session (5c6bdc5, 0455617, 12330c9, 54028cd)
-
-- **SLB per-zone sheets** trace, and the whole-job plot is dropped per client
-  direction. Also fixed the vintage whose curves are painted, not stroked.
-- **Peak-preserving reducer** (`0455617`): a swept column is read at whichever
-  END lies further from the local trend, not at its median. The client asked
-  for the spikes, not the averaging, and this is corpus-wide, not STEP-only.
-- **Five table parsers wired** (`12330c9`): STEP, Hal-1, Canyon, IFS, Sanjel.
-  Gated on each module's OWN detector, not on a chart source — gating tables
-  on charts is why 01155's 22 clean rows emitted nothing.
-- **STEP now reports its axes** (`54028cd`). It reported none at all, so the
-  peak-outside-axis check — the diagnostic that cracked IFS and Hal-1 — has
-  been silently skipping STEP entirely.
-- **BJ stage names** no longer carry a date (client #85): "10 May-31 14:00"
-  became "10 (2)".
-- **Lab UI**: provider dropdown removed; a "Table" button beside Stacked opens
-  the file's summary tables in their own window, Totals first.
-
-## What the STEP measurements settled
-
-- **STEP is raster from 2017 on — but NOT in 2016.** `step_vec.detect` fires on
-  ZERO pages across the 2017, 2020 and 2025 vintages, which is where the
-  uneven-tick fix belongs (`step1` + `auto_raster`). It is NOT dead code, and
-  the earlier claim here that it was is wrong: on 00180 (2016DEC09, Tourmaline
-  Laprise, WA 31976) `step_vec.detect` fires on **27 pages** and
-  `step1.detect` on **none** — those pages carry a text layer and are vector.
-  Client reports #86 and #87 are against that path, not the raster one. Check
-  which detector fires before attributing a STEP report to either.
-- **00183's "missing slurry" is NOT a bug.** Measured at pixel level: the gap
-  columns contain zero cyan pixels while good columns contain 162. The chart
-  lifts its pen while the pumps are off. An honest gap and a parser failure
-  look identical in the Lab — that is the real defect, and a per-channel note
-  ("4 gaps totalling 12.8 min where the chart draws no curve") would have
-  prevented the client report.
-- **A wrong axis defeats the axis check.** 00184's SSI-3 Conc peaks at 1,244
-  beside siblings at 0.11-1.95, but its axis was ALSO fitted as 0-2000, so the
-  peak sits inside it. Needs a sibling-consistency test, not a range test.
+- **Trican conc at zero (#105, #109).** `extract_image` cropped the plot as
+  `[y0+1:y1]`, and a conc curve resting at zero is drawn ON the bottom frame
+  line: the pen is 2px, the black frame is painted over `y1`, and the only
+  surviving green sat in the one row the crop excluded. Every blank column was
+  a column where the chart drew zero — the pad at the start of a stage and the
+  flush at the end, which is why the blanks came in two contiguous runs. Now
+  reads one row past the frame and clamps it back on. Corpus-wide over 103
+  layout-A chart pages, 22,262 of 23,311 blank columns (95.5%) had ink there.
+  **DH Prop Conc 29.1% → 1.7% blank; WH Prop Conc 51.2% → 41.2%.** Pressure and
+  rate are bit-identical (0 peaks moved) — measured, not assumed: those three
+  series have zero masked pixels on every row from `y1` to `y1+4`.
+- **Trican green partition (#105, #109).** The two conc curves were split by two
+  independent threshold rules with a gap between them; 32% of green ink matched
+  neither. Now a partition. A real fix, but it was not the main cause.
+- **CalFrac job dates (#98).** A well prints its Multiple-Zone summary as a RUN
+  of sheets carrying different days; reading the nearest sheet before a chart
+  handed the first chart the LAST sheet's day. Now picks the sheet whose zone
+  columns actually hold the chart's first zone. Paired over 242 keyed files
+  against BCER: **stages dated exactly right 58.2% → 71.7%**, off-by-one
+  1,598 → 1,131, other 676 → 432, and stages matched went *up* (5,437 → 5,514),
+  so nothing was dropped to get there.
+- **CalFrac stage separation (#101).** Pages that over-segment now split using
+  the printed zone start times to choose among boundaries the pumping data
+  proposed.
+- **Stacked window sync.** The link is a loop now — seq + ack, with the child
+  asking on load, on focus, and on a slow tick. Recovers a reloaded Lab (937 ms)
+  and a dropped push (103 ms).
+- **Full page ghost (#78-adjacent).** The panel and the graph's backdrop were
+  sharing one buffer, so Full page blanked the ghost. Two buffers now.
+- **SLB Zone Summary geometry (#95).** The call site filed every SLB chart with
+  no geometry, so Compare Original fitted the whole sheet, tables and all.
 
 ## Open, highest value first
 
-- **Deploy what landed.** `version.py` bump + `v*` tag + the `lab/api` sync
-  below, or Carmine is running an EXE and a hosted Lab that predate all of it.
-- **`lab/api` sync.** `lab/api/pipeline.py` and `lab/api/halliburton_ifs.py`
-  are now stale against the root, and there is no `lab/api/sanjel.py` at all,
-  so the hosted Lab has none of the fixes above. `lab/api/canyon_tables.py`
-  and `lab/api/ifs_tables.py` were kept in step by hand. Part of the larger
-  engine-drift problem, but do at least this much before any Lab deploy.
-- **Lab canvases.** `#graph`/`#origgraph` carry `width="1120"` with CSS
-  `width:100%`; measured at a 1600px window that is a 770px CSS box on a
-  dpr-2 display, so the backing store is stretched over 1540 device pixels.
-  The report's claim that the hit-testing "needs no change" is wrong if a
-  compensating `setTransform` is added — pick one coordinate system and
-  convert all ~20 uses of `cv.width` as a logical width, plus GP margins and
-  every font size. `renderSynced` is the delicate one.
-- **#69** — STEP uneven axis spacing (client-reported, cancelled mid-run when
-  a drive was swapped; no code changed).
+- **Trican WH Prop Conc, 41% blank.** Improved but not resolved, and the
+  remainder has **two** causes, not one. Of 39,194 columns still carrying no WH
+  ink: 50.6% have DH sitting on the shared zero row, so the two curves coincide
+  and the partition hands the pixel to whichever colour was painted last; 46.7%
+  have nothing drawn at zero at all, so WH is genuinely absent and why is not
+  established; 2.7% hold no conc ink anywhere. Neither of the first two is
+  recoverable from colour alone. **Do not assume the zero-row story explains all
+  of it** — that is the mistake the last two attempts on this channel made.
+- **Four client reports filed after the last session went quiet and never
+  looked at**: #110 (Liberty, positive — "got our term summary data"),
+  #111 (STEP raster, "do not try to get mainline 3 same colors as conc"),
+  #112 (STEP raster 00349, "missing data"), #113 (BJ list-load export reports
+  success and writes the CSVs nowhere — Carmine explicitly says this is low
+  priority, and drag-and-drop works).
+- **#104** — extracted data not being assigned to "our terms". Alias-table work;
+  `alias_table.txt` is 104 lines and has a Trican section as of v0.9.9.
+- **#69** — STEP uneven axis spacing (cancelled mid-run when a drive was
+  swapped; no code changed).
 - **#72** — STEP rate read off an `L/min` axis instead of `m3/min`, ~2.5x out.
-- **#61, #54-#59, #63** — five table parsers **built and verified but never
-  wired into `pipeline.py`** (STEP, Hal-1, Canyon, IFS, Sanjel), plus three
-  unverified drafts (`trican_b`, `calfrac_legacy`, `bj_wellops`).
+- **Three unverified table-parser drafts, still uncommitted and untracked**:
+  `trican_b.py` and `bj_wellops.py` sit in the working tree unstaged. They are
+  not in any build. Decide whether to finish or delete them.
 - **#73** — the Alberta `AB_WCF` file is not on any drive. Ask Carmine for it.
 
-## Untouched by request
+## Two things measured and settled — do not re-litigate
 
-Carmine's new drive also holds a `NOTES-Copy-Spud2018-with-Charts-AERO-0001-D.txt`
-mapping files to providers, with what look like his own review comments in it
-(19 instances of `??`). Worth reading before extracting from that set — it may
-already say what he expects to see.
+- **Trican gridlines are not a defect.** Carmine suggested removing the
+  horizontal grid lines. They are pure neutral grey `(211,211,211)`, zero
+  saturation, so no colour family in our tracer can match them. That step is
+  what his own PNGViewer digitizer needs, not ours.
+- **00183's "missing slurry" is NOT a bug.** The gap columns contain zero cyan
+  pixels; the chart lifts its pen while the pumps are off. An honest gap and a
+  parser failure look identical in the Lab — *that* is the real defect, and a
+  per-channel note ("4 gaps totalling 12.8 min where the chart draws no curve")
+  would have prevented the client report. The same shape explains the Trican
+  conc blanks above, which is why it was worth checking whether the ink existed
+  before concluding the pen was up.
