@@ -565,6 +565,56 @@ def _hms(t):
             + int(m.group(3) or 0))
 
 
+def _trican_clock(doc, results, notes):
+    """Date and clock a Trican layout-A chart from its own STAGE INFORMATION
+    page.
+
+    These charts read for elapsed minutes only — trican_charts.time_axis takes
+    the "Elapsed Time (min)" strip below the frame — so the template exported
+    with no date and no start time at all: measured, 0 of 39 stages on 00005
+    and 0 of 28 on 00317. The report prints the answer on the page after each
+    chart, in the As-Pumped "Start Time" cell, and trican2 already reads that
+    table for everything else.
+
+    Only fills what is empty. A chart that somehow carries its own clock keeps
+    it — nothing here is a correction, unlike the STEP pass below, because
+    there is no second reading to disagree with.
+    """
+    tri = [r for r in results
+           if r.get("type") == "series"
+           and str(r.get("source") or "").startswith("Trican")
+           and str(r["meta"].get("stage") or "").strip()]
+    if not tri:
+        return
+    try:
+        clocks = trican2.stage_clock(doc)
+    except Exception as e:                      # pragma: no cover - defensive
+        notes.append(f"Trican STAGE INFORMATION unreadable, so its charts "
+                     f"keep no clock — {e}")
+        return
+    if not clocks:
+        return
+    dated = clocked = 0
+    for r in tri:
+        md = r["meta"]
+        m = re.match(r"\d+", str(md.get("stage")).strip())
+        if not m:
+            continue
+        entry = clocks.get(int(m.group(0)))
+        if not entry:
+            continue
+        if not md.get("date") and entry["date"]:
+            md["date"] = entry["date"]
+            dated += 1
+        if (md.get("start_time") or "00:00:00") == "00:00:00" \
+                and entry["start"] != "00:00:00":
+            md["start_time"] = entry["start"]
+            clocked += 1
+    if dated or clocked:
+        notes.append(f"{max(dated, clocked)} Trican chart(s) dated and clocked "
+                     f"from the STAGE INFORMATION page that follows each one")
+
+
 def _step_clock(doc, results, notes):
     """Give a STEP chart that prints no clock the start time its own report
     files for that stage, and check the ones that do print one against it.
@@ -1261,6 +1311,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         _calfrac_days(results, notes)
 
     _step_clock(doc, results, notes)
+    _trican_clock(doc, results, notes)
 
     # A well can chart the same zone twice: once on a job-length overview
     # ("Zone 1-12") and again on a chart of its own ("Zones 12-14"). Both split

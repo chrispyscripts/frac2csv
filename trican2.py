@@ -18,6 +18,7 @@ As-Pumped cell must stay blank.
 """
 import csv
 import re
+from datetime import date
 
 import fitz
 
@@ -207,3 +208,134 @@ def write_csv(path, header, rows):
         for r in rows:
             w.writerow([r.get(c, "") for c in COLUMNS] + [r.get("page", "")])
     return len(rows)
+
+
+# ---------------------------------------------------------------- the clock
+
+_START_RE = re.compile(
+    r"([A-Z][a-z]{2})\s+(\d{1,2})\s*,\s*(\d{1,2}):(\d{2})\s*([AP])\.?M\.?",
+    re.I)
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
+           "jul", "aug", "sep", "oct", "nov", "dec"]
+# Dates the report prints about ITSELF — licence, submission, expiry. They are
+# not the job, but they bracket it, which is all the year needs. See _year_for.
+_DOC_DATE = re.compile(r"\b(20[0-2]\d)-(\d{2})-(\d{2})\b")
+_DOC_DATE_MON = re.compile(r"\b(20[0-2]\d)-([A-Z]{3})-(\d{1,2})\b")
+
+
+def _parse_start(text):
+    """'Feb 10, 10:09 AM' -> (month, day, hour, minute), or None.
+
+    These cells carry no year — measured across every STAGE INFORMATION page
+    of the sample, not one prints a 4-digit year anywhere on it.
+    """
+    m = _START_RE.search(text or "")
+    if not m:
+        return None
+    mon = _MONTHS.index(m.group(1).lower()[:3]) + 1
+    day, hh, mm = int(m.group(2)), int(m.group(3)), int(m.group(4))
+    if m.group(5).upper() == "P" and hh != 12:
+        hh += 12
+    elif m.group(5).upper() == "A" and hh == 12:
+        hh = 0
+    if not (1 <= day <= 31 and hh <= 23 and mm <= 59):
+        return None
+    return mon, day, hh, mm
+
+
+def document_dates(doc, pages=6):
+    """Every full date the report prints about itself, in its first pages.
+
+    Both spellings occur, sometimes on the same sheet: 2021-01-12 on the
+    completion form and 2021-JAN-11 in the licence block.
+    """
+    out = []
+    for pno in range(min(pages, len(doc))):
+        text = doc[pno].get_text()
+        for m in _DOC_DATE.finditer(text):
+            out.append(date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
+        for m in _DOC_DATE_MON.finditer(text):
+            mon = m.group(2).lower()[:3]
+            if mon in _MONTHS:
+                out.append(date(int(m.group(1)), _MONTHS.index(mon) + 1,
+                                int(m.group(3))))
+    return sorted(set(out))
+
+
+def _year_for(mon, day, doc_dates):
+    """The year that puts this month/day inside the report's own date span.
+
+    The STAGE INFORMATION table prints "Feb 10, 10:09 AM" and no year, so one
+    has to come from somewhere. The report is full of dates about itself —
+    licence issue, submission, expiry — and they are NOT the job, but a
+    completion report is written around the job it describes, so the job falls
+    inside their span. Measured on the sample: 00005 prints 2019-JAN-11 to
+    2019-APR-30 and its first stage is Feb 10; 00156 prints 2019-OCT-19 to
+    2020-JAN-30 for a Nov 14 start, which is the case a naive "use the
+    filing year" rule gets wrong in the other direction; 00317 prints
+    2021-JAN-11 to 2021-MAR-17 for Jan 19.
+
+    So try each year the report mentions, and keep the one landing nearest the
+    middle of that span. A span crossing New Year is handled by construction —
+    both years are candidates and the nearer one wins. Returns None when the
+    report prints no date at all, and the caller then has no year rather than
+    a guessed one.
+    """
+    if not doc_dates:
+        return None
+    years = sorted({d.year for d in doc_dates}
+                   | {d.year - 1 for d in doc_dates})
+    lo, hi = doc_dates[0], doc_dates[-1]
+    mid = date.fromordinal((lo.toordinal() + hi.toordinal()) // 2)
+    best, best_d = None, None
+    for y in years:
+        try:
+            cand = date(y, mon, day)
+        except ValueError:
+            continue                    # Feb 29 in a non-leap year
+        dist = abs(cand.toordinal() - mid.toordinal())
+        if best_d is None or dist < best_d:
+            best, best_d = y, dist
+    return best
+
+
+def stage_clock(doc):
+    """-> {stage number: {'date': 'YYYY-MM-DD'|'', 'start': 'HH:MM:SS'}}.
+
+    Layout A prints, per stage, a chart page followed by its STAGE INFORMATION
+    page, and that table's As-Pumped "Start Time" is when the stage was pumped.
+    The chart itself is read for elapsed minutes only, so without this the
+    whole template exports with no date and no clock: measured, 0 of 39 stages
+    on 00005 and 0 of 28 on 00317.
+
+    The join is stage number to stage number, and it is the data that says so
+    rather than the page order. These charts are cut out of ONE job-long
+    elapsed clock, so the gap between two charts' origins should equal the gap
+    between the same two rows' Start Times — and it does, to the minute, for
+    every stage from the second on: 00317's 27 stages agree within a constant
+    306 min and 00156's 34 within 135 min, the constant being stage 1 alone,
+    whose chart window opens partway through a long first stage rather than at
+    its start. Stage 1 is exactly the stage a page-order join would get right
+    and a data join reveals as different, which is why the offset is quoted
+    from stage 2.
+
+    NOT usable as a cross-check on every file: 00005's elapsed axis restarts
+    mid-job (stages 17 and 22 both report origin 0), so the shared-clock
+    identity holds per run of stages there, not across the document.
+    """
+    _hdr, rows = parse_document(doc)
+    if not rows:
+        return {}
+    doc_dates = document_dates(doc)
+    out = {}
+    for r in rows:
+        got = _parse_start(r.get("start"))
+        if not got:
+            continue
+        mon, day, hh, mm = got
+        y = _year_for(mon, day, doc_dates)
+        out[r["stage"]] = {
+            "date": f"{y:04d}-{mon:02d}-{day:02d}" if y else "",
+            "start": f"{hh:02d}:{mm:02d}:00",
+        }
+    return out
