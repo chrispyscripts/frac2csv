@@ -123,6 +123,30 @@ def series_masks(img):
     core pixel wide per column is all curve_positions needs.
     """
     r, g, b = img[..., 0], img[..., 1], img[..., 2]
+    # The two concentrations are both green and were split by two INDEPENDENT
+    # threshold rules, which left a gap between them: forest green demanded
+    # |r-b| <= 30 and yellow-green demanded r-b >= 38, so ink sitting at r-b
+    # around 36 answered to neither and was dropped. Measured on 00005 p75,
+    # 564 of 1,736 greenish pixels — 32% — matched no rule, and not merely the
+    # antialiased fringe: solid (72,156,36) and (156,204,120) both fall in the
+    # dead zone. That is why the client reports pressure and rate good and
+    # "conc having issues" (#105, #109) on a chart where WH Prop Conc came out
+    # 73% blank and DH Prop Conc 51% against 0.3% for every other channel.
+    #
+    # So make the two a PARTITION rather than two filters. The confident cores
+    # keep their original rules, bit for bit; everything else that is plainly
+    # green ink is then handed to whichever of the two reference colours it
+    # sits nearer. A partition cannot have a gap, and cannot double-count.
+    _wh = (g - r >= 25) & (g - b >= 25) & (np.abs(r - b) <= 30)
+    _dh = (g - b >= 55) & (r - b >= 38) & (g >= r)
+    _green = (g > r + 8) & (g > b + 8) & ((r + g + b) < 700)
+    _spare = _green & ~_wh & ~_dh
+    if _spare.any():
+        # distance to (34,139,34) forest vs (154,205,50) yellow-green
+        d_wh = (r - 34) ** 2 + (g - 139) ** 2 + (b - 34) ** 2
+        d_dh = (r - 154) ** 2 + (g - 205) ** 2 + (b - 50) ** 2
+        _wh = _wh | (_spare & (d_wh <= d_dh))
+        _dh = _dh | (_spare & (d_dh < d_wh))
     return {
         # (255,0,0) bright red, blends stay at r=255
         "surface": (r >= 200) & (r - g >= 90) & (r - b >= 90),
@@ -131,9 +155,9 @@ def series_masks(img):
         # (0,116,191) medium blue
         "rate": (b - r >= 40) & (b - g >= 12),
         # (34,139,34) forest green
-        "wh_conc": (g - r >= 25) & (g - b >= 25) & (np.abs(r - b) <= 30),
+        "wh_conc": _wh,
         # (154,205,50) yellow-green
-        "dh_conc": (g - b >= 55) & (r - b >= 38) & (g >= r),
+        "dh_conc": _dh,
     }
 
 
