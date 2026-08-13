@@ -660,7 +660,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         n_cols = sub.shape[1]
         # glyphs=True: these reports print the FracPro logo inside the frame,
         # in the series' own inks. See auto_raster.drop_glyph_islands.
-        py = ar.curve_positions(sub, glyphs=True)
+        py = ar.curve_positions(sub, glyphs=True, edge_blank=True)
         cx, py = _keep_excursions(sub, py)
         py = py + y0
         # same round-bound snap as the tiled path (see auto_raster.snap_axis):
@@ -1248,7 +1248,8 @@ def extract_page(page, sample_sec=1.0):
         if not titled:
             try:
                 samples, chans, info = ar.extract(img, sample_sec=sample_sec,
-                                                  plot=box, glyphs=True)
+                                                  plot=box, glyphs=True,
+                                                  edge_blank=True)
             except ValueError:
                 continue
         info["geom"] = _page_geom(info, sx, sy)

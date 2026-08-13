@@ -40,6 +40,11 @@ HUE_HEX = {"red": "#c8372d", "orange": "#d07a1f", "yellow": "#a89a17",
 # pen. The client's instruction is explicit: less smooth the better.
 SWEPT_FACTOR = 1.4
 
+# How many consecutive columns of ink must sit on the frame's top edge before
+# the trace is treated as CLIPPED there rather than as a peak touching its
+# axis. See the edge_blank block in curve_positions.
+EDGE_RUN = 4
+
 
 def tesseract_path():
     """Locate tesseract: bundled (PyInstaller) first, then PATH."""
@@ -1072,7 +1077,7 @@ def _rolling_median(v, k):
 
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
                     spike_run=8, glyphs=False, envelope=True,
-                    swept_factor=None):
+                    swept_factor=None, edge_blank=False):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
 
@@ -1153,6 +1158,31 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
         if hgt <= spike_run and abs(py[cx] - ref[cx]) > spike_tol * H:
             py[cx] = np.nan
 
+    # Ink pinned to the TOP of the frame is a reading the chart did not make.
+    #
+    # When a curve leaves the top of its axis the plotting software clips it and
+    # draws a flat line along the frame instead. Tracing that faithfully exports
+    # the axis maximum as though it were data: on 00183 chart 31 the surface
+    # pressure runs off a 0..60 axis around 968 min and we reported a dead-level
+    # 60.00 MPa for 453 consecutive seconds. The client asked for exactly this —
+    # "Data appears to go off the charts, exctracted data caps a straight line.
+    # return as blank instead" (#97) — and he is right: off-scale is unknown,
+    # and a flat cap is a number nobody measured.
+    #
+    # Only the top, and only a RUN of columns. The bottom edge is where a curve
+    # legitimately rests at zero — proppant concentration sits there for most of
+    # a stage — and blanking that would delete real data, which is the mistake
+    # step_vec had to be rescued from. A single column grazing the top is a peak
+    # that just touches its axis, so a clipped stretch has to last EDGE_RUN
+    # columns before it is treated as a cap; the excursion above is ~75.
+    if edge_blank and H > 2:
+        lit = sub[0].copy()
+        if lit.any():
+            idx = np.flatnonzero(lit)
+            for grp in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1):
+                if len(grp) >= EDGE_RUN:
+                    py[grp] = np.nan
+
     # Report the EXTREME of a swept column, not its middle.
     #
     # A column's ink is a run of pixels. Where the run is only as tall as the
@@ -1188,7 +1218,8 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
 
 # ---------- main entry ----------
 
-def extract(img, sample_sec=1.0, plot=None, glyphs=False):
+def extract(img, sample_sec=1.0, plot=None, glyphs=False,
+            edge_blank=False):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -1238,7 +1269,7 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False):
             # exported values, not just the drawing
             b = (_vb - _vt) / float(y1 - y0)
             a = _vt - b * y0
-        py = curve_positions(sub, glyphs=glyphs) + y0
+        py = curve_positions(sub, glyphs=glyphs, edge_blank=edge_blank) + y0
         vals = a + b * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
         if np.isfinite(vals).sum() < 50:
