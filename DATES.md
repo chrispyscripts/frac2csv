@@ -24,7 +24,7 @@ template needs a second source and a rule for who outranks whom.
 | Liberty | `_parse_date` | time axis | from code |
 | Halliburton (Hal-1, IFS) | nothing in the module | time axis only | **gap** |
 | BJ | nothing in the module | time axis only | **gap** |
-| **Trican layout A** | **nothing** | **nothing** | **gap — clock is on the page, unread** |
+| **Trican layout A** | STAGE INFORMATION page | STAGE INFORMATION page | **now read** — 3 files, not a corpus |
 
 "Measured" means re-run this session and counted. "From code" means read out
 of the module and not re-verified — treat as a claim, not a result.
@@ -75,21 +75,37 @@ Measured this session: 00349 — 51 stages, 51 dated, 51 clocked, 9 re-dated fro
 the summary. 00308 — 46 stages, **41 dated**, 46 clocked, so five stages come
 out with a clock and no day.
 
-## Trican layout A — the clearest open gap
+## Trican layout A — was the clearest gap, now read from the table
 
-**0 of 39 stages on 00005 and 0 of 28 on 00317 carry any date or start time.**
-Measured this session, not inferred.
+It exported **0 of 39 stages on 00005 and 0 of 28 on 00317** with any date or
+time, because `trican_charts.time_axis` reads only the "Elapsed Time (min)"
+strip below the frame.
 
-The cause is specific and fixable: `trican_charts.time_axis` reads the strip
-*below* the frame (`y1+1 .. y1+46`), which is the **"Elapsed Time (min)"** row.
-The module's own header docstring records that these charts print time along x
-**twice** — "clock time (HH:MM) above the frame, elapsed minutes below it". The
-wall clock is on the page and is never read.
+`trican2.stage_clock` now supplies both from the STAGE INFORMATION page that
+follows each chart — its As-Pumped "Start Time" cell, e.g. `Feb 10, 10:09 AM`,
+present on 39/39, 34/34 and 27/27 rows. Wired in at `pipeline._trican_clock`,
+which fills only what is empty and corrects nothing.
 
-That is the same shape as the STEP fix in `f6898de` ("ask the chart for its
-clock instead of the page's wording"), and layout A has a per-stage answer key
-sitting next to it: `trican2.py` reads the STAGE INFORMATION table on the
-following page. Both halves are already in the tree.
+**The join is proved by the data.** These charts are cut from one job-long
+elapsed clock, so the gap between two charts' origins equals the gap between
+the same two rows' Start Times — exactly, from the second stage on. 00317's 27
+stages agree within a constant 306 min, 00156's 34 within 135 min, and that
+constant is stage 1 alone, whose chart window opens partway through a long
+first stage. Caveat: 00005's elapsed axis RESTARTS mid-job (stages 17 and 22
+both report origin 0), so this is a check, not the join.
+
+**The year is the hard part.** No STAGE INFORMATION page prints one. The
+report's own dates — licence, submission, expiry — are not the job but bracket
+it, so `_year_for` takes the year landing nearest the middle of that span. A
+"use the filing year" rule gets 00156 wrong: filed 2019DEC06, printed dates
+2019-10-19 to 2020-01-30, job Nov **2019**.
+
+Result: 34/39, 34/35, 27/28 dated, the rest being whole-job "continuous" pages
+with no stage number. Across all 100 rows the clock runs forwards with **zero
+backwards steps**, over 5d19h, 22h26m and 17h41m.
+
+**NOT corpus-validated** — the drive unmounted mid-session and layout A is the
+2015-2016 vintage, which is NOT in `__TRICAN` on the newer drive. Three files.
 
 ## Canyon, SLB, Sanjel, Liberty — read from code, not re-measured
 
@@ -120,9 +136,10 @@ backstop for a mis-sourced day, not a substitute for finding the right source.
 
 ## If you pick this up next
 
-1. **Trican layout A's clock** is the biggest single gap and the mechanism is
-   already identified above — with `trican2`'s STAGE INFORMATION table as the
-   answer key.
+1. **Validate the Trican clock on the layout-A corpus.** It is written and
+   working on three files; the 2015-2016 vintage lives on the first drive, not
+   `__TRICAN`. Check `_year_for` against a report whose own printed dates span
+   more than a year, which is the case most likely to pick the wrong one.
 2. **STEP's undated stages** (5 of 46 on 00308) — they have a clock, so only
    the day is missing.
 3. **Verify SLB against the client's cascade** rather than against our output;
