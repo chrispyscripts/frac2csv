@@ -256,6 +256,11 @@
              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px; color:var(--mut); font-family:var(--mono); }
   #graph { cursor:grab; }
   #graph.panning { cursor:grabbing; }
+  /* The source panel is only draggable in Full page mode — in chart-region
+     mode it is a time-locked readout and the cursor must not promise a grab
+     that does nothing. The class is put on and taken off with the mode. */
+  #origgraph.pageview { cursor:grab; }
+  #origgraph.pageview.panning { cursor:grabbing; }
   .dlbar { padding:6px 18px 16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .dlbar .cnt { color:var(--mut); font-size:11.5px; margin-left:auto; font-family:var(--mono); }
   .tablewrap { padding:0 18px 18px; }
@@ -1413,6 +1418,7 @@ function showStage(entry, well, item) {
   setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
   orig.fullPage = false;      // each stage opens on its own chart region
+  resetPageView(); orig.page.key = "";   // and never on the last one's zoom
   if (applyCompareSize()) redrawGraph();
   updateOrigBar();
   scheduleOrigSync();
@@ -2240,7 +2246,12 @@ const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: nul
                synced: false, bufSeq: -1, failed: false,
                // show the WHOLE source page instead of the chart region
                // cropped and time-locked to the graph
-               fullPage: false };
+               fullPage: false,
+               // Full page's own zoom/pan. See the section below: this is a
+               // VIEW transform on a picture and is deliberately not the
+               // graph's time window.
+               page: { key: "", pw: 0, ph: 0, fit: 1, z: 1, x: 0, y: 0,
+                       bmp: null, bmpScale: 0, timer: null, pushRaf: 0 } };
 
 function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
@@ -2454,26 +2465,177 @@ function drawOrigOverlay(t) {
   ctx.setLineDash([]);
 }
 
-async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
-  let vp = page.getViewport({ scale: 1 });
-  const fit = Math.min(cv.width / vp.width, cv.height / vp.height);
-  vp = page.getViewport({ scale: fit * 2 });
-  const off = document.createElement("canvas");
-  off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
-  await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
-  if (mySeq !== orig.seq) return;
-  orig.synced = false;
-  orig.bufSeq = mySeq;
+// ---------- the whole sheet, as a picture you can zoom and pan ----------
+//
+// TWO KINDS OF ZOOM, AND THEY MUST NOT MEET. In chart-region mode a wheel
+// changes gState.t0/t1 — the graph's TIME WINDOW — and the source panel
+// follows because renderSynced re-renders the page at that window; graph and
+// panel move as one. Full page has no time lock at all: it is a picture of a
+// sheet whose tables and title block have no position on the time axis. So a
+// gesture here is a pure view transform on that picture, and nothing in this
+// section touches gState. The handlers at the bottom of the file branch on
+// orig.fullPage before they do anything, so the two paths never overlap.
+//
+// orig.page.z is a multiple of `fit` — the scale at which the whole sheet
+// fits the panel — so z = 1 IS fit-to-panel and is the floor: the sheet can
+// never be shrunk into a stamp in the middle of an empty panel. x/y are the
+// page image's top-left corner in canvas pixels, clamped so an edge of the
+// sheet can never be dragged past its own side of the panel.
+const PAGE_ZOOM_MAX = 8;        // 8x fit puts a 6pt table cell at reading size
+const PAGE_RENDER_MAX = 4000;   // per side; past this pdf.js canvases get slow
+const PAGE_RENDER_MS = 140;     // settle time before a crisp re-render
+
+function pageViewKey(cv) {
+  const srcs = (current && current.item && current.item.srcs) || [];
+  const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0] || {};
+  return `${orig.docKey}|${src.page}|${cv.width}x${cv.height}`;
+}
+
+function resetPageView() {
+  const p = orig.page;
+  p.z = 1; p.x = 0; p.y = 0;
+  p.bmp = null; p.bmpScale = 0;
+  if (p.timer) { clearTimeout(p.timer); p.timer = null; }
+  if (p.pushRaf) { cancelAnimationFrame(p.pushRaf); p.pushRaf = 0; }
+}
+
+// Keep the sheet on the panel. Bigger than the panel: no edge may come inside
+// its own side, so there is never a margin to drag into. Smaller (only at
+// z = 1): centred, because a fitted page has nowhere to go.
+function clampPageView(cv) {
+  const p = orig.page;
+  p.z = Math.max(1, Math.min(PAGE_ZOOM_MAX, p.z));
+  const w = p.pw * p.fit * p.z, h = p.ph * p.fit * p.z;
+  p.x = w <= cv.width ? (cv.width - w) / 2
+                      : Math.min(0, Math.max(cv.width - w, p.x));
+  p.y = h <= cv.height ? (cv.height - h) / 2
+                       : Math.min(0, Math.max(cv.height - h, p.y));
+}
+
+// Paint the current view out of whatever bitmap we have. Cheap enough to run
+// on every wheel tick and every mousemove: a re-render at the new scale is
+// scheduled separately, and until it lands this is the same pixels stretched,
+// which keeps the gesture continuous instead of stepping.
+function compositePage(cv) {
+  const p = orig.page;
+  if (!p.bmp) return;
   if (!orig.buf) orig.buf = document.createElement("canvas");
-  orig.buf.width = cv.width; orig.buf.height = cv.height;
+  if (orig.buf.width !== cv.width) orig.buf.width = cv.width;
+  if (orig.buf.height !== cv.height) orig.buf.height = cv.height;
   const bctx = orig.buf.getContext("2d");
-  const w = off.width / 2, h = off.height / 2;
-  const x = (cv.width - w) / 2, y = (cv.height - h) / 2;
-  bctx.fillStyle = "#ffffff"; bctx.fillRect(x, y, w, h);
-  bctx.drawImage(off, x, y, w, h);
+  bctx.setTransform(1, 0, 0, 1, 0, 0);
+  bctx.clearRect(0, 0, cv.width, cv.height);
+  const w = p.pw * p.fit * p.z, h = p.ph * p.fit * p.z;
+  bctx.fillStyle = "#ffffff";
+  bctx.fillRect(p.x, p.y, w, h);
+  bctx.drawImage(p.bmp, p.x, p.y, w, h);
   drawOrigOverlay(null);
   stackPageStale = false;
-  pushStackedPage();
+  // The stacked window follows the same view, but a drag fires this on every
+  // mousemove and each push costs an ImageBitmap of the whole panel. One per
+  // frame is plenty — the same rAF debounce scheduleOrigSync uses.
+  if (!p.pushRaf) p.pushRaf = requestAnimationFrame(() => {
+    p.pushRaf = 0; pushStackedPage();
+  });
+}
+
+// Re-render the page at the size it is actually being shown. Scaling a
+// fit-sized bitmap up to 8x is a blur, and the whole reason to zoom a sheet
+// is to read what it prints. Debounced, because a wheel spin is twenty
+// events and pdf.js renders are not free; the seq guard is the same one
+// syncOrig uses, so a stage switch mid-render cannot repaint over the new one.
+function schedulePageRender(cv) {
+  const p = orig.page;
+  if (p.timer) clearTimeout(p.timer);
+  p.timer = setTimeout(() => {
+    p.timer = null;
+    if (!orig.fullPage || !orig.doc) return;
+    renderPageBitmap(cv, orig.seq).catch(() => { /* superseded */ });
+  }, PAGE_RENDER_MS);
+}
+
+// Supersample a little past the on-screen size so the downscale stays sharp,
+// but never ask pdf.js for a canvas bigger than PAGE_RENDER_MAX a side.
+function pageRenderScale(cv) {
+  const p = orig.page;
+  const want = p.fit * p.z * 2;
+  const cap = Math.min(PAGE_RENDER_MAX / Math.max(1, p.pw),
+                       PAGE_RENDER_MAX / Math.max(1, p.ph));
+  return Math.max(0.1, Math.min(want, cap));
+}
+
+async function renderPageBitmap(cv, mySeq, known) {
+  const p = orig.page;
+  const srcs = (current && current.item && current.item.srcs) || [];
+  const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
+  if (!src || !orig.doc) return;
+  const scale = pageRenderScale(cv);
+  // already have this page at this size (a re-sync that changed nothing, or
+  // a zoom already capped) — repaint from it rather than re-rendering
+  if (p.bmp && Math.abs(scale - p.bmpScale) / p.bmpScale < 0.02) {
+    compositePage(cv);
+    return;
+  }
+  const page = known || await orig.doc.getPage(src.page);
+  if (mySeq !== orig.seq) return;
+  const vp = page.getViewport({ scale });
+  const off = document.createElement("canvas");
+  off.width = Math.max(1, Math.ceil(vp.width));
+  off.height = Math.max(1, Math.ceil(vp.height));
+  const octx = off.getContext("2d");
+  octx.fillStyle = "#ffffff"; octx.fillRect(0, 0, off.width, off.height);
+  if (orig.task) { try { orig.task.cancel(); } catch (e) { /* noop */ } }
+  const task = page.render({ canvasContext: octx, viewport: vp });
+  orig.task = task;
+  await task.promise.catch(() => { /* cancelled */ });
+  // The seq guard is the only one allowed here. Testing orig.fullPage as well
+  // looked safe and was not: this same routine draws the fallback for a chart
+  // that reports NO geometry, where fullPage is false and the fitted page is
+  // all the panel ever gets — gating on the mode left those templates with a
+  // rendered page and an empty panel. Toggling the mode bumps orig.seq, so
+  // seq already covers what the extra test was reaching for.
+  if (mySeq !== orig.seq) return;
+  p.bmp = off; p.bmpScale = scale;
+  compositePage(cv);
+}
+
+// The zoom/pan gestures. Both are no-ops until a page has been rendered.
+function pageZoomAt(cv, mx, my, deltaY) {
+  const p = orig.page;
+  if (!p.bmp) return;
+  const before = p.z;
+  p.z *= Math.pow(1.0015, -deltaY);          // wheel up = closer, as on the graph
+  p.z = Math.max(1, Math.min(PAGE_ZOOM_MAX, p.z));
+  if (p.z === before) return;
+  // hold the point under the cursor still: its offset from the page's corner
+  // scales with the zoom, so the corner moves by the difference
+  const k = p.z / before;
+  p.x = mx - (mx - p.x) * k;
+  p.y = my - (my - p.y) * k;
+  clampPageView(cv);
+  compositePage(cv);
+  schedulePageRender(cv);
+}
+
+function pagePanBy(cv, dx, dy) {
+  const p = orig.page;
+  if (!p.bmp) return;
+  p.x += dx; p.y += dy;
+  clampPageView(cv);
+  compositePage(cv);
+}
+
+async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
+  const p = orig.page;
+  const vp1 = page.getViewport({ scale: 1 });
+  const key = pageViewKey(cv);
+  if (p.key !== key) { resetPageView(); p.key = key; }
+  p.pw = vp1.width; p.ph = vp1.height;
+  p.fit = Math.min(cv.width / vp1.width, cv.height / vp1.height);
+  clampPageView(cv);
+  orig.synced = false;
+  orig.bufSeq = mySeq;
+  await renderPageBitmap(cv, mySeq, page);
 }
 
 function updateOrigBar() {
@@ -2496,6 +2658,9 @@ function updateOrigBar() {
   const ff = $("origfull");
   ff.classList.toggle("on", orig.fullPage);
   ff.textContent = orig.fullPage ? "Chart only" : "Full page";
+  // grab cursor only where a grab does something
+  $("origgraph").classList.toggle("pageview", !!orig.fullPage);
+  if (!orig.fullPage) $("origgraph").classList.remove("panning");
   if (orig.fullPage) {
     $("origlbl").textContent = `PDF p.${pages[i]} — whole page` +
       (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
@@ -3166,6 +3331,10 @@ $("origfull").addEventListener("click", () => {
   // the next redraw cannot composite a full page over the plot.
   orig.buf = null; orig.ink = null; orig.raw = null;
   orig.bufSeq = -1; orig.synced = false;
+  // Every entry into Full page starts fitted. Keeping the last zoom would
+  // bring the mode back showing a corner of a table with no way to tell what
+  // you are looking at.
+  resetPageView(); orig.page.key = "";
   gState.hover = null;
   updateOrigBar();
   if (applyCompareSize()) redrawGraph();
@@ -3325,7 +3494,32 @@ $("lblmode").addEventListener("click", e => {
     return { x: (e.clientX - r.left) * (ocv.width / r.width),
              y: (e.clientY - r.top) * (ocv.height / r.height) };
   };
+  // Full page's own drag-pan. Held here rather than in `pan` above because
+  // that one carries a time window and this one carries canvas pixels — the
+  // two must not be able to be mistaken for each other.
+  let opan = null;
+  ocv.addEventListener("mousedown", e => {
+    if (!orig.fullPage || !orig.page.bmp) return;
+    e.preventDefault();               // or the drag turns into a text selection
+    const p = opos(e);
+    opan = { x: p.x, y: p.y };
+    ocv.classList.add("panning");
+  });
+  window.addEventListener("mouseup", () => {
+    if (!opan) return;
+    opan = null; ocv.classList.remove("panning");
+    schedulePageRender(ocv);          // settle: repaint crisp where we landed
+  });
   ocv.addEventListener("mousemove", e => {
+    if (orig.fullPage) {
+      // A full page is not on the graph's time window, so it drives no
+      // crosshair and reads no time — it only pans.
+      if (!opan) return;
+      const p = opos(e);
+      pagePanBy(ocv, p.x - opan.x, p.y - opan.y);
+      opan = { x: p.x, y: p.y };
+      return;
+    }
     if (!orig.synced || !gState.channels.length) return;
     const p = opos(e);
     if (p.x < GP.L || p.x > ocv.width - GP.R) {
@@ -3339,20 +3533,38 @@ $("lblmode").addEventListener("click", e => {
     redrawGraph();
     drawOrigOverlay(t);
   });
-  // Same scroll-to-zoom on the source panel. Full-page mode is excluded: that
-  // view is not on the graph's time window, so zooming it would move the plot
-  // in response to a gesture over a picture that does not correspond to it.
+  // Scroll-to-zoom on the source panel, and it means two different things.
+  // In chart-region mode it is the graph's own zoom: the panel is on the
+  // graph's time window, so the wheel moves BOTH. In Full page it magnifies
+  // the picture about the cursor and the graph does not move at all —
+  // gState is untouched down that branch. Client request: "On 'Full Page'
+  // mode, enable scroll to zoom on the chart and click/drag to move around".
   ocv.addEventListener("wheel", e => {
+    if (orig.fullPage) {
+      if (!orig.page.bmp) return;
+      e.preventDefault();
+      const p = opos(e);
+      pageZoomAt(ocv, p.x, p.y, e.deltaY);
+      return;
+    }
     // orig.synced is the same gate this panel's mousemove uses: when the
-    // panel is not on the graph's time window (full page, or a page with no
-    // geometry) a wheel here means nothing.
-    if (!gState.channels.length || !orig.synced || orig.fullPage) return;
+    // panel is not on the graph's time window (a page with no geometry) a
+    // wheel here means nothing.
+    if (!gState.channels.length || !orig.synced) return;
     e.preventDefault();
     const p = opos(e);
     const t = gState.t0 + (p.x - GP.L) / (ocv.width - GP.L - GP.R) *
               (gState.t1 - gState.t0);
     zoomAround(t, e.deltaY);
   }, { passive: false });
+  // Double-click resets to fit — the same gesture that resets the graph to
+  // its full time window, so the two modes answer the mouse alike.
+  ocv.addEventListener("dblclick", () => {
+    if (!orig.fullPage) return;
+    resetPageView();
+    orig.page.key = "";               // force a fresh fit + render
+    syncOrig();
+  });
   ocv.addEventListener("mouseleave", () => {
     if (gState.hover) { gState.hover = null; redrawGraph(); }
     drawOrigOverlay(null);
