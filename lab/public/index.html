@@ -1259,9 +1259,23 @@ function stageLabel(item) {
   return item.key;
 }
 
-// map a chart/table source string to a service-provider label
+// map a chart/table source string to a service-provider label.
+//
+// This is NOT a filter any more. The dropdown that let a provider be picked by
+// hand is gone — the provider is detected from the chart itself — and what is
+// left is only the label, which rides on an auto-filed report so a flag says
+// which pumper's template produced it without anyone choosing one.
+// Specific brands come before the generic catch-alls: Halliburton's rule
+// claims any "treatment plot", so a pumper whose own source string carries
+// that phrase has to be matched by name first.
 const PROVIDERS = [
-  [/leucrotta/i, "Leucrotta"], [/halliburton|IFS|treatment plot/i, "Halliburton"],
+  [/leucrotta/i, "Leucrotta"],
+  // The client's SCHLUM-1/-2 types. Covers "SLB PRC chart" and the
+  // "SLB Zone Summary chart (raster)" label slb.page_source() defines, so
+  // a filing printing both still reads as one provider. Named for the
+  // company, matching Hal-1 -> Halliburton and LEI-1 -> Leucrotta.
+  [/\bSLB\b|schlumberger/i, "Schlumberger"],
+  [/halliburton|IFS|treatment plot/i, "Halliburton"],
   [/liberty/i, "Liberty"], [/\bBJ\b/i, "BJ"], [/canyon/i, "Canyon"],
   [/STEP/i, "STEP"], [/mview/i, "CalFrac"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
@@ -2867,10 +2881,11 @@ $("tablebtn").addEventListener("click", () => {
  td:first-child,th:first-child{text-align:left}
  tr:hover td{background:#f7f5f3}
  .cnt{color:#777;font-size:11px;margin:5px 2px 0}
- @media (prefers-color-scheme:dark){
-  body{background:#0d1117;color:#e6edf3}h1{color:#ff7b93}
-  .wrap{border-color:#30363d}th{background:#161b22}
-  th,td{border-bottom-color:#21262d}tr:hover td{background:#161b22}}
+ /* Always dark text on paper. This window used to follow the OS through
+    prefers-color-scheme, which is not the same question as what the app is
+    set to: on a machine in dark mode the tables came up white-on-black
+    whatever the Lab's own theme said, and the client asked for them the other
+    way round. A table of numbers is read, not watched, so it stays on paper. */
 </style><h1>${esc(name)}</h1>${body}`);
   w.document.close();
   try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
@@ -2951,9 +2966,7 @@ document.addEventListener("keydown", e => {
 // ---------- arrow-key stage navigation ----------
 // Down/Up step through the stage list and roll over into the next/previous
 // report, so a whole drive list can be reviewed without touching the mouse.
-// Files that produced nothing are skipped — there is no stage to land on —
-// and so are files the provider filter is hiding, which would otherwise
-// reappear as soon as you held an arrow down.
+// Files that produced nothing are skipped — there is no stage to land on.
 function navigableEntries() {
   return entries
     .filter(e => e.items && e.items.length)
@@ -3855,7 +3868,6 @@ $("exSumOne").addEventListener("click", wrapErr(exportSummaryOne));
 $("exSecAll").addEventListener("click", wrapErr(exportSecondsAll));
 $("exSumAll").addEventListener("click", wrapErr(exportSummaryAll));
 
-// seed the provider menu with the validated set before any file loads
 loadSettings();
 refreshDestUI();
 </script>
