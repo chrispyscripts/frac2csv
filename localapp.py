@@ -149,16 +149,33 @@ def dir_writable(folder):
 
 
 def export_folder(preferred, dest_folder=""):
-    """Where exports actually land: `preferred` (normally the PDF's own
-    folder) when it is writable, else the folder configured in Settings, else
-    ~/Downloads, else home. -> (folder, skipped) where skipped is the
-    unwritable folder we had to give up on ("" when none)."""
+    """Where exports actually land. -> (folder, skipped), where skipped is a
+    folder we wanted but had to give up on ("" when none).
+
+    A destination configured in Settings WINS. It used to be only a fallback
+    for when `preferred` was read-only, which meant that setting a destination
+    did nothing at all whenever the PDF's own folder happened to be writable —
+    the export reported success and the chosen folder stayed empty (#113,
+    "it reports that the folder was set and that it has exported all the files
+    ... but the set destination folder is empty where its putting them I do not
+    know"). A setting that is silently ignored most of the time is
+    indistinguishable from a broken export, and it cost the client a batch he
+    then had to go hunting for.
+
+    With no destination set the old behaviour stands: write beside the PDF,
+    and fall back to ~/Downloads then home when that folder is read-only — a
+    TXT list routinely names files on a read-only volume, which is what the
+    fallback was built for.
+    """
+    if dest_folder and dir_writable(dest_folder):
+        return dest_folder, ""
     if dir_writable(preferred):
-        return preferred, ""
+        # asked for somewhere we cannot write; say so rather than pretending
+        return preferred, dest_folder
     home = os.path.expanduser("~")
-    for cand in (dest_folder, os.path.join(home, "Downloads"), home):
+    for cand in (os.path.join(home, "Downloads"), home):
         if cand and dir_writable(cand):
-            return cand, preferred
+            return cand, dest_folder or preferred
     raise OSError(f"no writable export folder — tried {preferred}, "
                   f"{dest_folder or '(no destination set)'}, {home}")
 

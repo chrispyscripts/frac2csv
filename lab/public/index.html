@@ -3834,9 +3834,10 @@ const b64enc = buf => {
 };
 function dirName(p) { return p.replace(/[\/\\][^\/\\]*$/, ""); }
 function baseName(p) { return String(p).replace(/[\/\\]+$/, "").split(/[\/\\]/).pop() || p; }
-// where an entry's exports go: its own folder for TXT-batch files (or the
-// folder the server fell back to when that one is read-only), else the
-// configured destination folder
+// The folder to use when NO destination is configured: the entry's own (or
+// the one the server fell back to when that is read-only). When a destination
+// IS set the server prefers it over this and this becomes the fallback, so
+// the precedence lives in one place rather than being decided twice.
 function folderFor(entry) {
   if (entry && entry._outDir) return entry._outDir;
   if (entry && entry._srcPath) return dirName(entry._srcPath);
@@ -3910,9 +3911,12 @@ async function exportSecondsAll() {
   const list = entriesInScope().filter(e => e.well);
   if (!list.length) return;
   if (isLocal()) {
-    let n = 0;
-    for (const e of list) n += (await emitSeconds(e, e.well)).length;
-    exportDone([`${n} file(s)`]);
+    let n = 0; const written = [];
+    for (const e of list) {
+      const out = await emitSeconds(e, e.well);
+      n += out.length; written.push(...out);
+    }
+    exportDoneCount(n, written);
   } else {
     const pairs = [];
     for (const e of list) {
@@ -3928,9 +3932,12 @@ async function exportSummaryAll() {
   const list = entriesInScope().filter(e => e._tables && e._tables.length);
   if (!list.length) return;
   if (isLocal()) {
-    let n = 0;
-    for (const e of list) n += (await emitSummary(e)).length;
-    exportDone([`${n} file(s)`]);
+    let n = 0; const written = [];
+    for (const e of list) {
+      const out = await emitSummary(e);
+      n += out.length; written.push(...out);
+    }
+    exportDoneCount(n, written);
   } else {
     const pairs = [];
     for (const e of list)
@@ -3940,12 +3947,38 @@ async function exportSummaryAll() {
   }
 }
 
+// `files` are the paths the SERVER reported writing, not the names we asked
+// it to write. Saying "saved -> <the destination setting>" when the server
+// had put them somewhere else is what made #113 so expensive: the export
+// announced a folder that stayed empty and the client had no way to find the
+// files. Report the folders actually written to, and name them all when a
+// batch straddles more than one.
 function exportDone(files) {
   const foot = $("exfoot");
-  const where = isLocal()
-    ? (settings.destFolder || "each file's folder")
-    : "browser downloads";
-  foot.textContent = `✓ saved ${files.join(", ")} → ${where}`;
+  if (!isLocal()) {
+    foot.textContent = `✓ saved ${files.join(", ")} → browser downloads`;
+    return;
+  }
+  const dirs = [...new Set(files.map(dirName).filter(Boolean))];
+  const names = files.map(baseName);
+  const where = dirs.length === 1 ? dirs[0]
+    : dirs.length > 1 ? `${dirs.length} folders: ${dirs.join(", ")}`
+    : "each file's folder";
+  foot.textContent = `✓ saved ${names.join(", ")} → ${where}`;
+}
+// Same, for the batch buttons: they count files rather than listing them, so
+// the count is passed through and the folders come off the real paths.
+function exportDoneCount(n, files) {
+  const foot = $("exfoot");
+  if (!isLocal()) {
+    foot.textContent = `✓ saved ${n} file(s) → browser downloads`;
+    return;
+  }
+  const dirs = [...new Set(files.map(dirName).filter(Boolean))];
+  const where = dirs.length === 1 ? dirs[0]
+    : dirs.length > 1 ? `${dirs.length} folders: ${dirs.join(", ")}`
+    : "each file's folder";
+  foot.textContent = `✓ saved ${n} file(s) → ${where}`;
 }
 
 function refreshExportPanel() {
@@ -3957,9 +3990,12 @@ function refreshExportPanel() {
   $("exSumOne").disabled = !hasSum;
   $("exSecAll").disabled = !inScope.some(x => x.well);
   $("exSumAll").disabled = !inScope.some(x => x._tables && x._tables.length);
+  // A destination set in Settings now takes everything, TXT-list files
+  // included; it used to apply only when a file's own folder was read-only,
+  // which is why this line used to carve out the TXT case (#113).
   const dest = isLocal()
     ? "Saves to: " + (settings.destFolder
-        ? settings.destFolder + "  (TXT-list files → their own folder)"
+        ? settings.destFolder
         : "each file's own folder / Downloads — set a folder in Settings")
     : "Downloads to your browser";
   $("exfoot").textContent = dest;
