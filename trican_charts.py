@@ -498,7 +498,24 @@ def extract_image(img, sample_sec=1.0):
         mask = masks.get(key)
         if mask is None or not mask.any():
             continue
-        sub = mask[y0 + 1:y1, x0 + 1:x1]
+        # Read one row PAST the frame, and pull anything found there back onto
+        # it.  A curve resting at zero is drawn ON the bottom frame line, and
+        # the frame is painted over it: the pen is 2px, so it straddles y1 and
+        # y1+1, the black frame takes y1, and the only surviving green is the
+        # row a [y0+1:y1] crop throws away.  That is the whole of the client's
+        # "conc having issues" (#105, #109) — the tracer was discarding
+        # nothing, the mask simply never saw the ink.  Measured on 00005 p75,
+        # 311 of the 327 blank columns have conc ink at y1+1; corpus-wide over
+        # 103 chart pages, 22,262 of 23,311 (95.5%).
+        #
+        # Safe for the other three series because they put nothing there.
+        # Counting every masked pixel below the frame across those 103 pages:
+        # BH Pressure, Surface Pressure and WH Rate score 0 on every row from
+        # y1 to y1+4, while WH Prop Conc has 9,582 and DH Prop Conc 24,476 —
+        # all of them on y1+1 exactly, none on y1+2 or beyond.  So this widens
+        # by one row, not by a guess, and only the two conc traces can move.
+        y_end = min(y1 + 2, mask.shape[0])
+        sub = mask[y0 + 1:y_end, x0 + 1:x1]
         cov = float(sub.any(axis=0).mean())
         if cov < 0.05:
             continue
@@ -506,7 +523,12 @@ def extract_image(img, sample_sec=1.0):
             notes.append(f"{label}: {axis} axis unreadable")
             continue
         a, bb, ntick = cal
-        py = ar.curve_positions(sub) + y0 + 1
+        # Clamp to the frame rather than reading the row literally: y1 is the
+        # axis zero, so a value taken at y1+1 would export a small NEGATIVE
+        # concentration for ink the chart drew to mean zero.  The clamp only
+        # bites where the pen fell below the frame; a curve inside the plot is
+        # untouched.
+        py = np.minimum(ar.curve_positions(sub) + y0 + 1, float(y1))
         vals = (a + bb * py) * scale
         n_cols = sub.shape[1]
         t_cols = (ta + tb * (np.arange(n_cols) + x0 + 1)) - t_start
