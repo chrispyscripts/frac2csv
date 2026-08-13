@@ -1803,8 +1803,13 @@ function ghostMono() {
 // Whether the buffered page actually belongs to the chart on screen. Switching
 // charts bumps orig.seq immediately but the new render lands later, so without
 // this the previous stage's ink stays painted under the new curves.
+//
+// It asks about the GHOST's buffer, which is the time-locked chart region in
+// both panel modes — not about orig.synced, which describes what the panel
+// below is currently showing. Those were the same question while one buffer
+// served both, and that is why Full page took the graph's ghost away with it.
 function ghostReady() {
-  return ghostActive() && orig.synced && !!orig.buf && orig.bufSeq === orig.seq;
+  return ghostActive() && !!orig.gink && orig.gseq === orig.seq;
 }
 
 // How far from white a pixel must sit before it counts as fully inked. Set
@@ -2014,7 +2019,7 @@ function drawGhostBackdrop(ctx, W, H) {
   // after the mode switch was removed, which is worse than not having it.)
   ctx.globalCompositeOperation = "multiply";
   ctx.globalAlpha = 1;
-  ctx.drawImage(orig.ink || orig.buf, 0, 0);
+  ctx.drawImage(orig.gink, 0, 0);
   ctx.restore();
 }
 
@@ -2254,9 +2259,21 @@ function buildLegend() {
 }
 
 // ---------- "Original chart" mode: render the source PDF page ----------
-const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null, task: null,
-               raw: null, buf: null, ink: null,
+// Two buffers, because the graph and the panel below it want two different
+// pictures the moment Full page is on:
+//   buf  / raw  / synced / bufSeq   the COMPANION PANEL — the chart region in
+//                                   Chart-only mode, the whole sheet in Full
+//                                   page, whichever it is currently showing;
+//   gink / gbuf / graw   / gseq     the GRAPH's ghost backdrop — always the
+//                                   chart region locked to the time window,
+//                                   flattened to black ink on white paper.
+// Each carries its own seq stamp: switching charts bumps orig.seq at once and
+// the renders land later, so one shared guard would let a buffer that has not
+// caught up be treated as if it had.
+const orig = { doc: null, docKey: null, pageIdx: 0, seq: 0, raf: null,
+               task: null, raw: null, buf: null,
                synced: false, bufSeq: -1, failed: false,
+               gtask: null, graw: null, gbuf: null, gink: null, gseq: -1,
                // show the WHOLE source page instead of the chart region
                // cropped and time-locked to the graph
                fullPage: false,
@@ -2366,9 +2383,18 @@ async function syncOrig() {
     if (mySeq !== orig.seq) return;
     // Full page deliberately bypasses the synced crop: the point is to see
     // the sheet as printed — title block, tables, legend and all — so it must
-    // not follow the graph's time window.
+    // not follow the graph's time window. That is a statement about the PANEL
+    // only. The graph above it keeps its time-locked chart-region ghost in
+    // both modes, so when the panel stops producing that picture the graph
+    // gets its own render of it. Sequential, not parallel: two pdf.js renders
+    // of the same page at once is asking for trouble, and the second one is
+    // only reached in Full page on a chart that has geometry.
     if (src.geom && !orig.fullPage) await renderSynced(ctx, cv, page, src.geom, mySeq);
-    else await renderFit(ctx, cv, page, mySeq);
+    else {
+      await renderFit(ctx, cv, page, mySeq);
+      if (mySeq !== orig.seq) return;
+      if (src.geom) await renderSynced(ctx, cv, page, src.geom, mySeq, true);
+    }
   } catch (e) {
     if (mySeq !== orig.seq) return;
     orig.failed = true;
@@ -2378,9 +2404,20 @@ async function syncOrig() {
   }
 }
 
-// the chart region of the source page, re-rendered from vector at the
-// graph's exact time window — zoom/pan stay in lockstep with the graph
-async function renderSynced(ctx, cv, page, g, mySeq) {
+// The chart region of the source page, re-rendered from vector at the graph's
+// exact time window — zoom/pan stay in lockstep with the graph.
+//
+// TWO CONSUMERS, and they only want the same pixels in one of the two modes.
+// The graph's ghost backdrop wants this picture ALWAYS: it is the printed
+// chart laid under our curves at the same time window, which is the whole
+// alignment check. The companion panel wants it only in Chart-only mode; in
+// Full page it is showing the whole sheet instead. They used to share one
+// buffer, so turning Full page on took the graph's ghost away with it —
+// Carmine: "when you switch to full page mode, you lose the ghosting feature
+// on the top graph ... those 2 shouldnt be linked". So `forGhost` renders into
+// the ghost's own buffer and leaves the panel's alone; that is the only
+// difference, and it is the only time the page is rendered twice.
+async function renderSynced(ctx, cv, page, g, mySeq, forGhost) {
   const { L, R, T, B } = GP, W = cv.width, H = cv.height;
   const plotW = W - L - R, plotH = H - ORIG_FOOT - T - B;
   // The geometry arrives in mupdf page coordinates, whose origin is the
@@ -2411,12 +2448,17 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   const sx = plotW / Math.max(1e-9, Z[0] - A[0]);
   const yTop = Math.min(E0[1], E1[1]), yBot = Math.max(E0[1], E1[1]);
   const sy = plotH / Math.max(1e-9, yBot - yTop);
-  if (orig.task) { try { orig.task.cancel(); } catch (e) { /* noop */ } }
-  if (!orig.buf) orig.buf = document.createElement("canvas");
-  if (orig.buf.width !== W || orig.buf.height !== H) {
-    orig.buf.width = W; orig.buf.height = H;
-  }
-  const bctx = orig.buf.getContext("2d");
+  // Own cancel slot per consumer. A Full page re-render (schedulePageRender)
+  // and a ghost re-render are two different pictures in flight at once, and
+  // cancelling one because the other started would leave a half-drawn buffer
+  // that still passes its seq check.
+  const slot = forGhost ? "gtask" : "task";
+  if (orig[slot]) { try { orig[slot].cancel(); } catch (e) { /* noop */ } }
+  const dstKey = forGhost ? "gbuf" : "buf";
+  if (!orig[dstKey]) orig[dstKey] = document.createElement("canvas");
+  const dst = orig[dstKey];
+  if (dst.width !== W || dst.height !== H) { dst.width = W; dst.height = H; }
+  const bctx = dst.getContext("2d");
   // pdf.js must be handed a canvas with NO clip path of ours on it. This used
   // to clip to the frame top and render straight into orig.buf, and on the
   // Sanjel template that came back with the whole plot filled BLACK — the page
@@ -2425,11 +2467,11 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   // spreads over everything. Measured on the same page, same viewport, same
   // transform: 89.6% black pixels with the clip, 0.6% without. So render the
   // page whole into a scratch canvas and blit back only the band we want.
-  if (!orig.raw) orig.raw = document.createElement("canvas");
-  if (orig.raw.width !== W || orig.raw.height !== H) {
-    orig.raw.width = W; orig.raw.height = H;
-  }
-  const rctx = orig.raw.getContext("2d");
+  const rawKey = forGhost ? "graw" : "raw";
+  if (!orig[rawKey]) orig[rawKey] = document.createElement("canvas");
+  const raw = orig[rawKey];
+  if (raw.width !== W || raw.height !== H) { raw.width = W; raw.height = H; }
+  const rctx = raw.getContext("2d");
   rctx.setTransform(1, 0, 0, 1, 0, 0);
   rctx.clearRect(0, 0, W, H);
   rctx.fillStyle = "#ffffff"; rctx.fillRect(0, 0, W, H);
@@ -2437,19 +2479,26 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
     canvasContext: rctx, viewport: vp,
     transform: [sx, 0, 0, sy, L - sx * A[0], T - sy * yTop],
   });
-  orig.task = task;
+  orig[slot] = task;
   await task.promise.catch(() => { /* cancelled */ });
   if (mySeq !== orig.seq) return;
   // crop hard at the frame top (hides the chart's own legend band) but let
   // the render spill into the left/bottom margins so the first time label
   // and the x-axis dates stay fully readable
   bctx.clearRect(0, 0, W, H);
-  bctx.drawImage(orig.raw, 0, T, W, H - T, 0, T, W, H - T);
-  // Two copies from here: orig.buf stays exactly as the page prints, for the
-  // comparison panel below, and orig.ink is the same page flattened to black
-  // for the overlay. One buffer served both, so thresholding the overlay took
-  // the colour out of the panel too.
-  orig.ink = binarizedCopy(orig.buf, W, H, sx, sy);
+  bctx.drawImage(raw, 0, T, W, H - T, 0, T, W, H - T);
+  // Two copies from here: the buffer stays exactly as the page prints, for
+  // the comparison panel below, and orig.gink is the same page flattened to
+  // black for the backdrop. One buffer served both, so thresholding the
+  // backdrop took the colour out of the panel too.
+  //
+  // Its own staleness stamp, not the panel's: switching charts bumps orig.seq
+  // immediately while the render lands later, and with two buffers that guard
+  // has to be per buffer or one of them will paint the previous chart's ink
+  // under the new curves.
+  orig.gink = binarizedCopy(dst, W, H, sx, sy);
+  orig.gseq = mySeq;
+  if (forGhost) { redrawGraph(); return; }   // the panel is Full page's job
   bctx.strokeStyle = chartColors().grid;
   bctx.strokeRect(L + .5, T + .5, plotW - 1, plotH - 1);
   orig.synced = true;
@@ -3402,10 +3451,12 @@ $("flagsend").addEventListener("click", async () => {
 // open the source PDF in its own window (scalable, side-by-side compare)
 $("origfull").addEventListener("click", () => {
   orig.fullPage = !orig.fullPage;
-  // The whole sheet is not time-locked to the graph, so the backdrop and the
-  // crosshair would both be pointing at nothing. Drop the ghost buffers so
-  // the next redraw cannot composite a full page over the plot.
-  orig.buf = null; orig.ink = null; orig.raw = null;
+  // Drop the PANEL's buffers: the sheet and the cropped chart region are two
+  // different pictures at two different scales, and the crosshair this panel
+  // draws only means anything on the time-locked one. The graph's own ghost
+  // buffer is deliberately left alone — Full page is a statement about this
+  // panel, and the backdrop above it neither changes nor blinks.
+  orig.buf = null; orig.raw = null;
   orig.bufSeq = -1; orig.synced = false;
   // Every entry into Full page starts fitted. Keeping the last zoom would
   // bring the mode back showing a corner of a table with no way to tell what
@@ -3415,6 +3466,15 @@ $("origfull").addEventListener("click", () => {
   updateOrigBar();
   if (applyCompareSize()) redrawGraph();
   else redrawGraph();
+  // Carry the ghost's stamp onto the seq syncOrig is about to take, AFTER the
+  // redraw above has used it at the current one. This toggle does not
+  // invalidate the backdrop — same chart, same time window, only a different
+  // picture in the panel — so without this the graph would lose its ghost for
+  // the length of a page render on every toggle: seconds on a scanned
+  // template, which is the reported symptom again, just briefer. Anything
+  // else that bumps the seq leaves this stamp behind the counter, which is
+  // the safe direction: stale, not falsely fresh.
+  if (orig.gink && orig.gseq === orig.seq) orig.gseq = orig.seq + 1;
   syncOrig();
 });
 $("origopen").addEventListener("click", async () => {
