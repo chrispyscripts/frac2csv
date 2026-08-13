@@ -38,6 +38,29 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v0.9.10</h2>
+    <ul>
+      <li>Trican concentration: the stretches where conc sits at zero — the pad
+        at the start of a stage and the flush at the end — were coming out
+        blank. The chart draws that line on the frame and the frame was
+        painted over it. DH Prop Conc goes from 29% blank to 2%; WH Prop Conc
+        from 51% to 41% and is improved but not finished</li>
+      <li>CalFrac dates: a well prints its Multiple-Zone summary as a run of
+        sheets carrying different days, and a chart was taking the last of
+        them. Against BCER's filed dates, stages dated exactly right go from
+        58% to 72% across 242 wells</li>
+      <li>CalFrac stages that would not separate now split, using the printed
+        zone start times to pick the real boundaries out of the pumping data</li>
+      <li>The Stacked window stays in step with the Lab — it recovers on its
+        own after the Lab is reloaded, and a push that fails to land is
+        re-sent instead of leaving one chart's numbers under another
+        chart's page number</li>
+      <li>Full page view no longer drops the ghost overlay from the top
+        graph — the two are separate pictures now</li>
+      <li>Schlumberger Zone Summary sheets carry their chart geometry, so the
+        IMAGE tag shows and Compare Original frames the chart instead of
+        fitting the whole sheet</li>
+    </ul>
     <h2>v0.9.9</h2>
     <ul>
       <li>Trican charts were exporting with no Slurry Rate and no BH Prop Conc
