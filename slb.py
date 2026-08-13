@@ -58,6 +58,8 @@ is the defect sanjel.py still has live — task #67.)
 
   - page_chart_kind(page): 'vector' | 'raster' | None — what this ONE page
     carries. Structural, not keyed on print wording.
+  - page_source(page): the provider label the page's chart is filed under.
+    The raster one says "(raster)", which is what makes the Lab tag it IMAGE.
   - detect(page): a page this template extracts, of either kind.
   - detect_document(doc): the PDF carries an SLB report at all — the gate
     the TABLES belong on, since a blank plot must not suppress them.
@@ -218,6 +220,23 @@ def page_chart_kind(page):
 def detect(page):
     """True for any page this template extracts a chart from."""
     return page_chart_kind(page) is not None
+
+
+# The Lab decides whether to print its IMAGE tag from the SOURCE STRING a
+# chart is filed under: "(raster)" is the corpus-wide word for "traced off a
+# picture by colour and OCR", spelled the same way by step1, hal1 and
+# trican_charts. A per-zone sheet IS that and was being filed as though it
+# were vector, which is what the client's report #95 is about ("this is a
+# SCHLUM-2 image type should report image"). A PRC Plot is genuinely vector
+# and keeps the label it has always had. Both names carry "SLB" so a filing
+# that prints both kinds still reads as one provider.
+_SOURCE = {"vector": "SLB PRC chart",
+           "raster": "SLB Zone Summary chart (raster)"}
+
+
+def page_source(page):
+    """The provider label this page's chart should be filed under."""
+    return _SOURCE.get(page_chart_kind(page), _SOURCE["vector"])
 
 
 def is_additives_page(page):
@@ -1329,6 +1348,60 @@ def _drop_frame_rules(sub):
 _MIN_COVERAGE = 0.05
 
 
+def _printed_span(pts, fit):
+    """(lowest, highest) tick VALUE this axis actually PRINTS, or None.
+
+    The plot frame runs a hair past the outermost tick, so the axis read at
+    the frame edge is -0.01 where the report prints 0. The Lab labels its own
+    y axis with the printed pair whenever the two agree to within a tick, so
+    it wants the printed numbers as well as the frame's arithmetic.
+
+    Only ticks the fit accepted count. OCR reads a gridline crossing as a
+    stray number often enough that a raw min/max over the column would invent
+    a range the chart never prints — the tolerance is fit_ticks' own.
+    """
+    a, b, _n = fit
+    tol = max(abs(b) * 20, 1e-9)
+    keep = [v for v, c in pts if abs(a + b * c - v) < tol]
+    return (min(keep), max(keep)) if len(keep) >= 2 else None
+
+
+def _zone_geom(rect, shape, box, duration_min):
+    """The zone chart's PLOT FRAME in page coordinates, for the Lab's synced
+    "Compare Original" view, or None.
+
+    THE CLIENT'S ACTUAL ASK (report #95) is "extract the image from the page
+    for Ghosting without the summary data which is text". A Zone N Summary
+    sheet is one page carrying two unrelated things: real vector text — the
+    START/END times, the fluid and proppant grids — filling the top two
+    thirds, and ONE embedded 1572x1033 chart image pasted into the bottom
+    third. This is what separates them, and it does it without cutting a
+    picture out: geometry quoted at the chart's own plot frame makes the Lab
+    stretch that frame across its plot rect, and the Lab crops everything
+    above the rect — so the tables go off the top of their own accord and the
+    ghost is the chart alone. Nothing here has to know the tables exist.
+
+    Everything upstream works in the chart image's own pixels. The sheet
+    places that image with a plain positive scale and no rotation or flip
+    (measured across the corpus: transform (512.99, 0, 0, 292.39, x, y) on
+    every zone sheet, page rotation 0), so image pixel -> page point is a
+    scale and an offset — hal1's raster case exactly, so it uses step1's
+    converter and inherits its convention: elapsed second e sits at page
+    coordinate (e - ta) / tb along `axis`, and v0/v1 bracket the plot on the
+    other axis in mupdf (y-down) units.
+    """
+    from step1 import _page_geom
+
+    if rect.width <= 1 or rect.height <= 1 or duration_min <= 0:
+        return None
+    ih, iw = shape[0], shape[1]
+    # samples[0] is the frame's left edge, so elapsed time starts at zero
+    # there — which is what t0_seconds = 0 tells the converter.
+    return _page_geom({"plot": box, "duration_s": float(duration_min) * 60.0,
+                       "t0_seconds": 0.0},
+                      iw / rect.width, ih / rect.height, rect.x0, rect.y0)
+
+
 def extract_zone_page(page, sample_sec=1.0):
     """One Zone N Summary sheet -> (meta, samples, {col: values}, {col: unit}).
 
@@ -1368,20 +1441,22 @@ def extract_zone_page(page, sample_sec=1.0):
             "this chart's own time axis opens %.0f minutes from the START "
             "TIME printed on the same sheet; the chart's axis is what is "
             "used, and the two disagree about this zone" % drift)
-    left = ar.fit_ticks(_tick_column(img, 0, max(1, x0 - 2), y0, y1),
-                        min_inliers=4)
-    right = ar.fit_ticks(_tick_column(img, x1 + 3, img.shape[1], y0, y1),
-                         min_inliers=4)
+    left_pts = _tick_column(img, 0, max(1, x0 - 2), y0, y1)
+    right_pts = _tick_column(img, x1 + 3, img.shape[1], y0, y1)
+    left = ar.fit_ticks(left_pts, min_inliers=4)
+    right = ar.fit_ticks(right_pts, min_inliers=4)
     left_title = _axis_title(img, 0, max(1, x0 - 50))
     right_title = _axis_title(img, x1 + 50, img.shape[1])
     axes = []
     if left:
         axes.append({"side": "left", "key": 0.0, "title": left_title,
                      "fit": (left[0], left[1]),
+                     "printed": _printed_span(left_pts, left),
                      "lo": left[0] + left[1] * y1, "hi": left[0] + left[1] * y0})
     if right:
         axes.append({"side": "right", "key": 1.0, "title": right_title,
                      "fit": (right[0], right[1]),
+                     "printed": _printed_span(right_pts, right),
                      "lo": right[0] + right[1] * y1,
                      "hi": right[0] + right[1] * y0})
     if not axes:
@@ -1420,6 +1495,7 @@ def extract_zone_page(page, sample_sec=1.0):
     col_s = np.arange(x1 - x0 + 1) * tb * 60.0
 
     out, units = {}, {}
+    scales, frames = {}, {}
     for rgb, (col, kind, mult, label) in wanted.items():
         sub = _drop_frame_rules(masks[rgb][y0:y1 + 1, x0:x1 + 1].copy())
         if not sub.any():
@@ -1442,6 +1518,17 @@ def extract_zone_page(page, sample_sec=1.0):
             continue
         out[col] = ct.resample(samples_s, col_s, vals)
         units[col] = _UNITS.get(col, "")
+        # This curve's own axis read AT THE PLOT FRAME, top edge then bottom.
+        # Ghost stretches the source page so exactly those two rows fill the
+        # Lab's plot rect, so this is the pair a curve has to be placed
+        # against to land on its own printed ink; ax["hi"]/ax["lo"] are the
+        # same fit evaluated at the same two rows, before the legend's "x 10"
+        # is divided out. Without it the Lab falls back to a rounded peak —
+        # the "0..60 (guessed)" the client's own flag report printed.
+        frames[col] = (ax["hi"] / mult, ax["lo"] / mult)
+        span = ax.get("printed") or (min(ax["lo"], ax["hi"]),
+                                     max(ax["lo"], ax["hi"]))
+        scales[col] = (span[0] / mult, span[1] / mult)
     if not out:
         raise ValueError("slb: no curve traced on zone %d's chart" % zone)
 
@@ -1449,6 +1536,9 @@ def extract_zone_page(page, sample_sec=1.0):
     meta.stage = str(zone)
     meta.uwi = ""                       # never the printed one; see module doc
     meta.duration_min = float(duration)
+    meta.axes = scales
+    meta.axes_frame = frames
+    meta.geom = _zone_geom(rect, img.shape, (x0, y0, x1, y1), duration)
     clock = t0_abs % 1440.0
     meta.start_time = "%02d:%02d:%02d" % (int(clock // 60), int(clock % 60),
                                           int(round(clock * 60)) % 60)
