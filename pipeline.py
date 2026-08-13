@@ -110,7 +110,8 @@ def _series(meta, samples, data, source, page=None, units=None, labels=None,
 
 
 def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
-                    _last_progress, zclocks=None, sheet_date=None):
+                    _last_progress, zclocks=None, all_times=None,
+                    sheet_dates=None):
     """One CalFrac "Progress" page -> one (meta, samples, data, geom) per zone.
 
     The page plots several zones end to end and names none of them, so without
@@ -248,6 +249,8 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
     # The sheet's own "Job Date:" first, because the chart's only date is the
     # MView footer and that is when the chart was EXPORTED, not when the zones
     # ran — see cprog.sheet_job_date.
+    sheet_date = cprog.job_date_for(all_times or {}, sheet_dates or {},
+                                    pno, lo)
     page_date = (sheet_date or getattr(meta, "date", "")
                  or cprog.job_date(page) or "")
     out = []
@@ -1167,9 +1170,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 for part in _split_progress(page, meta, samples, data,
                                             cprog.times_before(_zone_times[0], pno),
                                             sample_sec, notes, pno, _last_progress,
-                                            _zone_clocks[0],
-                                            cprog.job_date_before(
-                                                _sheet_dates[0] or {}, pno)):
+                                            _zone_clocks[0], _zone_times[0],
+                                            _sheet_dates[0]):
                     pmeta, psamples, pdata, pgeom = part
                     results.append(_series(pmeta, psamples, pdata,
                                            "MView chart", pno + 1,

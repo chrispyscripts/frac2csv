@@ -245,15 +245,35 @@ def sheet_job_date(page, text=None):
     return None
 
 
-def job_date_before(dates, page_index):
-    """The Job Date of the sheet a chart page sits behind, or None.
+def job_date_for(times, dates, page_index, zone=None):
+    """The Job Date of the sheet that covers `zone`, or None.
 
-    The nearest sheet before it, not the merged run times_before() builds: a
-    run can span a midnight and print two different days, and the last sheet
-    of the run is the one whose zones this chart continues.
+    A well prints its summary as a RUN of sheets and then its charts, and the
+    run's sheets carry different days: 00288 prints zones 1-10 and 11-20 dated
+    Jun 4 and zones 21-28 dated Jun 5, then charts "Zones 1-20" and "Zones
+    21-28". Taking the nearest sheet before a chart hands the first chart the
+    LAST sheet's day and dates twenty zones a day late, so the sheet is chosen
+    by the zone it actually columns — the same run times_before() merges.
     """
-    prior = [p for p in dates if p < page_index]
-    return dates[max(prior)] if prior else None
+    prior = sorted(p for p in set(times) | set(dates) if p < page_index)
+    if not prior:
+        return None
+    run = [prior[-1]]
+    for p in reversed(prior[:-1]):
+        if p != run[-1] - 1:
+            break
+        run.append(p)
+    run.sort()
+    if zone is not None:
+        for p in run:
+            if zone in (times.get(p) or {}) and dates.get(p):
+                return dates[p]
+    # no sheet columns that zone — the run's FIRST day, the one its earliest
+    # zones ran on, since a chart begins with the earliest zone it names
+    for p in run:
+        if dates.get(p):
+            return dates[p]
+    return None
 
 
 _CALFRAC_MARK = re.compile(r"Calfrac\s+Service\s+Line", re.I)
