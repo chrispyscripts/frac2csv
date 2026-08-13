@@ -133,12 +133,37 @@ something *works*. Read the body before treating a number as a defect.
   established; 2.7% hold no conc ink anywhere. Neither of the first two is
   recoverable from colour alone. **Do not assume the zero-row story explains all
   of it** — that is the mistake the last two attempts on this channel made.
-- **Four client reports filed after the last session went quiet and never
-  looked at**: #110 (Liberty, positive — "got our term summary data"),
-  #111 (STEP raster, "do not try to get mainline 3 same colors as conc"),
-  #112 (STEP raster 00349, "missing data"), #113 (BJ list-load export reports
-  success and writes the CSVs nowhere — Carmine explicitly says this is low
-  priority, and drag-and-drop works).
+- **#112 — STEP 00349 p138, Btm Prop Conc 37.9% blank. Diagnosed, NOT fixed,
+  and one attempt has already been backed out.** Reproduced exactly (the
+  report's peaks 76.08 / 660.99 / 685.76 / 10.49 / 4.80 all match). What is
+  measured:
+    - It is **not** the Trican under-the-frame defect. Of the blank columns,
+      36.5% have no orange ink anywhere and only 1.2% are dropped by the
+      tracer, and the rows at and below the frame hold 0, 3 and 0 pixels.
+    - The gaps are 5 runs: four of 4-6 columns sitting on the proppant ramp's
+      step risers, one of 54 columns mid-chart, one of 55 running to the
+      chart's end.
+    - In the 54-column band, green (Prop Conc) occupies orange's own row band
+      — 463 px across rows 440..470 — while orange enters at row 456 and
+      leaves at 451.5. Green sits at ~451 through most of the band and then
+      plunges to 643, and **orange reappears exactly where green leaves.**
+      That is the signature of green being painted over orange.
+    - But it does not explain the short gaps: at 39..44 and 85..88 green is
+      11-16 rows off orange's level at the gap edges. At least two mechanisms
+      are in play, which is the same trap as the Trican WH remainder.
+  **The trap for the next attempt**, learned by walking into it: a guard that
+  requires the donor curve to match the hidden one at BOTH edges of the gap
+  can never fire on real occlusion, because the donor *leaving* is what makes
+  the hidden curve reappear. Loosening it to a median-vs-midpoint test makes
+  it fire 5/5 on this chart — and that test is too weak to be trusted, which
+  is why the change was reverted rather than shipped. Filling a hidden curve
+  from its neighbour invents data if the reasoning is wrong; this one needs a
+  rule validated across the 51 STEP files, not one chart.
+- **#111 — no code change wanted.** "do not try ti get mainline 3 same colors
+  as cocn" is Carmine telling us NOT to chase Mainline 3 on STEP 00308,
+  because it shares an ink with the conc traces. Leave it alone; do not let a
+  future colour-splitting pass "fix" it into the concentration channel.
+- **#110 — nothing to do.** Liberty 00374, and he is reporting that it works.
 - **#104** — extracted data not being assigned to "our terms". Alias-table work;
   `alias_table.txt` is 104 lines and has a Trican section as of v0.9.9.
 - **#69** — STEP uneven axis spacing (cancelled mid-run when a drive was
