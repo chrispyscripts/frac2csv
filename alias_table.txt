@@ -94,3 +94,11 @@ curve.Tr Press = Main Pressure, Back-up
 curve.Slurry Rate = Blender Dirty Rate, Blender 1 Dirty Rate, Surf Total Slurry Rate
 curve.WH Prop Conc = Blender Concentration, Blender 1 Concentration, Surf Total Proppant Conc
 curve.BH Prop Conc = Btm Prop Conc
+
+Trican-2
+chart_headers_include = PRESSURES, RATES, AND CONCENTRATIONS
+chart_stage_tokens = Stage #, Stage
+curve.Tr Press = Surface Pressure
+curve.Slurry Rate = WH Rate, WH Slurry Rate
+curve.WH Prop Conc = WH Prop Conc
+curve.BH Prop Conc = DH Prop Conc
