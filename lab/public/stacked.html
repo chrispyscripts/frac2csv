@@ -96,6 +96,10 @@ const state = {
   channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1, clock0: null,
   page: null, pageCount: 0,
   hoverT: null, haveStage: false,
+  // Which of the Lab's stage-level states is on screen here. seq is the Lab's
+  // own monotonic counter; id names the same thing in words (file · chart) so
+  // "which stage is this?" has an answer that does not depend on counting.
+  seq: -1, id: "",
 };
 let blocks = [];          // { c, el, cv, ro, last }
 let raf = null;
@@ -149,12 +153,55 @@ function toLab(msg) {
   const o = lab();
   try { if (o) o.postMessage(msg, ORIGIN); } catch (e) { /* gone */ }
 }
+// The link is reconciled, not merely received. Three rules:
+//
+//   1. Never draw a payload older than the one already on screen. A stage
+//      message that overtakes its successor would put the previous chart's
+//      numbers under the current chart's name, which is worse than showing
+//      nothing — it is a wrong answer that looks like a right one.
+//   2. Say what was applied. The Lab re-sends until this window confirms the
+//      seq it should be showing, so a push that never lands is not permanent.
+//   3. Ask. On load, on regaining focus, on noticing a follow-up that belongs
+//      to a newer stage, and on a slow tick. This is the half the old link did
+//      not have: when the LAB was reloaded, its new context had no handle to
+//      this window, nothing was ever pushed again, and this view sat on a
+//      stale chart indefinitely while still printing "Linked to the Lab
+//      window". Now any message from here re-adopts the handle.
+function ack() {
+  toLab({ type: "stacked:applied", seq: state.seq, id: state.id });
+}
+let askedAt = -1e9;
+function askLab() {
+  // One ask per gesture. focus and visibilitychange both fire when a window
+  // comes forward, and the Lab's answer is a whole stage's samples.
+  const now = performance.now();
+  if (now - askedAt < 400) return;
+  askedAt = now;
+  toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
+}
+// Is this stage payload news? Older is dropped outright; the same state again
+// is a re-send, which only needs acking.
+function fresher(d) {
+  if (typeof d.seq !== "number") return true;      // a Lab that doesn't stamp
+  if (d.seq < state.seq) return false;
+  if (d.seq === state.seq && (d.id || "") === state.id) { ack(); return false; }
+  return true;
+}
+// A view or page stamped for a stage this window has not got means a stage
+// message went missing. Ask, rather than paint it over the wrong charts.
+function forThisStage(d) {
+  if (typeof d.seq !== "number") return true;
+  if (d.seq === state.seq) return true;
+  if (d.seq > state.seq) askLab();
+  return false;
+}
+
 window.addEventListener("message", e => {
   if (ORIGIN !== "*" && e.origin !== ORIGIN) return;
   const d = e.data;
   if (!d || typeof d.type !== "string") return;
-  if (d.type === "stacked:stage") applyStage(d);
-  else if (d.type === "stacked:none") applyNone();
+  if (d.type === "stacked:stage") { if (fresher(d)) applyStage(d); }
+  else if (d.type === "stacked:none") { if (fresher(d)) applyNone(d); }
   else if (d.type === "stacked:view") applyView(d);
   else if (d.type === "stacked:page") applyPage(d);
 });
@@ -162,6 +209,12 @@ window.addEventListener("message", e => {
 // before a stage is picked, opened after one is, or reloaded by hand — the Lab
 // answers a ready with the stage that is on screen right now.
 toLab({ type: "stacked:ready" });
+// Coming back to this window is the moment its numbers are about to be read,
+// so it is the moment to make sure they are the selected stage's.
+window.addEventListener("focus", askLab);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) askLab();
+});
 
 // If the Lab is closed, say so instead of leaving a stale chart that silently
 // stops following anything.
@@ -171,12 +224,21 @@ setInterval(() => {
     ? "<b>The Lab window is closed</b> — this view is frozen at the last stage it received."
     : "Linked to the Lab window: cycling stages there (↑/↓, or clicking a stage) redraws this view.";
   $("openpdf").disabled = gone;
+  // Say where we are. The Lab answers only when that is not where IT is, so
+  // at rest this costs one small message every second and a half and nothing
+  // comes back — and it is how a Lab that has been reloaded finds this window
+  // again without anyone having to reopen it.
+  if (!gone) toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
 }, 1500);
 
 // ---------- incoming state ----------
-function applyNone() {
+function applyNone(d) {
+  d = d || {};
+  if (typeof d.seq === "number") state.seq = d.seq;
+  state.id = d.id || "";
   state.haveStage = false;
   state.channels = []; blocks = []; state.hoverT = null;
+  state.page = null; state.pageCount = 0;
   $("charts").innerHTML = "";
   $("msg").hidden = false;
   $("msg").textContent = "Pick a stage in the Lab window — this view follows it.";
@@ -187,15 +249,16 @@ function applyNone() {
 }
 
 function applyStage(d) {
+  // The seq moves first: everything below belongs to THIS stage, and a page
+  // or view stamped for an older one must be rejected from here on.
+  if (typeof d.seq === "number") state.seq = d.seq;
+  state.id = d.id || "";
   state.haveStage = true;
   state.channels = d.channels || [];
   state.n = d.n; state.dsec = d.dsec || 1; state.tMax = d.tMax || 1;
   state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
   state.page = d.page; state.pageCount = d.pageCount || 0;
   state.hoverT = null;
-  // A new stage invalidates the page picture; the Lab sends a fresh one as
-  // soon as its own render lands, and until then showing the previous stage's
-  // sheet would be a lie.
   $("title").textContent = d.title || "";
   $("sub").textContent = d.sub || "";
   document.title = (d.title || "Stacked charts") + " — stacked";
@@ -204,19 +267,26 @@ function applyStage(d) {
   if (!state.channels.length)
     $("msg").textContent = "This stage has no channels to plot.";
   build();
+  ack();
 }
 
 function applyView(d) {
+  if (!forThisStage(d)) return;
   if (!state.haveStage) return;
   state.t0 = d.t0; state.t1 = d.t1;
   schedule();
 }
 
 // The page number still matters — it labels the window and drives Open PDF —
-// but this view no longer renders the sheet, so any bitmap the Lab sends is
-// released rather than kept alive.
+// but this view no longer renders the sheet, so the Lab sends the number only.
+// The seq is what ties it to the charts above it: a page belonging to the
+// stage before this one is dropped rather than printed over the current one.
 function applyPage(d) {
+  if (!forThisStage(d)) return;
   state.page = d.page != null ? d.page : state.page;
+  if (d.pageCount != null) state.pageCount = d.pageCount;
+  // Older Labs shipped the rendered sheet with it; release anything that
+  // still arrives rather than leaving the bitmap alive.
   if (d.bmp && d.bmp.close) { try { d.bmp.close(); } catch (e) { /* noop */ } }
   updatePageLbl();
 }

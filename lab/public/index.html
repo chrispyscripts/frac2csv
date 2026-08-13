@@ -1439,7 +1439,6 @@ function showStage(entry, well, item) {
   $("pv-table").innerHTML = "";
   $("pv-notes").textContent = (entry.notes || []).join("\n");
   renderDlbar(well);
-  stackPageStale = true;    // the source page for this stage is not drawn yet
   pushStacked();      // the stacked window follows whatever is on screen here
   updateTableBtn();
 }
@@ -2457,8 +2456,7 @@ async function renderSynced(ctx, cv, page, g, mySeq) {
   orig.bufSeq = mySeq;
   drawOrigOverlay(gState.hover ? gState.hover.t : null);
   redrawGraph();       // the backdrop only became valid now
-  stackPageStale = false;
-  pushStackedPage();   // the stacked window shows this same rendered page
+  pushStackedPage();   // the stacked window labels itself with this page
 }
 
 // blit the buffered original + the shared crosshair (both panels track the
@@ -2544,10 +2542,9 @@ function compositePage(cv) {
   bctx.fillRect(p.x, p.y, w, h);
   bctx.drawImage(p.bmp, p.x, p.y, w, h);
   drawOrigOverlay(null);
-  stackPageStale = false;
-  // The stacked window follows the same view, but a drag fires this on every
-  // mousemove and each push costs an ImageBitmap of the whole panel. One per
-  // frame is plenty — the same rAF debounce scheduleOrigSync uses.
+  // The stacked window labels itself with the page number, and a drag fires
+  // this on every mousemove. One push per frame is plenty — the same rAF
+  // debounce scheduleOrigSync uses.
   if (!p.pushRaf) p.pushRaf = requestAnimationFrame(() => {
     p.pushRaf = 0; pushStackedPage();
   });
@@ -2700,14 +2697,31 @@ function updateOrigBar() {
 // Two message weights, because a stage can carry 14,000+ samples: the heavy
 // "stage" (the values) goes only when the stage changes, and zoom/pan send a
 // two-number "view" that the child redraws from the values it already holds.
+//
+// AND IT IS A LOOP, NOT A STREAM OF PUSHES. Every stage-level state carries a
+// monotonic seq and an identity (file + chart); the child echoes back the seq
+// it has APPLIED, so this window always knows whether the other one is
+// showing the chart that is selected here. The cheap follow-ups (view, page)
+// carry the same seq, so a message that belongs to the previous chart can be
+// recognised as such and dropped instead of drawn.
+//
+// Three things put the two windows out of step, and each has an answer:
+//   - a stage push that never lands (the child mid-navigation, a throw inside
+//     postMessage): the ack never arrives and stackReconcile re-sends it;
+//   - THIS window being reloaded while the stacked window stays open. The new
+//     Lab context has no handle at all and the child has nothing to receive,
+//     so it sat on a stale chart for good — still saying "Linked to the Lab
+//     window". Measured as the one failure that never recovered on its own.
+//     The child now says where it is every second and a half, and any message
+//     from it re-adopts the handle;
+//   - a message arriving out of order: dropped by seq, at the child.
 const STACK_ORIGIN = (location.origin && location.origin !== "null")
   ? location.origin : "*";
 let stackWin = null;
-// orig.buf still holds the PREVIOUS stage's sheet until the new render lands
-// (it is kicked off on the next frame), so a page push in that window would
-// put the wrong page under the new charts. Send no picture until the render
-// that belongs to this stage has finished.
-let stackPageStale = false;
+let stackSeq = 0;          // bumps once per stage-level state change here
+let stackAckSeq = -1;      // the seq the child last reported it had applied
+let stackSentAt = 0;       // when the current seq last went on the wire
+let stackTries = 0;        // re-sends of the current seq, capped
 
 function stackAlive() {
   try { return !!stackWin && !stackWin.closed; } catch (e) { return false; }
@@ -2718,10 +2732,19 @@ function stackPost(msg, transfer) {
   catch (e) { return false; }         // navigating, or gone since we checked
 }
 
+// What the child is being asked to show, in words rather than by position —
+// two files can both have a "Stage 1", and the seq alone says nothing about
+// which chart it stood for when a log is read back.
+function stackId() {
+  const it = current && current.item;
+  if (!it || it.type !== "stage") return "";
+  return ((current.entry && current.entry.name) || "?") + " · " + it.key;
+}
+
 function stackPayload() {
   const it = current && current.item;
   if (!it || it.type !== "stage" || !gState.channels.length)
-    return { type: "stacked:none" };
+    return { type: "stacked:none", seq: stackSeq, id: "" };
   const chans = [];
   gState.channels.forEach((c, ci) => {
     if (!inMode(c) || !(c._vmax > 0)) return;
@@ -2742,6 +2765,8 @@ function stackPayload() {
   const pages = it.pages || [];
   return {
     type: "stacked:stage",
+    seq: stackSeq, id: stackId(),
+    file: (current.entry && current.entry.name) || "", chart: it.key,
     title: $("pv-title").textContent, sub: $("pv-sub").textContent,
     n: gState.n, dsec: gState.dsec, tMax: gState.tMax,
     t0: gState.t0, t1: gState.t1,
@@ -2752,55 +2777,96 @@ function stackPayload() {
   };
 }
 
+// The stage-level state changed: new seq, and the child owes us a fresh ack.
 function pushStacked() {
+  stackSeq++;                    // bumped even with no child listening, so a
+  stackAckSeq = -1;              // window opened later cannot look "current"
+  stackTries = 0;
+  stackSend();
+}
+// Put the state that is on screen HERE on the wire. Same seq every time, so a
+// re-send is the same message, not a newer one — the child treats it as the
+// state it already has and simply re-acks.
+function stackSend() {
   if (!stackAlive()) return;
+  stackSentAt = performance.now();
+  stackTries++;
   stackPost(stackPayload());
-  pushStackedPage();
+  pushStackedPage();             // the sheet under the charts, same seq
 }
 function pushStackedView() {
   if (!stackAlive()) return;
-  stackPost({ type: "stacked:view", t0: gState.t0, t1: gState.t1 });
+  stackPost({ type: "stacked:view", seq: stackSeq,
+              t0: gState.t0, t1: gState.t1 });
 }
 
-// "Linked to the original page": send the page WE ALREADY RENDERED rather than
-// have the child load pdf.js and render the same sheet a second time. Same
-// pixels, no second copy of the renderer, no second PDF in memory — and when
-// the crop is time-synced it is already stretched to this window's time
-// window, so it lines up with the stacked charts under it. The child's
-// "Open PDF" asks us to open the file, for the same reason.
+// The page number that labels the stacked window and drives its Open PDF.
+//
+// This used to ship the rendered sheet itself as an ImageBitmap. The child
+// stopped drawing the sheet a while back and closes any bitmap it is handed,
+// so that was a createImageBitmap of the whole panel — once per frame while a
+// page was being dragged — for a picture nobody looked at. Worse, building it
+// took a promise, so a page push could land AFTER the stage push that
+// superseded it; stackPageStale existed to paper over exactly that window.
+// Two numbers sent synchronously, stamped with the stage's own seq, cannot be
+// reordered against the stage they belong to, and the child drops any page
+// whose seq is not the chart it is showing. So the flag is gone.
 function pushStackedPage() {
   if (!stackAlive()) return;
   const it = current && current.item;
   const pages = (it && it.type === "stage" && it.pages) || [];
-  const base = { type: "stacked:page",
-                 page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
-                 synced: !!orig.synced, full: !!orig.fullPage,
-                 failed: !!orig.failed };
-  if (stackPageStale || !orig.buf || orig.failed) { stackPost(base); return; }
-  const plot = { L: GP.L, T: GP.T, R: GP.R, B: GP.B, foot: ORIG_FOOT,
-                 w: orig.buf.width, h: orig.buf.height };
-  const buf = orig.buf;
-  Promise.resolve()
-    .then(() => createImageBitmap(buf))
-    .then(bmp => {
-      // transferred, so nothing is copied; if the window shut while we were
-      // decoding, drop the bitmap rather than leak it
-      if (!stackPost({ ...base, bmp, plot }, [bmp])) bmp.close();
-    })
-    .catch(() => {
-      try { stackPost({ ...base, url: buf.toDataURL("image/png"), plot }); }
-      catch (e) { stackPost(base); }
-    });
+  stackPost({ type: "stacked:page", seq: stackSeq,
+              page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
+              pageCount: pages.length,
+              synced: !!orig.synced, full: !!orig.fullPage,
+              failed: !!orig.failed });
 }
+
+// The child's own seq, never going backwards inside one generation. A "sync"
+// posted before the child applied the latest push can arrive after its ack,
+// and taking it at face value would ask for a re-send of something already on
+// screen. pushStacked() clears the ack, so a NEW state still starts from
+// nothing acknowledged.
+function ackSeq(d) {
+  return (typeof d.seq === "number" && d.seq > stackAckSeq) ? d.seq : stackAckSeq;
+}
+
+// Re-send while the child has not confirmed the state it should be showing.
+// Idle cost is one comparison: it goes quiet the instant an ack matches, and
+// gives up after STACK_TRIES so a stacked.html too old to ack is not handed
+// 14,000 samples per channel over and over — it still gets every real state
+// change, exactly as it did before.
+const STACK_TRIES = 6;
+setInterval(function stackReconcile() {
+  if (!stackAlive() || stackAckSeq === stackSeq) return;
+  if (stackTries >= STACK_TRIES) return;
+  if (performance.now() - stackSentAt < 500) return;
+  stackSend();
+}, 500);
 
 window.addEventListener("message", e => {
   if (STACK_ORIGIN !== "*" && e.origin !== STACK_ORIGIN) return;
   const d = e.data;
   if (!d || typeof d.type !== "string" || d.type.indexOf("stacked:") !== 0) return;
-  if (d.type === "stacked:ready") {
-    stackWin = e.source;              // also re-adopts it after a manual reload
-    pushStacked();
+  // Every message from the child also says WHICH window it is. A "ready" is a
+  // freshly loaded document and always wins the link — that is what re-adopts
+  // the window after a manual reload. The rest only claim it when there is no
+  // live one to take, so an orphan left over by a previous Lab cannot steal
+  // the handle from the window this one opened.
+  if (d.type === "stacked:ready") stackWin = e.source;
+  else if (!stackAlive() && e.source) stackWin = e.source;
+
+  if (d.type === "stacked:ready" || d.type === "stacked:sync") {
+    // "ready" is a document with nothing on it yet, so it always gets sent
+    // the state. "sync" carries the child's own seq — it is asking to be
+    // corrected IF it is behind, and at rest the right answer is silence.
+    if (e.source !== stackWin) return;
+    stackAckSeq = d.type === "stacked:sync" ? ackSeq(d) : -1;
+    if (stackAckSeq !== stackSeq) { stackTries = 0; stackSend(); }
     updateTableBtn();
+  } else if (d.type === "stacked:applied") {
+    if (e.source !== stackWin) return;
+    stackAckSeq = ackSeq(d);
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
   } else if (d.type === "stacked:zoom") {
@@ -2907,17 +2973,14 @@ $("stackbtn").addEventListener("click", () => {
   try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
   // An already-open window does not reload, so it sends no second "ready" —
   // push at it straight away. A freshly opened one is not listening yet and
-  // will normally handshake, but a browser that hands back a window with no
-  // opener never can, so keep pushing over the first couple of seconds. The
-  // child is idempotent: each push simply replaces what it is showing.
-  pushStacked();
+  // will normally handshake; a browser that hands one back with no opener
+  // never can, and that is what the ack does for us now. Clear the ack and
+  // stackReconcile keeps re-sending until this window confirms what it drew,
+  // instead of the old fixed handful of blind pushes.
+  stackAckSeq = -1;
+  stackTries = 0;
+  stackSend();
   updateTableBtn();
-  let tries = 0;
-  const again = setInterval(() => {
-    if (++tries > 6 || !stackAlive()) { clearInterval(again); return; }
-    pushStacked();
-    updateTableBtn();
-  }, 350);
 });
 
 // ---------- settings persistence + modal ----------
