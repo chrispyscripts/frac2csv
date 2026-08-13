@@ -929,8 +929,19 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             try:
                 for meta, samples, data, units in \
                         slb.extract_page_blocks(page, sample_sec):
+                    # A Zone Summary sheet is a picture, not a vector plot, and
+                    # says so through page_source so the Lab's IMAGE badge and
+                    # the ghost overlay both key off it. geom places the chart
+                    # region, which is what crops the tables off the top of the
+                    # companion panel. All three are None on a vector page, so
+                    # this is a no-op there.
                     results.append(_series(_md(meta), samples, data,
-                                           "SLB PRC chart", pno + 1, units))
+                                           slb.page_source(page), pno + 1,
+                                           units,
+                                           geom=getattr(meta, "geom", None),
+                                           scales=getattr(meta, "axes", None),
+                                           frames=getattr(meta, "axes_frame",
+                                                          None)))
             except Exception as e:
                 notes.append(f"p{pno + 1}: SLB PRC chart failed — {e}")
             continue
