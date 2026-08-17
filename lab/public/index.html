@@ -631,6 +631,24 @@ applyTheme();
 const stageNum = s => { const m = String(s).match(/\d+/); return m ? +m[0] : 1e9; };
 const wells = [];       // { base, stages, provider }
 const tableFiles = [];  // { name, text, provider } — engineering tables (CSV)
+
+// A table's CSV is named after the table, not its position. Mirrors
+// localapp.table_csv_name so the desktop export and the browser export put the
+// same table in the same filename. Position is NOT stable between wells:
+// Halliburton 00536 prints 14 tables and 00789 the same set minus Cluster
+// Data, so a positional name means "table 13" is Cluster Data in one well and
+// Stage Description in the next.
+function tableCsvName(base, title, i, used) {
+  let slug = String(title || "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
+    .replace(/^-+|-+$/g, "");
+  if (!slug) slug = "table-" + (i + 1);
+  let name = `${base}-${slug}.csv`;
+  let n = 2;
+  while (used.has(name)) name = `${base}-${slug}-${n++}.csv`;
+  used.add(name);
+  return name;
+}
 const entries = [];     // file entries (for provider menu + filtering)
 
 // ---------- upload plumbing ----------
@@ -1385,8 +1403,16 @@ function render(entry, fname, stages, tables, notes, summary) {
   const sumItems = [];
   for (const g of summary)
     sumItems.push({ type: "summary", key: "sum", group: g, pageIdx: 0 });
+  // One file per table, NAMED after the table. Both of these used to be one
+  // constant string: every table was called "<base>-stages-table.csv", so the
+  // dedupe below kept only the FIRST table and emitSummary — which used
+  // "<base>-summary.csv" for all of them — kept only the LAST, because a zip
+  // keyed by name overwrites. On Halliburton 00536, which parses 14 tables,
+  // the Lab exported one CSV. The other thirteen were extracted, displayed,
+  // counted in "N files ready", and then dropped on the way out.
+  const tnames = new Set();
   for (const t of tables) {
-    const name = base + "-stages-table.csv";
+    const name = tableCsvName(base, t.title, tnames.size, tnames);
     if (!tableFiles.some(x => x.name === name))
       tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
     sumItems.push({ type: "table", key: "table", table: t });
@@ -1564,7 +1590,17 @@ function showTable(entry, t) {
   const b = document.createElement("button"); b.className = "btn primary";
   b.textContent = "⬇ Export…";
   b.addEventListener("click", () => $("exportbtn").click());
-  dl.appendChild(b); addZipCount(dl);
+  dl.appendChild(b);
+  // The column chooser reachable from the tables themselves. It already lists
+  // every table's columns, but it only opened from inside the Export panel —
+  // so the place you decide a column is unwanted was three clicks from the
+  // place you are looking at that column.
+  const cb = document.createElement("button"); cb.className = "btn";
+  cb.textContent = "Columns…";
+  cb.title = "Choose which columns this file's CSVs carry, per provider";
+  cb.addEventListener("click", openColumns);
+  dl.appendChild(cb);
+  addZipCount(dl);
   $("pv-notes").textContent = "";
   showAlert(entry, null);   // the file's re-export notice outlives the chart view
   pushStacked();      // not a stage — the stacked window empties itself
@@ -3105,12 +3141,30 @@ $("tablebtn").addEventListener("click", () => {
  td:first-child,th:first-child{text-align:left}
  tr:hover td{background:#f7f5f3}
  .cnt{color:#777;font-size:11px;margin:5px 2px 0}
+ .colsbtn{font:inherit;font-size:12px;padding:4px 11px;border-radius:6px;
+          border:1px solid #d8d4d0;background:#fff;color:#1a1a1a;cursor:pointer}
+ .colsbtn:hover{background:#f3f1ef}
+ #colsmsg{color:#a31631;font-size:11.5px;margin-left:8px}
  /* Always dark text on paper. This window used to follow the OS through
     prefers-color-scheme, which is not the same question as what the app is
     set to: on a machine in dark mode the tables came up white-on-black
     whatever the Lab's own theme said, and the client asked for them the other
     way round. A table of numbers is read, not watched, so it stays on paper. */
-</style><h1>${esc(name)}</h1>${body}`);
+</style><h1>${esc(name)}</h1>
+<p><button type="button" class="colsbtn" id="colsbtn">Columns…</button><span id="colsmsg"></span></p>
+${body}
+<script>
+document.getElementById("colsbtn").addEventListener("click", function () {
+  // the chooser lives in the Lab, not here — this window is a static dump
+  try {
+    window.opener.openColumns();
+    window.opener.focus();
+  } catch (e) {
+    document.getElementById("colsmsg").textContent =
+      "Open the Lab window and use Columns… there.";
+  }
+});
+<\/script>`);
   w.document.close();
   try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
 });
@@ -3980,8 +4034,11 @@ function deleteEntry(entry) {
     if (wi >= 0) wells.splice(wi, 1);
   }
   const base = entry.name.replace(/\.pdf$/i, "");
+  // match on the file's own base, not on the old "-stages-table" prefix —
+  // table CSVs are named after the table now, so that prefix matches nothing
+  // and every removed file used to leave its tables behind in the export
   for (let i = tableFiles.length - 1; i >= 0; i--)
-    if (tableFiles[i].name.startsWith(base + "-stages-table")) tableFiles.splice(i, 1);
+    if (tableFiles[i].name.startsWith(base + "-")) tableFiles.splice(i, 1);
   if (current && current.entry === entry) {
     current = null;
     clearStageList();
@@ -4090,8 +4147,12 @@ async function emitSeconds(entry, well) {
 // the summary table CSV(s) for one entry (BJ Totals etc.)
 async function emitSummary(entry) {
   const out = [];
+  const base = entry.name.replace(/\.pdf$/i, "");
+  const used = new Set();
   for (const t of (entry._tables || [])) {
-    const nm = entry.name.replace(/\.pdf$/i, "") + "-summary.csv";
+    // every table used to be written as "<base>-summary.csv"; in a zip keyed
+    // by filename that means the last one wins and the rest never leave
+    const nm = tableCsvName(base, t.title, used.size, used);
     out.push(await emit(entry, nm, tableCSV(t), false));
   }
   return out;
