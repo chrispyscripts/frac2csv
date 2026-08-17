@@ -110,6 +110,14 @@
   .exgrid .exh { font-size:10px; text-transform:uppercase; letter-spacing:.05em;
                  font-weight:700; color:var(--mut); text-align:center; }
   .exgrid .exrl { font-size:12.5px; font-weight:700; color:var(--ink); padding-right:6px; }
+  .excols { display:flex; align-items:center; gap:10px; margin-top:10px;
+            padding-top:10px; border-top:1px solid var(--line); }
+  .excolsnote { font-size:11.5px; color:var(--mut); }
+  .colrow { display:flex; align-items:center; gap:8px; padding:3px 0 3px 4px;
+            font-size:12.5px; color:var(--ink); cursor:pointer; }
+  .colrow input { cursor:pointer; }
+  .colrow input:disabled { cursor:default; }
+  .colrow input:disabled + span { color:var(--mut); }
   .exgrid .btn { width:100%; text-align:center; }
   .exgrid .btn:disabled { opacity:.4; pointer-events:none; }
   .exfoot { margin-top:12px; padding-top:10px; border-top:1px solid var(--line);
@@ -302,6 +310,10 @@
           <button type="button" class="btn" id="exSumOne">Save</button>
           <button type="button" class="btn" id="exSumAll">Save all</button>
         </div>
+        <div class="excols">
+          <button type="button" class="btn" id="exColumns">Columns…</button>
+          <span class="excolsnote" id="excolsnote"></span>
+        </div>
         <div class="exfoot" id="exfoot"></div>
       </div>
     </div>
@@ -348,6 +360,27 @@
             <button type="button" class="btn" id="destpick">Browse…</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Column chooser. Lists every column the CSVs would carry for the file on
+       screen and lets any of them be dropped. A default is remembered per
+       PROVIDER, so unchecking a column once on a Liberty file applies to every
+       Liberty file after it. -->
+  <div class="modalback" id="colback" hidden>
+    <div class="modal">
+      <div class="modalhead"><b>Columns to export</b>
+        <button type="button" class="x" id="colclose">&times;</button></div>
+      <div class="modalbody">
+        <div class="sethint" id="colwhich">&nbsp;</div>
+        <div id="collist"></div>
+      </div>
+      <div class="modalfoot">
+        <span class="sethint" id="colstatus">&nbsp;</span>
+        <button type="button" class="btn" id="colreset">Reset</button>
+        <button type="button" class="btn primary" id="colsavedef">
+          Save as default for this filetype</button>
       </div>
     </div>
   </div>
@@ -489,6 +522,11 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const settings = { format: "both", xlsxTabs: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
                    ghostOurs: true, ghostRef: true, tipScale: 1,
+                   // { provider: { column: true } } — a column listed here is
+                   // DROPPED from that provider's exports. Only exclusions are
+                   // stored, so a column this build has never seen defaults to
+                   // being included rather than silently vanishing.
+                   colDrop: {},
                  };  // toggles
 // Readout-box size. 1 is the original size and the floor of the slider, so
 // nobody's chart changes until they ask for it. Clamped on read because the
@@ -1098,8 +1136,41 @@ function wellModel(stages) {
       if (rows[edge]) rows[edge] = rows[edge].slice(0, 6).concat(cols.map(() => null));
     blocks.push({ stage: seqNo, label, rows });
   }
-  return { head, unitRow, blocks };
+  // Drop the columns this provider is set to exclude. Done HERE rather than in
+  // wellCSV so the xlsx writer, which builds off the same model, cannot
+  // disagree with the csv about what was exported.
+  const prov = wellProviderOf(stages);
+  const keep = head.map(h => keepColumn(prov, h));
+  if (keep.some(k => !k)) {
+    const pick = arr => arr.filter((_v, i) => keep[i]);
+    return { head: pick(head), unitRow: pick(unitRow), provider: prov,
+             blocks: blocks.map(b => ({ ...b, rows: b.rows.map(pick) })) };
+  }
+  return { head, unitRow, blocks, provider: prov };
 }
+
+// ---- which columns a provider's exports carry -------------------------
+//
+// Stored as EXCLUSIONS per provider (settings.colDrop), so a column added by a
+// later build is exported by default instead of silently disappearing for
+// anyone who had saved a default before it existed.
+function wellProviderOf(stages) {
+  const c = {};
+  for (const st of stages) {
+    const p = providerOf(st.source);
+    c[p] = (c[p] || 0) + 1;
+  }
+  return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || "Other";
+}
+function dropMap(provider) {
+  return (settings.colDrop && settings.colDrop[provider]) || {};
+}
+function keepColumn(provider, col) {
+  return !dropMap(provider)[col];
+}
+// The identity columns are what make a row traceable back to a stage; dropping
+// them produces a CSV nobody can join to anything, so they are not offered.
+const LOCKED_COLS = new Set(["UWI", "STAGE", "DATETIME"]);
 
 function csvCell(v) {
   if (v == null) return "";
@@ -1197,9 +1268,13 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;   // RFC-4180 quoting
 }
 function tableCSV(t) {
+  const prov = providerOf(t.source);
+  const keep = (t.columns || []).map(c => keepColumn(prov, c));
+  const pick = arr => keep.some(k => !k)
+    ? arr.filter((_v, i) => keep[i]) : arr;
   const rows = [["well", t.well, "uwi", t.uwi, "formation", t.formation].map(csvCell).join(","),
-                t.columns.map(csvCell).join(",")];
-  for (const r of t.rows) rows.push(r.map(csvCell).join(","));
+                pick(t.columns).map(csvCell).join(",")];
+  for (const r of t.rows) rows.push(pick(r).map(csvCell).join(","));
   return rows.join("\n");
 }
 
@@ -3038,6 +3113,18 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem("frac2csv-settings") || "{}");
     Object.assign(settings, s);
   } catch (e) { /* ignore */ }
+  // A hand-edited or older store can carry anything here, and every read of it
+  // indexes two levels deep on the export path.
+  if (!settings.colDrop || typeof settings.colDrop !== "object"
+      || Array.isArray(settings.colDrop)) {
+    settings.colDrop = {};
+  }
+  for (const k of Object.keys(settings.colDrop)) {
+    const v = settings.colDrop[k];
+    if (!v || typeof v !== "object" || Array.isArray(v)) {
+      delete settings.colDrop[k];
+    }
+  }
   setSeg($("fmt"), settings.format);
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
   $("layopt").classList.toggle("off", settings.format === "csv");
@@ -3054,6 +3141,7 @@ function saveSettings() {
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
     tipScale: settings.tipScale,
+    colDrop: settings.colDrop || {},
   }));
 }
 $("tipscale").addEventListener("input", e => {
@@ -3984,6 +4072,112 @@ async function exportSummaryAll() {
 // announced a folder that stayed empty and the client had no way to find the
 // files. Report the folders actually written to, and name them all when a
 // batch straddles more than one.
+// ---- the column chooser ------------------------------------------------
+//
+// Lists every column the CSVs would carry for the file on screen: the seconds
+// export's own columns, then each summary table's. Unchecking one drops it,
+// and "Save as default for this filetype" makes that stick for the PROVIDER,
+// so it applies to every later file of the same kind.
+function colTargets() {
+  const e = current && current.entry;
+  if (!e) return { provider: "Other", groups: [] };
+  const groups = [];
+  if (e.well) {
+    groups.push({ name: "Seconds export",
+                  cols: wellModelHead(e.well.stages) });
+  }
+  for (const t of (e._tables || [])) {
+    if (t.columns && t.columns.length) {
+      groups.push({ name: t.title || "Summary table",
+                    cols: t.columns.slice() });
+    }
+  }
+  const prov = e.well ? wellProviderOf(e.well.stages)
+    : providerOf((e._tables && e._tables[0] && e._tables[0].source) || "");
+  return { provider: prov, groups };
+}
+// The unfiltered head, so the dialog can offer a column that is currently
+// switched off — asking wellModel would hide exactly the ones to re-enable.
+function wellModelHead(stages) {
+  const saved = settings.colDrop;
+  settings.colDrop = {};
+  try { return wellModel(stages).head.slice(); }
+  finally { settings.colDrop = saved; }
+}
+
+let colPending = null;          // provider -> {col: true} being edited
+
+function openColumns() {
+  const { provider, groups } = colTargets();
+  if (!groups.length) {
+    $("exfoot").textContent = "Nothing extracted yet to choose columns from.";
+    return;
+  }
+  colPending = { ...dropMap(provider) };
+  $("colwhich").textContent =
+    `Applies to ${provider} files. Unchecked columns are left out of the CSV.`;
+  const host = $("collist");
+  host.innerHTML = "";
+  const seen = new Set();
+  for (const g of groups) {
+    const h = document.createElement("div");
+    h.className = "setlabel";
+    h.textContent = g.name;
+    host.appendChild(h);
+    for (const c of g.cols) {
+      if (seen.has(c)) continue;       // same column in two tables, one switch
+      seen.add(c);
+      const row = document.createElement("label");
+      row.className = "colrow";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !colPending[c];
+      cb.disabled = LOCKED_COLS.has(c);
+      cb.addEventListener("change", () => {
+        if (cb.checked) delete colPending[c];
+        else colPending[c] = true;
+        applyColPending(provider);
+      });
+      row.appendChild(cb);
+      const span = document.createElement("span");
+      span.textContent = c + (LOCKED_COLS.has(c) ? "  (always exported)" : "");
+      row.appendChild(span);
+      host.appendChild(row);
+    }
+  }
+  $("colstatus").textContent = "";
+  $("colback").hidden = false;
+}
+// Take effect immediately for this session; "Save as default" is what makes
+// it outlive the file on screen.
+function applyColPending(provider) {
+  settings.colDrop = { ...(settings.colDrop || {}) };
+  settings.colDrop[provider] = { ...colPending };
+  refreshExportPanel();
+}
+$("exColumns").addEventListener("click", openColumns);
+$("colclose").addEventListener("click", () => { $("colback").hidden = true; });
+$("colback").addEventListener("click", e => {
+  if (e.target === $("colback")) $("colback").hidden = true;
+});
+$("colreset").addEventListener("click", () => {
+  const { provider } = colTargets();
+  colPending = {};
+  applyColPending(provider);
+  saveSettings();
+  openColumns();
+  $("colstatus").textContent = "All columns restored.";
+});
+$("colsavedef").addEventListener("click", () => {
+  const { provider } = colTargets();
+  applyColPending(provider);
+  saveSettings();
+  const n = Object.keys(colPending).length;
+  $("colstatus").textContent = n
+    ? `Saved — ${n} column(s) will be left out of every ${provider} export.`
+    : `Saved — every ${provider} export carries all its columns.`;
+});
+
 function exportDone(files) {
   const foot = $("exfoot");
   if (!isLocal()) {
@@ -4030,6 +4224,15 @@ function refreshExportPanel() {
         : "each file's own folder / Downloads — set a folder in Settings")
     : "Downloads to your browser";
   $("exfoot").textContent = dest;
+  // Say when columns are being withheld. A CSV quietly missing a column the
+  // client expected is the kind of thing that gets reported as lost data.
+  const { provider } = colTargets();
+  const nDrop = Object.keys(dropMap(provider)).length;
+  const note = $("excolsnote");
+  if (note) {
+    note.textContent = nDrop
+      ? `${nDrop} column(s) excluded for ${provider}` : "";
+  }
 }
 
 // open right-aligned to the button, but flip to left-aligned if that would
