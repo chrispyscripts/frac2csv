@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auto_raster as ar          # noqa: E402
 import frac_core                  # noqa: E402
 import lib1                       # noqa: E402
+import liberty_summary            # noqa: E402
 import localapp                   # noqa: E402
 import pipeline                   # noqa: E402
 import trican2                    # noqa: E402
@@ -232,6 +233,46 @@ class ReExportNotice(unittest.TestCase):
         note = pipeline._rescaled_note(rows)
         self.assertIn("Hydr Pressure", note)
         self.assertNotIn("nope", note)
+
+
+class LibertySummaryKinds(unittest.TestCase):
+    """Carmine ran 299 Liberty files and got the Summary view on 10.
+
+    Two mechanisms, both fixed: the view was gated on a Liberty CHART having
+    extracted, and the sheet names it knew were the old vintage's only. The
+    2025 filings print "Time Log", "24 Hour Summary:" and "Completion Field
+    Report" and carry no STIMULATION SUMMARY page at all, so every one of them
+    came up empty.
+    """
+
+    def test_old_vintage_sheets_still_match(self):
+        for text, kind in [("STIMULATION SUMMARY\nStage: 1", "stimulation"),
+                           ("PROPPANT SUMMARY", "proppant"),
+                           ("LIBERTY", "timetracker"),
+                           ("Cement Report", "cement")]:
+            self.assertEqual(liberty_summary._page_kind(text), kind, text[:20])
+
+    def test_2025_vintage_sheets_match(self):
+        for text, kind in [("Time Log\nTime From\nTime To", "timelog"),
+                           ("24 Hour Summary:", "dailysummary"),
+                           ("24 Hr Summary:", "dailysummary"),
+                           ("Completion Field Report", "fieldreport")]:
+            self.assertEqual(liberty_summary._page_kind(text), kind, text[:20])
+
+    def test_well_completion_summary_is_not_dropped(self):
+        # on the OLD vintage, beside STIMULATION SUMMARY in all 12 files
+        # sampled, and it matched nothing before
+        self.assertEqual(liberty_summary._page_kind("WELL COMPLETION SUMMARY"),
+                         "wellcompletion")
+
+    def test_a_chart_page_is_not_a_summary_sheet(self):
+        self.assertIsNone(liberty_summary._page_kind(
+            "OVV HZ SUNRISE F5-26-78-17 Stage 13\nLiberty Energy\nPRC"))
+
+    def test_every_kind_has_a_title(self):
+        # a kind with no title renders in the Lab as its bare slug
+        for kind, _pat in liberty_summary.SUMMARY_KINDS:
+            self.assertIn(kind, liberty_summary.KIND_TITLES)
 
 
 if __name__ == "__main__":

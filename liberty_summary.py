@@ -13,18 +13,57 @@ positional grid, so it parses with regex.
 """
 import re
 
+# Order matters: _page_kind returns the FIRST pattern that matches.
+#
+# The last four are the 2025-era filings, which print none of the first four.
+# Measured over 18 Liberty files: the old vintage leads its sheets with
+# "LIBERTY", "Stage No" and "STIMULATION SUMMARY"; the 2025 vintage leads with
+# "Time Log" (271 pages across 6 files), "24 Hour Summary:" and "Completion
+# Field Report" and carries no STIMULATION SUMMARY page at all. Knowing only
+# the old names meant the Summary view came up empty on every new filing —
+# Carmine got it on 10 of 299 files.
+#
+# WELL COMPLETION SUMMARY is on the OLD vintage and was missed too: it sits
+# beside STIMULATION SUMMARY in all 12 old files sampled and matched nothing.
 SUMMARY_KINDS = [
     ("stimulation", r"STIMULATION SUMMARY"),
+    ("wellcompletion", r"WELL COMPLETION SUMMARY"),
     ("proppant", r"PROPPANT SUMMARY|^Stage No\b"),
     ("timetracker", r"^LIBERTY\s*$|TimeTracker"),
     ("cement", r"^Cement Report"),
+    ("timelog", r"^Time Log\s*$"),
+    ("dailysummary", r"^\s*\d+\s*(?:Hour|Hr)\s+Summary\s*:"),
+    ("fieldreport", r"^Completion Field Report"),
 ]
 KIND_TITLES = {
     "stimulation": "Stimulation Summary",
+    "wellcompletion": "Well Completion Summary",
     "proppant": "Proppant Summary",
     "timetracker": "TimeTracker Log",
     "cement": "Cement Report",
+    "timelog": "Time Log",
+    "dailysummary": "24 Hour Summary",
+    "fieldreport": "Completion Field Report",
 }
+
+
+def detect_document(doc):
+    """True when this is a Liberty filing, whether or not its charts read.
+
+    find_summary_pages used to be reachable only when a Liberty CHART had
+    already been extracted, so a filing whose plots we could not read showed
+    no summary sheets either — even though the sheets are plain text and were
+    sitting right there. Same shape as the Calfrac gate in pipeline.py, and
+    the same reasoning: a filing prints its tables whether or not we can read
+    its plots.
+    """
+    for p in range(min(doc.page_count, 400)):
+        try:
+            if "Liberty Energy" in (doc[p].get_text() or ""):
+                return True
+        except Exception:
+            continue
+    return False
 
 # order matters: label -> (column name, unit). Interval Base before Top would
 # still work (regex is anchored on the label), but keep report order.

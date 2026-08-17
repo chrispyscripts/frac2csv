@@ -1514,7 +1514,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     _summary(bj_summary, "BJ chart" in chart_srcs,
              "Totals — per-interval frac summary",
              lambda d: _bj_totals(d))
-    _summary(liberty_summary, "Liberty chart" in chart_srcs,
+    # Gate on Liberty's OWN pages as well as on the chart source, for exactly
+    # the reason the Calfrac note below gives. Carmine ran 299 Liberty files
+    # and got the Summary view on 10: charts read on 172, and the summary was
+    # unreachable on the other 127 no matter what those files printed.
+    _summary(liberty_summary,
+             "Liberty chart" in chart_srcs
+             or liberty_summary.detect_document(doc),
              "Stimulation Summary", liberty_summary.parse_stimulation)
     # Calfrac printed three different summary layouts across the corpus and
     # only the newest one was ever read, so most Calfrac wells came back with
