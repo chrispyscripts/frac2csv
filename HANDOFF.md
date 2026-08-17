@@ -138,10 +138,24 @@ something *works*. Read the body before treating a number as a defect.
     **Fixed in v1.0.0.** Those six together went from 0 to 568/568 chart pages
     and 1,939,562 samples.
   - **27 files: NO TEXT LAYER AT ALL** — 2-3 text pages out of 150-330, every
-    label converted to vector outlines (01116 p222 is a BJ chart drawn that
-    way). **No text-based detector can ever fire on these.** They need OCR of
-    the axis and legend text. THIS is the big remaining group and it is a
-    different problem from the other two.
+    label converted to vector outlines. **No text-based detector can ever fire
+    on these.** But they are TWO groups, not one, and only the first is an
+    extraction problem:
+    - **19 files with real charts — the big remaining prize.** 39-69 chart
+      pages each, ~950 pages in total, curves drawn as clean vector polylines
+      (01116 p222 is a BJ chart drawn that way). The curves are readable; it
+      is the axis, legend and time labels that need OCR. Start here.
+    - **8 files (01151-01158) that contain NO treatment charts at all, and
+      "No extractable data" is the CORRECT answer for them.** Ovintiv WellOps
+      daily-report packages: 122-214 pages of tables, and exactly ONE
+      ink-heavy page each, which is a wellbore SCHEMATIC, not a chart
+      (verified by rendering 01151 p142, 01155 p112 and 01158 p138 — same OVV
+      Tower Lake pad, same layout). Every other page in all eight scores <=180
+      saturated vector items against 4,700-6,900 on the schematic. **Do not
+      point OCR at these** — there is nothing to read. What they need is the
+      per-file note the 00183 entry below already argues for: say the file
+      holds no treatment charts, so an honest empty result stops looking like
+      a parser failure and stops generating reports.
   - 7 files (00944, 01137-01142): partial text layer, ~62 of 400 pages, STEP
     marker present.
   - 2 files (01078/01079): Trican/STEP/Canyon/Hal markers, not Liberty.
