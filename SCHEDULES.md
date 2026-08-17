@@ -23,7 +23,10 @@ plausible nonsense, so establish the orientation before writing anything.
 | STEP | `Treatment Report - Daily Stage Summary` | **transposed** | partly — read for clocks |
 | Trican layout A | `STAGE INFORMATION` page, its volume/fluid/proppant sections | row-wise, flattened | partly |
 | CalFrac | not located yet | — | no |
-| BJ, Liberty, Canyon, Sanjel | not scanned | — | no |
+| **Liberty** | `Job Design` pages | row-wise | no |
+| **BJ** | not located (WellOps report is metadata) | — | no |
+| **Canyon** | none found in 3 files | — | no |
+| **Sanjel** | none found in 3 files | — | no |
 
 ## Halliburton (IFS) — the clearest schedule in the corpus
 
@@ -78,6 +81,56 @@ Note for the year rule: the POST-FRAC SUMMARY cover prints
 `Start Date : February 16, 2019` and `Finish Date : February 18, 2019` — a
 full date WITH a year, which is a better source than `trican2._year_for`'s
 span heuristic. Worth switching to, and cheap.
+
+## Liberty — the richest schedule found, and row-wise
+
+Titled `Job Design`; 11 pages across a 3-file sample. Unlike Halliburton and
+STEP this one is the ordinary way round, one row per pump step, and it carries
+a per-step timestamp, which none of the others do.
+
+Columns measured on 00375 p32: `STAGE #`, `CMTV Reset Vol.`, `Reset Count`,
+`Step Date Time` (e.g. `10-10-2024 12:47:00`), `Pressure`, `Rate`,
+`STAGE TYPE`, `FLUID TYPE`, `PROPPANT TYPE`, `PPA (kgPA)`,
+`DESIGN RATE (m3pm)`, `DESIGN VOLUME (m3)`, `CLEAN VOLUME (m3)`,
+`SLURRY VOLUME (m3)`, `PROPPANT (kg) STAGE COUNTER`, and an
+`ADDITIVE CONCENTRATIONS` group. Non-pumping steps are labelled in place —
+step 4 of that page reads `Shut Down`.
+
+Because it timestamps every step, this is the one schedule that can be lined
+up against a chart's own clock, which makes it the natural place to validate
+whatever schedule CSV shape gets chosen.
+
+## BJ, Canyon, Sanjel — not found yet, and what was actually checked
+
+- **BJ**: 67 pages of `DC & Workover - WellOps Regulatory Report` match on
+  shape, but the one inspected (00418 p19) is well and wellbore METADATA —
+  legal location, elevations, casing, kick-offs — not a pump schedule. The
+  report has many sections and a schedule may sit deeper in it. Note there is
+  an unverified, still-untracked `bj_wellops.py` draft in the working tree
+  that presumably reads this report; read it before scanning further.
+- **Canyon** and **Sanjel**: nothing schedule-shaped in three files each.
+  Three files is thin, and both were sampled from the first drive rather than
+  a provider folder, so treat this as "not found" rather than "not present".
+
+## Finding these files at all
+
+Neither drive sorts these four into folders — `__CALFRAC/__HAL/__SCHLUM/
+__STEP/__TRICAN` on the newer drive is the whole of it. They live on the first
+drive, `/Volumes/For-Chris-CnC-1TB/BCER-Frac`, in 1,451 unsorted
+`<index>-<uwi>_<wa>/` folders. Classifying them by each module's OWN detector
+over a sample of pages gives:
+
+  Liberty 189, Canyon 89, BJ 71, Canyon+Sanjel 15, unclassified 1,080, error 7
+
+Do NOT classify these by searching for the vendor's name: `bj1.detect` keys on
+a Stage title plus a time and a UWI, and `canyon.detect` on `Ticket#:` plus an
+axis label, so neither needs the company name to appear and a name scan finds
+almost none of them. The 15 Canyon+Sanjel co-detections are Sanjel — a known
+overlap that `pipeline.py:1048` already guards by testing Sanjel first.
+
+The classification is cached at `prov_detect.tsv` in the session scratchpad,
+and the scanner (`findprov2.py`) is resumable, which matters because the drive
+drops.
 
 ## Still to do
 
