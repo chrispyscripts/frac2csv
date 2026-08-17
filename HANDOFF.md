@@ -125,6 +125,21 @@ something *works*. Read the body before treating a number as a defect.
 
 ## Open, highest value first
 
+- **THE 2025 FILINGS ARE A TEMPLATE GAP, and they are the report flood.**
+  Carmine filed 197 "No extractable data" reports in three days. They are NOT
+  stale: re-run on the current build, **35 of the 37 reproducible ones still
+  produce nothing**, and 31 of those are 2025 filings. Of 38 still-empty 2025
+  files examined, **33 have NO detector firing at all** and 19 open with the
+  page heading "BC Energy Regulator" — a filing wrapper no template knows.
+  One document class explains most of the backlog. Start here.
+  - Only 42 of the 184 reported filenames are on either drive; the other 142
+    are all 2021-2022 filings and are on a drive Carmine has yet to send
+    (he has ~1000 more files coming). Shelved until it arrives.
+  - Do NOT cross-reference reports to files by the 5-digit index. The two
+    drives use DIFFERENT index schemes and the same number means different
+    wells — matching that way produced a confident, entirely wrong Liberty/BJ
+    classification earlier today. Match on the full filename.
+
 - **Trican WH Prop Conc, 41% blank.** Improved but not resolved, and the
   remainder has **two** causes, not one. Of 39,194 columns still carrying no WH
   ink: 50.6% have DH sitting on the shared zero row, so the two curves coincide
