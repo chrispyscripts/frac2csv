@@ -153,9 +153,27 @@ something *works*. Read the body before treating a number as a defect.
     wells — matching that way produced a confident, entirely wrong Liberty/BJ
     classification. Match on the full filename.
 - **Tell Carmine to re-export affected Liberty wells.** Builds before v1.0.0
-  exported Hydr Pressure at ~4.5x true and PFR-ZC FR CONC at half, on files
-  including 00374 — the one he reports as WORKING in #110. Shapes right, scale
-  wrong.
+  read a black series off a coloured axis of the same unit. Census over all 12
+  Liberty vector files, 901 pages: **403 pages carried a wrong value and every
+  one is a black series — no coloured channel moved anywhere**, so the rest of
+  the corpus is unaffected.
+    - Hydr Pressure, 182 pages, ~4.5x too high (black axis 10..110, inverted).
+    - PFR-ZC FR CONC, too low by the page's own printed range: x2 on 147
+      pages (0..1.0), x3 on 73 (0..1.5), x4 on 1 (0..2.0), against a borrowed
+      0..0.5 colour axis.
+    - **The factor is NOT constant, so an old export cannot be corrected by
+      multiplying.** Re-export.
+    - The three distinct ratios landing exactly on black_max/0.5 with no
+      fitting is the strongest evidence the fix reads the printed axis rather
+      than inventing a scale.
+    - Affects 00374, which Carmine reports as WORKING in #110. Shapes right,
+      scale wrong.
+- **A 299-page Liberty file takes 322.7s end to end with no progress signal.**
+  Not a defect, but a five-minute silent wait is how "it did nothing" reports
+  get written — and 197 of those arrived in three days.
+- **Cosmetic:** 01103 labels stage 1 as "01" and stages 2-9 bare, so a CSV
+  sorted by stage puts 01 after 9. It is the chart's own printed text, so not
+  a data defect.
 - **#112 — STEP 00349 p138, Btm Prop Conc 37.9% blank. Diagnosed, NOT fixed,
   and one attempt has already been backed out.** Reproduced exactly (the
   report's peaks 76.08 / 660.99 / 685.76 / 10.49 / 4.80 all match). What is

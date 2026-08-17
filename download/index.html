@@ -61,11 +61,16 @@
       <li><b>Correction to values in earlier builds — please re-export
         affected Liberty wells.</b> A black curve with its own printed axis was
         being read off a coloured axis of the same unit. Where the two
-        disagreed the numbers were wrong, not just imprecise: PFR-ZC FR CONC on
-        00374 exported at HALF its true value, and Hydr Pressure on 00394 and
-        01397 at roughly 4.5x, pinned near the top of the chart. The shapes
-        were right, the scale was not. Verified against the reports' own
-        printed axes and the ink position on the page</li>
+        disagreed the numbers were wrong, not just imprecise. Across all 12
+        Liberty vector files, 403 of 901 pages carried a wrong value, and every
+        one of them is a black series — no coloured channel moved anywhere.
+        Hydr Pressure came out roughly 4.5x too high on 182 pages, pinned near
+        the top of the chart. PFR-ZC FR CONC came out too LOW by a factor that
+        depends on the range printed on that page: half on 147 pages, a third
+        on 73, a quarter on 1. <b>Do not try to correct an old export by
+        multiplying — the factor is not the same on every page. Re-export the
+        affected wells.</b> Verified against the reports' own printed axes and
+        the ink position on the page</li>
       <li><b>Choose which columns your CSVs carry.</b> A new
         <i>Columns…</i> button in the Export menu lists every column for the
         file on screen with a checkbox each. <i>Save as default for this
