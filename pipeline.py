@@ -879,11 +879,45 @@ def _fmt_dt(v):
     return v
 
 
+# What a table IS, independent of which provider printed it. The client asks
+# for "the schedule" and gets a list of thirteen titles with no marker on any
+# of them — Halliburton alone prints 14 tables per filing. Classifying once,
+# centrally, from the title lets the Lab group them and lets a schedule export
+# select them without every call site having to agree on a convention.
+#
+# Built from the 37 distinct titles the corpus actually produces, plus the
+# schedule titles the parsers define: ifs_tables' "Pumping Schedule (design)"
+# and "Stage Summary (pumped schedule)", hal1_tables' deferred "Actual Design
+# (pump schedule)", and Canyon's per-substage log.
+_KIND_RULES = [
+    ("schedule", re.compile(r"pump(?:ed|ing)?\s+schedule|\bschedule\b|"
+                            r"job design|actual design", re.I)),
+    ("log", re.compile(r"\b(?:event\s+log|treatment\s+log|time\s*log|"
+                       r"timetracker)\b", re.I)),
+    ("summary", re.compile(r"summary|summaries|totals|treatment details|"
+                           r"completion details|per-stage engineering", re.I)),
+]
+
+
+def table_kind(title):
+    """-> 'schedule' | 'log' | 'summary' | 'other'.
+
+    Order matters: "Stage Summary (pumped schedule)" is a SCHEDULE that has
+    the word summary in it, so schedule is tested first.
+    """
+    t = str(title or "")
+    for kind, pat in _KIND_RULES:
+        if pat.search(t):
+            return kind
+    return "other"
+
+
 def _normalise_tables(results, filename=None):
     fallback = pe.filename_uwi(filename) if filename else ""
     for r in results:
         if r.get("type") != "table":
             continue
+        r["kind"] = table_kind(r.get("title"))
         cols = list(r.get("columns") or [])
         rows = [list(x) for x in (r.get("rows") or [])]
         for i, c in enumerate(cols):

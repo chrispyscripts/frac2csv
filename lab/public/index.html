@@ -208,6 +208,9 @@
   .stagerow.sel { background:var(--panel2); color:var(--ink);
                   border-left:2px solid var(--carmine); padding-left:24px; }
   .stagerow .ch { font-family:var(--mono); font-size:10.5px; color:var(--mut); }
+  .grouphdr { padding:10px 14px 3px 14px; font-size:10px; font-weight:600;
+              letter-spacing:.07em; text-transform:uppercase; color:var(--mut);
+              opacity:.75; }
   /* the stage name can carry an appended tag, so let it have the room and
      keep the sequence pinned right */
   .stagerow .stg { flex:1; min-width:0; overflow:hidden;
@@ -638,6 +641,11 @@ const tableFiles = [];  // { name, text, provider } — engineering tables (CSV)
 // Halliburton 00536 prints 14 tables and 00789 the same set minus Cluster
 // Data, so a positional name means "table 13" is Cluster Data in one well and
 // Stage Description in the next.
+// pipeline.table_kind sets these; the Lab only orders and labels them
+const KIND_RANK = { schedule: 0, summary: 1, log: 2, other: 3 };
+const KIND_LABEL = { schedule: "Schedules", summary: "Summaries",
+                     log: "Logs", other: "Other tables" };
+
 function tableCsvName(base, title, i, used) {
   let slug = String(title || "").toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
@@ -1411,7 +1419,15 @@ function render(entry, fname, stages, tables, notes, summary) {
   // the Lab exported one CSV. The other thirteen were extracted, displayed,
   // counted in "N files ready", and then dropped on the way out.
   const tnames = new Set();
-  for (const t of tables) {
+  // Grouped by what the table IS, schedules first. A Halliburton filing parses
+  // 14 tables and they arrived in parser order, so "where is the schedule"
+  // meant reading every title. Stable sort, so order inside a group is
+  // unchanged.
+  const ranked = tables.map((t, i) => [t, i])
+    .sort((a, b) => (KIND_RANK[a[0].kind] ?? 9) - (KIND_RANK[b[0].kind] ?? 9)
+                    || a[1] - b[1])
+    .map(x => x[0]);
+  for (const t of ranked) {
     const name = tableCsvName(base, t.title, tnames.size, tnames);
     if (!tableFiles.some(x => x.name === name))
       tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
@@ -1448,7 +1464,22 @@ function selectFile(entry) {
   tog.querySelectorAll("button").forEach(b =>
     b.classList.toggle("on", b.dataset.v === entry.viewMode));
   const list = $("stages"); list.innerHTML = "";
+  let lastKind = null;
   for (const it of entry.items) {
+    // a heading above each run of tables of one kind, so a 14-table filing
+    // reads as Schedules / Summaries / Logs rather than as fourteen titles
+    if (it.type === "table") {
+      const k = it.table.kind || "other";
+      if (k !== lastKind) {
+        const h = document.createElement("div");
+        h.className = "grouphdr";
+        h.textContent = KIND_LABEL[k] || "Other tables";
+        list.appendChild(h);
+        lastKind = k;
+      }
+    } else {
+      lastKind = null;
+    }
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")

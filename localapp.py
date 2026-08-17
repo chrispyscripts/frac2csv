@@ -290,6 +290,9 @@ def serialize(results, notes):
                 "uwi": r.get("uwi", ""), "formation": r.get("formation", ""),
                 "columns": r["columns"], "rows": r["rows"],
                 "source": r.get("source", ""), "page": r.get("page"),
+                # schedule / log / summary / other — what the table IS, so the
+                # Lab can group a 14-table filing into something readable
+                "kind": r.get("kind", "other"),
             })
     return stages, tables, notes, summary
 

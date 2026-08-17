@@ -315,5 +315,40 @@ class TableCsvNaming(unittest.TestCase):
         self.assertEqual(nm, "w-avg-max-technical-data-hal-1.csv")
 
 
+class TableKind(unittest.TestCase):
+    """A Halliburton filing parses 14 tables and they all arrived as an
+    undifferentiated list, so "where is the schedule" meant reading every
+    title. pipeline.table_kind classifies once, centrally, from the title.
+    """
+
+    def test_schedules(self):
+        for t in ["Pumping Schedule (design)",          # ifs_tables
+                  "Stage Summary (pumped schedule)",    # ifs_tables
+                  "Actual Design (pump schedule)",      # hal1_tables, deferred
+                  "Job Design"]:                        # Liberty, not parsed yet
+            self.assertEqual(pipeline.table_kind(t), "schedule", t)
+
+    def test_schedule_beats_summary_when_the_title_says_both(self):
+        # the ordering trap: this one is a schedule with "Summary" in its name
+        self.assertEqual(pipeline.table_kind("Stage Summary (pumped schedule)"),
+                         "schedule")
+
+    def test_logs(self):
+        for t in ["Event log (Hal-1)", "Treatment Log", "Time Log",
+                  "TimeTracker Log"]:
+            self.assertEqual(pipeline.table_kind(t), "log", t)
+
+    def test_summaries(self):
+        for t in ["Proppant Summary (Hal-1)", "Interval summaries",
+                  "Totals — per-interval frac summary", "Treatment Details",
+                  "Completion Details",
+                  "well — per-stage engineering data (Trican)"]:
+            self.assertEqual(pipeline.table_kind(t), "summary", t)
+
+    def test_unknown_titles_are_other_not_a_guess(self):
+        for t in ["Tubular Data (Hal-1)", "Cluster Data (Hal-1)", "", None]:
+            self.assertEqual(pipeline.table_kind(t), "other", str(t))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
