@@ -93,7 +93,35 @@ def _md(meta):
             # filing's own (Sanjel's banner names another well) — carried for
             # reference, the way sanjel_tables carries it on the table side
             "banner_uwi": getattr(meta, "banner_uwi", ""),
+            # channels whose values a correction changed, named rather than
+            # described, so the file-level notice can be built without
+            # parsing the human sentence in `warnings`
+            "rescaled": list(getattr(meta, "rescaled", [])),
             "warnings": list(getattr(meta, "warnings", []))}
+
+
+def _rescaled_note(results):
+    """One re-export notice for the whole file, or None.
+
+    The per-chart warning only shows on the chart being looked at, and what
+    has to reach the client is about a CSV they exported earlier and may never
+    open again — so it belongs where they see it as soon as the file loads.
+    """
+    counts = {}
+    for r in results:
+        if r.get("type") != "series":
+            continue
+        for name in (r.get("meta") or {}).get("rescaled", []):
+            counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return None
+    which = ", ".join(f"{k} ({n} chart{'s' if n != 1 else ''})"
+                      for k, n in sorted(counts.items()))
+    return (f"RE-EXPORT NOTICE — {which}: these channels were read off the "
+            f"wrong axis by builds before 1.0.0. What you see now is correct, "
+            f"but any CSV of this well exported earlier is not. The error is "
+            f"not a constant factor, so an old file cannot be fixed by "
+            f"multiplying — export it again.")
 
 
 def _series(meta, samples, data, source, page=None, units=None, labels=None,
@@ -1622,5 +1650,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         extra = "" if raster else \
             " (raster/scanned templates need the tesseract OCR engine)"
         notes.append(f"No extractable charts or tables found in {npages} pages{extra}.")
+    _note = _rescaled_note(results)
+    if _note:
+        notes.append(_note)
     _normalise_tables(results, filename)
     return results, notes

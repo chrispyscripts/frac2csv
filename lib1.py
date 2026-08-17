@@ -408,6 +408,26 @@ def extract_page(page, sample_sec=1.0):
         order = np.argsort(t, kind="stable")
         series[info["name"]] = (t[order], v[order])
         units[info["name"]] = info["unit"]
+        # This channel is one the black-axis fix changed. Say so ON the chart,
+        # because the correction reaches data the client already has: builds
+        # before 1.0.0 read a black series off a coloured axis of the same
+        # unit, so any CSV exported earlier carries wrong numbers for it. The
+        # value being shown NOW is right — it is the old export that is not,
+        # and nothing else in the app would ever tell them that.
+        if color_int == 0 and 0 in fits:
+            # The channel name goes in a field of its own as well as in the
+            # sentence. The file-level notice is built from THIS, not by
+            # re-reading the prose — otherwise rewording the warning below
+            # silently switches the notice off, and the thing that goes quiet
+            # is the only warning the client gets about data already on disk.
+            meta.rescaled = list(getattr(meta, "rescaled", [])) + [info["name"]]
+            meta.warnings.append(
+                f"Corrected in 1.0.0 — {info['name']} is read from its own "
+                f"printed axis ({v_lo_ax:g} to {v_hi_ax:g} {info['unit']}). "
+                f"Earlier builds read it off another curve's axis, so a CSV "
+                f"exported before 1.0.0 has the wrong numbers for this "
+                f"channel. The values here are correct; re-export this well "
+                f"if you kept an older CSV.")
         # The chart's OWN axis range for this curve, straight off its printed
         # tick labels. The Lab plots against this instead of guessing a top
         # from the data, so our y axis reads the same as the source report.
