@@ -21,6 +21,7 @@ import socket
 import sys
 import threading
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -514,6 +515,12 @@ class Handler(BaseHTTPRequestHandler):
                                         "summary": summary, "outDir": out_dir})
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
+            # The client gets one line; the log gets the stack. Without this
+            # the traceback died here and a 500 was all anyone ever saw, which
+            # is most of why "it did nothing" was unanswerable.
+            import traceback
+            sys.stderr.write(f"[{self.path}] unhandled {type(e).__name__}\n")
+            traceback.print_exc(file=sys.stderr)
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
 
 
@@ -575,13 +582,115 @@ def grab_screen(max_edge=1800):
             + base64.b64encode(buf.getvalue()).decode()), None
 
 
+LOG_KEEP = 5                      # how many previous runs to keep
+LOG_MAX_BYTES = 4_000_000
+_LOG_PATH = None
+
+
+def log_dir():
+    """Where the log goes, in a place the user can actually find and send.
+
+    Beside the EXE is wrong: it is routinely in Program Files or on a
+    read-only share. %LOCALAPPDATA%\\Frac2CSV on Windows and
+    ~/Library/Logs/Frac2CSV on a Mac are both writable and both somewhere a
+    support request can point at without a folder hunt.
+    """
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        d = os.path.join(base, "Frac2CSV", "logs")
+    elif sys.platform == "darwin":
+        d = os.path.join(os.path.expanduser("~"), "Library", "Logs",
+                         "Frac2CSV")
+    else:
+        d = os.path.join(os.path.expanduser("~"), ".frac2csv", "logs")
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except OSError:
+        return None
+
+
+def start_logging():
+    """Tee stdout and stderr to a per-run log file. -> its path, or None.
+
+    Until now the desktop app wrote errors to stderr and nothing else, which
+    on Windows means a console window the user may never look at and cannot
+    send anywhere. Every diagnosis therefore depended on the client noticing
+    a failure and describing it. A traceback that survives the run turns "it
+    did nothing" into evidence.
+
+    Deliberately not the logging module: the point is to capture everything
+    already being printed, including third-party warnings and tracebacks from
+    threads, without touching a single call site.
+    """
+    global _LOG_PATH
+    d = log_dir()
+    if not d:
+        return None
+    try:
+        old = sorted(f for f in os.listdir(d) if f.startswith("frac2csv-"))
+        for f in old[:max(0, len(old) - LOG_KEEP + 1)]:
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = os.path.join(d, f"frac2csv-{stamp}.log")
+        fh = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
+    except OSError:
+        return None
+
+    class _Tee:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def write(self, s):
+            if self.stream is not None:
+                try:
+                    self.stream.write(s)
+                except Exception:
+                    pass
+            try:
+                if fh.tell() < LOG_MAX_BYTES:
+                    fh.write(s)
+            except Exception:
+                pass
+
+        def flush(self):
+            for t in (self.stream, fh):
+                try:
+                    if t is not None:
+                        t.flush()
+                except Exception:
+                    pass
+
+    sys.stdout = _Tee(sys.stdout)
+    sys.stderr = _Tee(sys.stderr)
+    # A frozen build has no console at all, so an exception escaping a thread
+    # would vanish entirely. Route both hooks into the same file.
+    def _hook(exc_type, exc, tb):
+        import traceback
+        traceback.print_exception(exc_type, exc, tb, file=sys.stderr)
+    sys.excepthook = _hook
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = lambda a: _hook(a.exc_type, a.exc_value,
+                                               a.exc_traceback)
+    print(f"=== Frac2CSV {VERSION} "
+          f"started {datetime.now().isoformat(timespec='seconds')} ===")
+    _LOG_PATH = path
+    return path
+
+
 def main():
+    log_path = start_logging()
     srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = srv.server_address[1]
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     print(f"Frac2CSV local — {url}  (raster/OCR: "
           f"{'on' if pipeline.raster_available() else 'OFF'})")
+    if log_path:
+        print(f"Log: {log_path}")
     print("Close this window to stop the app.")
     if not os.environ.get("F2C_NO_BROWSER"):
         webbrowser.open(url)
