@@ -421,6 +421,7 @@
         title="Drag to resize · double-click to fit the longest name"></div>
       <div class="lefthead filehdr">
         <span>Files</span>
+        <button class="clr" id="reportall" hidden>Report all empty</button>
         <button class="clr" id="clearall" hidden>Clear all</button>
       </div>
       <div class="files" id="files"></div>
@@ -3865,7 +3866,67 @@ function updateCount() {
 
 function updateClearAll() {
   $("clearall").hidden = entries.length === 0;
+  const n = emptyEntries().length;
+  const b = $("reportall");
+  if (b) {
+    b.hidden = n < 2;
+    b.textContent = `Report all empty (${n})`;
+    b.title = "Send ONE report listing every file in this batch that "
+      + "produced no data";
+  }
 }
+// Files that finished with nothing, i.e. the ones showing a Report button.
+function emptyEntries() {
+  return entries.filter(e => e.el && e.el.querySelector(".rptbtn"));
+}
+// One batch, one report.
+//
+// A "Report" button per file meant a batch of 197 empty files became 197
+// GitHub issues in three days — for what is usually a handful of root causes,
+// and it buries the hand-written reports that actually describe something.
+// The filenames and their extraction notes are what matter, and they fit in
+// one issue.
+async function reportAllEmpty() {
+  const list = emptyEntries();
+  if (!list.length) return;
+  const b = $("reportall");
+  b.disabled = true;
+  const was = b.textContent;
+  b.textContent = "Sending…";
+  const lines = list.map(e => {
+    const notes = (e.notes || []).join(" | ");
+    return `- ${e.name}${notes ? "  —  " + notes : ""}`;
+  });
+  try {
+    const r = await fetch(FLAG_ENDPOINT, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: `No extractable data — ${list.length} files in one batch`
+          + `\n\n${lines.join("\n")}`,
+        reporter: "user (auto, batch)",
+        diagnostics: {
+          version: (localInfo && localInfo.version) || "web",
+          build: localInfo && localInfo.local ? "desktop" : "web",
+          files: list.length,
+          platform: navigator.platform, userAgent: navigator.userAgent,
+        },
+      }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
+    b.textContent = `Reported ${list.length} files`;
+    if (out.number) b.title = "sent as report #" + out.number;
+    // the per-file buttons would only duplicate this now
+    for (const e of list) {
+      const x = e.el.querySelector(".rptbtn");
+      if (x) { x.disabled = true; x.textContent = "In batch report"; }
+    }
+  } catch (err) {
+    b.disabled = false;
+    b.textContent = was;
+    b.title = "Could not send: " + err.message;
+  }
+}
+$("reportall").addEventListener("click", reportAllEmpty);
 
 // The middle column belongs to whichever file is open. Clearing a file left
 // its stage/summary rows sitting there, listing a PDF that is no longer in the
