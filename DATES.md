@@ -24,7 +24,7 @@ template needs a second source and a rule for who outranks whom.
 | Liberty | `_parse_date` | time axis | from code |
 | Halliburton (Hal-1, IFS) | nothing in the module | time axis only | **gap** |
 | BJ | nothing in the module | time axis only | **gap** |
-| **Trican layout A** | STAGE INFORMATION page | STAGE INFORMATION page | **now read** — 3 files, not a corpus |
+| **Trican layout A** | STAGE INFORMATION page | STAGE INFORMATION page | **measured**, 98.0% of 6,795 stages |
 
 "Measured" means re-run this session and counted. "From code" means read out
 of the module and not re-verified — treat as a claim, not a result.
@@ -104,8 +104,28 @@ Result: 34/39, 34/35, 27/28 dated, the rest being whole-job "continuous" pages
 with no stage number. Across all 100 rows the clock runs forwards with **zero
 backwards steps**, over 5d19h, 22h26m and 17h41m.
 
-**NOT corpus-validated** — the drive unmounted mid-session and layout A is the
-2015-2016 vintage, which is NOT in `__TRICAN` on the newer drive. Three files.
+**Corpus-validated** over all 192 `__TRICAN` files — 182 carry STAGE
+INFORMATION pages, holding 6,795 stages, of which **6,657 (98.0%) are dated**,
+with zero crashes.
+
+- The 4 undated files print no date anywhere in their first pages, so
+  `_year_for` returns nothing and the charts keep no year rather than a
+  guessed one. That is the designed behaviour, and it is the whole of the 2%.
+- **The year rule holds: zero backwards steps of year scale.** All 75
+  backwards steps across 45 files are under a day (0.01-0.97 d), and most land
+  exactly on `00:00:00` — stages whose Start Time cell reads midnight, which is
+  a cell-content question, not a dating one. A mis-picked year would show as a
+  ~365-day jump and none occurs, including on the report whose own printed
+  dates span 432 days.
+- Two files put their first stage outside the report's printed span, and both
+  look right on inspection: 00470 and 00520 print a single date, 2021-03-15,
+  for jobs pumped the previous December, which the filenames
+  (`COMP_2021JAN27`, `COMP_2021FEB03`) agree with.
+
+An earlier draft of this file said layout A was "NOT in `__TRICAN` on the newer
+drive". That was wrong. It came from classifying a directory that was empty
+because the drive had dropped mid-copy — three zeros that read like a result
+and actually meant no data. 00005, 00156 and 00317 are all in `__TRICAN`.
 
 ## Canyon, SLB, Sanjel, Liberty — read from code, not re-measured
 
