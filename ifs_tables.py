@@ -75,11 +75,22 @@ _TOC = re.compile(r"\.{5,}")
 
 
 def detect(doc_or_page):
-    """True for an IFS document/page (the footer every build prints)."""
+    """True for an IFS document/page (the footer every build prints).
+
+    Scans the WHOLE document. It used to stop at page 40, on the assumption
+    that a filing leads with its IFS pages — and #330 is the filing that does
+    not: 00056 carries "(IFS v" on 129 of its 180 pages and the first is page
+    52, so the marker was there in bulk and the detector never saw it. The
+    charts still came out, because those detect per page, which is why it read
+    as "tables not showing up" rather than as a file that failed.
+
+    any() short-circuits, so a real IFS document costs a page or two; only a
+    document that is not IFS at all pays for the full scan, and that is the
+    case where being sure is worth it.
+    """
     if hasattr(doc_or_page, "page_count"):
-        n = doc_or_page.page_count
         return any("(IFS v" in doc_or_page[p].get_text()
-                   for p in range(min(n, 40)))
+                   for p in range(doc_or_page.page_count))
     return "(IFS v" in doc_or_page.get_text()
 
 

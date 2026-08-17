@@ -373,8 +373,13 @@ def detect(doc):
     these tables. The cover sheet plus the vendor name, or three of the
     named sections, is what identifies this bundle.
     """
+    # Whole document, not the first 80 pages. Same trap as ifs_tables.detect
+    # (#330): 00056 leads with 51 pages that carry no vendor marker and the
+    # IFS footer only starts on page 52, so a filing that buries its bundle
+    # past the window reads as "no tables" while its charts come out fine.
+    # Both flags short-circuit as soon as they are set.
     cover = vendor = False
-    for p in range(min(doc.page_count, 80)):
+    for p in range(doc.page_count):
         t = doc[p].get_text()
         if "WELL STIMULATION REPORT" in t.upper():
             cover = True

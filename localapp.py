@@ -231,6 +231,29 @@ def _channels_payload(data, units=None, labels=None, scales=None,
     return out
 
 
+def table_csv_name(base, title, i, used):
+    """Name a table's CSV after the table, not its position.
+
+    Tables used to export as -stages-table.csv, -stages-table-2.csv and so on,
+    numbered by the order they happened to come out. The number is not stable
+    between wells: on Halliburton 00536 -stages-table-13.csv is Cluster Data,
+    and on 00789 — which prints no Cluster Data — the same filename is Stage
+    Description. Anyone batching a folder of wells and reading "table-13" from
+    each was silently combining different tables, and nothing in the file said
+    so. Naming from the title makes a well that lacks a table simply lack the
+    file.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:48]
+    slug = slug.strip("-") or f"table-{i + 1}"
+    name = f"{base}-{slug}.csv"
+    n = 2
+    while name in used:                    # two tables printed under one title
+        name = f"{base}-{slug}-{n}.csv"
+        n += 1
+    used.add(name)
+    return name
+
+
 def _coverage(vals):
     """-> {filled, gaps, gapSamples} for one channel's resampled values."""
     a = np.asarray([np.nan if v is None else v for v in vals], dtype=float)
@@ -327,9 +350,9 @@ def process_path(path, fmt="both", tabs=True, seq=False, dest_folder="",
             with open(os.path.join(folder, sec_base + ".xlsx"), "wb") as f:
                 f.write(pe.well_xlsx(model, tabs))
             written.append(sec_base + ".xlsx")
+    used_names = set()
     for i, t in enumerate(r for r in results if r["type"] == "table"):
-        nm = base + ("-stages-table.csv" if i == 0
-                     else f"-stages-table-{i + 1}.csv")
+        nm = table_csv_name(base, t.get("title", ""), i, used_names)
         import csv as _csv
         with open(os.path.join(folder, nm), "w", newline="") as f:
             w = _csv.writer(f)

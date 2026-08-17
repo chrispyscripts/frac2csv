@@ -275,5 +275,45 @@ class LibertySummaryKinds(unittest.TestCase):
             self.assertIn(kind, liberty_summary.KIND_TITLES)
 
 
+class TableCsvNaming(unittest.TestCase):
+    """Table CSVs were numbered by position, and the position moves between
+    wells. Halliburton 00536 prints 14 tables and 00789 prints 13 — the same
+    set minus Cluster Data — so -stages-table-13.csv is Cluster Data in one
+    well and Stage Description in the other. Batching a folder and reading
+    "table-13" from each silently mixed two different tables.
+    """
+
+    def test_named_from_the_title(self):
+        used = set()
+        self.assertEqual(
+            localapp.table_csv_name("00536", "Cluster Data (Hal-1)", 12, used),
+            "00536-cluster-data-hal-1.csv")
+
+    def test_same_table_gets_the_same_name_in_a_different_well(self):
+        # the whole point: position differs, name does not
+        a = localapp.table_csv_name("00536", "Stage Description (Hal-1)", 13, set())
+        b = localapp.table_csv_name("00789", "Stage Description (Hal-1)", 12, set())
+        self.assertEqual(a.split("-", 1)[1], b.split("-", 1)[1])
+
+    def test_duplicate_titles_do_not_overwrite(self):
+        used = set()
+        first = localapp.table_csv_name("w", "Treatment Log", 0, used)
+        second = localapp.table_csv_name("w", "Treatment Log", 1, used)
+        self.assertNotEqual(first, second)
+        self.assertEqual(second, "w-treatment-log-2.csv")
+
+    def test_untitled_table_falls_back_to_its_index(self):
+        self.assertEqual(localapp.table_csv_name("w", "", 4, set()),
+                         "w-table-5.csv")
+        self.assertEqual(localapp.table_csv_name("w", "///", 0, set()),
+                         "w-table-1.csv")
+
+    def test_name_is_filesystem_safe(self):
+        nm = localapp.table_csv_name("w", "Avg / Max Technical Data (Hal-1)",
+                                     0, set())
+        self.assertNotIn("/", nm[1:])
+        self.assertEqual(nm, "w-avg-max-technical-data-hal-1.csv")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
