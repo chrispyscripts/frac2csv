@@ -91,29 +91,69 @@
         and nowhere else. There is now a log file (its location is printed
         when the app starts) with the full detail of any failure, which you
         can send with a report</li>
+      <li><b>What is still NOT fixed, so you know what to expect from the
+        "no extractable data" batch.</b> This release fixes 6 of those files,
+        not the whole set — please do not re-run all of them expecting them to
+        come out. Of the 42 reported files we can currently open, 6 are fixed
+        above and the rest break down as: <b>19 files whose charts are drawn
+        with every label converted to line art</b>, so there is no text on the
+        page for the reader to find at all — the curves are perfectly good and
+        this is the next thing being built, and it is the biggest remaining
+        group; <b>8 files (01151-01158) that contain no treatment charts in
+        the first place</b> — they are Ovintiv WellOps daily reports, all
+        tables plus a single wellbore schematic, so "no data" is the correct
+        answer for those and the job is to make the app say so instead of
+        looking like it failed; and 9 more that are a mix. Separately, 152 of
+        the reported files are not on either drive we have — they are all 2021
+        and 2022 filings and are presumably on the drive still to come</li>
     </ul>
     <h2>v0.9.10</h2>
     <ul>
-      <li>Trican concentration: the stretches where conc sits at zero — the pad
-        at the start of a stage and the flush at the end — were coming out
-        blank. The chart draws that line on the frame and the frame was
-        painted over it. DH Prop Conc goes from 29% blank to 2%; WH Prop Conc
-        from 51% to 41% and is improved but not finished</li>
-      <li>CalFrac dates: a well prints its Multiple-Zone summary as a run of
-        sheets carrying different days, and a chart was taking the last of
-        them. Against BCER's filed dates, stages dated exactly right go from
-        58% to 72% across 242 wells</li>
-      <li>CalFrac stages that would not separate now split, using the printed
-        zone start times to pick the real boundaries out of the pumping data</li>
-      <li>The Stacked window stays in step with the Lab — it recovers on its
-        own after the Lab is reloaded, and a push that fails to land is
-        re-sent instead of leaving one chart's numbers under another
-        chart's page number</li>
-      <li>Full page view no longer drops the ghost overlay from the top
-        graph — the two are separate pictures now</li>
-      <li>Schlumberger Zone Summary sheets carry their chart geometry, so the
-        IMAGE tag shows and Compare Original frames the chart instead of
-        fitting the whole sheet</li>
+      <li><b>Trican concentration no longer goes blank where it sits at
+        zero</b> (reports #105 and #109). The blanks came in two runs per
+        stage because that is exactly where conc rests at zero — the pad at
+        the start and the flush at the end. The chart draws that line ON the
+        bottom frame, the frame is painted over it, and the reader was
+        cropping one row too high, so the only surviving green was in the row
+        being thrown away. Checked across all 103 layout-A chart pages:
+        22,262 of 23,311 blank columns (95.5%) had ink sitting there the whole
+        time. <b>DH Prop Conc goes from 29.1% blank to 1.7%. WH Prop Conc goes
+        from 51.2% to 41.2%</b> — better, but not finished, and still being
+        worked. Pressure and rate are untouched by this change: 0 peaks moved
+        on any of them, checked rather than assumed</li>
+      <li><b>Trican's two concentration curves are separated properly</b>
+        (same reports). They were split by two independent colour rules with a
+        gap between them, and 32% of the green ink matched neither rule and
+        was dropped. It is now a clean partition with no gap. A real fix,
+        though it turned out not to be the main cause of the blanks above</li>
+      <li><b>CalFrac stages are dated from the right summary sheet</b>
+        (report #98). A well prints its Multiple-Zone summary as a RUN of
+        sheets carrying different days, and each chart was being handed the
+        last sheet's day instead of its own. It now picks the sheet whose zone
+        columns actually contain that chart's first zone. Checked against
+        BCER's own filed dates over 242 wells: <b>stages dated exactly right
+        go from 58.2% to 71.7%</b>, off-by-one drops from 1,598 to 1,131, and
+        other wrong dates from 676 to 432. The number of stages matched went
+        UP as well, 5,437 to 5,514, so nothing was quietly dropped to make the
+        percentage look better</li>
+      <li><b>CalFrac pages that ran several stages together now split</b>
+        (report #101). Where the pumping data suggested more than one possible
+        boundary, the printed zone start times are used to choose the real
+        one</li>
+      <li><b>The Stacked window stays in step with the Lab.</b> The link is a
+        two-way loop now — the second window asks for the current chart when
+        it loads, when you click back onto it, and on a slow timer. It
+        recovers on its own after the Lab is reloaded (937 ms) and after a
+        push that fails to arrive (103 ms), instead of leaving one chart's
+        numbers sitting under another chart's page number</li>
+      <li><b>Full page view no longer blanks the ghost overlay.</b> The panel
+        and the graph's backdrop were sharing one drawing buffer, so switching
+        to Full page wiped the ghost off the top graph. They are two separate
+        buffers now</li>
+      <li><b>Schlumberger Zone Summary sheets frame their chart properly</b>
+        (report #95). These sheets were being filed with no chart geometry, so
+        the IMAGE tag did not show and Compare Original fitted the entire
+        sheet — tables and all — instead of the chart on it</li>
     </ul>
     <h2>v0.9.9</h2>
     <ul>
