@@ -21,10 +21,17 @@ from leucrotta import _fit, _close, _spans
 FRAME_FIT_TOL = 75
 
 
+# Liberty writes the stage token two ways: "Stage 13" on most filings and
+# "STG 1" on the newer ones (01397/01398 title theirs "Upper Montney - STG 1").
+# Only the spelling differs — same PRC/Chem Plot template underneath — so
+# matching one and not the other cost those files every chart they had.
+_STAGE = r"(?:Stage|STG)"
+
+
 def detect(page):
     t = page.get_text()
     return "Liberty Energy" in t and \
-        re.search(r"Stage\s+(?:[A-Z]{2,4}\s+)?\d", t, re.I) is not None
+        re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is not None
 
 
 def _parse_date(txt):
@@ -113,6 +120,29 @@ def _horizontal(spans):
     return (max(cxs) - min(cxs)) > (max(cys) - min(cys))
 
 
+def _axis_column(pts):
+    """True when [(value, cx, cy)] is a printed value axis rather than stray
+    black text. A tick column is one row along the time axis, monotonic in
+    position, and evenly stepped in BOTH value and position — a page number,
+    a well name's digits or a stage number satisfies none of those."""
+    if len(pts) < 4:
+        return False
+    cys = [p[2] for p in pts]
+    if max(cys) - min(cys) > 2.0:            # scattered text, not one column
+        return False
+    order = sorted(pts, key=lambda p: p[1])
+    xs = [p[1] for p in order]
+    vals = [p[0] for p in order]
+    if vals != sorted(vals) and vals != sorted(vals, reverse=True):
+        return False
+    gaps = [b - a for a, b in zip(xs, xs[1:])]
+    steps = [abs(b - a) for a, b in zip(vals, vals[1:])]
+    if min(gaps) <= 0 or min(steps) <= 0:
+        return False
+    return (max(gaps) - min(gaps)) <= 0.06 * max(gaps) and \
+           (max(steps) - min(steps)) <= 1e-6 * max(steps)
+
+
 def _clean_name(name):
     """Drop a leading wellbore/leg prefix like 'B: ' or 'B :' so the curve
     name matches Carmine's alias table (e.g. 'B: Treating Pressure')."""
@@ -196,6 +226,21 @@ def extract_page(page, sample_sec=1.0):
         if s["color"] != 0 and re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
             ticks[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
                                       s["cx"], s["cy"]))
+    # A black series with its OWN printed tick column. Black numerics are
+    # excluded above because axis, grid and title ink is black too, so a black
+    # series borrows a colored axis of the same unit (unit_fit below). That
+    # borrow is only right when the two axes agree, and on 01397 they do not:
+    # Hydr Pressure prints 10..110 running DOWNWARD beside a red 0..100
+    # running upward, so reading it off red put a ~14 MPa curve at 90-100 MPa
+    # and pinned it to the axis top. Accept a black column only when it looks
+    # like a printed axis — see _axis_column — and leave the borrow in place
+    # otherwise.
+    black_ticks = [(float(s["t"].replace(",", "")) + 0.0, s["cx"], s["cy"])
+                   for s in spans
+                   if s["color"] == 0 and
+                   re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"])]
+    if 0 in named and _axis_column(black_ticks):
+        ticks[0] = black_ticks
     # value gridlines: long constant-x strokes. Tick LABELS sit ~12pt off
     # the gridline they annotate (left-aligned text), which biased every
     # value by a constant few units — snap each label to its gridline and
@@ -240,9 +285,13 @@ def extract_page(page, sample_sec=1.0):
             fits[color] = (a, b, min(vals), max(vals))
     if not named or not fits:
         raise ValueError("lib1: legend or tick rows not found")
-    # share an axis by unit for series without their own tick row (black series)
+    # share an axis by unit for series without their own tick row (black series).
+    # Colored axes only: a black fit is the borrower's own axis, never a donor,
+    # so a colored series missing its ticks cannot inherit the black range.
     unit_fit = {}
     for color, f in fits.items():
+        if color == 0:
+            continue
         u = named.get(color, {}).get("unit", "")
         if u and u not in unit_fit:
             unit_fit[u] = f
@@ -255,14 +304,14 @@ def extract_page(page, sample_sec=1.0):
     # keep a "Part I/II" continuation tag distinct — same-key charts merge
     # by sample index, which would silently drop the later part. Carmine's
     # naming: "Part I/II" (roman or arabic) -> "Attempt 1/2".
-    m = (re.search(r"Stage\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+"
+    m = (re.search(rf"{_STAGE}\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+"
                    r"(?:\s+Part\s+(\w+))?", text, re.I)
          # A trailing ALL-CAPS token belongs to the stage name — Liberty
          # prints "Stage 1A HRF" and "Stage 6A PW", and dropping it merged
          # distinct stages under one label. Uppercase-only and 2-4 letters, so
          # the lowercase "of" in "Stage 01 of 47" (handled above) and ordinary
          # words after the name are not swallowed.
-         or re.search(r"Stage\s+((?:[A-Z]{2,4}\s+)?\d+[A-Z]?"
+         or re.search(rf"{_STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Z]?"
                       r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]+[A-Z]{2,4})?)\b()",
                       text))
     if m:
@@ -305,7 +354,15 @@ def extract_page(page, sample_sec=1.0):
         pts = []
         for d in page.get_drawings():
             c = d.get("color")
-            if c is None or d["type"] not in ("s", "fs"):
+            if c is None and d["type"] in ("f", "fs"):
+                # The 2025-era filings stroke nothing: each curve is a FILLED
+                # ribbon — the pen outline as a closed path, fill set and
+                # color None. Reading only stroked ink skipped every curve and
+                # the whole file reported no data (Carmine's 197 "No
+                # extractable data" reports; 01103 draws 6 curves this way,
+                # 88,613 items, all six fills matching the legend exactly).
+                c = d.get("fill")
+            if c is None or d["type"] not in ("s", "fs", "f"):
                 continue
             if not _close(c, color_int):
                 continue

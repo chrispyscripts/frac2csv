@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import auto_raster as ar          # noqa: E402
 import frac_core                  # noqa: E402
+import lib1                       # noqa: E402
 import localapp                   # noqa: E402
 import trican2                    # noqa: E402
 
@@ -140,6 +141,53 @@ class OffScaleBlanking(unittest.TestCase):
         py = ar.curve_positions(m, edge_blank=True)
         self.assertTrue(np.all(np.isfinite(py[cols])),
                         "a curve resting at zero is data, not a clip")
+
+
+class BlackAxisColumn(unittest.TestCase):
+    """A black Liberty series used to borrow a colored axis of the same unit,
+    because black tick labels are indistinguishable from axis, grid and title
+    ink. The borrow is wrong whenever the two axes disagree: 00374's black
+    PFR-ZC FR CONC prints 0.00-1.00 across the same span the colored L/m3
+    axes use for 0.00-0.50, so every value shipped at HALF size; 01397's
+    black Hydr Pressure prints 10..110 running the other way beside a red
+    0..100, which pinned a ~19 MPa curve to 90-100.
+
+    lib1._axis_column is the gate that decides a black column is a printed
+    axis. It must accept a real one and reject the black numerics that are
+    not — or the fit it enables invents a scale.
+    """
+
+    @staticmethod
+    def _column(values, x0=137.4, pitch=66.7, cy=94.6):
+        return [(v, x0 + i * pitch, cy) for i, v in enumerate(values)]
+
+    def test_accepts_a_printed_tick_column(self):
+        # 00374 p45: black PFR-ZC FR CONC, six evenly stepped ticks in one row
+        self.assertTrue(lib1._axis_column(
+            self._column([1.00, 0.80, 0.60, 0.40, 0.20, 0.00])))
+
+    def test_accepts_an_inverted_column(self):
+        # 01397: 10..110 increasing DOWN the page — monotonic is enough
+        self.assertTrue(lib1._axis_column(
+            self._column([10.0, 30.0, 50.0, 70.0, 90.0, 110.0])))
+
+    def test_rejects_scattered_black_numerics(self):
+        # page numbers and a well name's digits: same count, different rows
+        pts = self._column([1.0, 2.0, 3.0, 4.0])
+        pts = [(v, x, cy + i * 40) for i, (v, x, cy) in enumerate(pts)]
+        self.assertFalse(lib1._axis_column(pts))
+
+    def test_rejects_uneven_value_steps(self):
+        # 0, 1, 2, 10 is not an axis even when the labels line up
+        self.assertFalse(lib1._axis_column(self._column([0.0, 1.0, 2.0, 10.0])))
+
+    def test_rejects_uneven_spacing(self):
+        pts = self._column([0.0, 0.2, 0.4, 0.6])
+        pts[2] = (pts[2][0], pts[2][1] + 25.0, pts[2][2])
+        self.assertFalse(lib1._axis_column(pts))
+
+    def test_rejects_too_few_labels(self):
+        self.assertFalse(lib1._axis_column(self._column([0.0, 0.5, 1.0])))
 
 
 if __name__ == "__main__":
