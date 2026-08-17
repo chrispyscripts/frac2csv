@@ -38,6 +38,46 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.0.0</h2>
+    <ul>
+      <li><b>Trican POST-FRAC SUMMARY reports now carry a date and a start
+        time.</b> They previously exported neither — 0 of 39 stages on 00005,
+        0 of 28 on 00317 — because the chart only prints elapsed minutes. Both
+        are now read off the STAGE INFORMATION page that follows each chart.
+        Across all 192 Trican files, 6,657 of 6,795 stages (98%) are dated,
+        and the derived clock runs forwards on every one of them</li>
+      <li><b>Schlumberger fluid and proppant breakdowns are exported.</b> Each
+        Zone and Interval Summary sheet prints a per-stage fluid table (pad,
+        slurry, spacer, flush, sweep — or the PUMPDOWN/FRAC steps) and a
+        per-proppant-type table with designed vs placed tonnage. Neither was
+        read before; 4,514 fluid rows and 1,805 proppant rows across 513
+        sheets in testing</li>
+      <li><b>Liberty: files titled "STG 1" instead of "Stage 1" extract at
+        all.</b> They produced nothing. Also fixed: a black curve with its own
+        printed axis was being read off a coloured axis of the same unit, so
+        PFR-ZC FR CONC on 00374 shipped at half its real value and Hydr
+        Pressure on 01397 was pinned near the top of the chart</li>
+      <li><b>Choose which columns your CSVs carry.</b> A new
+        <i>Columns…</i> button in the Export menu lists every column for the
+        file on screen with a checkbox each. <i>Save as default for this
+        filetype</i> remembers it per service provider, so unchecking a column
+        once on a Liberty file applies to every Liberty export after it. UWI,
+        STAGE and DATETIME always export, so a row can always be traced back</li>
+      <li><b>The export destination folder is now actually used.</b> Setting a
+        destination did nothing whenever the PDF's own folder was writable —
+        the export reported success and the folder you chose stayed empty. The
+        export panel now also names the folder the files really went to</li>
+      <li><b>A batch of files with no data files ONE report, not one each.</b>
+        "Report all empty" sends a single report listing every file and its
+        reason</li>
+      <li><b>Flagging an error survives a GitHub outage.</b> A 503 is retried,
+        and if it still fails the message says the service is down and your
+        report is still there to re-send — it is no longer discarded-looking</li>
+      <li><b>The app keeps a log.</b> Errors used to go to a console window
+        and nowhere else. There is now a log file (its location is printed
+        when the app starts) with the full detail of any failure, which you
+        can send with a report</li>
+    </ul>
     <h2>v0.9.10</h2>
     <ul>
       <li>Trican concentration: the stretches where conc sits at zero — the pad
