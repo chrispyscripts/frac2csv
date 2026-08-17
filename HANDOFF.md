@@ -125,29 +125,37 @@ something *works*. Read the body before treating a number as a defect.
 
 ## Open, highest value first
 
-- **THE 2025 FILINGS ARE A TEMPLATE GAP, and they are the report flood.**
-  Carmine filed 197 "No extractable data" reports in three days. They are NOT
-  stale: re-run on the current build, **35 of the 37 reproducible ones still
-  produce nothing**, and 31 of those are 2025 filings. Of 38 still-empty 2025
-  files examined, **33 have NO detector firing at all** and 19 open with the
-  page heading "BC Energy Regulator" — a filing wrapper no template knows.
-  One document class explains most of the backlog. Start here.
-  - Only 42 of the 184 reported filenames are on either drive; the other 142
-    are all 2021-2022 filings and are on a drive Carmine has yet to send
-    (he has ~1000 more files coming). Shelved until it arrives.
+- **THE 2025 FILINGS: THREE DIFFERENT PROBLEMS, not one.** An earlier version
+  of this file said "33 have NO detector firing at all... one document class
+  explains most of the backlog". That was wrong, and it was wrong in the way
+  that matters: it would have sent the next session hunting for one new
+  template. Measured properly over all 42 reported 2025 filings present on a
+  drive (thanks to the parallel Liberty session, which had the files open):
+  - **4 files (01103-01106): lib1 DID fire**, on 72-86 pages each, then failed
+    with "no curves matched" — their curves are FILLED ribbons, not strokes.
+    **Fixed in v1.0.0.**
+  - **2 files (01397/01398): "STG 1" not "Stage 1"**, so detect never fired.
+    **Fixed in v1.0.0.** Those six together went from 0 to 568/568 chart pages
+    and 1,939,562 samples.
+  - **27 files: NO TEXT LAYER AT ALL** — 2-3 text pages out of 150-330, every
+    label converted to vector outlines (01116 p222 is a BJ chart drawn that
+    way). **No text-based detector can ever fire on these.** They need OCR of
+    the axis and legend text. THIS is the big remaining group and it is a
+    different problem from the other two.
+  - 7 files (00944, 01137-01142): partial text layer, ~62 of 400 pages, STEP
+    marker present.
+  - 2 files (01078/01079): Trican/STEP/Canyon/Hal markers, not Liberty.
+  Only 56 of the 208 open "No extractable data" reports are on either mounted
+  drive; the other 152 are all 2021/2022 filings on the drive Carmine has yet
+  to send (~1000 more files coming).
   - Do NOT cross-reference reports to files by the 5-digit index. The two
     drives use DIFFERENT index schemes and the same number means different
     wells — matching that way produced a confident, entirely wrong Liberty/BJ
-    classification earlier today. Match on the full filename.
-
-- **Trican WH Prop Conc, 41% blank.** Improved but not resolved, and the
-  remainder has **two** causes, not one. Of 39,194 columns still carrying no WH
-  ink: 50.6% have DH sitting on the shared zero row, so the two curves coincide
-  and the partition hands the pixel to whichever colour was painted last; 46.7%
-  have nothing drawn at zero at all, so WH is genuinely absent and why is not
-  established; 2.7% hold no conc ink anywhere. Neither of the first two is
-  recoverable from colour alone. **Do not assume the zero-row story explains all
-  of it** — that is the mistake the last two attempts on this channel made.
+    classification. Match on the full filename.
+- **Tell Carmine to re-export affected Liberty wells.** Builds before v1.0.0
+  exported Hydr Pressure at ~4.5x true and PFR-ZC FR CONC at half, on files
+  including 00374 — the one he reports as WORKING in #110. Shapes right, scale
+  wrong.
 - **#112 — STEP 00349 p138, Btm Prop Conc 37.9% blank. Diagnosed, NOT fixed,
   and one attempt has already been backed out.** Reproduced exactly (the
   report's peaks 76.08 / 660.99 / 685.76 / 10.49 / 4.80 all match). What is

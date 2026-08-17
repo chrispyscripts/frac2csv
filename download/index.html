@@ -52,11 +52,20 @@
         per-proppant-type table with designed vs placed tonnage. Neither was
         read before; 4,514 fluid rows and 1,805 proppant rows across 513
         sheets in testing</li>
-      <li><b>Liberty: files titled "STG 1" instead of "Stage 1" extract at
-        all.</b> They produced nothing. Also fixed: a black curve with its own
-        printed axis was being read off a coloured axis of the same unit, so
-        PFR-ZC FR CONC on 00374 shipped at half its real value and Hydr
-        Pressure on 01397 was pinned near the top of the chart</li>
+      <li><b>Six Liberty 2025 files that produced nothing now extract in
+        full.</b> Their curves are drawn as filled ribbons rather than stroked
+        lines, which the reader skipped entirely, and two of them title their
+        charts "STG 1" instead of "Stage 1" so were never even detected.
+        01103, 01104, 01105, 01106, 01397 and 01398 now give 568 of 568 chart
+        pages and 1.94 million samples, from zero</li>
+      <li><b>Correction to values in earlier builds — please re-export
+        affected Liberty wells.</b> A black curve with its own printed axis was
+        being read off a coloured axis of the same unit. Where the two
+        disagreed the numbers were wrong, not just imprecise: PFR-ZC FR CONC on
+        00374 exported at HALF its true value, and Hydr Pressure on 00394 and
+        01397 at roughly 4.5x, pinned near the top of the chart. The shapes
+        were right, the scale was not. Verified against the reports' own
+        printed axes and the ink position on the page</li>
       <li><b>Choose which columns your CSVs carry.</b> A new
         <i>Columns…</i> button in the Export menu lists every column for the
         file on screen with a checkbox each. <i>Save as default for this
