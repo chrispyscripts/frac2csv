@@ -168,6 +168,19 @@ something *works*. Read the body before treating a number as a defect.
       than inventing a scale.
     - Affects 00374, which Carmine reports as WORKING in #110. Shapes right,
       scale wrong.
+
+- **Trican WH Prop Conc, 41% blank.** Improved but not resolved, and the
+  remainder has **two** causes, not one. Of 39,194 columns still carrying no WH
+  ink: 50.6% have DH sitting on the shared zero row, so the two curves coincide
+  and the partition hands the pixel to whichever colour was painted last; 46.7%
+  have nothing drawn at zero at all, so WH is genuinely absent and why is not
+  established; 2.7% hold no conc ink anywhere. Neither of the first two is
+  recoverable from colour alone. **Do not assume the zero-row story explains all
+  of it** — that is the mistake the last two attempts on this channel made.
+  (Deleted by accident in ba6c5b0, which was correcting the 2025 diagnosis and
+  took this neighbouring item with it. Restored verbatim — the percentages are
+  measured and re-deriving them means re-running the corpus.)
+
 - **A 299-page Liberty file takes 322.7s end to end with no progress signal.**
   Not a defect, but a five-minute silent wait is how "it did nothing" reports
   get written — and 197 of those arrived in three days.
