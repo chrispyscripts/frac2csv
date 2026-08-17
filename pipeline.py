@@ -38,6 +38,7 @@ import step_vec
 import pipeline_export as pe
 import sk_fracr as sk
 import slb
+import slb_tables
 import trican2
 
 try:
@@ -1406,6 +1407,53 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             "rows": [[r.get(c, "") for c in cols] for r in trows],
             "source": "Trican stage report (stages numbered by document order)"})
         notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports.")
+
+    # --- Schlumberger Zone / Interval Summary sheets ---
+    #
+    # Gated on slb_tables' OWN detector, not on whether this document produced
+    # SLB charts. Gating tables on charts is why 01155's 22 clean rows emitted
+    # nothing, and it bites here specifically: the sheets are text on every
+    # page measured while the PRC plots beside them are pictures, so the two
+    # succeed and fail independently.
+    try:
+        srecs = slb_tables.parse_document(doc)
+    except Exception as e:
+        srecs, _ = [], notes.append(f"SLB summary sheets unreadable — {e}")
+    # ONLY the FLUID and PROPPANT blocks are emitted here. The scalar fields
+    # of these sheets are already read, and better named, by
+    # slb.parse_zone_table and slb.parse_interval_summaries — a parallel
+    # parser for them would be two sources of one truth. What those two do NOT
+    # read is the per-stage fluid breakdown and the per-proppant-type
+    # breakdown printed lower down the same sheet, which is what this adds.
+    for kind, label in (("zone", "Zone"), ("interval", "Interval")):
+        group = [r for r in srecs if r["kind"] == kind]
+        if not group:
+            continue
+        for block in ("FLUID", "PROPPANT"):
+            cols, rows = [], []
+            for r in group:
+                tab = r["tables"].get(block)
+                if not tab:
+                    continue
+                for c in tab["columns"]:
+                    if c and c not in cols:
+                        cols.append(c)
+                for row in tab["rows"]:
+                    rows.append((r["number"], dict(zip(tab["columns"], row))))
+            if not rows:
+                continue
+            results.append({
+                "type": "table",
+                "title": f"{block.title()} by {label.lower()} (Schlumberger)",
+                "well": "", "uwi": "", "formation": "",
+                "columns": [label] + cols,
+                "rows": [[n] + [d.get(c, "") for c in cols] for n, d in rows],
+                "source": f"SLB {label} Summary sheets — {block} block"})
+    if srecs:
+        notes.append(f"{len(srecs)} Schlumberger summary sheet(s) read "
+                     f"({sum(1 for r in srecs if r['kind'] == 'zone')} zone, "
+                     f"{sum(1 for r in srecs if r['kind'] == 'interval')} "
+                     f"interval).")
 
     # --- "Summary Data": each chart provider's summary table pages (for
     # viewing) + the key per-stage summary table parsed into a grid. Keyed
