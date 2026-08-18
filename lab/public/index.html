@@ -482,6 +482,9 @@
           <button type="button" class="btn" id="stackbtn"
                   title="Open every channel on its own chart, stacked, in a
 separate window that follows this one">Stacked ↗</button>
+          <button type="button" class="btn" id="fvbtn"
+                  title="Open every stage of this well end to end, and adjust
+where one stage stops and the next starts">FracView &#8599;</button>
           <button type="button" class="btn" id="tablebtn"
                   title="Open this file's summary tables in a separate window"
                   disabled>Table &#8599;</button>
@@ -1610,6 +1613,7 @@ function render(entry, fname, stages, tables, notes, summary) {
 
 // populate the middle column for one file, auto-select its first item
 function selectFile(entry) {
+  if (fvAlive() && entry && entry.name !== fvFile) setTimeout(fvPush, 0);
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
   entry.head.classList.add("sel");
   const tog = $("viewtoggle");
@@ -3264,6 +3268,193 @@ function updateOrigBar() {
       (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
   }
 }
+
+// ---------- FracView: every stage end to end, and the boundaries between ----
+// The auto-split gets multi-zone sheets wrong in two directions. Calfrac
+// prints zones 1-30 on one plot and sometimes we find none of the breaks, so
+// a whole job lands as one stage called "1-30" (report #362); other times we
+// find them but a few zones swallow the idle time either side (#343). Both
+// are a judgement about WHERE one stage ends, and the plot makes that obvious
+// to a human in a second. So FracView shows the stages laid end to end and
+// lets the boundary be dragged, split, and trimmed — and then applies that to
+// the graphs and the CSV, because an adjustment that only redraws a picture
+// fixes nothing.
+//
+// The edit is a set of absolute cut points over the ORIGINAL samples, never a
+// mutated copy of them. That is what makes Reset exact and what lets the same
+// edit be applied to the graph and to the export by one function.
+const fvEdits = new Map();          // file name -> {bounds, labels, cuts}
+let fvWin = null;
+let fvFile = "";
+
+function fvStageStart(st) {
+  const d = new Date((st.meta.date || "2000-01-01") + "T" +
+                     (st.meta.start_time || "00:00:00"));
+  return d.getTime();
+}
+// Absolute start of every stage, and whether that clock is real.
+//
+// On the files FracView exists for, it often is not: "date not found" is one
+// of the warnings on exactly the Calfrac sheets whose zones did not split, and
+// stages that share a start_time would stack on top of each other on a real
+// clock — leaving the one view that could fix the problem unreadable. When the
+// printed clock is missing or not strictly increasing, lay the stages end to
+// end on a synthetic one instead. Same geometry, and nothing downstream is
+// told a made-up time: `synthetic` keeps it out of the exported timestamps.
+function fvStarts(stages) {
+  const raw = stages.map(fvStageStart);
+  const ok = raw.every(v => isFinite(v)) &&
+             raw.every((v, i) => i === 0 || v > raw[i - 1]);
+  if (ok) return { starts: raw, synthetic: false };
+  const starts = [];
+  let t = isFinite(raw[0]) ? raw[0] : Date.parse("2000-01-01T00:00:00");
+  for (const st of stages) {
+    starts.push(t);
+    t += st.n * (st.sample_sec || 1) * 1000;
+  }
+  return { starts, synthetic: true };
+}
+
+function fvPayload(entry) {
+  const w = entry && entry.well;
+  if (!w || !w.stages.length) return { type: "fv:none" };
+  const raw = w.stagesRaw || w.stages;
+  const { starts } = fvStarts(raw);
+  const stages = raw.map((st, i) => ({
+    key: st.meta.stage || "?",
+    label: String(st.meta.stage || (i + 1)),
+    t0: starts[i],
+    dsec: st.sample_sec || 1,
+    n: st.n,
+    channels: st.channels.map(c => {
+      const src = c.values, len = src.length;
+      const vals = new Float64Array(len);      // block copy, no boxed nulls
+      for (let j = 0; j < len; j++) {
+        const v = src[j];
+        vals[j] = (v == null || !isFinite(v)) ? NaN : v;
+      }
+      return { name: chanName(c), unit: c.unit || "", values: vals };
+    }),
+  }));
+  return { type: "fv:well", file: entry.name, uwi: (raw[0].meta.uwi || ""),
+           stages, edits: fvEdits.get(entry.name) || null };
+}
+
+// The whole of the edit's meaning: rebuild the stage list from the original
+// samples, cut at the boundaries FracView holds.
+function applyFvEdits(raw, ed) {
+  if (!ed || !ed.bounds || ed.bounds.length < 2) return raw;
+  const { starts, synthetic } = fvStarts(raw);
+  const cuts = ed.cuts || [];
+  const p2 = n => String(n).padStart(2, "0");
+  const out = [];
+  for (let i = 0; i < ed.bounds.length - 1; i++) {
+    const a = ed.bounds[i], b = ed.bounds[i + 1];
+    const parts = [];
+    raw.forEach((st, si) => {
+      const step = (st.sample_sec || 1) * 1000, s0 = starts[si];
+      if (s0 + st.n * step <= a || s0 >= b) return;
+      const j0 = Math.max(0, Math.ceil((a - s0) / step));
+      const j1 = Math.min(st.n, Math.ceil((b - s0) / step));
+      if (j1 > j0) parts.push({ st, j0, j1, s0, step });
+    });
+    if (!parts.length) continue;
+    parts.sort((x, y) => (x.s0 + x.j0 * x.step) - (y.s0 + y.j0 * y.step));
+    const lead = parts[0].st;
+    const chans = new Map();
+    for (const p of parts) for (const c of p.st.channels)
+      if (!chans.has(c.key)) chans.set(c.key, { ...c, values: [] });
+    for (const p of parts) {
+      for (const [key, nc] of chans) {
+        const sc = p.st.channels.find(c => c.key === key);
+        for (let j = p.j0; j < p.j1; j++) {
+          const t = p.s0 + j * p.step;
+          // A trimmed span is blanked, not deleted. Dropping the samples would
+          // slide every later reading earlier on the elapsed axis and quietly
+          // restate when the job happened; a blank says "this span is not
+          // ours" and leaves the clock intact.
+          const cut = cuts.some(c => t >= c.a && t < c.b);
+          nc.values.push((cut || !sc) ? null : sc.values[j]);
+        }
+      }
+    }
+    const chanList = [...chans.values()];
+    const n = Math.max(0, ...chanList.map(c => c.values.length));
+    const meta = { ...lead.meta, stage: ed.labels && ed.labels[i] != null
+                                        ? String(ed.labels[i]) : lead.meta.stage };
+    if (!synthetic) {                     // only a real clock reaches the export
+      const t0 = parts[0].s0 + parts[0].j0 * parts[0].step;
+      const d = new Date(t0);
+      meta.date = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+      meta.start_time = `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    }
+    meta.duration_min = n * (lead.sample_sec || 1) / 60;
+    out.push({ ...lead, meta, channels: chanList, n });
+  }
+  return out.length ? out : raw;
+}
+
+// Put an edit into effect: the stage list, the graph and every export path
+// read `well.stages`, so rebuilding that one array is the whole application.
+function fvApplyToEntry(entry, ed) {
+  const w = entry && entry.well;
+  if (!w) return;
+  if (!w.stagesRaw) w.stagesRaw = w.stages;
+  ed ? fvEdits.set(entry.name, ed) : fvEdits.delete(entry.name);
+  w.stages = ed ? applyFvEdits(w.stagesRaw, ed) : w.stagesRaw;
+  entry.secItems = stageItems(w.stages);
+  if (entry.viewMode !== "summary") entry.items = entry.secItems;
+  if (current && current.entry === entry) selectFile(entry);
+  updateCount();
+}
+
+function fvAlive() { return fvWin && !fvWin.closed; }
+function fvPush() {
+  if (!fvAlive()) return;
+  const entry = current && current.entry;
+  try { fvWin.postMessage(entry ? fvPayload(entry) : { type: "fv:none" }, "*"); }
+  catch (e) { /* the window went away between the check and the send */ }
+  fvFile = entry ? entry.name : "";
+}
+
+window.addEventListener("message", ev => {
+  const d = ev.data;
+  if (!d || typeof d !== "object") return;
+  if (d.type === "fv:ready") { fvPush(); return; }
+  if (d.type !== "fv:edits") return;
+  const entry = entries.find(f => f.name === d.file);
+  if (!entry) return;
+  const untouched = !d.cuts.length &&
+    d.bounds.length === (entry.well && (entry.well.stagesRaw || entry.well.stages).length) + 1;
+  // "no edits" comes back as a plain reset rather than as an identity edit, so
+  // an untouched FracView never rebuilds the stages it was handed.
+  fvApplyToEntry(entry, untouched && !fvEditsMoved(entry, d) ? null : d);
+});
+function fvEditsMoved(entry, d) {
+  const raw = entry.well && (entry.well.stagesRaw || entry.well.stages);
+  if (!raw) return true;
+  const { starts } = fvStarts(raw);
+  const base = starts.concat([starts[starts.length - 1] +
+    raw[raw.length - 1].n * (raw[raw.length - 1].sample_sec || 1) * 1000]);
+  return d.bounds.some((v, i) => Math.abs(v - base[i]) > 500);
+}
+
+$("fvbtn").addEventListener("click", () => {
+  const msg = $("stackmsg");
+  msg.hidden = true;
+  // Wider than the stacked window by default: this one is read along the time
+  // axis, and a whole job's stages at once is the point of it.
+  const w = window.open("fracview.html", "carmine-fracview",
+                        "width=1500,height=780");
+  if (!w) {
+    msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
+    msg.hidden = false;
+    return;
+  }
+  fvWin = w;
+  try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
+  fvPush();                        // an already-open window sends no new ready
+});
 
 // ---------- Stacked charts: a linked second window ----------
 // The original proof-of-concept view, back as a companion to the combined
