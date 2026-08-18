@@ -1518,6 +1518,24 @@ function stageLabel(item) {
   return item.key;
 }
 
+// Carmine, #546: "the stage label should not be getting the chart type added
+// to it" — a stage read "04 Surface".
+//
+// The suffix is not decoration. Calfrac prints each zone TWICE, as "… Surface"
+// and "… Bottom Hole", and both carry Treating Pressure; without it in the key
+// the two merge and that channel ends up holding two different recordings. So
+// the key keeps it and only the DISPLAY drops it, with the variant shown as
+// its own tag beside the number. Nothing that groups, exports or matches on
+// the key is touched.
+const _VARIANT = /\s+(Surface|BH|Bottom\s*Hole)\s*$/i;
+function stageDisplay(key) {
+  return String(key).replace(_VARIANT, "");
+}
+function stageVariant(key) {
+  const m = _VARIANT.exec(String(key));
+  return m ? m[1].replace(/bottom\s*hole/i, "BH") : "";
+}
+
 // map a chart/table source string to a service-provider label.
 //
 // This is NOT a filter any more. The dropdown that let a provider be picked by
@@ -1643,8 +1661,10 @@ function selectFile(entry) {
       // The stage's own printed name on the left — including any tag the
       // report appends to it ("1A HRF", "2A PW"), which distinguishes stages
       // that would otherwise read alike — and the sequence flush right.
-      row.innerHTML = `<span class="stg">Stage ${stageLabel(it)}</span>`
-        + `<span class="seqno">${it.seq}</span>`;
+      row.innerHTML = `<span class="stg">Stage ${stageDisplay(stageLabel(it))}`
+        + (stageVariant(it.key)
+            ? ` <span class="ch">${stageVariant(it.key)}</span>` : "")
+        + `</span><span class="seqno">${it.seq}</span>`;
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
         + `<span class="ch">${it.group.pages.length} pg</span>`;
@@ -1706,7 +1726,9 @@ function showStage(entry, well, item) {
   const M = item.meta;
   // the full file name, not the UWI — the UWI is already in the sub-line and
   // several files can share one
-  $("pv-title").textContent = entry.name + "  —  Chart " + stageLabel(item);
+  $("pv-title").textContent = entry.name + "  —  Chart "
+    + stageDisplay(stageLabel(item))
+    + (stageVariant(item.key) ? "  (" + stageVariant(item.key) + ")" : "");
   const bits = [
     M.date && (M.date + (M.start_time ? " " + M.start_time : "")),
     Math.round(M.duration_min) + " min",
@@ -1965,6 +1987,14 @@ function showTable(entry, t) {
   // every table's columns, but it only opened from inside the Export panel —
   // so the place you decide a column is unwanted was three clicks from the
   // place you are looking at that column.
+  // #547: with only tables parsed there was no route back to the document.
+  if (entry && (entry._pdfFile || entry._pdfUrl)) {
+    const ob = document.createElement("button"); ob.className = "btn";
+    ob.textContent = "Open PDF ↗";
+    ob.title = "Open the source PDF this table was read from";
+    ob.addEventListener("click", () => openSourcePdf(entry));
+    dl.appendChild(ob);
+  }
   const cb = document.createElement("button"); cb.className = "btn";
   cb.textContent = "Columns…";
   cb.title = "Choose which columns this file's CSVs carry, per provider";
@@ -2048,20 +2078,27 @@ $("sumnext").addEventListener("click", () => {
   if (!current || current.item.type !== "summary") return;
   current.item.pageIdx++; renderSummaryPage(current.entry, current.item);
 });
-$("sumopen").addEventListener("click", async () => {
-  if (!current || current.item.type !== "summary") return;
-  const entry = current.entry;
+// Open the source PDF for a file. Was inline on the Summary view's button,
+// which meant a filing that parses only TABLES — no charts, no summary sheets
+// — had no way back to the document at all (#547).
+async function openSourcePdf(entry) {
+  if (!entry) return;
   try {
     if (!entry._pdfFile && entry._pdfUrl) {
       if (entry._pdfUrl.startsWith("/api/file")) { window.open(entry._pdfUrl, "_blank"); return; }
       const resp = await fetch(entry._pdfUrl);
       entry._pdfFile = new File([await resp.blob()], entry.name);
     }
+    if (!entry._pdfFile) return;
     const url = URL.createObjectURL(
       new Blob([await entry._pdfFile.arrayBuffer()], { type: "application/pdf" }));
     window.open(url, "_blank");
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (e) { /* noop */ }
+}
+$("sumopen").addEventListener("click", () => {
+  if (!current || current.item.type !== "summary") return;
+  openSourcePdf(current.entry);
 });
 
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
