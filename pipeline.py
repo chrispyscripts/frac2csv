@@ -24,6 +24,7 @@ import fitz
 
 import canyon
 import frac_core as fc
+import ocr_labels
 import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
@@ -102,9 +103,15 @@ def _md(meta):
 
 
 def _mview_variant(page):
-    """-> " Surface" / " BH" / "" from an MView page's own title line."""
+    """-> " Surface" / " BH" / "" from an MView page's own title line.
+
+    Read through ocr_labels, so a Type3 filing gets the tag too. Without it
+    the Surface and Bottom Hole pages of a zone share one key and merge, and
+    both carry Treating Pressure — which is the collision this tag exists to
+    prevent.
+    """
     try:
-        head = (page.get_text().strip().splitlines() or [""])[0]
+        head = (ocr_labels.page_text(page).strip().splitlines() or [""])[0]
     except Exception:
         return ""
     if re.search(r"\bbottom\s*hole\b", head, re.I):
@@ -1059,6 +1066,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # schematic/table pages that draw like charts — reported as one line, not
     # one per page: a 171-page report has dozens and they are not errors
     _not_charts = []
+    # the Hal-1 EVENT LOG, read once per document and only when a raster
+    # treatment plot actually needs a calendar to date itself against
+    _hal_events = [None]
 
     # year hint from the COMP filename survives client-side page chunking
     yhint = bj1.filename_year(filename)
@@ -1243,9 +1253,30 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
                           if c.get("axis_frame")}
+                # These plots print their date under the axis and their clock
+                # along it, and every one of them used to export dated
+                # 2000-01-01 at 00:00:00 (#368). hal1 reads both off the
+                # picture; hal1_tables makes them agree with the report's own
+                # EVENT LOG before either is believed, and returns nothing
+                # when they do not.
+                _date = _start = None
+                if hal1_tables is not None:
+                    if _hal_events[0] is None:
+                        try:
+                            _hal_events[0] = hal1_tables.event_log_index(doc)
+                        except Exception:
+                            _hal_events[0] = {}
+                    try:
+                        _iv = int(md.get("stage"))
+                    except (TypeError, ValueError):
+                        _iv = None
+                    _date, _start = hal1_tables.chart_datetime(
+                        info.get("t0_seconds"), info.get("axis_kind"),
+                        info.get("duration_s"), info.get("start_date"),
+                        _hal_events[0].get(_iv))
                 meta = {"title": f"Treatment interval {md.get('stage') or '?'}",
                         "uwi": md.get("uwi", ""), "stage": str(md.get("stage") or ""),
-                        "date": "", "start_time": "00:00:00",
+                        "date": _date or "", "start_time": _start or "00:00:00",
                         "duration_min": len(samples) / 60.0, "warnings": []}
                 if data:
                     results.append(_series(meta, samples, data,

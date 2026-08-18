@@ -22,6 +22,7 @@ import fitz  # PyMuPDF
 import numpy as np
 
 import aliases
+import ocr_labels
 
 # stroke color -> (csv column, axis kind). LAST-RESORT fallback only: the
 # template re-uses the same colours for different curves across vintages, so
@@ -273,7 +274,15 @@ def _legend_keys(page):
 
 
 def _text_spans(page):
-    """[(bbox, text)] for every span carrying a letter."""
+    """[(bbox, text)] for every span carrying a letter.
+
+    A page whose text layer decodes to control characters has none, and its
+    legend is read off the render instead (see ocr_labels). Nothing else
+    about the page changes: the swatches, the frame and the curves are all
+    real vector artwork and are read from the PDF as always.
+    """
+    if ocr_labels.garbled(page):
+        return ocr_labels.text_spans(page)
     out = []
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
@@ -392,7 +401,7 @@ def detect_text_meta(page, meta=None):
     that kept a text layer). Frame-independent."""
     if meta is None:
         meta = PageMeta()
-    text = page.get_text()
+    text = ocr_labels.page_text(page)
 
     m = re.search(r"(1[0-9A-F]\d)/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)", text)
     if m:
@@ -412,6 +421,12 @@ def detect_text_meta(page, meta=None):
     m = re.search(r"(?:Zone|Stage)\s+(\d+)", text)
     if m:
         meta.stage = m.group(1)
+    elif ocr_labels.garbled(page):
+        # A lone "1" beside "Zone" is the one thing the full-page OCR pass
+        # reliably gets wrong; ocr_labels reads that caption again, larger.
+        meta.stage = ocr_labels.stage_number(page) or ""
+        if not meta.stage:
+            meta.warnings.append("stage/zone not found")
     elif not meta.stage:
         meta.warnings.append("stage/zone not found")
 
@@ -442,7 +457,7 @@ def is_chemicals(page):
     is nothing on these pages that belongs in it.
     """
     try:
-        text = page.get_text()
+        text = ocr_labels.page_text(page)
     except Exception:
         return False
     if re.search(r"Chemical\s+Concentration", text, re.I):
@@ -466,6 +481,8 @@ _BAND_PAD = 30.0
 
 def _numeric_spans(page):
     """[(bbox, value)] for every span that is a bare number."""
+    if ocr_labels.garbled(page):
+        return ocr_labels.numeric_spans(page)
     out = []
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
@@ -528,7 +545,56 @@ def _axis_columns(page, frame, orient, band):
     full = [g for g in groups if len(g) == width]
     if len(full) < 3 or len(full) * 2 < len(groups):
         return None
-    return [max(g[k][2] for g in full) for k in range(width)]
+    if not ocr_labels.garbled(page):
+        return [max(g[k][2] for g in full) for k in range(width)]
+    # OCR'd ticks. This mapping is positional — column 0 is the rate axis,
+    # the rest are concentrations — so it only holds while every tick row is
+    # complete. One label the OCR did not see shortens that row, the modal
+    # width follows the short rows, and the columns shift: on 00035 p114 the
+    # rate axis (0..18) and the first concentration axis (0..900) both came
+    # back as 700, which would have multiplied every rate in the CSV by
+    # forty. So a ragged read is refused outright and the caller falls back
+    # to the flat maxima, which cannot be misaligned because they are not
+    # aligned to anything.
+    if len(full) != len(groups):
+        return None
+    out = []
+    for k in range(width):
+        # ...and a column that survives that still has to be a straight
+        # line: "900" read as "9000" at the top of a concentration axis is
+        # a tenfold error that looks exactly like a bigger axis.
+        kept = ocr_labels.axis_column_ok([(g[k][0], g[k][2]) for g in full])
+        if not kept:
+            return None
+        out.append(max(v for _p, v in kept))
+    return out
+
+
+def _fit_time_axis(pts, far_edge):
+    """OCR'd time labels -> the axis's value at the frame's far edge.
+
+    `pts` is [(position, minutes)]. Returns None unless the labels fall on a
+    line, which also throws out a stray number that wandered into the band.
+    The answer is rounded to whole minutes: these axes are labelled in round
+    numbers and the fit's own residual is a fraction of one.
+    """
+    kept = ocr_labels.axis_column_ok(pts)
+    if not kept or len(kept) < 4:
+        return None
+    xs = np.array([p for p, _v in kept], float)
+    ys = np.array([v for _p, v in kept], float)
+    if xs.max() - xs.min() < 1e-6:
+        return None
+    b, a = np.polyfit(xs, ys, 1)
+    dur = a + b * far_edge
+    # The far edge is the END of the axis, so the answer sits at the largest
+    # label or just past it — within half a tick either way, since the last
+    # label is normally printed right on the edge and the fit lands a
+    # fraction of a minute off it, and never more than two ticks beyond.
+    step = float(np.median(np.abs(np.diff(np.sort(ys))))) or 1.0
+    if not (ys.max() - 0.5 * step <= dur <= ys.max() + 2.0 * step):
+        return None
+    return round(float(dur))
 
 
 def detect_meta(page, frame, orient=None):
@@ -546,32 +612,40 @@ def detect_meta(page, frame, orient=None):
     # column's own x band.
     time_vals, pressure_vals, top_vals = [], [], []
     pad = 10
-    for block in page.get_text("dict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line["spans"]:
-                v = _num(span["text"].strip())
-                if v is None:
-                    continue
-                x0, y0, x1, y1 = span["bbox"]
-                cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-                along_x = frame.x0 - pad < cx < frame.x1 + pad
-                along_y = frame.y0 - pad < cy < frame.y1 + pad
-                if orient == "y":
-                    if cx > frame.x1 and along_y:
-                        time_vals.append(v)
-                    elif cy > frame.y1 and along_x:
-                        pressure_vals.append(v)
-                    elif cy < frame.y0 and along_x:
-                        top_vals.append(v)
-                else:
-                    if cy > frame.y1 and along_x:
-                        time_vals.append(v)
-                    elif cx < frame.x0 and along_y:
-                        pressure_vals.append(v)
-                    elif cx > frame.x1 and along_y:
-                        top_vals.append(v)
+    # Through _numeric_spans, not page.get_text, so a page whose numbers had
+    # to be OCR'd is banded by exactly the same rules as one whose numbers
+    # were readable.
+    time_pts = []
+    for (x0, y0, x1, y1), v in _numeric_spans(page):
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        along_x = frame.x0 - pad < cx < frame.x1 + pad
+        along_y = frame.y0 - pad < cy < frame.y1 + pad
+        if orient == "y":
+            if cx > frame.x1 and along_y:
+                time_vals.append(v); time_pts.append((cy, v))
+            elif cy > frame.y1 and along_x:
+                pressure_vals.append(v)
+            elif cy < frame.y0 and along_x:
+                top_vals.append(v)
+        else:
+            if cy > frame.y1 and along_x:
+                time_vals.append(v); time_pts.append((cx, v))
+            elif cx < frame.x0 and along_y:
+                pressure_vals.append(v)
+            elif cx > frame.x1 and along_y:
+                top_vals.append(v)
 
-    if time_vals:
+    if time_vals and ocr_labels.garbled(page):
+        # The duration sets where every sample lands, so on an OCR'd page it
+        # is FITTED and read at the frame's far edge rather than taken as the
+        # largest label seen. A missed last tick would otherwise shorten the
+        # stage — 140 minutes for a 160-minute job — and squeeze every curve
+        # on the page to match, with nothing to show it had happened.
+        far = frame.y0 if orient == "y" else frame.x1
+        meta.duration_min = _fit_time_axis(time_pts, far) or 0.0
+        if meta.duration_min <= 0:
+            meta.warnings.append("time axis labels did not fit a line")
+    elif time_vals:
         meta.duration_min = max(time_vals)
     else:
         meta.warnings.append("time axis labels not found")

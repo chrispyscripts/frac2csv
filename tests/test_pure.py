@@ -7,6 +7,7 @@ comes from.
 
 Run: python3 -m pytest tests/ -q      (or: python3 -m unittest discover tests)
 """
+import datetime
 import os
 import re
 import sys
@@ -23,9 +24,12 @@ import halliburton_ifs as ifs     # noqa: E402
 import bj1                        # noqa: E402
 import bj_fracturing as bjf       # noqa: E402
 import canyon                     # noqa: E402
+import hal1                       # noqa: E402
+import hal1_tables                # noqa: E402
 import lib1                       # noqa: E402
 import liberty_summary            # noqa: E402
 import localapp                   # noqa: E402
+import ocr_labels                 # noqa: E402
 import pipeline                   # noqa: E402
 import pipeline_export as pe      # noqa: E402
 import trican2                    # noqa: E402
@@ -808,6 +812,181 @@ class FilenameUwiWins(unittest.TestCase):
         pipeline._normalise_tables(res, "01574-103050108116W600_47516_COMP.pdf")
         self.assertEqual({r[0] for r in res[0]["rows"]},
                          {"100010203040W500", "102010203040W500"})
+
+
+class HourlyTimeAxisIsNotMinutes(unittest.TestCase):
+    """#368's neighbours. A Halliburton treatment plot long enough for hour
+    ticks labels its axis "08-15 18", and the dash was not in the OCR
+    whitelist — so the label arrived as "081518", fell through to the
+    plain-number branch and was read as 81,518 MINUTES. Every one of those
+    pages reported a ~6-minute treatment (351s, 359s, 388s, 402s on four of
+    the 187 plots sampled) for a job the event log times in hours, and the
+    curves were resampled onto that fictional axis before export.
+    """
+
+    def test_month_day_hour_reads_as_day_and_hour(self):
+        # 15th at 18:00, in hal1's own units: day-of-month * 86400 + sod
+        self.assertEqual(ar._md_hour("08-15 18".replace(" ", "")),
+                         15 * 86400 + 18 * 3600)
+
+    def test_the_dash_may_be_lost_in_ocr(self):
+        self.assertEqual(ar._md_hour("081518"), 15 * 86400 + 18 * 3600)
+
+    def test_a_six_digit_number_that_is_not_a_date_is_refused(self):
+        # month 12, day 34 — not a date, so not a clock either
+        self.assertIsNone(ar._md_hour("123456"))
+        self.assertIsNone(ar._md_hour("08-1599"))   # hour 99
+        self.assertIsNone(ar._md_hour("99-1518"))   # month 99
+        self.assertIsNone(ar._md_hour("0815"))      # too short to be one
+
+
+class TreatmentPlotStartDateIsReadWhole(unittest.TestCase):
+    """#368 — "can we now add in smarts to get the times and dates at least
+    on ones like this that have it on the image". The date is printed under
+    the axis and nowhere else on the page, and it is matched as the whole
+    printed phrase: a bare date floating under a chart could be a tick label.
+    """
+
+    def test_the_printed_caption_is_matched(self):
+        m = hal1._START_DATE.search("Pump Time (Start Date: 2025-08-30)")
+        self.assertEqual(m.groups(), ("2025", "08", "30"))
+
+    def test_a_loose_date_is_not_a_start_date(self):
+        self.assertIsNone(hal1._START_DATE.search("2025-08-30"))
+        self.assertIsNone(hal1._START_DATE.search("Start Date: 2025-08-30"))
+
+
+class ChartDatetimeRefusesWhatItCannotCorroborate(unittest.TestCase):
+    """#368 — the treatment plots exported dated 2000-01-01 00:00:00 because
+    a raster chart's time axis is an origin, not a clock. It can be turned
+    into one, but only where the picture and the report agree: a plausible
+    wrong date in a CSV is worse than a blank one.
+    """
+
+    EV = [{"name": "Start Pumping", "time": "2025-08-30 04:14:08"},
+          {"name": "Pump Acid", "time": "2025-08-30 04:16:22"},
+          {"name": "ISIP", "time": "2025-08-30 05:47:34"},
+          {"name": "Stop Pumping", "time": "2025-08-30 05:50:46"}]
+
+    def test_report_368_gets_its_date_and_time(self):
+        # 01282 p212: axis labelled "03:30 04:00 ...", left edge 03:16:07,
+        # caption "Pump Time (Start Date: 2025-08-30)"
+        got = hal1_tables.chart_datetime(11767.1, "sod", 9733,
+                                         datetime.date(2025, 8, 30), self.EV)
+        self.assertEqual(got, ("2025-08-30", "03:16:07"))
+
+    def test_an_elapsed_axis_yields_no_clock_at_all(self):
+        self.assertEqual(
+            hal1_tables.chart_datetime(0.0, "elapsed", 9733,
+                                       datetime.date(2025, 8, 30), self.EV),
+            (None, None))
+
+    def test_a_chart_that_opened_before_midnight_is_dated_the_day_before(self):
+        # 00424 p115: axis "09 00:00 ...", left edge 8th at 23:54, caption
+        # says the 9th. The axis names the day, so the left edge wins.
+        self.assertEqual(
+            hal1_tables.chart_datetime(777287.5, "day_sod", 6932,
+                                       datetime.date(2023, 11, 9), None),
+            ("2023-11-08", "23:54:48"))
+
+    def test_axis_day_disagreeing_with_the_caption_is_refused(self):
+        # axis says the 15th, caption says the 1st: one of the two is misread
+        self.assertEqual(
+            hal1_tables.chart_datetime(1360678.8, "day_sod", 21080,
+                                       datetime.date(2024, 8, 1), None),
+            (None, None))
+
+    def test_an_event_log_a_month_away_from_the_caption_is_refused(self):
+        far = [{"name": "Start Pumping", "time": "2025-07-30 04:14:08"}] * 4
+        self.assertEqual(
+            hal1_tables.chart_datetime(11767.1, "sod", 9733,
+                                       datetime.date(2025, 8, 30), far),
+            (None, None))
+
+    def test_with_no_calendar_anywhere_nothing_is_invented(self):
+        self.assertEqual(
+            hal1_tables.chart_datetime(11767.1, "sod", 9733, None, None),
+            (None, None))
+
+
+class GarbledTextLayerIsNotATextLayer(unittest.TestCase):
+    """00035/00051 (Paramount): 45 chart pages of real vector curves set in a
+    Type3 font with no ToUnicode. The page LOOKS fine and extracts as control
+    characters, so nothing named the zone, the date, the axes or the curves
+    and the whole file reported "no extractable data".
+    """
+
+    class _Page:
+        def __init__(self, text):
+            self._t = text
+
+        def get_text(self, *_a):
+            return self._t
+
+    def test_control_characters_are_not_text(self):
+        self.assertTrue(ocr_labels.garbled(
+            self._Page("\x00\x01\x02\x03\x04\x05\x06\x07" * 40)))
+
+    def test_an_empty_page_has_no_text_layer_either(self):
+        self.assertTrue(ocr_labels.garbled(self._Page("")))
+
+    def test_a_readable_chart_is_never_sent_to_ocr(self):
+        # the gate every entry point in ocr_labels hangs off: a false True
+        # here would render and OCR every page of every filing
+        self.assertFalse(ocr_labels.garbled(self._Page(
+            "Progress c-B055-B/094-G-08 Bottom Hole  Time (min)  "
+            "Pressure (MPa)  Treating Pressure  Zone 4  April 3, 2020")))
+
+
+class OcrTickColumnsMustBeStraight(unittest.TestCase):
+    """An OCR'd tick column becomes an axis full scale, which multiplies
+    every value in that channel. "900" read as "9000" at the top of a
+    concentration axis does not look wrong in a list of numbers — it looks
+    like a bigger axis — so a reading that misses the column's own line is
+    thrown away rather than trusted.
+    """
+
+    def test_a_tenfold_misread_is_dropped(self):
+        pts = [(100.0, 9000.0), (200.0, 800.0), (300.0, 700.0),
+               (400.0, 600.0), (500.0, 500.0), (600.0, 400.0)]
+        kept = ocr_labels.axis_column_ok(pts)
+        self.assertIsNotNone(kept)
+        self.assertNotIn(9000.0, [v for _p, v in kept])
+        self.assertEqual(max(v for _p, v in kept), 800.0)
+
+    def test_a_clean_column_survives_intact(self):
+        pts = [(100.0, 900.0), (200.0, 800.0), (300.0, 700.0),
+               (400.0, 600.0), (500.0, 500.0)]
+        self.assertEqual(len(ocr_labels.axis_column_ok(pts)), 5)
+
+    def test_numbers_that_are_not_an_axis_are_refused(self):
+        # a caption's numbers that wandered into the band
+        pts = [(100.0, 20.0), (180.0, 50.0), (260.0, 3.0), (340.0, 2020.0)]
+        self.assertIsNone(ocr_labels.axis_column_ok(pts))
+
+
+class OcrTimeAxisIsFittedNotMaximised(unittest.TestCase):
+    """On an OCR'd chart the duration cannot be "the largest label seen": one
+    tick the OCR missed shortens the stage — 140 minutes for a 160-minute job
+    — and squeezes every curve on the page to match, with nothing in the
+    output to show it happened. 00035 p114 loses two of its nine time labels.
+    """
+
+    def test_a_missing_last_tick_is_extrapolated_to_the_frame(self):
+        # ticks 20..140 at 81pt apart, frame edge one tick beyond the last
+        pts = [(681.5, 20.0), (600.8, 40.0), (519.8, 60.0), (438.9, 80.0),
+               (357.7, 100.0), (276.8, 120.0), (196.0, 140.0)]
+        self.assertEqual(frac_core._fit_time_axis(pts, 115.19), 160)
+
+    def test_the_last_tick_printed_on_the_edge_reads_as_itself(self):
+        pts = [(681.5, 20.0), (600.8, 40.0), (519.8, 60.0), (357.7, 100.0),
+               (276.8, 120.0), (196.0, 140.0), (115.0, 160.0)]
+        self.assertEqual(frac_core._fit_time_axis(pts, 115.19), 160)
+
+    def test_labels_that_do_not_make_a_line_give_no_duration(self):
+        pts = [(681.5, 20.0), (600.8, 900.0), (519.8, 3.0), (357.7, 2020.0)]
+        self.assertIsNone(frac_core._fit_time_axis(pts, 115.19))
+
 
 
 if __name__ == "__main__":
