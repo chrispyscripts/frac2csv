@@ -443,8 +443,9 @@
       <div class="manifestbar" id="manifestbar" hidden>
         <div class="mtext" id="mtext"></div>
         <button class="btn primary" id="mrun">Choose drive folder &amp; run</button>
-        <div class="mnote">Pick any folder holding the files — they're matched
-        by name if the layout differs. Exports save into each PDF's own folder.</div>
+        <div class="mnote" id="mnote">Pick any folder holding the files — they're
+        matched by name if the layout differs. Exports save into each PDF's own
+        folder.</div>
       </div>
       <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
         Drop PDFs or a .txt file list here <b>or click</b>
@@ -861,6 +862,24 @@ async function loadManifest(f) {
       manifest.resolved = out.rows || [];
       const found = manifest.resolved.filter(r => r.real).length;
       $("mtext").textContent = `${f.name} — ${found}/${manifest.resolved.length} found on disk`;
+      // On the desktop build the server has ALREADY resolved every path, so
+      // there is no folder to choose — but the button still said "Choose drive
+      // folder & run" and the note still asked for one. Dropping a list left
+      // the file panel at zero and a button that reads like it is waiting for
+      // something you cannot give, which is exactly how a working list looks
+      // like a broken one.
+      $("mrun").textContent = found
+        ? `Extract ${found} file${found === 1 ? "" : "s"}`
+        : "None of these files are on this machine";
+      $("mrun").disabled = !found;
+      const note = $("mnote");
+      if (note) {
+        note.textContent = found
+          ? "Read straight off the drive. Exports save into each PDF's own "
+            + "folder, or your chosen destination if that folder is read-only."
+          : "The list parsed, but none of its paths exist here — check the "
+            + "drive is mounted and that the paths match this machine.";
+      }
     } catch (e) {
       $("mtext").textContent = `${f.name} — server error: ${e.message}`;
       manifest.resolved = [];
