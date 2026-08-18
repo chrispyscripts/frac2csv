@@ -66,6 +66,27 @@ _FRAME_TOL = 3.0
 _FRAME_MIN_SIDE = 0.45
 
 
+# A frame is not always BLACK. The MView pages in ARC's Alberta filings rule
+# their plot box and gridlines in mid grey (0.5, 0.5, 0.5), so a near-black-only
+# test found ONE segment on 00089 p62 and _detect_frame returned None — "no plot
+# frame found on page" on a chart that is perfectly readable (#341).
+#
+# Widened, but only ever ADDED to: anything the old rule accepted still passes,
+# and the new part requires the ink to be NEUTRAL, so a dark coloured curve
+# cannot become a frame edge. The len(items) guard below is what actually keeps
+# curves out; this only decides what counts as frame-coloured.
+_FRAME_MAX_LEVEL = 0.6
+_FRAME_NEUTRAL_TOL = 0.10
+
+
+def _frame_ink(color):
+    """True for the near-black the frame used to be, or a neutral mid grey."""
+    hi, lo = max(color), min(color)
+    if hi <= 0.2:                       # the original rule, unchanged
+        return True
+    return hi <= _FRAME_MAX_LEVEL and (hi - lo) <= _FRAME_NEUTRAL_TOL
+
+
 def _black_segments(page):
     """Axis-aligned near-black stroked segments: [(horizontal, pos, lo, hi)].
 
@@ -78,16 +99,19 @@ def _black_segments(page):
     segs = []
     for d in page.get_drawings():
         color = d.get("color")
-        if d.get("type") != "s" or color is None or max(color) > 0.2:
+        if d.get("type") != "s" or color is None or not _frame_ink(color):
             continue
         items = d["items"]
         if len(items) > 6:
             continue
         for item in items:
+            dark = max(color) <= 0.2
             if item[0] == "re":
                 r = item[1]
-                segs += [(True, r.y0, r.x0, r.x1), (True, r.y1, r.x0, r.x1),
-                         (False, r.x0, r.y0, r.y1), (False, r.x1, r.y0, r.y1)]
+                segs += [(True, r.y0, r.x0, r.x1, dark),
+                         (True, r.y1, r.x0, r.x1, dark),
+                         (False, r.x0, r.y0, r.y1, dark),
+                         (False, r.x1, r.y0, r.y1, dark)]
                 continue
             if item[0] != "l":
                 continue
@@ -95,10 +119,10 @@ def _black_segments(page):
             dx, dy = abs(p1.x - p2.x), abs(p1.y - p2.y)
             if dy <= 0.5 < dx:
                 segs.append((True, (p1.y + p2.y) / 2,
-                             min(p1.x, p2.x), max(p1.x, p2.x)))
+                             min(p1.x, p2.x), max(p1.x, p2.x), dark))
             elif dx <= 0.5 < dy:
                 segs.append((False, (p1.x + p2.x) / 2,
-                             min(p1.y, p2.y), max(p1.y, p2.y)))
+                             min(p1.y, p2.y), max(p1.y, p2.y), dark))
     return segs
 
 
@@ -115,15 +139,19 @@ def _detect_frame(page):
     """
     box = page.cropbox or page.rect
     segs = _black_segments(page)
-    # longest first, then capped: a table page can rule a dozen full-width
-    # lines, and the pairing below is quadratic in each list
+    # BLACK first, then longest, then capped: the pairing below is quadratic in
+    # each list so the cap has to stay small, and once grey counts as frame ink
+    # a page with many grey rules can push the real black frame out of the top
+    # 16 — which shrank 66 frames on 00004 to a third of their height. Ranking
+    # the ink the old rule accepted ahead of the new keeps every such page on
+    # exactly the frame it had.
     hs = sorted((s for s in segs
                  if s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.width),
-                key=lambda s: s[2] - s[3])[:16]
+                key=lambda s: (not s[4], s[2] - s[3]))[:16]
     vs = sorted((s for s in segs
                  if not s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.height),
-                key=lambda s: s[2] - s[3])[:16]
-    best = None
+                key=lambda s: (not s[4], s[2] - s[3]))[:16]
+    best = best_dark = None
     for i, (_h, ytop, *_r) in enumerate(hs):
         for j in range(i + 1, len(hs)):
             top, bot = sorted((ytop, hs[j][1]))
@@ -140,8 +168,18 @@ def _detect_frame(page):
                            for s in sides):
                         continue
                     area = (right - left) * (bot - top)
+                    rect = fitz.Rect(left, top, right, bot)
+                    if all(s[4] for s in sides):
+                        if best_dark is None or area > best_dark[0]:
+                            best_dark = (area, rect)
                     if best is None or area > best[0]:
-                        best = (area, fitz.Rect(left, top, right, bot))
+                        best = (area, rect)
+    # An all-BLACK frame wins outright when the page has one. Grey is only
+    # here for pages that draw no black frame at all, and letting it compete
+    # on area moved 33 frames by ~0.13pt — harmless in value terms, but it
+    # means a page that used to read one way now reads another for no gain.
+    if best_dark is not None:
+        return best_dark[1]
     return best[1] if best else None
 
 
@@ -358,6 +396,7 @@ def detect_text_meta(page, meta=None):
         meta.stage = m.group(1)
     elif not meta.stage:
         meta.warnings.append("stage/zone not found")
+
 
     m = re.search(r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})", text)
     if m and m.group(1)[:3].lower() in MONTHS:

@@ -451,5 +451,55 @@ class IfsDoubledPage(unittest.TestCase):
         doc.close()
 
 
+class GreyPlotFrame(unittest.TestCase):
+    """#341 — "No charts extracted, only tables". ARC's Alberta MView pages
+    rule their plot box in mid grey (0.5, 0.5, 0.5), and _black_segments only
+    accepted near-black, so 00089 p62 yielded ONE segment and _detect_frame
+    returned None on a perfectly readable chart. 0 series -> 123.
+
+    The widening is strictly additive and must stay that way: the old rule's
+    ink still qualifies, an all-black frame still wins outright, and a dark
+    COLOURED curve must never qualify as frame ink.
+    """
+
+    def test_near_black_still_qualifies(self):
+        for c in [(0.0, 0.0, 0.0), (0.1, 0.1, 0.1), (0.0, 0.0, 0.2)]:
+            self.assertTrue(frac_core._frame_ink(c), str(c))
+
+    def test_neutral_grey_now_qualifies(self):
+        self.assertTrue(frac_core._frame_ink((0.5, 0.5, 0.5)))
+
+    def test_a_coloured_curve_is_not_frame_ink(self):
+        # dark green, dark red: below the level cap but not neutral
+        for c in [(0.0, 0.5, 0.0), (0.5, 0.0, 0.0), (0.0, 0.0, 0.5),
+                  (0.0, 0.5, 0.5)]:
+            self.assertFalse(frac_core._frame_ink(c), str(c))
+
+    def test_light_grey_gridlines_are_not_frame_ink(self):
+        for c in [(0.76, 0.76, 0.76), (0.87, 0.87, 0.87), (1.0, 1.0, 1.0)]:
+            self.assertFalse(frac_core._frame_ink(c), str(c))
+
+
+class MviewSurfaceAndBottomHole(unittest.TestCase):
+    """MView prints each zone twice — "… Surface" and "… Bottom Hole" — as
+    different charts carrying different channels. Both are wanted, but they
+    share a zone number and BOTH carry Treating Pressure, so under one key they
+    merge and that channel gets two sets of values. Same collision as Canyon's
+    overview plot. 00089: 123 series, 61 distinct keys -> 122.
+    """
+
+    def test_titles_are_tagged(self):
+        cases = [("ARC Resources Ltd 102/02-12-066-25W5/00 Surface", " Surface"),
+                 ("ARC Resources Ltd 102/02-12-066-25W5/00 Bottom Hole", " BH"),
+                 ("ARC Resources Ltd 102/02-12-066-25W5/00 BottomHole", " BH")]
+        for head, want in cases:
+            page = type("P", (), {"get_text": lambda self, h=head: h})()
+            self.assertEqual(pipeline._mview_variant(page), want, head)
+
+    def test_an_untitled_page_is_left_alone(self):
+        page = type("P", (), {"get_text": lambda self: "Zones 1-2"})()
+        self.assertEqual(pipeline._mview_variant(page), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

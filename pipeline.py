@@ -100,6 +100,19 @@ def _md(meta):
             "warnings": list(getattr(meta, "warnings", []))}
 
 
+def _mview_variant(page):
+    """-> " Surface" / " BH" / "" from an MView page's own title line."""
+    try:
+        head = (page.get_text().strip().splitlines() or [""])[0]
+    except Exception:
+        return ""
+    if re.search(r"\bbottom\s*hole\b", head, re.I):
+        return " BH"
+    if re.search(r"\bsurface\b", head, re.I):
+        return " Surface"
+    return ""
+
+
 def _rescaled_note(results):
     """One re-export notice for the whole file, or None.
 
@@ -1276,6 +1289,16 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 continue
             geom = getattr(meta, "geom", None)
             scales = getattr(meta, "scales", None)
+            # MView prints each zone TWICE, as consecutive pages titled
+            # "… Surface" and "… Bottom Hole", and they are different charts:
+            # Surface carries Tubing Pressure and Blender Slurry Rate, Bottom
+            # Hole carries Bottom Hole Pressure, Combined Rate @ Formation and
+            # a second Master Conc. Both are wanted. But they share a zone
+            # number and BOTH carry Treating Pressure, so under one key they
+            # merge and that channel ends up with two different sets of values
+            # — the collision that put Canyon's overview plot on top of a real
+            # stage. Tag the key so they stay apart and say which is which.
+            _variant = _mview_variant(page)
             if data and cprog.detect(page):
                 # a "Progress" page: several zones on one plot, no stage named
                 if _zone_times[0] is None:
@@ -1289,11 +1312,16 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                             _zone_clocks[0], _zone_times[0],
                                             _sheet_dates[0]):
                     pmeta, psamples, pdata, pgeom = part
+                    if _variant and pmeta.get("stage"):
+                        pmeta["stage"] = f"{pmeta['stage']}{_variant}"
                     results.append(_series(pmeta, psamples, pdata,
                                            "MView chart", pno + 1,
                                            geom=pgeom, scales=scales))
                 continue
-            results.append(_series(_md(meta), samples, data,
+            _mm = _md(meta)
+            if _variant and _mm.get("stage"):
+                _mm["stage"] = f"{_mm['stage']}{_variant}"
+            results.append(_series(_mm, samples, data,
                                    "MView chart", pno + 1,
                                    geom=geom, scales=scales))
 
