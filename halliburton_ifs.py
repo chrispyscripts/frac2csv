@@ -85,7 +85,40 @@ def _fit(pairs):
     return float(a), float(b)
 
 
-def _axis_columns(spans):
+def visible_plot_box(page):
+    """-> (first_visible_drawing_index, plot_rect) for a page that draws its
+    chart more than once.
+
+    Some IFS pages render the whole chart, paint an OPAQUE WHITE rectangle
+    over the plot area, and render it again at a different scale. Both copies
+    are in the content stream with the same colours, the same clip and full
+    opacity, so every collector sees two of every curve and two of every tick
+    column — 181 one-sample dips on Treating Pressure on 00002 p339, which is
+    what "extreme spikes" turned out to be. Nothing is wrong with the ink; the
+    first copy is simply painted over and invisible.
+
+    So the rule is the page's own rendering rule: whatever is drawn after the
+    LAST full-plot white fill is what a reader sees. On a page that draws its
+    chart once, that fill is the ordinary background at the top of the stream
+    and this returns an index that excludes nothing.
+    """
+    cut, box = 0, None
+    pr = page.rect
+    for i, d in enumerate(page.get_drawings()):
+        f = d.get("fill")
+        if f is None or d["type"] not in ("f", "fs"):
+            continue
+        if min(f[:3]) < 0.97:                       # not white
+            continue
+        if (d.get("fill_opacity") or 1) < 0.99:     # not opaque: no cover
+            continue
+        r = d["rect"]
+        if r.width > pr.width * 0.5 and r.height > pr.height * 0.4:
+            cut, box = i, r
+    return cut, box
+
+
+def _axis_columns(spans, box=None):
     """Cluster numeric black tick labels into vertical columns."""
     nums = [s for s in spans if s["color"] == 0 and
             re.fullmatch(r"-?\d+(\.\d+)?", s["t"].replace(",", ""))]
@@ -113,7 +146,7 @@ def _axis_columns(spans):
         def val(s):
             return float(s["t"].replace(",", ""))
 
-        best_chain = []
+        chains = []
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 gap = group[j]["cy"] - group[i]["cy"]
@@ -131,8 +164,23 @@ def _axis_columns(spans):
                         chain.append(group[k])
                         exp_y = group[k]["cy"] + gap
                         exp_v = val(group[k]) + vstep
-                if len(chain) > len(best_chain):
-                    best_chain = chain
+                if len(chain) >= 4:
+                    chains.append(chain)
+        if not chains:
+            continue
+        longest = max(len(c) for c in chains)
+        keep = [c for c in chains if len(c) >= longest - 1]
+        if box is not None and len(keep) > 1:
+            # two label sets of EQUAL length, one per copy of the chart: the
+            # visible one is the set whose ticks span the visible plot box.
+            # Picking "longest" alone chose between them arbitrarily and got
+            # 00002 p339 wrong by 4 MPa on top of the spikes.
+            def off(c):
+                ys = [t["cy"] for t in c]
+                return abs(min(ys) - box.y0) + abs(max(ys) - box.y1)
+            best_chain = min(keep, key=off)
+        else:
+            best_chain = max(keep, key=len)
         if len(best_chain) < 4:
             continue
         vals = [(val(s), s["cy"]) for s in best_chain]
@@ -290,7 +338,8 @@ def extract_page(page, sample_sec=1.0):
     legend = _legend(spans)
     if not legend:
         raise ValueError("IFS: legend not found")
-    columns = _axis_columns(spans)
+    vis_cut, vis_box = visible_plot_box(page)
+    columns = _axis_columns(spans, vis_box)
     if not columns:
         raise ValueError("IFS: no axis tick columns")
     # axis letters -> columns: A = leftmost; remaining right-side columns in
@@ -309,7 +358,11 @@ def extract_page(page, sample_sec=1.0):
     # is the only honest statement of where this series has data at all. See
     # _pen_resample.
     pts_by_color = defaultdict(list)
-    for d in page.get_drawings():
+    for _i, d in enumerate(page.get_drawings()):
+        # ink drawn before the last full-plot white fill is painted over and
+        # never seen by a reader — see visible_plot_box
+        if _i < vis_cut:
+            continue
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
             continue

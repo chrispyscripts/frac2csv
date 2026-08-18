@@ -17,7 +17,9 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import auto_raster as ar          # noqa: E402
+import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
+import halliburton_ifs as ifs     # noqa: E402
 import canyon                     # noqa: E402
 import lib1                       # noqa: E402
 import liberty_summary            # noqa: E402
@@ -390,6 +392,63 @@ class CanyonOverviewPage(unittest.TestCase):
 
     def test_the_module_raises_a_distinct_type(self):
         self.assertTrue(issubclass(canyon.NotAStageChart, ValueError))
+
+
+class IfsDoubledPage(unittest.TestCase):
+    """#336 "extreme spikes". Some IFS pages draw the whole chart, paint an
+    OPAQUE WHITE rectangle over the plot, and draw it again at a different
+    scale. Both copies sit in the content stream with the same colours, same
+    clip and full opacity, so the collector saw two of every curve and two of
+    every tick column: 181 dips on Treating Pressure on 00002 p339, 178 of
+    them a single sample long, against a printed curve that is smooth.
+
+    _axis_columns used to take the LONGEST tick chain. The two label sets have
+    the SAME length, so that chose between them arbitrarily and read the peak
+    as 81.68 MPa where the page prints 77.9. Given the visible plot box it now
+    takes the chain that spans it.
+    """
+
+    @staticmethod
+    def _labels(values, y_at_zero, y_at_max, cx=90.0):
+        # a tick column: value -> cy, linear between the two anchors
+        top, bot = float(y_at_max), float(y_at_zero)
+        hi = max(values)
+        return [{"color": 0, "t": str(v), "cx": cx,
+                 "cy": bot - (bot - top) * (v / hi)} for v in values]
+
+    def test_box_picks_the_visible_tick_column(self):
+        vals = [0, 20, 40, 60, 80, 100]
+        hidden = self._labels(vals, y_at_zero=395.0, y_at_max=130.0)
+        visible = self._labels(vals, y_at_zero=469.0, y_at_max=135.2)
+        box = fitz.Rect(110.4, 135.2, 642.8, 468.4)      # the last white fill
+        cols = ifs._axis_columns(hidden + visible, box)
+        self.assertTrue(cols, "no tick column found")
+        c = cols[0]
+        # value at the box bottom must be ~0 and at its top ~100
+        self.assertAlmostEqual(c["a"] + c["b"] * 469.0, 0.0, delta=1.0)
+        self.assertAlmostEqual(c["a"] + c["b"] * 135.2, 100.0, delta=1.5)
+
+    def test_without_a_box_behaviour_is_unchanged(self):
+        vals = [0, 20, 40, 60, 80, 100]
+        cols = ifs._axis_columns(self._labels(vals, 469.0, 135.2), None)
+        self.assertTrue(cols)
+        self.assertAlmostEqual(cols[0]["a"] + cols[0]["b"] * 469.0, 0.0, delta=1.0)
+
+    def test_a_single_draw_page_hides_nothing(self):
+        # one ordinary background fill at the top of the stream: the cut index
+        # must not exclude the chart that follows it
+        doc = fitz.open()
+        page = doc.new_page(width=792, height=612)
+        page.draw_rect(fitz.Rect(72, 87, 719, 527), color=None,
+                       fill=(1, 1, 1), overlay=True)
+        page.draw_line(fitz.Point(120, 200), fitz.Point(600, 210),
+                       color=(1, 0, 0))
+        cut, box = ifs.visible_plot_box(page)
+        n_paths = len(page.get_drawings())
+        self.assertLess(cut, n_paths - 1,
+                        "the only curve on the page was cut away")
+        self.assertIsNotNone(box)
+        doc.close()
 
 
 if __name__ == "__main__":
