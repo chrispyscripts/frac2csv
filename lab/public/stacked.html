@@ -66,6 +66,10 @@
     </div>
     <div class="tools">
       <span class="pglbl" id="pglbl"></span>
+      <button type="button" class="btn" id="interp"
+              title="Bridge gaps in a curve with a straight line. Raster charts
+lose samples wherever curves cross, and the gaps break the trace. Bridged
+spans are drawn dashed — they are drawn, not measured.">Interpolate</button>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
     </div>
@@ -205,6 +209,13 @@ window.addEventListener("message", e => {
   else if (d.type === "stacked:view") applyView(d);
   else if (d.type === "stacked:page") applyPage(d);
 });
+$("interp").addEventListener("click", () => {
+  interp = !interp;
+  localStorage.setItem("f2c.interp", interp ? "1" : "0");
+  $("interp").classList.toggle("on", interp);
+  build();                     // the header line changes with it
+});
+
 // Announce ourselves on load. This is what makes the order not matter: opened
 // before a stage is picked, opened after one is, or reloaded by hand — the Lab
 // answers a ready with the stage that is on screen right now.
@@ -294,13 +305,35 @@ function applyPage(d) {
 function updatePageLbl() {
   $("pglbl").textContent = state.page ? ("PDF p." + state.page) : "";
   $("openpdf").disabled = !state.page || !lab();
+  $("interp").classList.toggle("on", interp);
 }
 
 // ---------- layout ----------
+// Gaps come from the raster tracer: where two curves cross, the pixels of one
+// are the pixels of the other, and neither can be followed through the
+// overlap. The samples either side are real, so a straight line between them
+// is the honest reading of what happened in between — but it is still a line
+// we drew, not a value the chart printed, so bridges are DASHED and the header
+// says how much of the curve is bridge. Nothing here touches the exported CSV:
+// a gap stays an empty cell there.
+let interp = localStorage.getItem("f2c.interp") === "1";
+
+// what fraction of a channel's samples are missing, and the longest run
+function gapStats(vals) {
+  let missing = 0, longest = 0, run = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { missing++; run++; if (run > longest) longest = run; }
+    else run = 0;
+  }
+  return { missing, longest, pct: vals.length ? 100 * missing / vals.length : 0 };
+}
+
 function build() {
   const host = $("charts");
   host.innerHTML = "";
   blocks = state.channels.map((c, i) => {
+    const gs = gapStats(c.values);
     const el = document.createElement("div");
     el.className = "chartblock" + (c.off ? " off" : "");
     el.innerHTML =
@@ -310,7 +343,11 @@ function build() {
         "</span>" +
         '<span class="rng">' + fmtV(c.lo) + " – " + fmtV(c.hi) +
           (c.printed ? " · chart axis" : " · auto") +
-          (c.off ? " · hidden in the Lab" : "") + "</span>" +
+          (c.off ? " · hidden in the Lab" : "") +
+          (gs.missing
+            ? " · " + gs.pct.toFixed(1) + "% missing" +
+              (interp ? " (bridged, longest " + gs.longest + ")" : "")
+            : "") + "</span>" +
         '<span class="ro"></span>' +
       "</div><canvas></canvas>";
     host.appendChild(el);
@@ -397,14 +434,32 @@ function drawChart(b) {
   g.strokeStyle = c.color; g.lineWidth = 1.4;
   g.lineJoin = "round";
   g.beginPath();
-  let pen = false;
+  let pen = false, prev = null;
+  const bridges = [];
   for (let i = i0; i <= i1; i += step) {
     const v = vals[i];
     if (v == null || !isFinite(v)) { pen = false; continue; }
     const x = xOf(i * state.dsec, W), y = yOf(v);
-    if (pen) g.lineTo(x, y); else { g.moveTo(x, y); pen = true; }
+    if (pen) g.lineTo(x, y);
+    else {
+      g.moveTo(x, y);
+      // first real sample after a gap — remember the span to bridge
+      if (interp && prev) bridges.push([prev.x, prev.y, x, y]);
+      pen = true;
+    }
+    prev = { x, y };
   }
   g.stroke();
+  // Bridges last and dashed, so a drawn span never reads as a measured one.
+  if (bridges.length) {
+    g.setLineDash([4, 3]);
+    g.globalAlpha = 0.8;
+    g.beginPath();
+    for (const [ax, ay, bx, by] of bridges) { g.moveTo(ax, ay); g.lineTo(bx, by); }
+    g.stroke();
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+  }
   g.restore();
 
   // shared time axis, printed under the bottom chart only
