@@ -38,6 +38,64 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.1.1</h2>
+    <ul>
+      <li><b>Halliburton IFS: the extreme spikes are gone.</b> Some IFS pages
+        draw the whole chart, paint a white rectangle over it, and draw it
+        again at a different size. Both copies were being read as one curve, so
+        the line jumped between them hundreds of times — 178 one-sample spikes
+        on a single chart of 00002, against a curve that is smooth on the page.
+        Only the copy you can actually see is read now, and the pressure scale
+        was wrong along with it: that chart&rsquo;s peak read 81.68 MPa where the
+        report prints 77.9. <b>Please re-export any Halliburton IFS well you
+        exported before this build.</b> On 00002 it affects 11 of 321 charts,
+        and on the worst of them the two proppant concentration channels now
+        read zero — correctly, because the visible chart draws them flat along
+        the bottom; the rising curve belonged to the hidden copy</li>
+      <li><b>CalFrac/MView charts on Alberta filings now come out at all.</b>
+        They rule their plot box in grey rather than black, and the reader only
+        looked for a black one, so it reported &ldquo;no plot frame found&rdquo;
+        on perfectly readable charts. 00089 goes from 0 charts to 123</li>
+      <li><b>MView Surface and Bottom Hole charts are kept apart.</b> The same
+        zone prints twice — one sheet with Tubing Pressure and Blender Slurry
+        Rate, the next with Bottom Hole Pressure and Combined Rate @ Formation.
+        Both are wanted, but they shared a stage number and both carry Treating
+        Pressure, so they were being merged into one stage with two sets of
+        values. Stages now read &ldquo;12 Surface&rdquo; and &ldquo;12 BH&rdquo;</li>
+      <li><b>Canyon day-overview plots no longer sit on top of a real stage.</b>
+        Canyon prints a plot per pumping day covering several stages after the
+        per-stage charts. Those were being read as extra copies of stages 1, 7,
+        15 and 22 — seven and eight hours long against a 68-minute stage — and
+        drawn over the real ones. They are now left out, with the reason in the
+        file&rsquo;s notes. On 00011 that is 29 stages with four duplicates down
+        to a clean 25</li>
+      <li><b>Liberty charts titled &ldquo;STAGE 2&rdquo; in capitals now get a
+        stage number.</b> On Alberta filings 32 of 56 charts in one well had no
+        stage at all and collapsed into a single &ldquo;Stage ?&rdquo; entry</li>
+      <li><b>A file with no charts but plenty of tables is no longer
+        &ldquo;no extractable data&rdquo;.</b> BJ prints a
+        <i>Fracturing-Acidizing Treatment</i> sheet per frac — three pages
+        carrying the pumped schedule, one row per step with clean and slurry
+        volume, rate, proppant type, start and end concentration and mass.
+        Those files plot nothing at all, so they read as empty. One 218-page
+        well now gives a 124-row pumped schedule across 21 fracs</li>
+      <li><b>Tables are grouped by what they are</b> — Schedules first, then
+        Summaries, Logs and the rest — and the extracted tables now sit ABOVE
+        the scanned report pages instead of below them, so on a report with a
+        dozen summary sheets the data is not off the bottom of the list</li>
+      <li><b>A dropped file list says what it will do.</b> On the desktop app
+        the button read &ldquo;Choose drive folder &amp; run&rdquo; even though
+        the paths were already resolved off the drive, so a working list looked
+        like it had failed. It now says &ldquo;Extract 67 files&rdquo;, or tells
+        you plainly when none of the paths exist on this machine</li>
+      <li><b>The queue reads top to bottom</b>, so the file being worked on is
+        where you expect it instead of at the bottom of the list</li>
+      <li><b>A batch of files with no data files ONE report, not one each</b> —
+        and reports now carry each file&rsquo;s full path, not just its name, so
+        it is clear which drive and folder a file came from</li>
+      <li><b>Full page view stays on when you move between stages</b> instead of
+        switching itself off every time</li>
+    </ul>
     <h2>v1.1.0</h2>
     <ul>
       <li><b>Halliburton IFS reports now give you their tables</b> (report
