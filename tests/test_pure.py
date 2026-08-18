@@ -27,6 +27,7 @@ import lib1                       # noqa: E402
 import liberty_summary            # noqa: E402
 import localapp                   # noqa: E402
 import pipeline                   # noqa: E402
+import pipeline_export as pe      # noqa: E402
 import trican2                    # noqa: E402
 
 
@@ -763,6 +764,50 @@ class BjLegendAxisSide(unittest.TestCase):
 
     def test_only_a_trailing_side_is_stripped(self):
         self.assertEqual(self._strip("Rate (left) (MPa)"), "Rate (left) (MPa)")
+
+
+class FilenameUwiWins(unittest.TestCase):
+    """Carmine, report #517: the UWI printed inside a filing can be an older
+    designation for the same hole; the file name is kept against the current
+    register. So the file name leads and the printed value is the fallback —
+    the reverse of what shipped through v1.1.2."""
+
+    def test_filename_uwi_beats_the_printed_one(self):
+        series = [{"meta": {"uwi": "100010203040W500", "stage": "1",
+                            "date": "2020-01-01", "start_time": "00:00:00"},
+                   "samples": np.array([0.0, 1.0]),
+                   "data": {"Tr Press": np.array([1.0, 2.0])},
+                   "units": {}, "labels": {}, "source": "CalFrac chart"}]
+        m = pe.build_well(series, fallback_uwi="103050108116W600")
+        uwis = {row[0] for blk in m["blocks"] for row in blk["rows"]}
+        self.assertEqual(uwis, {"103050108116W600"})
+
+    def test_printed_uwi_still_used_when_the_name_carries_none(self):
+        series = [{"meta": {"uwi": "100010203040W500", "stage": "1",
+                            "date": "2020-01-01", "start_time": "00:00:00"},
+                   "samples": np.array([0.0, 1.0]),
+                   "data": {"Tr Press": np.array([1.0, 2.0])},
+                   "units": {}, "labels": {}, "source": "CalFrac chart"}]
+        m = pe.build_well(series, fallback_uwi="")
+        uwis = {row[0] for blk in m["blocks"] for row in blk["rows"]}
+        self.assertEqual(uwis, {"100010203040W500"})
+
+    def test_table_uwi_column_is_overridden_when_it_holds_one_well(self):
+        res = [{"type": "table", "title": "Stimulation Summary",
+                "columns": ["UWI", "Stage"],
+                "rows": [["100010203040W500", "1"], ["100010203040W500", "2"]]}]
+        pipeline._normalise_tables(res, "01574-103050108116W600_47516_COMP.pdf")
+        self.assertEqual({r[0] for r in res[0]["rows"]}, {"103050108116W600"})
+
+    def test_a_multi_well_table_keeps_its_own_uwis(self):
+        """A pad summary lists several holes. Stamping the file's own UWI over
+        that column would merge different wells into one."""
+        res = [{"type": "table", "title": "Pad Summary",
+                "columns": ["UWI", "Stage"],
+                "rows": [["100010203040W500", "1"], ["102010203040W500", "1"]]}]
+        pipeline._normalise_tables(res, "01574-103050108116W600_47516_COMP.pdf")
+        self.assertEqual({r[0] for r in res[0]["rows"]},
+                         {"100010203040W500", "102010203040W500"})
 
 
 if __name__ == "__main__":

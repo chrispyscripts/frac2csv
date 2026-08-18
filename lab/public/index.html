@@ -1593,7 +1593,10 @@ function render(entry, fname, stages, tables, notes, summary) {
   // Carmine's file naming: "<index>-<UWI>_<WA>" or "<UWI>-<WA>-..." (AB)
   const fuwi = (fname.match(/^\d+-([0-9A-Z]{10,20})_\d/) ||
                 fname.match(/^([12]\d{2}[0-9A-Z]{9,13}W?\d{0,3})[-_]\d/) || [])[1] || "";
-  if (fuwi) for (const st of stages) if (!st.meta.uwi) st.meta.uwi = fuwi;
+  // #517: the file name carries the CURRENT UWI — a filing keeps whatever
+  // designation it was filed under, so the printed one can be an older name
+  // for the same hole. It leads; the printed value stays as the fallback.
+  if (fuwi) for (const st of stages) st.meta.uwi = fuwi;
   const well = stages.length ? { base, stages } : null;
   if (well) { well.provider = wellProvider(well); wells.push(well); }
   entry.well = well; entry.notes = notes || [];

@@ -109,7 +109,13 @@ def build_well(series_results, fallback_uwi="", seq=False):
             for k, v in data.items():
                 if k not in chan:
                     chan[k] = v
-        uwi = meta.get("uwi") or fallback_uwi or ""
+        # Carmine, #517: "we should be getting the UWI from the file name it
+        # is the correct one to use, the UWI in the pdf's might not be the
+        # current UWI". A well gets re-designated and the filing keeps the
+        # designation it was filed under, so the printed value can be an older
+        # name for the same hole. The file name is maintained against the
+        # current register, so it leads and the printed one is the fallback.
+        uwi = fallback_uwi or meta.get("uwi") or ""
         rows = []
         for i in range(n):
             sec = i * dsec

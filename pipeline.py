@@ -1013,9 +1013,22 @@ def _normalise_tables(results, filename=None):
                 if i < len(row):
                     row[i] = _fmt_dt(row[i])
         if not any(str(c).strip().lower() == "uwi" for c in cols):
-            uwi = canon_uwi(r.get("uwi")) or fallback
+            uwi = fallback or canon_uwi(r.get("uwi"))
             cols = ["UWI"] + cols
             rows = [[uwi] + row for row in rows]
+        elif fallback:
+            # Same rule as build_well (#517) for a table that prints its own
+            # UWI column. Guarded on the column holding ONE well: a pad or
+            # multi-well summary legitimately lists several, and overwriting
+            # those with the file's own UWI would merge different holes.
+            i = next(i for i, c in enumerate(cols)
+                     if str(c).strip().lower() == "uwi")
+            vals = {str(row[i]).strip() for row in rows
+                    if i < len(row) and str(row[i]).strip()}
+            if len(vals) <= 1:
+                for row in rows:
+                    if i < len(row):
+                        row[i] = fallback
         r["columns"], r["rows"] = cols, rows
 
 
