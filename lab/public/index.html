@@ -3372,6 +3372,9 @@ function applyFvEdits(raw, ed) {
     const chans = new Map();
     for (const p of parts) for (const c of p.st.channels)
       if (!chans.has(c.key)) chans.set(c.key, { ...c, values: [] });
+    const times = [];
+    for (const p of parts)
+      for (let j = p.j0; j < p.j1; j++) times.push(p.s0 + j * p.step);
     for (const p of parts) {
       for (const [key, nc] of chans) {
         const sc = p.st.channels.find(c => c.key === key);
@@ -3387,6 +3390,7 @@ function applyFvEdits(raw, ed) {
       }
     }
     const chanList = [...chans.values()];
+    for (const nc of chanList) fillMarkedGaps(nc.values, times, ed.fills);
     const n = Math.max(0, ...chanList.map(c => c.values.length));
     const meta = { ...lead.meta, stage: ed.labels && ed.labels[i] != null
                                         ? String(ed.labels[i]) : lead.meta.stage };
@@ -3400,6 +3404,42 @@ function applyFvEdits(raw, ed) {
     out.push({ ...lead, meta, channels: chanList, n });
   }
   return out.length ? out : raw;
+}
+
+// Bridge holes the client has marked as LOST TRACE.
+//
+// The distinction that makes this safe is his, from the corpus: a proppant
+// curve resting at zero, or one that has not started yet, reads as missing but
+// is not — the chart simply has no line there, and joining across it would
+// invent proppant during the pad. So a run is only filled when it has a real
+// reading on BOTH sides. A run that reaches either end of the stage has
+// nothing to interpolate between and is left alone, whatever span is marked.
+function fillMarkedGaps(vals, times, fills) {
+  if (!fills || !fills.length) return 0;
+  const gone = v => v === null || v === undefined || !isFinite(Number(v));
+  let filled = 0, i = 0;
+  while (i < vals.length) {
+    if (!gone(vals[i])) { i++; continue; }
+    let j = i;
+    while (j < vals.length && gone(vals[j])) j++;
+    // bounded either side, and the hole's MIDPOINT inside a marked span —
+    // midpoint rather than containment so a span dragged roughly around a gap
+    // still takes it, and rather than overlap so a small span cannot pull in
+    // a huge neighbouring hole.
+    if (i > 0 && j < vals.length) {
+      const mid = (times[i] + times[j - 1]) / 2;
+      if (fills.some(f => mid >= f.a && mid < f.b)) {
+        const t0 = times[i - 1], t1 = times[j];
+        const v0 = Number(vals[i - 1]), v1 = Number(vals[j]);
+        const span = (t1 - t0) || 1;
+        for (let k = i; k < j; k++)
+          vals[k] = v0 + (v1 - v0) * ((times[k] - t0) / span);
+        filled += j - i;
+      }
+    }
+    i = j;
+  }
+  return filled;
 }
 
 // Put an edit into effect: the stage list, the graph and every export path
@@ -3463,7 +3503,7 @@ window.addEventListener("message", ev => {
   if (d.type !== "fv:edits") return;
   const entry = entries.find(f => f.name === d.file);
   if (!entry) return;
-  const untouched = !d.cuts.length &&
+  const untouched = !d.cuts.length && !(d.fills || []).length &&
     d.bounds.length === (entry.well && (entry.well.stagesRaw || entry.well.stages).length) + 1;
   // "no edits" comes back as a plain reset rather than as an identity edit, so
   // an untouched FracView never rebuilds the stages it was handed.

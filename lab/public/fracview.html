@@ -80,6 +80,11 @@
     </span>
     <button type="button" class="btn" id="adjust" title="Drag the boundary between two stages to move where one ends and the next begins">Adjust</button>
     <button type="button" class="btn" id="trim" title="Drag across the chart to cut a span out of the data">Trim</button>
+    <button type="button" class="btn" id="fill"
+            title="Drag across a span where the trace was LOST and its gaps are
+bridged with a straight line. Only holes with a real reading on BOTH sides are
+filled — a curve resting at zero, or one that has not started yet, is not a
+lost trace and is left alone.">Fill Gaps</button>
     <button type="button" class="btn" id="undo" title="Undo the last edit">Undo</button>
     <button type="button" class="btn" id="reset" title="Throw away every edit and go back to what was extracted">Reset</button>
     <span class="state clean" id="state">no edits</span>
@@ -97,8 +102,11 @@
     <b>Adjust</b> mode drags the boundary between two stages to move where one ends
     and the next begins. <b>Trim</b> mode drags out a span to cut — grey while you
     are dragging, and once it lands you can still drag either edge to fine-tune;
-    click inside a cut to put it back. Every edit lands on the Lab's graphs and on
-    the exported CSV.
+    click inside a cut to put it back.
+    <b>Fill Gaps</b> drags out a span where the trace was LOST and bridges the
+    holes in it with a straight line — only holes with a real reading on both
+    sides, so a curve resting at zero or one that has not started yet is left
+    alone. Every edit lands on the Lab's graphs and on the exported CSV.
   </div>
 </div>
 
@@ -120,7 +128,7 @@ let well = null;             // {file, uwi, stages:[{key,label,t0,dsec,n,channel
 let edits = null;            // {bounds:[ms...], labels:[...], cuts:[{a,b}]}
 let undoStack = [];
 let view = { a: 0, b: 1 };   // visible absolute span, ms
-let mode = "";               // "" | "adjust" | "trim"
+let mode = "";               // "" | "adjust" | "trim" | "fill"
 let selIdx = -1;             // the stage highlighted here and on the Lab
 let justDragged = false;     // so the click that ends a drag is not also acted on
 let scheme = "alt";
@@ -147,7 +155,7 @@ function rawBounds(w) {
 }
 function freshEdits(w) {
   return { bounds: rawBounds(w), labels: w.stages.map(s => s.label),
-           origin: w.stages.map((_, i) => i), cuts: [] };
+           origin: w.stages.map((_, i) => i), cuts: [], fills: [] };
 }
 function nStages() { return edits.bounds.length - 1; }
 function stageSpan(i) { return { a: edits.bounds[i], b: edits.bounds[i + 1] }; }
@@ -167,17 +175,28 @@ function inCut(t) {
   for (const c of edits.cuts) if (t >= c.a && t < c.b) return true;
   return false;
 }
+// A span the user has marked as LOST TRACE rather than absent data. Inside
+// one a hole in the curve is bridged; outside it a hole stays a hole. The
+// distinction is the client's: a proppant curve resting at zero, or one that
+// has not started yet, is not missing data and must never be filled — only a
+// hole with a real reading either side is.
+function inFill(t) {
+  for (const f of (edits.fills || [])) if (t >= f.a && t < f.b) return true;
+  return false;
+}
 
 function markDirty() {
-  const n = edits.cuts.length;
+  if (!edits.fills) edits.fills = [];
+  const n = edits.cuts.length, nf = edits.fills.length;
   const moved = edits.bounds.length !== well.stages.length + 1 ||
                 edits.bounds.some((v, i) => v !== rawBounds(well)[i]);
   const el = $("state");
-  if (!n && !moved) { el.textContent = "no edits"; el.className = "state clean"; }
+  if (!n && !nf && !moved) { el.textContent = "no edits"; el.className = "state clean"; }
   else {
     const bits = [];
     if (moved) bits.push(`${nStages()} stages`);
     if (n) bits.push(`${n} cut${n > 1 ? "s" : ""}`);
+    if (nf) bits.push(`${nf} filled`);
     el.textContent = "edited · " + bits.join(" · ");
     el.className = "state dirty";
   }
@@ -294,6 +313,22 @@ function draw() {
     }
   }
 
+  // fill spans — green, because they ADD a reading where a cut removes one
+  for (const f of (edits.fills || [])) {
+    const x0 = Math.max(PAD.l, X(f.a, w)), x1 = Math.min(w - PAD.r, X(f.b, w));
+    if (x1 <= x0) continue;
+    ctx.fillStyle = "rgba(30,122,52,0.11)";
+    ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+    ctx.strokeStyle = "rgba(30,122,52,0.55)"; ctx.lineWidth = 1;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(x0 + 0.5, PAD.t + 0.5, x1 - x0 - 1, plotH - 1);
+    ctx.setLineDash([]);
+    if (mode === "fill") {
+      ctx.fillStyle = "#1e7a34";
+      for (const x of [x0, x1]) ctx.fillRect(x - 2.5, PAD.t + plotH / 2 - 9, 5, 18);
+    }
+  }
+
   // cuts, over the bands and under the ink
   for (const c of edits.cuts) {
     void 0;
@@ -384,7 +419,12 @@ function draw() {
         const v = ch.values[j];
         // solid pass: a cut is a gap, so what you see is what exports.
         // ghost pass: draw straight through it — that IS the point.
-        if (!isFinite(v) || (!ghost && inCut(t))) { pen = false; continue; }
+        if (!ghost && inCut(t)) { pen = false; continue; }
+        // A hole inside a fill span keeps the pen DOWN, so the next real
+        // sample joins straight to the last one — which is the interpolation,
+        // drawn exactly as it will be exported. Outside a fill span a hole
+        // still lifts the pen.
+        if (!isFinite(v)) { if (!inFill(t)) pen = false; continue; }
         const x = X(t, w);
         const y = PAD.t + plotH - (v / mx) * (plotH - 6) - 3;
         if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
@@ -562,6 +602,7 @@ function sendEdits() {
         bounds: edits.bounds.slice(), labels: edits.labels.slice(),
         origin: edits.origin.slice(),
         cuts: edits.cuts.map(c => ({ a: c.a, b: c.b })),
+        fills: (edits.fills || []).map(f => ({ a: f.a, b: f.b })),
       }, "*");
     } catch (e) { /* the Lab went away — nothing to keep in step */ }
   }, 90);
@@ -599,7 +640,8 @@ window.addEventListener("message", ev => {
               origin: (e.origin && e.origin.length === e.bounds.length - 1)
                       ? e.origin.slice()
                       : e.bounds.slice(0, -1).map((_, i) => Math.min(i, d.stages.length - 1)),
-              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })) };
+              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })),
+              fills: (e.fills || []).map(f => ({ a: f.a, b: f.b })) };
   } else {
     edits = freshEdits(d);
   }
@@ -630,11 +672,15 @@ function boundNear(x, w) {
 // Which committed cut edge is under the cursor. Trim used to be a one-shot —
 // drag it out and the only correction was to delete it and drag again — so a
 // span that wanted moving by two seconds meant redoing the whole gesture.
+function regionList() {
+  return mode === "trim" ? edits.cuts : mode === "fill" ? edits.fills : null;
+}
 function cutEdgeNear(x, w) {
-  if (mode !== "trim") return null;
-  for (let i = 0; i < edits.cuts.length; i++) {
-    if (Math.abs(X(edits.cuts[i].a, w) - x) < 9) return { i, side: "a" };
-    if (Math.abs(X(edits.cuts[i].b, w) - x) < 9) return { i, side: "b" };
+  const list = regionList();
+  if (!list) return null;
+  for (let i = 0; i < list.length; i++) {
+    if (Math.abs(X(list[i].a, w) - x) < 9) return { i, side: "a" };
+    if (Math.abs(X(list[i].b, w) - x) < 9) return { i, side: "b" };
   }
   return null;
 }
@@ -642,7 +688,8 @@ function setMode(m) {
   mode = (mode === m) ? "" : m;
   $("adjust").classList.toggle("on", mode === "adjust");
   $("trim").classList.toggle("on", mode === "trim");
-  cv.style.cursor = mode === "trim" ? "crosshair" : "grab";
+  $("fill").classList.toggle("on", mode === "fill");
+  cv.style.cursor = (mode === "trim" || mode === "fill") ? "crosshair" : "grab";
   draw();
 }
 
@@ -674,8 +721,14 @@ cv.addEventListener("mousedown", e => {
   if (!well) return;
   const p = pos(e), t = T(p.x, p.w);
   const edge = cutEdgeNear(p.x, p.w);
-  if (edge) { pushUndo(); drag = { kind: "cutedge", ...edge, moved: false }; return; }
-  if (mode === "trim") { pushUndo(); drag = { kind: "cut", a: t, b: t }; return; }
+  if (edge) {
+    pushUndo();
+    drag = { kind: "cutedge", ...edge, list: regionList(), moved: false };
+    return;
+  }
+  if (mode === "trim" || mode === "fill") {
+    pushUndo(); drag = { kind: "cut", a: t, b: t, into: mode }; return;
+  }
   const bi = boundNear(p.x, p.w);
   if (bi > 0) { pushUndo(); drag = { kind: "bound", i: bi, moved: false }; return; }
   drag = { kind: "pan", x: p.x, a: view.a, b: view.b, moved: false, down: p.x };
@@ -687,7 +740,7 @@ window.addEventListener("mousemove", e => {
   hover = { x: p.x, t: T(p.x, p.w) };
   if (!drag) {
     cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
-      : mode === "trim" ? "crosshair"
+      : (mode === "trim" || mode === "fill") ? "crosshair"
       : boundNear(p.x, p.w) > 0 ? "col-resize" : "grab";
     draw(); return;
   }
@@ -703,7 +756,7 @@ window.addEventListener("mousemove", e => {
   } else if (drag.kind === "cut") {
     drag.b = T(p.x, p.w);
   } else if (drag.kind === "cutedge") {
-    const c = edits.cuts[drag.i];
+    const c = (drag.list || edits.cuts)[drag.i];
     const t = T(p.x, p.w);
     if (drag.side === "a") c.a = Math.min(t, c.b - 500);
     else c.b = Math.max(t, c.a + 500);
@@ -717,7 +770,8 @@ window.addEventListener("mouseup", () => {
   const d = drag; drag = null;
   if (d.kind === "cut") {
     const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
-    if (b - a > 1500) { edits.cuts.push({ a, b }); justDragged = true; markDirty(); }
+    const into = d.into === "fill" ? edits.fills : edits.cuts;
+    if (b - a > 1500) { into.push({ a, b }); justDragged = true; markDirty(); }
     else undoStack.pop();               // a click, not a drag — no edit made
   } else if (d.kind === "bound" || d.kind === "cutedge") {
     if (d.moved) { justDragged = true; markDirty(); } else undoStack.pop();
@@ -731,16 +785,17 @@ cv.addEventListener("click", e => {
   if (!well) return;
   if (justDragged) { justDragged = false; return; }
   const p = pos(e), t = T(p.x, p.w);
-  if (mode === "trim") {                 // click inside a cut puts it back
-    const i = edits.cuts.findIndex(c => t >= c.a && t < c.b);
-    if (i >= 0) { pushUndo(); edits.cuts.splice(i, 1); markDirty(); draw(); }
+  const list = regionList();             // click inside a span removes it
+  if (list) {
+    const i = list.findIndex(c => t >= c.a && t < c.b);
+    if (i >= 0) { pushUndo(); list.splice(i, 1); markDirty(); draw(); }
     return;
   }
   selectStage(stageAtX(t));
 });
 
 cv.addEventListener("dblclick", e => {
-  if (!well || mode === "trim") return;
+  if (!well || mode === "trim" || mode === "fill") return;
   const p = pos(e);
   splitAt(T(p.x, p.w));
 });
@@ -760,6 +815,7 @@ $("span").addEventListener("change", e => {
 $("scheme").addEventListener("change", e => { scheme = e.target.value; draw(); });
 $("adjust").addEventListener("click", () => setMode("adjust"));
 $("trim").addEventListener("click", () => setMode("trim"));
+$("fill").addEventListener("click", () => setMode("fill"));
 $("undo").addEventListener("click", () => {
   if (!undoStack.length) return;
   edits = JSON.parse(undoStack.pop());
