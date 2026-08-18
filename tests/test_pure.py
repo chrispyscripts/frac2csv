@@ -569,5 +569,45 @@ class BjFracturingSheets(unittest.TestCase):
         self.assertFalse(bjf._is_schedule_head([]))
 
 
+class FrameCandidateCap(unittest.TestCase):
+    """#362 — "1-30 not seperated". The candidate lists are capped at 16 a side
+    because the pairing is quadratic. On a gridded plot every gridline is the
+    SAME length as the frame edge, so "longest first" ranks them arbitrarily:
+    on 00090 p65 all 21 qualifying horizontals were 492.3pt and the real top
+    edge landed at index 18. The frame lost its top, came out 17% short, and 30
+    printed zone times were matched against a 1125-minute window on a chart
+    whose axis reads 1350 — so no split was possible and the page was left
+    whole. Keeping the two OUTERMOST candidates as well fixes it, because a
+    frame's edges ARE the extreme lines.
+    """
+
+    @staticmethod
+    def _cap(cands):
+        keep = cands[:16]
+        for extreme in (min(cands, key=lambda s: s[1]),
+                        max(cands, key=lambda s: s[1])):
+            if extreme not in keep:
+                keep.append(extreme)
+        return keep
+
+    def test_the_outermost_survive_a_full_cap(self):
+        # 21 equal-length gridlines: the real edges are first and last by
+        # POSITION, and neither is in the first 16 by order
+        cands = [(True, 100.0 + i * 37.0, 0.0, 492.3, False) for i in range(21)]
+        cands = cands[5:] + cands[:5]          # arbitrary order, as sorting gives
+        keep = self._cap(cands)
+        ys = [c[1] for c in keep]
+        self.assertIn(min(c[1] for c in cands), ys)
+        self.assertIn(max(c[1] for c in cands), ys)
+
+    def test_a_short_list_is_untouched(self):
+        cands = [(True, 100.0, 0.0, 400.0, True), (True, 700.0, 0.0, 400.0, True)]
+        self.assertEqual(len(self._cap(cands)), 2)
+
+    def test_the_cap_stays_small(self):
+        cands = [(True, float(i), 0.0, 400.0, False) for i in range(80)]
+        self.assertLessEqual(len(self._cap(cands)), 18)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

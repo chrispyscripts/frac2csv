@@ -145,12 +145,30 @@ def _detect_frame(page):
     # 16 — which shrank 66 frames on 00004 to a third of their height. Ranking
     # the ink the old rule accepted ahead of the new keeps every such page on
     # exactly the frame it had.
-    hs = sorted((s for s in segs
-                 if s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.width),
-                key=lambda s: (not s[4], s[2] - s[3]))[:16]
-    vs = sorted((s for s in segs
-                 if not s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.height),
-                key=lambda s: (not s[4], s[2] - s[3]))[:16]
+    def _cap(cands):
+        """The 16 best, plus the two OUTERMOST — a frame's edges are the
+        extreme lines, and on a grid they are the same length as every
+        gridline, so "longest first" ranks them arbitrarily. On 00090 p65 all
+        21 qualifying horizontals were 492.3pt long and the real top edge
+        landed at index 18: the frame lost its top, came out 17% short, and
+        every zone time was placed against a 1125-minute window on a chart
+        whose axis reads 1350."""
+        cands = list(cands)
+        if not cands:
+            return []
+        keep = cands[:16]
+        for extreme in (min(cands, key=lambda s: s[1]),
+                        max(cands, key=lambda s: s[1])):
+            if extreme not in keep:
+                keep.append(extreme)
+        return keep
+
+    hs = _cap(sorted((s for s in segs
+                      if s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.width),
+                     key=lambda s: (not s[4], s[2] - s[3])))
+    vs = _cap(sorted((s for s in segs
+                      if not s[0] and s[3] - s[2] >= _FRAME_MIN_SIDE * box.height),
+                     key=lambda s: (not s[4], s[2] - s[3])))
     best = best_dark = None
     for i, (_h, ytop, *_r) in enumerate(hs):
         for j in range(i + 1, len(hs)):
