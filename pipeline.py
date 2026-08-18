@@ -597,7 +597,7 @@ def _calfrac_days(results, notes):
     """
     stages, order = {}, []
     for r in results:
-        if r.get("source") != "MView chart":
+        if r.get("source") != "CalFrac chart":
             continue
         md = r.get("meta", {})
         if md.get("multi_zone"):
@@ -1388,14 +1388,14 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     if _variant and pmeta.get("stage"):
                         pmeta["stage"] = f"{pmeta['stage']}{_variant}"
                     results.append(_series(pmeta, psamples, pdata,
-                                           "MView chart", pno + 1,
+                                           "CalFrac chart", pno + 1,
                                            geom=pgeom, scales=scales))
                 continue
             _mm = _md(meta)
             if _variant and _mm.get("stage"):
                 _mm["stage"] = f"{_mm['stage']}{_variant}"
             results.append(_series(_mm, samples, data,
-                                   "MView chart", pno + 1,
+                                   "CalFrac chart", pno + 1,
                                    geom=geom, scales=scales))
 
     # CalFrac/MView 2013-vintage: a stage's channels are split across several
@@ -1412,7 +1412,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
     last_stage, keep = None, []
     for r in results:
-        if r.get("source") != "MView chart":
+        if r.get("source") != "CalFrac chart":
             keep.append(r)
             continue
         if not r["data"]:                       # whole-job overview, no curves
@@ -1441,7 +1441,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # A zone the grid does not name is left BLANK rather than defaulted: this
     # is exactly where a wrong clock is worse than no clock. Documents with no
     # grid at all are left alone — there is nothing to say about them.
-    if any(r.get("source") == "MView chart" for r in results):
+    if any(r.get("source") == "CalFrac chart" for r in results):
         if _zone_clocks[0] is None:
             _zone_clocks[0] = calfrac_summary.zone_clock(doc)
         clocks = _zone_clocks[0]
@@ -1449,7 +1449,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             restamped, blanked = 0, []
             for r in results:
                 md = r.get("meta", {})
-                if r.get("source") != "MView chart" or \
+                if r.get("source") != "CalFrac chart" or \
                         md.get("zone_span") is not None or \
                         md.get("multi_zone"):
                     continue        # a split zone is already on the clock
@@ -1669,7 +1669,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # that already produced a table exactly as they were.
     _calfrac_legacy_doc = calfrac_legacy is not None and calfrac_legacy.detect(doc)
     _summary(calfrac_summary,
-             "MView chart" in chart_srcs or _calfrac_legacy_doc
+             "CalFrac chart" in chart_srcs or _calfrac_legacy_doc
              or calfrac_summary.detect(doc),
              "Treatment Summary", calfrac_summary.parse_treatment_summary)
 

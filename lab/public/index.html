@@ -1534,7 +1534,10 @@ const PROVIDERS = [
   [/\bSLB\b|schlumberger/i, "Schlumberger"],
   [/halliburton|IFS|treatment plot/i, "Halliburton"],
   [/liberty/i, "Liberty"], [/\bBJ\b/i, "BJ"], [/canyon/i, "Canyon"],
-  [/STEP/i, "STEP"], [/mview/i, "CalFrac"], [/trican/i, "Trican"],
+  // "CalFrac chart" is the source string now; /mview/ stays so a report or a
+  // saved session from before the rename still reads as CalFrac rather than
+  // falling through to Other.
+  [/STEP/i, "STEP"], [/calfrac|mview/i, "CalFrac"], [/trican/i, "Trican"],
   [/peloton|wellview/i, "Peloton"], [/fracr|\bSK\b/i, "SK / FracR"],
 ];
 function providerOf(source) {
@@ -1772,21 +1775,215 @@ function showAlert(entry, item) {
   box.hidden = false;
 }
 
+// ---------- "Our Terms": one curated table shape across every provider ----------
+// Carmine's field list. Every provider prints these under a different heading —
+// Liberty writes "Average pressure", Halliburton "Avg STP (MPa)", BJ
+// "Avg. Pressure (MPa)", the schedule parsers write "rate_avg_m3min" — so a
+// stack of extracted tables never lines up column-for-column. Each term below
+// names the headings it accepts and, just as importantly, the ones it must
+// refuse.
+//
+// Three traps this has to avoid, all of them seen in the real corpus:
+//   - "... Proposed" columns are the DESIGN, not what was pumped. A proposed
+//     tonnage landing in "Total Proppant Placed" would read as fact.
+//   - "10 Min Pressure (MPa)" is a shut-in reading taken at ten minutes, not a
+//     minimum. Any "Min" with a digit in front of it is a duration.
+//   - Pressure comes in kPa on Liberty summaries and MPa nearly everywhere
+//     else. Merging those into one column without converting puts values
+//     1000x apart under the same header. UNITS below converts and the view
+//     says so.
+const UNIT_CONV = {
+  kpa:   { to: "MPa",      f: 0.001 },
+  mpa:   { to: "MPa",      f: 1 },
+  psi:   { to: "MPa",      f: 0.00689476 },
+  kg:    { to: "tonne",    f: 0.001 },
+  t:     { to: "tonne",    f: 1 },
+  tonne: { to: "tonne",    f: 1 },
+};
+
+const OUR_TERMS = [
+  { key: "uwi", label: "UWI",
+    accept: /^\s*(uwi|well\s*id|well)\s*$/i },
+  { key: "stageno", label: "Stage Number",
+    accept: /^\s*(stage(\s*(no\.?|number|#))?|zone\s*#?|interval\s*#)\s*$/i },
+  { key: "stagelabel", label: "Stage Label",
+    accept: /^\s*(stage\s*label|interval\s*label|treatment\s*interval|interval|zones|perf\s*intervals?)\s*(\(.*\))?\s*$/i },
+  // date and time are separate columns on most sheets; join them.
+  { key: "datetime", label: "Date / Time", multi: true,
+    accept: /\b(date|job\s*date|start\s*time|start_time|event\s*time|time\s*on)\b/i,
+    reject: /\b(end|stop|down|pumping|total|shut|open)\b/i },
+  { key: "top", label: "Interval Top", unit: "m",
+    accept: /\b(interval\s*top|top\s*(depth|md)|perforation\s*top|top_depth_m|top\s*packer)\b/i,
+    reject: /proposed|length/i },
+  { key: "base", label: "Interval Base", unit: "m",
+    accept: /\b(interval\s*(base|bottom)|bottom\s*(depth|md)|perforation\s*bottom|bottom_depth_m|bottom\s*packer)\b/i,
+    reject: /proposed|length/i },
+  { key: "prop", label: "Total Proppant Placed", unit: "tonne",
+    accept: /\b(proppant\s*in\s*formation|in\s*formation\s*proppant|proppant_placed_t|total\s*sand\s*in\s*formation|prop(pant)?\s*mass|pumped\s*proppant\s*total|proppant_total_t|proppant_pumped_t|proppant_t|proppant\s*\((metric\s*)?tonne|proppant\s*\(t\))/i,
+    reject: /proposed|conc|wellbore|off\s*surface|size|type|\(m3\)|\(m³\)/i,
+    prefer: [/in\s*formation|placed/i] },
+  { key: "pavg", label: "Average Pressure", unit: "MPa",
+    accept: /\b(av(g|erage)\.?\s*(treat(ing|ment)\s*)?press(ure)?|avg\s*stp)\b/i,
+    reject: /proposed|annulus|conc|rate|gradient/i },
+  { key: "ravg", label: "Average Rate", unit: "m³/min",
+    accept: /(\bav(g|erage)\b[^)]{0,24}\brate\b|rates\s*—\s*avg|slurry\s*rate\s*average|rate_avg)/i,
+    reject: /proposed|billing/i,
+    prefer: [/slurry|clean|inj/i, /\bdh\b|down\s*hole/i] },
+  { key: "pmax", label: "Max Pressure", unit: "MPa",
+    accept: /\b(max(imum)?\.?\s*(treat(ing|ment)\s*)?press(ure)?|max\s*stp)\b/i,
+    reject: /proposed|annulus|conc|rate|gradient/i },
+  { key: "pmin", label: "Minimum Pressure", unit: "MPa",
+    accept: /\b(min(imum)?\.?\s*(treat(ing|ment)\s*)?press(ure)?)\b/i,
+    reject: /proposed|annulus|conc|rate|gradient|\d\s*min|shut/i },
+];
+
+// the unit a heading declares, from its trailing "(...)"
+function headUnit(name) {
+  const m = /\(([^)]*)\)\s*$/.exec(String(name || ""));
+  if (!m) return null;
+  return m[1].trim().toLowerCase().replace(/³/g, "3").replace(/\s+/g, "");
+}
+
+// how to get from the source column's unit to the term's unit, or null for
+// "same unit / nothing to do". Returns {f, from} when a conversion applies.
+function unitFactor(name, want) {
+  if (!want) return null;
+  const u = headUnit(name);
+  if (!u) return null;
+  const key = u.replace(/[^a-z]/g, "");
+  const conv = UNIT_CONV[key];
+  if (!conv || conv.to !== want || conv.f === 1) return null;
+  return { f: conv.f, from: u };
+}
+
+function scaleCell(v, f) {
+  if (v === null || v === undefined) return "";
+  const s = String(v).replace(/,/g, "").trim();
+  if (!s) return "";
+  const n = Number(s);
+  if (!isFinite(n)) return v;                 // text cell — leave it alone
+  const out = n * f;
+  return String(Math.round(out * 1e6) / 1e6);
+}
+
+// -> {columns, rows, map:[{label, from, note}], missing:[label]}
+function curateTable(t) {
+  const cols = t.columns || [];
+  const map = [], missing = [];
+  for (const term of OUR_TERMS) {
+    let hits = [];
+    cols.forEach((c, i) => {
+      const name = String(c || "");
+      if (!term.accept.test(name)) return;
+      if (term.reject && term.reject.test(name)) return;
+      hits.push(i);
+    });
+    if (!hits.length) { missing.push(term.label); continue; }
+    if (!term.multi) {
+      // rank by the term's preference list, then by first appearance
+      if (term.prefer) {
+        for (const pref of term.prefer) {
+          const p = hits.filter(i => pref.test(String(cols[i])));
+          if (p.length) { hits = p; break; }
+        }
+      }
+      hits = [hits[0]];
+    }
+    const parts = hits.map(i => {
+      const conv = unitFactor(cols[i], term.unit);
+      return { i, f: conv ? conv.f : 1, from: cols[i], conv };
+    });
+    map.push({
+      term, parts,
+      label: term.unit ? `${term.label} (${term.unit})` : term.label,
+    });
+  }
+  // A chemicals or QA sheet matches UWI and a stage label and nothing else —
+  // two identity columns and no readings. Curating that produces a grid with
+  // no data in it, which reads as a parse failure rather than as "this sheet
+  // holds none of the fields you asked for". Those fall back to the full view.
+  const MEASURED = new Set(["datetime", "top", "base", "prop",
+                            "pavg", "ravg", "pmax", "pmin"]);
+  const thin = !map.some(m => MEASURED.has(m.term.key));
+  const columns = map.map(m => m.label);
+  const rows = (t.rows || []).map(r =>
+    map.map(m => m.parts
+      .map(p => scaleCell(r[p.i], p.f))
+      .filter(v => v !== "")
+      .join(" ").trim()));
+  return { columns, rows, map, missing, thin };
+}
+
+let tableTerms = localStorage.getItem("f2c.tableTerms") || "ours";
+
 function showTable(entry, t) {
   setPreviewMode("table");
+  const E = v => String(v === null || v === undefined ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const cur = curateTable(t);
+  // A chemicals or proppant-inventory sheet carries none of Carmine's fields.
+  // Showing it as an empty grid would look like a parse failure, so those fall
+  // back to the full table and say why.
+  const ours = tableTerms === "ours" && cur.columns.length > 0 && !cur.thin;
+  const view = ours ? cur : t;
+  const fellBack = tableTerms === "ours" && !ours;
+
   $("pv-title").textContent = t.title;
-  $("pv-sub").textContent = `${t.rows.length} rows × ${t.columns.length} columns`;
+  $("pv-sub").textContent = ours
+    ? `${t.rows.length} rows · ${cur.columns.length} of ${OUR_TERMS.length} terms found`
+    : `${t.rows.length} rows × ${t.columns.length} columns`;
   clearGraph();
+
+  let legend = "";
+  if (ours) {
+    const conv = cur.map.filter(m => m.parts.some(p => p.conv));
+    const bits = cur.map.map(m =>
+      `<div><b>${E(m.label)}</b> ← ${m.parts.map(p =>
+        E(p.from) + (p.conv ? ` <i>×${p.f}</i>` : "")).join(" + ")}</div>`).join("");
+    legend =
+      `<div class="notes"><div style="margin-bottom:4px"><b>Mapped from this table's own headings</b></div>` +
+      bits +
+      (cur.missing.length
+        ? `<div style="margin-top:6px">Not on this table: ${E(cur.missing.join(", "))}</div>` : "") +
+      (conv.length
+        ? `<div style="margin-top:6px">⚠ Converted to a common unit — check the factors above.</div>` : "") +
+      `</div>`;
+  } else if (fellBack) {
+    legend = `<div class="notes">This sheet carries none of the Our Terms ` +
+             `readings, so it is shown in full.</div>`;
+  }
+
   $("pv-table").innerHTML =
-    `<table><tr>${t.columns.map(c => `<th>${c}</th>`).join("")}</tr>` +
-    t.rows.slice(0, 200).map(r => `<tr>${r.map(v => `<td>${v}</td>`).join("")}</tr>`).join("") +
+    `<table><tr>${view.columns.map(c => `<th>${E(c)}</th>`).join("")}</tr>` +
+    view.rows.slice(0, 200).map(r =>
+      `<tr>${view.columns.map((c, i) => `<td>${E(r[i])}</td>`).join("")}</tr>`).join("") +
     "</table>" +
-    (t.rows.length > 200 ? `<div class="notes">Showing 200 of ${t.rows.length} rows — the CSV has all.</div>` : "");
+    (view.rows.length > 200 ? `<div class="notes">Showing 200 of ${view.rows.length} rows — the CSV has all.</div>` : "") +
+    legend;
+
   const dl = $("pv-dl"); dl.innerHTML = "";
   const b = document.createElement("button"); b.className = "btn primary";
   b.textContent = "⬇ Export…";
   b.addEventListener("click", () => $("exportbtn").click());
   dl.appendChild(b);
+
+  // Our Terms / All Extracted. The curated view is what Carmine reads; the
+  // full one is what proves nothing was dropped, so both stay one click apart.
+  for (const [mode, label] of [["ours", "Our Terms"], ["all", "All Extracted"]]) {
+    const tb = document.createElement("button");
+    tb.className = "btn" + (tableTerms === mode ? " primary" : "");
+    tb.textContent = label;
+    tb.title = mode === "ours"
+      ? "Carmine's field list, mapped from whatever this provider called them"
+      : "Every column exactly as extracted, original headings and units";
+    tb.addEventListener("click", () => {
+      tableTerms = mode;
+      localStorage.setItem("f2c.tableTerms", mode);
+      showTable(entry, t);
+    });
+    dl.appendChild(tb);
+  }
+
   // The column chooser reachable from the tables themselves. It already lists
   // every table's columns, but it only opened from inside the Export panel —
   // so the place you decide a column is unwanted was three clicks from the
