@@ -707,14 +707,37 @@ fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); file
 // buries the hand-written reports that actually describe something, which is
 // the problem the "Report all empty" button was added to solve in the first
 // place. So empties collect for a few seconds and go as one.
+// Long enough to catch the tail of a run, not so long that a single dropped
+// file sits waiting. The timer alone was not enough: a 200MB report takes 90
+// seconds, so files in a batch finish MINUTES apart and each one filed its own
+// report anyway (#372-#375, one a minute). What actually marks the end of a
+// batch is the queue going idle, so that is the primary trigger and the timer
+// is only the backstop for a file dropped on its own.
+// What marks the end of a batch is the QUEUE going idle, not a stopwatch. A
+// 200MB report takes ninety seconds, so files in a run finish minutes apart:
+// a timer alone filed one report each anyway (#372-#375, one a minute). The
+// timer is now only for a file dropped on its own, when nothing else is
+// queued; while work is outstanding the report waits for it.
 const EMPTY_BATCH_WAIT = 4000;
 let emptyPending = [];
 let emptyTimer = null;
+let pendingWork = 0;          // files queued for extraction and not yet settled
+
+function workStarted() { pendingWork++; }
+function workFinished() {
+  pendingWork = Math.max(0, pendingWork - 1);
+  if (pendingWork === 0 && emptyPending.length) {
+    if (emptyTimer) clearTimeout(emptyTimer);
+    emptyTimer = setTimeout(flushEmptyReports, 400);
+  }
+}
 
 function queueEmptyReport(entry) {
   emptyPending.push(entry);
   if (emptyTimer) clearTimeout(emptyTimer);
-  emptyTimer = setTimeout(flushEmptyReports, EMPTY_BATCH_WAIT);
+  // only start the stopwatch when nothing else is coming
+  if (pendingWork === 0)
+    emptyTimer = setTimeout(flushEmptyReports, EMPTY_BATCH_WAIT);
 }
 
 function tagEntry(entry, txt, title) {
@@ -867,7 +890,10 @@ function enqueue(files) {
     if (n.endsWith(".txt")) { loadManifest(f); continue; }
     if (!n.endsWith(".pdf")) continue;
     const q = makeFileEntry(f.name);
-    busy = busy.then(() => handleFile(f, q)).catch(() => {});
+    workStarted();
+    busy = busy.then(() => handleFile(f, q))
+               .catch(() => {})
+               .finally(workFinished);
   }
 }
 
@@ -996,6 +1022,7 @@ $("mrun").addEventListener("click", async () => {
       const q = makeFileEntry(base);
       q.head.querySelector(".nm").title = row.path;
       q.path = row.path;
+      workStarted();
       busy = busy.then(async () => {
         if (!row.real) { q.set("✗ not found on this machine", "err"); return; }
         q.set("extracting"); q.progress(0.05);
@@ -1047,7 +1074,7 @@ $("mrun").addEventListener("click", async () => {
         // (and in the notes panel)
         if (q._outDir) q.head.querySelector(".st").title = "exports written to "
                                                           + q._outDir;
-      }).catch(e => q.set("✗ " + e.message, "err"));
+      }).catch(e => q.set("✗ " + e.message, "err")).finally(workFinished);
     }
     return;
   }

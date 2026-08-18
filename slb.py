@@ -601,7 +601,27 @@ def _classify(label):
     for key, col, kind in _NAMES:
         if key in low:
             return col, kind, mult
+    # Whole-word keys. _NAMES matches on substring, which is fine for the
+    # distinctive ones and dangerous here: "an pressure" is inside "MEAN
+    # PRESSURE", so the annulus trace has to be matched at word boundaries or
+    # it would claim any mean-pressure curve that came along.
+    for key, col, kind in _NAMES_WORD:
+        if re.search(r"\b" + re.escape(key) + r"\b", low):
+            return col, kind, mult
     return None
+
+
+# Its own column, not Tr Press. Carmine's alias table maps "Annulus Pressure"
+# onto Tr Press for Hal-2 and LEI-1, where that IS the treating measurement —
+# but an SLB PRC page prints Treating Pressure AND An Pressure side by side, so
+# folding them together would drop one of the two (#352: "curve(s) not named by
+# this template, left unextracted: An Pressure"). It arrives unaliased; if he
+# wants it under a name of his own that is one line in alias_table.txt.
+_NAMES_WORD = [
+    ("an pressure", "Annulus Press", "pressure"),
+    ("annulus pressure", "Annulus Press", "pressure"),
+    ("annulus press", "Annulus Press", "pressure"),
+]
 
 
 def _axis_multiplier(title, kind):
@@ -829,6 +849,24 @@ def _extract_core(page, sample_sec=1.0):
 
     start = timedelta(minutes=float(tmin_all) % 1440.0)
     meta = PageMeta()
+    # Geometry for the ghost overlay, on VECTOR pages too (#363). Only the
+    # rastered Zone Summary sheets carried it, so a vector PRC chart got no
+    # ghost at all — "we should be able to get the Ghost window / chart only
+    # window to size for the ghosting like we do for BJ". The Lab wants
+    # elapsed SECONDS = ta + tb * <mupdf page coord>, and which page axis
+    # carries time.
+    #
+    # The fitting above happens in canonical space, where a rotated page has
+    # been mapped (x, y) -> (-y, x) so time always runs along cx. Going back:
+    # unrotated, cx IS page x; rotated, cx = -page_y, so the time axis is page
+    # y and the slope changes sign. Values run along cy either way, and the
+    # frame's cy extent is already the page coordinate the Lab wants for the
+    # other axis.
+    _t0 = 60.0 * (ta - float(tmin_all))          # minutes -> elapsed seconds
+    _tb = 60.0 * tb
+    meta.geom = {"axis": "y" if rot else "x",
+                 "ta": float(_t0), "tb": float(-_tb if rot else _tb),
+                 "v0": float(frame[1]), "v1": float(frame[3])}
     meta.stage = page_stage(page) or ""
     meta.start_time = str(start).split(".")[0].rjust(8, "0")
     meta.duration_min = float(tmax_all - tmin_all)
