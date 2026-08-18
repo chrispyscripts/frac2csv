@@ -648,6 +648,16 @@ class BjWellIdForms(unittest.TestCase):
         line = "200/C-022-C-094-G-01 - Well D - Stage 14"
         self.assertTrue(bj1._WELL_ID.search(line))
 
+    def test_the_separator_is_a_slash_or_a_hyphen(self):
+        # 00633 titles its charts "100-12-27-079-16W6 - Well D - Stage 03",
+        # which matched nothing: its 10 chart pages read as an empty file with
+        # no failure note, because detect never fired (#319)
+        self.assertTrue(bj1._WELL_ID.search("100-12-27-079-16W6"))
+        self.assertTrue(bj1._WELL_ID.search("200-C-022-C-094-G-01"))
+
+    def test_a_plain_date_is_not_a_well_id(self):
+        self.assertIsNone(bj1._WELL_ID.search("2025-01-18"))
+
 
 class WhyNothingCameOut(unittest.TestCase):
     """"No extractable charts or tables found" is true of a scanned daily
@@ -694,6 +704,39 @@ class WhyNothingCameOut(unittest.TestCase):
         pages = [self._Page(text="x", curves=True) for _ in range(20)]
         self.assertTrue(self._note(pages).startswith(
             "No extractable charts or tables found in 20 pages"))
+
+
+class BjLegendAxisSide(unittest.TestCase):
+    """#319-#329. The 2022 filings append the axis SIDE to each legend label —
+    "CMB SLR Rate (m3/min) (left)", "WH Press (MPa) (outer l.)" — while the
+    axis is titled without it. The matcher asks whether the legend name sits
+    INSIDE the axis name, and the qualifier makes it longer, so no curve found
+    an axis and the page raised "no curves matched" with 3,677 items of blue
+    ink on it. 01359: 47 treatment pages, 0 series -> 94.
+    """
+
+    SIDE = re.compile(r"\s*\((?:left|right|outer|inner)[^)]*\)\s*$", re.I)
+
+    def _strip(self, name):
+        return self.SIDE.sub("", re.sub(r"\s+", " ", name)).strip()
+
+    def test_the_side_comes_off(self):
+        for raw, want in [("CMB SLR Rate (m3/min) (left)", "CMB SLR Rate (m3/min)"),
+                          ("WH Press (MPa) (outer l.)", "WH Press (MPa)"),
+                          ("Density at Perfs (kg/m3) (right)",
+                           "Density at Perfs (kg/m3)")]:
+            self.assertEqual(self._strip(raw), want)
+
+    def test_the_unit_survives(self):
+        # the unit is what tells two curves on one axis apart, so it must NOT
+        # be stripped along with the side
+        self.assertIn("(m3/min)", self._strip("CMB SLR Rate (m3/min) (left)"))
+
+    def test_a_label_with_no_side_is_untouched(self):
+        self.assertEqual(self._strip("WH Press (MPa)"), "WH Press (MPa)")
+
+    def test_only_a_trailing_side_is_stripped(self):
+        self.assertEqual(self._strip("Rate (left) (MPa)"), "Rate (left) (MPa)")
 
 
 if __name__ == "__main__":

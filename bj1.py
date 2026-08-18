@@ -28,8 +28,12 @@ TIME_RE = re.compile(r"([A-Z][a-z]{2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 # filing, so 35 chart pages read as nothing and the file came back tables-only
 # (#371, "there are charts stages for these BJ that are only reporting
 # tables"). "Stage" and a time label still have to be on the page too.
-_WELL_ID = re.compile(r"\d{3}/\d{2}-\d{2}-\d{3}-\d{2}W\d"
-                      r"|\d{3}/[A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
+# ...and the separator after the licence prefix is a slash on some filings and
+# a HYPHEN on others: 00633 titles its charts "100-12-27-079-16W6 - Well D -
+# Stage 03 Plug Wash" and matched nothing, so its 10 chart pages read as an
+# empty file with no failure note at all — detect simply never fired.
+_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{3}-\d{2}W\d"
+                      r"|\d{3}[-/][A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
 
 
 def detect(page):
@@ -110,7 +114,7 @@ def extract_page(page, sample_sec=1.0):
     text = page.get_text()
 
     meta = PageMeta()
-    m = re.search(r"(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)"
+    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)"
                   r".*?Stage\s*(\d+)", text, re.S)
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups()[:6])
@@ -121,7 +125,7 @@ def extract_page(page, sample_sec=1.0):
         # stage "?" even once detect let them through (#371). The UWI is the
         # id with its separators dropped, which is the same shape the DLS
         # branch above builds and what canon_uwi would make of it anyway.
-        mn = re.search(r"(\d{3})/([A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2})"
+        mn = re.search(r"(\d{3})[-/]([A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2})"
                        r".*?Stage\s*(\d+)", text, re.S)
         if mn:
             meta.uwi = mn.group(1) + re.sub(r"-", "", mn.group(2)) + "00"
@@ -299,7 +303,17 @@ def extract_page(page, sample_sec=1.0):
 
     # match each legend name to the axis whose name span mentions it
     def name_axis(name):
+        # The 2022 filings append the axis SIDE to the legend label — "CMB SLR
+        # Rate (m3/min) (left)", "WH Press (MPa) (outer l.)" — while the axis
+        # itself is titled without it. The test below asks whether the legend
+        # name sits inside the axis name, and the qualifier makes it longer, so
+        # every treatment curve on 01359 and 00633 failed to find an axis and
+        # the page raised "no curves matched" with the ink sitting right there
+        # (#319-#329: 47 treatment pages in one file). Strip the side, keep the
+        # unit — the unit is what distinguishes two curves on one axis.
         base = re.sub(r"\s+", " ", name)
+        base = re.sub(r"\s*\((?:left|right|outer|inner)[^)]*\)\s*$", "",
+                      base, flags=re.I).strip()
         for ax_text, key in axis_names.items():
             if base in re.sub(r"\s+", " ", ax_text):
                 return key
