@@ -38,6 +38,79 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.1.0</h2>
+    <ul>
+      <li><b>Halliburton IFS reports now give you their tables</b> (report
+        #330). These files showed their charts and no tables at all. The
+        reader looked for Halliburton&rsquo;s own IFS marker in the first 40
+        pages of a report and gave up; on 00056 that marker is on 129 of the
+        180 pages but the first one is page 52, so it was there in bulk and
+        never seen. Because the charts are found a different way they kept
+        working, which is why this looked like missing tables rather than a
+        file that failed. 00056 now gives a 244-row Stage Summary and a 24-row
+        Treatment Summary. The same 80-page limit in the Hal-1 reader is gone
+        as well</li>
+      <li><b>Every table in a file now reaches your CSVs. Until now most of
+        them did not.</b> A Halliburton file that parses 14 tables was showing
+        all 14 on screen, counting all 14 in &ldquo;files ready&rdquo;, and
+        writing ONE — the rest were read correctly and thrown away on the way
+        out, with nothing saying so. Please re-export any Halliburton or
+        Schlumberger well you exported before this build; the tables you were
+        missing were never in the files</li>
+      <li><b>Table CSVs are named after the table.</b> They used to be numbered
+        by position — <span class="mono">-stages-table-13.csv</span> — and the
+        position moves between wells: on one Halliburton well number 13 is
+        Cluster Data, and on the next well, which prints no Cluster Data, the
+        same filename holds Stage Description. Anyone opening &ldquo;table
+        13&rdquo; from a folder of wells was combining different tables without
+        being told. Now it is
+        <span class="mono">&lt;well&gt;-cluster-data-hal-1.csv</span>, so a well
+        that does not print a table simply has no file for it.
+        <b>If you have anything set up that reads the old numbered filenames,
+        it will need pointing at the new names.</b></li>
+      <li><b>Canyon: the day-overview charts no longer merge into a stage.</b>
+        Canyon prints a plot per pumping day covering several stages, after the
+        per-stage charts. Those were being read as extra copies of stages 1, 7,
+        15 and 22 — 7 and 8 hours long against a 68-minute stage — and the app
+        drew them on top of the real stage, so stage 1 appeared on a 7-hour
+        axis with the actual treatment squeezed into the left fifth. The page
+        says which it is in its own Interval field: a real chart names a depth
+        (&ldquo;#1 - 3689.04m&rdquo;), an overview names a range of stages
+        (&ldquo;#1 - 6&rdquo;). Overviews are now left out and the reason is
+        printed in the file&rsquo;s notes. On 00011 that is 29 stages with four
+        duplicates down to a clean 25</li>
+      <li><b>Where is the schedule.</b> Tables are now grouped by what they
+        ARE — <b>Schedules</b> first, then Summaries, then Logs, then
+        everything else — so on a report that parses a dozen tables the pumped
+        schedule is the first row instead of somewhere in the list. Schedules
+        currently come from Halliburton IFS; Liberty&rsquo;s
+        <i>Job Design</i> and Halliburton Hal-1&rsquo;s
+        <i>Actual Design</i> are not read yet, so those wells will show an
+        empty Schedules group for now</li>
+      <li><b>Extracted tables now sit ABOVE the scanned report pages</b> in the
+        Summary list, under a <i>Source pages</i> heading, instead of below
+        them. On a report printing a dozen summary sheets the extracted data
+        was off the bottom of the list</li>
+      <li><b>A Columns… button on the tables view.</b> Choosing which columns
+        your CSVs carry only opened from inside the Export menu; it is now
+        beside the table you are actually looking at, and on the pop-out tables
+        window</li>
+      <li><b>Liberty summary sheets show up on far more wells.</b> They were
+        only looked for when a Liberty chart had already been read, so a well
+        whose plots did not come out showed no summary sheets either — even
+        though those sheets are plain text sitting right there. The 2025-style
+        Liberty reports were also unrecognised: they print <i>Time Log</i>,
+        <i>24 Hour Summary</i> and <i>Completion Field Report</i> where the
+        older ones print <i>Stimulation Summary</i>. Across an 18-file check,
+        summary sheets found went from 60 to 152</li>
+      <li><b>The app now tells you on the chart when an earlier export of that
+        well is wrong.</b> The v1.0.0 correction to Hydr Pressure and PFR-ZC FR
+        CONC affects CSVs you already have. Opening an affected well now shows
+        a notice naming the channel, both on the chart and on the file, so it
+        cannot be missed by not reading these notes. It also says plainly that
+        the error is not a constant factor, so an old export cannot be fixed by
+        multiplying — re-export it</li>
+    </ul>
     <h2>v1.0.0</h2>
     <ul>
       <li><b>Trican POST-FRAC SUMMARY reports now carry a date and a start
