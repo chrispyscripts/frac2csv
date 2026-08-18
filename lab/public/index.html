@@ -191,6 +191,9 @@
             border-radius:5px; padding:3px 7px; cursor:pointer; }
   .rptbtn:hover:not(:disabled) { color:var(--carmine); border-color:var(--carmine); }
   .rptbtn:disabled { opacity:.45; cursor:default; }
+  /* outcome of the automatic report, on the file's own status line */
+  .rpttail { color:var(--mut); font-weight:400; text-transform:none;
+             letter-spacing:0; }
   .filehead .st.ok { color:var(--ok); } .filehead .st.err { color:var(--carmine); }
   .filehead .del { flex-shrink:0; border:none; background:none; cursor:pointer;
                    color:var(--mut); font-size:15px; line-height:1; padding:2px 4px;
@@ -695,6 +698,70 @@ fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); file
   if (dragging(e) && !leftcol.contains(e.target)) e.preventDefault();
 }));
 
+// Send the "this file produced nothing" report without being asked. The
+// outcome is appended to the file's own status line rather than shown on a
+// button, because the button is no longer about reporting — and a send that
+// quietly failed would leave the user believing it went.
+async function sendEmptyReport(entry) {
+  const st = entry.head.querySelector(".st");
+  const tail = txt => { const n = document.createElement("span");
+                        n.className = "rpttail"; n.textContent = " · " + txt;
+                        st.appendChild(n); };
+  try {
+    const r = await fetch(FLAG_ENDPOINT, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "No extractable data — " + entry.name,
+        reporter: "user (auto)",
+        diagnostics: {
+          version: (localInfo && localInfo.version) || "web",
+          build: localInfo && localInfo.local ? "desktop" : "web",
+          file: entry.name, provider: entry.provider || "unknown",
+          platform: navigator.platform, userAgent: navigator.userAgent,
+          notes: entry.notes || [],
+        },
+      }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
+    tail(out.number ? "reported #" + out.number : "reported");
+  } catch (err) {
+    tail("report not sent");
+    st.title = "Could not send: " + err.message;
+  }
+}
+
+// Show the whole source PDF for a file that parsed nothing. There is no item
+// list to select from — that is what "produced nothing" means — so this builds
+// a group over every page and hands it to the same viewer the summary sheets
+// use, page nav and all.
+async function showWholePdf(entry) {
+  document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
+  entry.head.classList.add("sel");
+  $("stages").innerHTML = "";
+  $("viewtoggle").hidden = true;
+  $("empty").hidden = true;
+  $("previewpane").hidden = false;
+  setPreviewMode("summary");
+  $("pv-title").textContent = entry.name;
+  $("pv-sub").textContent = "loading the PDF…";
+  $("pv-dl").innerHTML = ""; $("pv-table").innerHTML = "";
+  $("pv-notes").textContent = (entry.notes || []).join("\n");
+  try {
+    const doc = await ensureSumPdf(entry);
+    const item = { type: "summary", key: "sum", pageIdx: 0,
+                   group: { title: entry.name, kind: "wholepdf",
+                            pages: Array.from({ length: doc.numPages },
+                                              (_, i) => i + 1) } };
+    current = { entry, well: null, item };
+    showSummary(entry, item);
+    $("pv-sub").textContent =
+      `${doc.numPages} page${doc.numPages > 1 ? "s" : ""}  ·  `
+      + "source PDF — nothing was extracted from this file";
+  } catch (err) {
+    $("pv-sub").textContent = "could not open the PDF — " + err.message;
+  }
+}
+
 function makeFileEntry(name) {
   const el = document.createElement("div"); el.className = "fileitem";
   const head = document.createElement("div"); head.className = "filehead";
@@ -715,43 +782,20 @@ function makeFileEntry(name) {
       st.className = "st" + (cls ? " " + cls : "");
       if (cls) entry.progress(1, cls);          // finished, one way or another
     },
-    // A file that produced nothing is worth reporting, and the extraction
-    // notes already say why — so this sends straight off one click instead of
-    // asking the user to describe what they cannot see.
+    // A file that produced nothing reports ITSELF. The notes already say why,
+    // so there was never anything for the user to add — and a button that has
+    // to be noticed and clicked means the report only arrives when someone is
+    // watching the list. What the user actually wants next is to LOOK at the
+    // file, so that is what the button does now.
     offerReport() {
       if (head.querySelector(".rptbtn")) return;
       const b = document.createElement("button");
       b.className = "rptbtn";
-      b.textContent = "Report";
-      b.title = "Send this file's name and extraction notes for a look";
-      b.addEventListener("click", async ev => {
-        ev.stopPropagation();
-        b.disabled = true; b.textContent = "Sending…";
-        try {
-          const r = await fetch(FLAG_ENDPOINT, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              description: "No extractable data — " + name,
-              reporter: "user (auto)",
-              diagnostics: {
-                version: (localInfo && localInfo.version) || "web",
-                build: localInfo && localInfo.local ? "desktop" : "web",
-                file: name, provider: entry.provider || "unknown",
-                platform: navigator.platform, userAgent: navigator.userAgent,
-                notes: entry.notes || [],
-              },
-            }) });
-          const out = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
-          b.textContent = "Reported";
-          if (out.number) b.title = "sent as report #" + out.number;
-        } catch (err) {
-          b.disabled = false;               // let them try again
-          b.textContent = "Report";
-          b.title = "Could not send: " + err.message;
-        }
-      });
+      b.textContent = "Show PDF";
+      b.title = "Open this file's pages in the viewer";
+      b.addEventListener("click", ev => { ev.stopPropagation(); showWholePdf(entry); });
       head.insertBefore(b, head.querySelector(".del"));
+      sendEmptyReport(entry);
     },
     // frac 0..1, or null to park the bar. Each file owns its own bar, so a
     // queue shows every report's position at once.
@@ -1577,8 +1621,12 @@ function showStage(entry, well, item) {
   }
   setGraph(item.channels, item.n, item.sample_sec, item.meta);
   orig.pageIdx = 0;
-  orig.fullPage = false;      // each stage opens on its own chart region
-  resetPageView(); orig.page.key = "";   // and never on the last one's zoom
+  // Full page STAYS ON across stages. It used to reset on every stage change,
+  // so checking the same thing on stage after stage meant clicking it back on
+  // each time — and the button is the only way to turn it off, which makes it
+  // a mode the user chose, not a per-stage default. The ZOOM inside that mode
+  // is still reset, because a pan/zoom belongs to the sheet it was made on.
+  resetPageView(); orig.page.key = "";   // never on the last stage's zoom
   if (applyCompareSize()) redrawGraph();
   updateOrigBar();
   scheduleOrigSync();
