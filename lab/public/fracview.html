@@ -75,8 +75,10 @@
         <option value="spectrum">Spectrum</option>
         <option value="mono">Mono</option>
         <option value="contrast">High contrast</option>
+        <option value="rainbow">Rainbow</option>
       </select>
     </span>
+    <button type="button" class="btn" id="adjust" title="Drag the boundary between two stages to move where one ends and the next begins">Adjust</button>
     <button type="button" class="btn" id="trim" title="Drag across the chart to cut a span out of the data">Trim</button>
     <button type="button" class="btn" id="undo" title="Undo the last edit">Undo</button>
     <button type="button" class="btn" id="reset" title="Throw away every edit and go back to what was extracted">Reset</button>
@@ -88,12 +90,15 @@
   <canvas id="cv" height="560"></canvas>
   <div class="hint">
     <b>Scroll</b> to zoom, <b>drag</b> to pan — same as the Lab's graph.
-    <b>Drag a boundary</b> (the vertical line between two stages) to move where one
-    stage ends and the next begins. <b>Double-click</b> inside a stage to split it
+    <b>Click a stage</b> to highlight it here and bring the Lab's graph and the
+    stacked window to the same one. <b>Double-click</b> inside a stage to split it
     there — a stage labelled as a range like <kbd>1-30</kbd> numbers its pieces
-    <kbd>1</kbd>…<kbd>30</kbd> as you split it. <b>Trim</b> mode drags out a span to
-    cut; click a cut span to put it back. Every edit lands on the Lab's graphs and
-    on the exported CSV.
+    <kbd>1</kbd>…<kbd>30</kbd> as you split it.
+    <b>Adjust</b> mode drags the boundary between two stages to move where one ends
+    and the next begins. <b>Trim</b> mode drags out a span to cut — grey while you
+    are dragging, and once it lands you can still drag either edge to fine-tune;
+    click inside a cut to put it back. Every edit lands on the Lab's graphs and on
+    the exported CSV.
   </div>
 </div>
 
@@ -115,7 +120,9 @@ let well = null;             // {file, uwi, stages:[{key,label,t0,dsec,n,channel
 let edits = null;            // {bounds:[ms...], labels:[...], cuts:[{a,b}]}
 let undoStack = [];
 let view = { a: 0, b: 1 };   // visible absolute span, ms
-let trimMode = false;
+let mode = "";               // "" | "adjust" | "trim"
+let selIdx = -1;             // the stage highlighted here and on the Lab
+let justDragged = false;     // so the click that ends a drag is not also acted on
 let scheme = "alt";
 let hover = null;            // {x, t}
 let drag = null;             // {kind:"pan"|"bound"|"cut", ...}
@@ -182,21 +189,29 @@ function pushUndo() {
 }
 
 // ---------- colours ----------
+function stageHue(i) { return (i * 360 / Math.max(1, nStages())) % 360; }
 function bandFill(i) {
   if (scheme === "mono") return i % 2 ? "#f3f4f6" : "#fafafa";
   if (scheme === "contrast") return i % 2 ? "#e8edf5" : "#fdf4e3";
-  if (scheme === "spectrum") {
-    const h = (i * 360 / Math.max(1, nStages())) % 360;
-    return `hsl(${h.toFixed(0)} 62% 95%)`;
-  }
+  if (scheme === "spectrum") return `hsl(${stageHue(i).toFixed(0)} 62% 95%)`;
+  // Rainbow puts the colour on the CURVES, so the band behind them stays
+  // near-white — tinting both would leave the ink competing with its backdrop.
+  if (scheme === "rainbow") return `hsl(${stageHue(i).toFixed(0)} 60% 98%)`;
   return i % 2 ? "#f6f7f9" : "#ffffff";     // alternating, the default
 }
 function bandEdge(i) {
-  if (scheme === "spectrum") {
-    const h = (i * 360 / Math.max(1, nStages())) % 360;
-    return `hsl(${h.toFixed(0)} 55% 62%)`;
-  }
+  if (scheme === "spectrum" || scheme === "rainbow")
+    return `hsl(${stageHue(i).toFixed(0)} 55% 62%)`;
   return "#c9ced6";
+}
+// In every scheme but Rainbow a channel keeps one colour the length of the
+// well, so a curve can be followed across a boundary. Rainbow trades that for
+// the other reading: which stage a piece of ink belongs to, at a glance.
+function curveColor(name, ni, si) {
+  if (scheme !== "rainbow")
+    return CH_COLORS[name] || FALLBACK[ni % FALLBACK.length];
+  const l = [34, 50, 64][ni % 3];       // channels stay apart inside one stage
+  return `hsl(${stageHue(si).toFixed(0)} 74% ${l}%)`;
 }
 
 // ---------- drawing ----------
@@ -253,6 +268,12 @@ function draw() {
     if (x1 <= PAD.l || x0 >= w - PAD.r) continue;
     ctx.fillStyle = bandFill(i);
     ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+    if (i === selIdx) {                 // the stage the Lab is showing
+      ctx.fillStyle = "rgba(163,22,49,0.07)";
+      ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+      ctx.strokeStyle = "rgba(163,22,49,0.5)"; ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0 + 0.75, PAD.t + 0.75, x1 - x0 - 1.5, plotH - 1.5);
+    }
     if (x1 - x0 > 26) {
       ctx.fillStyle = "#697077"; ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
       ctx.save();
@@ -264,6 +285,7 @@ function draw() {
 
   // cuts, over the bands and under the ink
   for (const c of edits.cuts) {
+    void 0;
     const x0 = Math.max(PAD.l, X(c.a, w)), x1 = Math.min(w - PAD.r, X(c.b, w));
     if (x1 <= x0) continue;
     ctx.fillStyle = "rgba(163,22,49,0.13)";
@@ -275,6 +297,30 @@ function draw() {
       ctx.lineTo(Math.min(x1, x + plotH), PAD.t + Math.min(plotH, plotH - Math.max(0, (x + plotH) - x1)));
     }
     ctx.stroke();
+    if (mode === "trim") {              // the edges are draggable in trim mode
+      ctx.fillStyle = "#a31631";
+      for (const x of [x0, x1]) ctx.fillRect(x - 2.5, PAD.t + plotH / 2 - 9, 5, 18);
+    }
+  }
+
+  // the span being dragged out right now — grey, because it is not an edit yet
+  if (drag && drag.kind === "cut") {
+    const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b);
+    const x0 = Math.max(PAD.l, X(a, w)), x1 = Math.min(w - PAD.r, X(b, w));
+    if (x1 > x0) {
+      ctx.fillStyle = "rgba(105,112,119,0.22)";
+      ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+      ctx.strokeStyle = "rgba(105,112,119,0.7)"; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x0 + 0.5, PAD.t + 0.5, x1 - x0 - 1, plotH - 1);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#14181d";
+      ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+      ctx.textAlign = "center";
+      const secs = Math.round((b - a) / 1000);
+      if (x1 - x0 > 46) ctx.fillText(`${secs}s`, (x0 + x1) / 2, PAD.t + plotH / 2);
+      ctx.textAlign = "left";
+    }
   }
 
   // frame
@@ -289,7 +335,6 @@ function draw() {
   for (let ni = 0; ni < names.length; ni++) {
     const name = names[ni];
     const mx = MAXES.get(name) || 1;
-    ctx.strokeStyle = CH_COLORS[name] || FALLBACK[ni % FALLBACK.length];
     ctx.lineWidth = 1.25;
     for (const st of well.stages) {
       const ch = st.channels.find(c => c.name === name);
@@ -300,10 +345,24 @@ function draw() {
       const j1 = Math.min(ch.values.length - 1, Math.ceil((view.b - st.t0) / step) + 1);
       if (j1 <= j0) continue;
       const stride = Math.max(1, Math.floor((j1 - j0) / Math.max(1, plotW * 2)));
+      // `si` walks forward with t instead of being searched for per sample —
+      // at 30 stages and a few thousand plotted points the search version was
+      // the most expensive thing in the frame.
+      let si = 0;
+      while (si + 1 < nStages() && st.t0 + j0 * step >= edits.bounds[si + 1]) si++;
+      ctx.strokeStyle = curveColor(name, ni, si);
       ctx.beginPath();
       let pen = false;
       for (let j = j0; j <= j1; j += stride) {
         const t = st.t0 + j * step;
+        while (si + 1 < nStages() && t >= edits.bounds[si + 1]) {
+          si++;
+          if (scheme === "rainbow") {    // close the run, restart in the new hue
+            if (pen) ctx.stroke();
+            ctx.beginPath(); ctx.strokeStyle = curveColor(name, ni, si);
+            pen = false;
+          }
+        }
         const v = ch.values[j];
         // a cut span is drawn as a gap, so what you see is what exports
         if (!isFinite(v) || inCut(t)) { pen = false; continue; }
@@ -320,13 +379,13 @@ function draw() {
     const x = X(edits.bounds[i], w);
     if (x < PAD.l - 2 || x > w - PAD.r + 2) continue;
     const isEnd = i === 0 || i === edits.bounds.length - 1;
-    const near = hover && Math.abs(hover.x - x) < 9 && !trimMode;
+    const near = hover && Math.abs(hover.x - x) < 9 && mode === "adjust";
     ctx.strokeStyle = near ? "#a31631" : (isEnd ? "#9aa1aa" : bandEdge(i));
     ctx.lineWidth = near ? 2.5 : 1.5;
     ctx.setLineDash(isEnd ? [3, 3] : []);
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     ctx.setLineDash([]);
-    if (!isEnd) {                       // grab handle
+    if (!isEnd && mode === "adjust") {   // grab handle, only when it grabs
       ctx.fillStyle = near ? "#a31631" : bandEdge(i);
       ctx.fillRect(x - 3, PAD.t + plotH / 2 - 9, 6, 18);
     }
@@ -355,7 +414,7 @@ function draw() {
   ctx.fillRect(w - PAD.r - kw - 4, PAD.t + 2, kw, names.length * 14 + 4);
   let ky = PAD.t + 12;
   for (let ni = 0; ni < names.length; ni++) {
-    ctx.fillStyle = CH_COLORS[names[ni]] || FALLBACK[ni % FALLBACK.length];
+    ctx.fillStyle = curveColor(names[ni], ni, Math.max(0, selIdx));
     ctx.fillText(names[ni], w - PAD.r - 6, ky);
     ky += 14;
   }
@@ -506,6 +565,7 @@ window.addEventListener("message", ev => {
     (d.uwi ? `  ·  ${d.uwi}` : "");
   fillJump();
   $("span").value = "all";
+  selIdx = -1;
   viewAll();
   markDirty();
 });
@@ -517,9 +577,43 @@ function pos(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width };
 }
 function boundNear(x, w) {
+  if (mode !== "adjust") return -1;
   for (let i = 1; i < edits.bounds.length - 1; i++)
     if (Math.abs(X(edits.bounds[i], w) - x) < 9) return i;
   return -1;
+}
+// Which committed cut edge is under the cursor. Trim used to be a one-shot —
+// drag it out and the only correction was to delete it and drag again — so a
+// span that wanted moving by two seconds meant redoing the whole gesture.
+function cutEdgeNear(x, w) {
+  if (mode !== "trim") return null;
+  for (let i = 0; i < edits.cuts.length; i++) {
+    if (Math.abs(X(edits.cuts[i].a, w) - x) < 9) return { i, side: "a" };
+    if (Math.abs(X(edits.cuts[i].b, w) - x) < 9) return { i, side: "b" };
+  }
+  return null;
+}
+function setMode(m) {
+  mode = (mode === m) ? "" : m;
+  $("adjust").classList.toggle("on", mode === "adjust");
+  $("trim").classList.toggle("on", mode === "trim");
+  cv.style.cursor = mode === "trim" ? "crosshair" : "grab";
+  draw();
+}
+
+// Tell the Lab which stage is being looked at, so its graph and the stacked
+// window land on the same one. Sent by label, not by index: a split has
+// already renumbered the stages here and the Lab matches on what it prints.
+function selectStage(i) {
+  if (i < 0 || i >= nStages()) return;
+  selIdx = i;
+  $("jump").value = String(i);
+  draw();
+  if (!window.opener || window.opener.closed || !well) return;
+  try {
+    window.opener.postMessage({ type: "fv:select", file: well.file,
+                                index: i, label: String(edits.labels[i] || "") }, "*");
+  } catch (e) { /* the Lab went away */ }
 }
 
 cv.addEventListener("wheel", e => {
@@ -527,18 +621,19 @@ cv.addEventListener("wheel", e => {
   e.preventDefault();
   const p = pos(e), t = T(p.x, p.w);
   const f = Math.pow(1.0016, e.deltaY);           // wheel up = closer
-  const a = t - (t - view.a) * f, b = t + (view.b - t) * f;
-  setView(a, b);
+  setView(t - (t - view.a) * f, t + (view.b - t) * f);
   $("span").value = "";
 }, { passive: false });
 
 cv.addEventListener("mousedown", e => {
   if (!well) return;
   const p = pos(e), t = T(p.x, p.w);
-  if (trimMode) { pushUndo(); drag = { kind: "cut", a: t, b: t }; return; }
+  const edge = cutEdgeNear(p.x, p.w);
+  if (edge) { pushUndo(); drag = { kind: "cutedge", ...edge, moved: false }; return; }
+  if (mode === "trim") { pushUndo(); drag = { kind: "cut", a: t, b: t }; return; }
   const bi = boundNear(p.x, p.w);
-  if (bi > 0) { pushUndo(); drag = { kind: "bound", i: bi }; return; }
-  drag = { kind: "pan", x: p.x, a: view.a, b: view.b };
+  if (bi > 0) { pushUndo(); drag = { kind: "bound", i: bi, moved: false }; return; }
+  drag = { kind: "pan", x: p.x, a: view.a, b: view.b, moved: false, down: p.x };
 });
 
 window.addEventListener("mousemove", e => {
@@ -546,50 +641,63 @@ window.addEventListener("mousemove", e => {
   const p = pos(e);
   hover = { x: p.x, t: T(p.x, p.w) };
   if (!drag) {
-    cv.style.cursor = trimMode ? "crosshair"
-      : (boundNear(p.x, p.w) > 0 ? "col-resize" : "grab");
+    cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
+      : mode === "trim" ? "crosshair"
+      : boundNear(p.x, p.w) > 0 ? "col-resize" : "grab";
     draw(); return;
   }
   if (drag.kind === "pan") {
+    if (Math.abs(p.x - drag.down) > 3) drag.moved = true;
     const dt = (drag.x - p.x) / (p.w - PAD.l - PAD.r) * (drag.b - drag.a);
     view.a = drag.a + dt; view.b = drag.b + dt;
   } else if (drag.kind === "bound") {
     // a boundary may not pass its neighbours — that would invert a stage
     const lo = edits.bounds[drag.i - 1] + 1000, hi = edits.bounds[drag.i + 1] - 1000;
     edits.bounds[drag.i] = Math.max(lo, Math.min(hi, T(p.x, p.w)));
+    drag.moved = true;
   } else if (drag.kind === "cut") {
     drag.b = T(p.x, p.w);
+  } else if (drag.kind === "cutedge") {
+    const c = edits.cuts[drag.i];
+    const t = T(p.x, p.w);
+    if (drag.side === "a") c.a = Math.min(t, c.b - 500);
+    else c.b = Math.max(t, c.a + 500);
+    drag.moved = true;
   }
   draw();
 });
 
 window.addEventListener("mouseup", () => {
   if (!drag) return;
-  if (drag.kind === "cut") {
-    const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b);
-    if (b - a > 1500) edits.cuts.push({ a, b });
-    else undoStack.pop();                 // a click, not a drag — no edit made
+  const d = drag; drag = null;
+  if (d.kind === "cut") {
+    const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
+    if (b - a > 1500) { edits.cuts.push({ a, b }); justDragged = true; markDirty(); }
+    else undoStack.pop();               // a click, not a drag — no edit made
+  } else if (d.kind === "bound" || d.kind === "cutedge") {
+    if (d.moved) { justDragged = true; markDirty(); } else undoStack.pop();
+  } else if (d.kind === "pan" && d.moved) {
+    justDragged = true;
   }
-  if (drag.kind === "bound" || drag.kind === "cut") markDirty();
-  drag = null;
   draw();
 });
 
-cv.addEventListener("dblclick", e => {
+cv.addEventListener("click", e => {
   if (!well) return;
+  if (justDragged) { justDragged = false; return; }
   const p = pos(e), t = T(p.x, p.w);
-  if (trimMode) {                          // click a cut to put it back
+  if (mode === "trim") {                 // click inside a cut puts it back
     const i = edits.cuts.findIndex(c => t >= c.a && t < c.b);
     if (i >= 0) { pushUndo(); edits.cuts.splice(i, 1); markDirty(); draw(); }
     return;
   }
-  splitAt(t);
+  selectStage(stageAtX(t));
 });
-cv.addEventListener("click", e => {
-  if (!well || !trimMode) return;
-  const p = pos(e), t = T(p.x, p.w);
-  const i = edits.cuts.findIndex(c => t >= c.a && t < c.b);
-  if (i >= 0) { pushUndo(); edits.cuts.splice(i, 1); markDirty(); draw(); }
+
+cv.addEventListener("dblclick", e => {
+  if (!well || mode === "trim") return;
+  const p = pos(e);
+  splitAt(T(p.x, p.w));
 });
 cv.addEventListener("mouseleave", () => { hover = null; draw(); });
 
@@ -597,6 +705,7 @@ $("jump").addEventListener("change", e => {
   const i = Number(e.target.value);
   if (!isFinite(i) || e.target.value === "") return;
   zoomStages(i, $("span").value || "1");
+  selectStage(i);
 });
 $("span").addEventListener("change", e => {
   const sel = $("jump").value;
@@ -604,11 +713,8 @@ $("span").addEventListener("change", e => {
   zoomStages(i, e.target.value);
 });
 $("scheme").addEventListener("change", e => { scheme = e.target.value; draw(); });
-$("trim").addEventListener("click", () => {
-  trimMode = !trimMode;
-  $("trim").classList.toggle("on", trimMode);
-  cv.style.cursor = trimMode ? "crosshair" : "grab";
-});
+$("adjust").addEventListener("click", () => setMode("adjust"));
+$("trim").addEventListener("click", () => setMode("trim"));
 $("undo").addEventListener("click", () => {
   if (!undoStack.length) return;
   edits = JSON.parse(undoStack.pop());
@@ -618,6 +724,7 @@ $("reset").addEventListener("click", () => {
   if (!well) return;
   pushUndo();
   edits = freshEdits(well);
+  selIdx = -1;
   fillJump(); viewAll(); markDirty();
 });
 window.addEventListener("resize", () => draw());

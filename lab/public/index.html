@@ -3421,6 +3421,23 @@ window.addEventListener("message", ev => {
   const d = ev.data;
   if (!d || typeof d !== "object") return;
   if (d.type === "fv:ready") { fvPush(); return; }
+  // FracView picked a stage: bring this window — and through it the stacked
+  // one, which already follows this window — to the same stage. Matched on the
+  // printed label rather than the position, because a split in FracView has
+  // already renumbered them and the label is what both sides agree on.
+  if (d.type === "fv:select") {
+    const entry = entries.find(f => f.name === d.file);
+    if (!entry || !entry.well) return;
+    if (entry.viewMode !== "seconds" && entry.secItems.length) {
+      entry.viewMode = "seconds"; entry.items = entry.secItems;
+    }
+    if (!current || current.entry !== entry) selectFile(entry);
+    const items = entry.items || [];
+    const it = items.find(x => x.type === "stage" && String(stageLabel(x)) === d.label)
+            || items.filter(x => x.type === "stage")[d.index];
+    if (it && it._row) selectItem(entry, entry.well, it, it._row);
+    return;
+  }
   if (d.type !== "fv:edits") return;
   const entry = entries.find(f => f.name === d.file);
   if (!entry) return;
