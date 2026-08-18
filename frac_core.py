@@ -383,6 +383,23 @@ def detect_legend(page):
     return mapping, ordered
 
 
+def _curveish(page):
+    """Stroked paths long enough to be curves, in a colour that isn't ink.
+
+    Greys and blacks are the frame, the gridlines and the text, so a page of
+    prose does not reach the legend read below.
+    """
+    out = []
+    for d in page.get_drawings():
+        color = d.get("color")
+        if color is None or len(d["items"]) <= 5:
+            continue
+        if max(color) - min(color) < 0.15:      # neutral: frame/grid/text
+            continue
+        out.append(tuple(round(c, 4) for c in color))
+    return out
+
+
 def page_kind(page):
     """'vector' if the page has stroked curves in known series colors,
     else 'raster'."""
@@ -393,6 +410,26 @@ def page_kind(page):
         for c in SERIES:
             if sum((a - b) ** 2 for a, b in zip(c, color)) < 1e-4 and len(d["items"]) > 5:
                 return "vector"
+    # SERIES is a last-resort table — see its comment, and the module docstring:
+    # which curve is which comes from the page's OWN legend, because the
+    # template reuses colours differently across vintages. But this gate did
+    # not, so a filing drawn in a restyled palette was called "raster" and
+    # dropped before anything could read its legend. 01377 (#365) is 329 pages
+    # carrying 96 charts whose curves are ordinary vector paths in
+    # (0.03,0.32,0.65) blue and (0.93,0.11,0.14) red — near, but not equal to,
+    # the pure primaries above — and it produced nothing at all for that reason.
+    #
+    # Only pages that already look like charts pay for the legend read, so a
+    # page of prose still costs one get_drawings() scan.
+    curves = _curveish(page)
+    if not curves:
+        return "raster"
+    try:
+        mapping, _rows = detect_legend(page)
+    except Exception:
+        return "raster"
+    if mapping and any(c in mapping for c in curves):
+        return "vector"
     return "raster"
 
 
