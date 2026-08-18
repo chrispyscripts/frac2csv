@@ -190,7 +190,17 @@ function pushUndo() {
 }
 
 // ---------- colours ----------
-function stageHue(i) { return (i * 360 / Math.max(1, nStages())) % 360; }
+// Spreading the hues evenly across the wheel put NEIGHBOURS closest together:
+// at 30 stages consecutive bands were 12 degrees apart and read as one long
+// gradient, which is the opposite of what the colour is for. Stepping by the
+// golden angle instead puts every stage far from the one before it and still
+// never repeats a hue until the wheel is densely packed.
+const GOLDEN_ANGLE = 137.508;
+function stageHue(i) {
+  return (scheme === "rainbow")
+    ? (i * GOLDEN_ANGLE) % 360
+    : (i * 360 / Math.max(1, nStages())) % 360;
+}
 function bandFill(i) {
   if (scheme === "mono") return i % 2 ? "#f3f4f6" : "#fafafa";
   if (scheme === "contrast") return i % 2 ? "#e8edf5" : "#fdf4e3";
@@ -337,6 +347,13 @@ function draw() {
     const name = names[ni];
     const mx = MAXES.get(name) || 1;
     ctx.lineWidth = 1.25;
+    // Two passes once anything is cut: the whole curve faintly FIRST, so a
+    // committed cut still shows the data it is taking out, then the surviving
+    // curve solid on top. Drawing the cut span as a plain gap meant the one
+    // thing you needed to see to fine-tune the edges — what is inside them —
+    // was the thing that disappeared the moment you let go of the mouse.
+    for (const ghost of (edits.cuts.length ? [true, false] : [false])) {
+    ctx.globalAlpha = ghost ? 0.22 : 1;
     for (const st of well.stages) {
       const ch = st.channels.find(c => c.name === name);
       if (!ch) continue;
@@ -365,14 +382,17 @@ function draw() {
           }
         }
         const v = ch.values[j];
-        // a cut span is drawn as a gap, so what you see is what exports
-        if (!isFinite(v) || inCut(t)) { pen = false; continue; }
+        // solid pass: a cut is a gap, so what you see is what exports.
+        // ghost pass: draw straight through it — that IS the point.
+        if (!isFinite(v) || (!ghost && inCut(t))) { pen = false; continue; }
         const x = X(t, w);
         const y = PAD.t + plotH - (v / mx) * (plotH - 6) - 3;
         if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
       }
       ctx.stroke();
     }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // boundaries — the draggable bit
