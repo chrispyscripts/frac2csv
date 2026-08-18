@@ -735,7 +735,7 @@ async function flushEmptyReports() {
   const one = batch.length === 1;
   const lines = batch.map(e => {
     const notes = (e.notes || []).join(" | ");
-    return `- ${e.name}${notes ? "  —  " + notes : ""}`;
+    return `- ${e.path || e.name}${notes ? "  —  " + notes : ""}`;
   });
   try {
     const r = await fetch(FLAG_ENDPOINT, {
@@ -743,6 +743,7 @@ async function flushEmptyReports() {
       body: JSON.stringify({
         description: one
           ? "No extractable data — " + batch[0].name
+            + (batch[0].path ? `\n\n${batch[0].path}` : "")
           : `No extractable data — ${batch.length} files in one batch`
             + `\n\n${lines.join("\n")}`,
         reporter: one ? "user (auto)" : "user (auto, batch)",
@@ -751,6 +752,7 @@ async function flushEmptyReports() {
           build: localInfo && localInfo.local ? "desktop" : "web",
           files: batch.length,
           file: one ? batch[0].name : undefined,
+          path: one ? (batch[0].path || "") : undefined,
           provider: one ? (batch[0].provider || "unknown") : undefined,
           platform: navigator.platform, userAgent: navigator.userAgent,
           notes: one ? (batch[0].notes || []) : undefined,
@@ -993,6 +995,7 @@ $("mrun").addEventListener("click", async () => {
       const base = row.path.split(/[\\/]+/).pop();
       const q = makeFileEntry(base);
       q.head.querySelector(".nm").title = row.path;
+      q.path = row.path;
       busy = busy.then(async () => {
         if (!row.real) { q.set("✗ not found on this machine", "err"); return; }
         q.set("extracting"); q.progress(0.05);
@@ -1063,6 +1066,7 @@ $("mrun").addEventListener("click", async () => {
     const base = row.path.split(/[\\/]+/).pop();
     const q = makeFileEntry(base);
     q.head.querySelector(".nm").title = row.path;        // full path on hover
+    q.path = row.path;
     busy = busy.then(async () => {
       let dest;
       try { dest = await resolveManifestPath(root, row.path); }
@@ -3650,6 +3654,12 @@ function flagDiagnostics() {
     version: (localInfo && localInfo.version) || "web",
     build: localInfo && localInfo.local ? "desktop" : "web",
     provider: it && it.source, file: e && e.name,
+    // where the file actually came from. Carmine asked for this (#355): with
+    // lists dropped off two drives, "00058-…pdf" does not say which drive or
+    // folder produced it, and that is the first thing anyone reproducing a
+    // report needs. Only the desktop build knows a real path — the browser is
+    // handed a File with no location — so it is omitted rather than faked.
+    path: (e && e.path) || "",
     chart: it && (it.key || ""), stage: m.stage || "",
     pdfPage: (it && it.pages) ? it.pages.join(",") : (it && it.page) || "",
     duration: m.duration_min ? Math.round(m.duration_min) + " min" : "",
