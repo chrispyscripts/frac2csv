@@ -119,21 +119,35 @@ def _why_nothing(doc, npages, raster):
 
     "No extractable charts or tables found" is true of a scanned daily report
     and true of a broken parser, and the client cannot tell them apart — which
-    is most of what the "No extractable data" backlog is made of. A file with
-    no plotted curves anywhere has no charts to miss; one with no text layer
-    needs OCR of its labels; the two want different work and only one is a
-    defect. Sampled, not scanned end to end: this only runs when the document
-    is already a dead end, but it should not cost minutes to say so.
+    is most of what the "No extractable data" backlog is made of.
+
+    The question is asked of the pages that DRAW CURVES, not of the document.
+    A 359-page filing can carry its vendor name on 54 cover sheets and not one
+    readable character on any of its 167 chart pages, and it is the chart pages
+    that decide whether anything can be read. Sampled: this only runs when the
+    document is already a dead end, but it should not cost minutes to say so.
     """
+    def readable(page):
+        t = page.get_text("text") or ""
+        good = sum(1 for ch in t if ch.isprintable() and not ch.isspace())
+        bad = sum(1 for ch in t if ord(ch) < 32 and ch not in "\n\r\t")
+        # Type3 fonts with no ToUnicode hand back raw glyph codes: the page
+        # LOOKS fine and extracts as control characters (00035, 00051 —
+        # 200 of 344 characters). That is not a text layer anyone can use.
+        return good > 20 and good > bad
+
     step = max(1, npages // 60)
-    text_pages = curve_pages = looked = 0
-    for p in range(0, npages, step):
+    curve_pages = curve_readable = any_readable = looked = 0
+    for i in range(0, npages, step):
         looked += 1
         try:
-            page = doc[p]
-            if (page.get_text("text") or "").strip():
-                text_pages += 1
-            sat = 0
+            page = doc[i]
+        except Exception:
+            continue
+        ok = readable(page)
+        any_readable += bool(ok)
+        sat = 0
+        try:
             for d in page.get_drawings():
                 for key in ("color", "fill"):
                     c = d.get(key)
@@ -141,24 +155,32 @@ def _why_nothing(doc, npages, raster):
                         sat += len(d["items"]) or 1
                 if sat > 500:
                     break
-            if sat > 500:
-                curve_pages += 1
         except Exception:
-            continue
+            pass
+        if sat > 500:
+            curve_pages += 1
+            curve_readable += bool(ok)
+
     base = f"No extractable charts or tables found in {npages} pages"
-    if looked and not curve_pages and not text_pages:
+    if not looked:
+        return base + "."
+    if not curve_pages and not any_readable:
         return (base + " — this file draws no curves and carries no text layer "
                 "at all: every page is a picture. Reading it needs OCR, and it "
                 "may be a daily report that holds no treatment charts to begin "
                 "with.")
-    if looked and not curve_pages:
+    if not curve_pages:
         return (base + " — no page in it draws a plotted curve, so there are "
                 "no treatment charts here to miss. If this well should have "
                 "charts, they are in another file.")
-    if looked and not text_pages:
-        return (base + " — the curves are drawn but no page carries a text "
-                "layer, so nothing names the axes or the stages. Reading it "
-                "needs OCR of the labels.")
+    if not curve_readable:
+        where = ("none of them carry a text layer"
+                 if not any_readable else
+                 "none of them carry READABLE text — the rest of the file does, "
+                 "so this is the charts' own font, not a scan")
+        return (base + f" — {curve_pages} of the pages sampled draw plotted "
+                f"curves and {where}. Nothing names the axes or the stages, so "
+                f"reading them needs OCR of the labels.")
     if not raster:
         return base + " (raster/scanned templates need the tesseract OCR engine)."
     return base + "."

@@ -680,6 +680,10 @@ class WhyNothingCameOut(unittest.TestCase):
             return [{"color": (1, 0, 0), "fill": None,
                      "items": [("l",)] * 600}]
 
+    READABLE = "Treating Pressure (MPa) Slurry Rate stage 4 of 20"
+    # what a Type3 font with no ToUnicode hands back: the page LOOKS fine
+    GARBLED = "\x00\x01\x02\x01\x03\x04\x05\x06\x07" * 25
+
     class _Doc:
         def __init__(self, pages): self._p = pages
         def __getitem__(self, i): return self._p[i]
@@ -693,17 +697,39 @@ class WhyNothingCameOut(unittest.TestCase):
         self.assertIn("OCR", n)
 
     def test_text_but_no_curves_says_there_are_no_charts(self):
-        n = self._note([self._Page(text="Daily Time Log") for _ in range(50)])
-        self.assertIn("no treatment charts here to miss", n)
+        # a real daily-report page carries hundreds of characters; the stub
+        # this used to pass ("Daily Time Log") is shorter than any page in the
+        # corpus and would be judged unreadable, which is the right call
+        page = self._Page(text="Daily Time Log  Start Time  End Time  Code "
+                               "Comments  Frac Stage 13 pumped as designed")
+        self.assertIn("no treatment charts here to miss",
+                      self._note([page for _ in range(50)]))
 
     def test_curves_but_no_text_says_ocr_the_labels(self):
         n = self._note([self._Page(curves=True) for _ in range(50)])
         self.assertIn("OCR of the labels", n)
 
     def test_the_ordinary_case_still_reports_plainly(self):
-        pages = [self._Page(text="x", curves=True) for _ in range(20)]
+        pages = [self._Page(text=self.READABLE, curves=True) for _ in range(20)]
         self.assertTrue(self._note(pages).startswith(
             "No extractable charts or tables found in 20 pages"))
+
+    def test_garbled_chart_text_is_not_a_text_layer(self):
+        # 00035/00051: Type3 fonts, no ToUnicode, 200 of 344 chars are control
+        # codes. Counting "has text" would call these parseable and hide the
+        # real remedy.
+        pages = [self._Page(text=self.GARBLED, curves=True) for _ in range(30)]
+        n = self._note(pages)
+        self.assertIn("OCR of the labels", n)
+
+    def test_a_readable_cover_does_not_excuse_unreadable_charts(self):
+        # 00217: the vendor name is on 54 cover sheets and not one readable
+        # character is on any of its 167 chart pages. The CHART pages decide.
+        pages = ([self._Page(text=self.READABLE) for _ in range(10)]
+                 + [self._Page(text="", curves=True) for _ in range(30)])
+        n = self._note(pages)
+        self.assertIn("OCR of the labels", n)
+        self.assertIn("draw plotted curves", n)
 
 
 class BjLegendAxisSide(unittest.TestCase):
