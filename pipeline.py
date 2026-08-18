@@ -27,6 +27,7 @@ import frac_core as fc
 import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
+import bj_fracturing
 import bj_summary
 import calfrac_summary
 import calfrac_progress as cprog
@@ -1716,6 +1717,22 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 _table(tab.get("title") or "Sanjel table", tab)
         except Exception as e:
             notes.append(f"Sanjel tables parse failed — {e}")
+
+    # BJ's "Fracturing-Acidizing Treatment" sheets: a whole filing of these and
+    # no charts at all reported "No extractable data" for weeks (#332/#360/#361
+    # on 00058, 218 pages). Gated on its OWN pages, not on a chart source —
+    # that is the entire point, these documents plot nothing.
+    try:
+        if bj_fracturing.detect(doc):
+            _bjf = bj_fracturing.parse_document(doc)
+            if _bjf.get("schedule"):
+                _table("Pumped schedule (BJ Fracturing-Acidizing)",
+                       _bjf["schedule"])
+            if _bjf.get("summary"):
+                _table("Per-frac summary (BJ Fracturing-Acidizing)",
+                       _bjf["summary"])
+    except Exception as e:
+        notes.append(f"BJ Fracturing-Acidizing tables failed — {e}")
 
     if not results:
         extra = "" if raster else \

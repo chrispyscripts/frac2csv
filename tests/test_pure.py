@@ -20,6 +20,7 @@ import auto_raster as ar          # noqa: E402
 import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
 import halliburton_ifs as ifs     # noqa: E402
+import bj_fracturing as bjf       # noqa: E402
 import canyon                     # noqa: E402
 import lib1                       # noqa: E402
 import liberty_summary            # noqa: E402
@@ -531,6 +532,41 @@ class LibertyStageKeywordCase(unittest.TestCase):
 
     def test_lowercase_prose_does_not_invent_a_stage(self):
         self.assertIsNone(self._stage("pumped down the stage seven times"))
+
+
+class BjFracturingSheets(unittest.TestCase):
+    """00058 is 218 pages that reported "No extractable data" for weeks
+    (#332, #360, #361). It holds no treatment charts at ALL — zero pages carry
+    plotted-curve ink — and 66 pages of BJ "Fracturing-Acidizing Treatment"
+    sheets nothing read. The pumped schedule is one row per step, in a text
+    layer, needing no OCR: 124 rows across 21 fracs on that file.
+    """
+
+    def test_cells_lose_wraps_and_thousands_separators(self):
+        self.assertEqual(bjf._cell("1,022.97"), "1022.97")
+        self.assertEqual(bjf._cell("Slickwater FRP\n@1"), "Slickwater FRP @1")
+        self.assertEqual(bjf._cell(None), "")
+        # a name that merely contains digits is not a number
+        self.assertEqual(bjf._cell("SAND, WHITE, 40/70"), "SAND, WHITE, 40/70")
+
+    def test_completion_type_drops_the_timing_paragraph(self):
+        # the header block merges a cell and the timings ride along
+        got = bjf._BLEED.sub("", "Plug & Perf Total Time (hrs): 9.2 "
+                                 "Non-Pump Time (hrs): 2.6").strip()
+        self.assertEqual(got, "Plug & Perf")
+
+    def test_only_numbered_steps_become_rows(self):
+        rows = [["#", "Placement"], ["", "Vol."], ["", "(m3)"],
+                ["1", "Acid"], ["2", "Pad"], ["", "carried over"]]
+        out = bjf._schedule_rows(rows, 1)
+        self.assertEqual([r[0] for r in out], ["1", "2"])
+        self.assertTrue(all(len(r) == 12 for r in out))
+
+    def test_a_schedule_header_is_recognised(self):
+        self.assertTrue(bjf._is_schedule_head(
+            [["#", "Placement", "Fluid System"]]))
+        self.assertFalse(bjf._is_schedule_head([["Additive", "Volume", "Unit"]]))
+        self.assertFalse(bjf._is_schedule_head([]))
 
 
 if __name__ == "__main__":
