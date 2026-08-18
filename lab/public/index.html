@@ -1409,8 +1409,11 @@ function render(entry, fname, stages, tables, notes, summary) {
   // pages (rendered) plus any parsed table (the BJ Totals grid)
   const secItems = stages.length ? stageItems(stages) : [];
   const sumItems = [];
-  for (const g of summary)
-    sumItems.push({ type: "summary", key: "sum", group: g, pageIdx: 0 });
+  // Parsed tables FIRST, the rendered source pages after them. The tables are
+  // the extracted data — the thing being looked for — and they used to sit
+  // below however many summary SHEETS the filing happened to print, so on a
+  // report with a dozen of those the schedule was off the bottom of the list.
+  // Pictures of the report are reference; the data comes first.
   // One file per table, NAMED after the table. Both of these used to be one
   // constant string: every table was called "<base>-stages-table.csv", so the
   // dedupe below kept only the FIRST table and emitSummary — which used
@@ -1433,6 +1436,8 @@ function render(entry, fname, stages, tables, notes, summary) {
       tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
     sumItems.push({ type: "table", key: "table", table: t });
   }
+  for (const g of summary)
+    sumItems.push({ type: "summary", key: "sum", group: g, pageIdx: 0 });
   // charts on some templates (Liberty) carry no parseable UWI — fall back to
   // Carmine's file naming: "<index>-<UWI>_<WA>" or "<UWI>-<WA>-..." (AB)
   const fuwi = (fname.match(/^\d+-([0-9A-Z]{10,20})_\d/) ||
@@ -1468,18 +1473,16 @@ function selectFile(entry) {
   for (const it of entry.items) {
     // a heading above each run of tables of one kind, so a 14-table filing
     // reads as Schedules / Summaries / Logs rather than as fourteen titles
-    if (it.type === "table") {
-      const k = it.table.kind || "other";
-      if (k !== lastKind) {
-        const h = document.createElement("div");
-        h.className = "grouphdr";
-        h.textContent = KIND_LABEL[k] || "Other tables";
-        list.appendChild(h);
-        lastKind = k;
-      }
-    } else {
-      lastKind = null;
+    const grp = it.type === "table" ? (it.table.kind || "other")
+      : it.type === "summary" ? "__pages" : null;
+    if (grp && grp !== lastKind) {
+      const h = document.createElement("div");
+      h.className = "grouphdr";
+      h.textContent = grp === "__pages" ? "Source pages"
+        : (KIND_LABEL[grp] || "Other tables");
+      list.appendChild(h);
     }
+    lastKind = grp;
     const row = document.createElement("div");
     row.className = "stagerow";
     if (it.type === "stage")
