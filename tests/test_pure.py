@@ -649,5 +649,52 @@ class BjWellIdForms(unittest.TestCase):
         self.assertTrue(bj1._WELL_ID.search(line))
 
 
+class WhyNothingCameOut(unittest.TestCase):
+    """"No extractable charts or tables found" is true of a scanned daily
+    report and true of a broken parser, and nobody can tell them apart from
+    the outside — which is most of what the "No extractable data" backlog is.
+    #376 is the case: 140 pages, every one a picture, no treatment charts in
+    the file at all, reported in the same words a real failure would use.
+    """
+
+    class _Page:
+        def __init__(self, text="", curves=False):
+            self._t, self._c = text, curves
+
+        def get_text(self, *_a):
+            return self._t
+
+        def get_drawings(self):
+            if not self._c:
+                return []
+            return [{"color": (1, 0, 0), "fill": None,
+                     "items": [("l",)] * 600}]
+
+    class _Doc:
+        def __init__(self, pages): self._p = pages
+        def __getitem__(self, i): return self._p[i]
+
+    def _note(self, pages, raster=True):
+        return pipeline._why_nothing(self._Doc(pages), len(pages), raster)
+
+    def test_scanned_with_no_curves_says_picture_and_ocr(self):
+        n = self._note([self._Page() for _ in range(140)])
+        self.assertIn("no text layer", n)
+        self.assertIn("OCR", n)
+
+    def test_text_but_no_curves_says_there_are_no_charts(self):
+        n = self._note([self._Page(text="Daily Time Log") for _ in range(50)])
+        self.assertIn("no treatment charts here to miss", n)
+
+    def test_curves_but_no_text_says_ocr_the_labels(self):
+        n = self._note([self._Page(curves=True) for _ in range(50)])
+        self.assertIn("OCR of the labels", n)
+
+    def test_the_ordinary_case_still_reports_plainly(self):
+        pages = [self._Page(text="x", curves=True) for _ in range(20)]
+        self.assertTrue(self._note(pages).startswith(
+            "No extractable charts or tables found in 20 pages"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -114,6 +114,56 @@ def _mview_variant(page):
     return ""
 
 
+def _why_nothing(doc, npages, raster):
+    """Say WHY a file produced nothing, not just that it did.
+
+    "No extractable charts or tables found" is true of a scanned daily report
+    and true of a broken parser, and the client cannot tell them apart — which
+    is most of what the "No extractable data" backlog is made of. A file with
+    no plotted curves anywhere has no charts to miss; one with no text layer
+    needs OCR of its labels; the two want different work and only one is a
+    defect. Sampled, not scanned end to end: this only runs when the document
+    is already a dead end, but it should not cost minutes to say so.
+    """
+    step = max(1, npages // 60)
+    text_pages = curve_pages = looked = 0
+    for p in range(0, npages, step):
+        looked += 1
+        try:
+            page = doc[p]
+            if (page.get_text("text") or "").strip():
+                text_pages += 1
+            sat = 0
+            for d in page.get_drawings():
+                for key in ("color", "fill"):
+                    c = d.get(key)
+                    if c and max(c[:3]) - min(c[:3]) > 0.35:
+                        sat += len(d["items"]) or 1
+                if sat > 500:
+                    break
+            if sat > 500:
+                curve_pages += 1
+        except Exception:
+            continue
+    base = f"No extractable charts or tables found in {npages} pages"
+    if looked and not curve_pages and not text_pages:
+        return (base + " — this file draws no curves and carries no text layer "
+                "at all: every page is a picture. Reading it needs OCR, and it "
+                "may be a daily report that holds no treatment charts to begin "
+                "with.")
+    if looked and not curve_pages:
+        return (base + " — no page in it draws a plotted curve, so there are "
+                "no treatment charts here to miss. If this well should have "
+                "charts, they are in another file.")
+    if looked and not text_pages:
+        return (base + " — the curves are drawn but no page carries a text "
+                "layer, so nothing names the axes or the stages. Reading it "
+                "needs OCR of the labels.")
+    if not raster:
+        return base + " (raster/scanned templates need the tesseract OCR engine)."
+    return base + "."
+
+
 def _rescaled_note(results):
     """One re-export notice for the whole file, or None.
 
@@ -1735,9 +1785,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         notes.append(f"BJ Fracturing-Acidizing tables failed — {e}")
 
     if not results:
-        extra = "" if raster else \
-            " (raster/scanned templates need the tesseract OCR engine)"
-        notes.append(f"No extractable charts or tables found in {npages} pages{extra}.")
+        notes.append(_why_nothing(doc, npages, raster))
     _note = _rescaled_note(results)
     if _note:
         notes.append(_note)
