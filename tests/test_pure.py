@@ -501,5 +501,37 @@ class MviewSurfaceAndBottomHole(unittest.TestCase):
         self.assertEqual(pipeline._mview_variant(page), "")
 
 
+class LibertyStageKeywordCase(unittest.TestCase):
+    """#346 — "Stage ? showed as last stage". ARC's Alberta Liberty filings
+    title their charts "MIDDLE MONTNEY - STAGE 2", in caps. The fallback stage
+    pattern is deliberately case-SENSITIVE, because it reads a trailing
+    ALL-CAPS token as part of the name ("1A HRF"), so it matched neither
+    "Stage" nor "STG": 32 of 56 charts on 00269 came back with no stage at all
+    and collapsed under one blank key. Only the KEYWORD is case-insensitive.
+    """
+
+    def _stage(self, text):
+        m = (re.search(rf"{lib1._STAGE}\s+([A-Za-z0-9][A-Za-z0-9\- ]*?)\s+of\s+\d+",
+                       text, re.I)
+             or re.search(rf"{lib1._STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Z]?"
+                          r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]+[A-Z]{2,4})?)\b()",
+                          text))
+        return " ".join(m.group(1).split()) if m else None
+
+    def test_all_caps_stage_is_read(self):
+        self.assertEqual(self._stage("MIDDLE MONTNEY - STAGE 2"), "2")
+
+    def test_the_spellings_that_already_worked_still_do(self):
+        self.assertEqual(self._stage("OVV HZ SUNRISE F5 Stage 13"), "13")
+        self.assertEqual(self._stage("Upper Montney - STG 1"), "1")
+
+    def test_an_all_caps_suffix_is_still_part_of_the_name(self):
+        # the reason the pattern cannot simply be given re.I
+        self.assertEqual(self._stage("Stage 1A HRF"), "1A HRF")
+
+    def test_lowercase_prose_does_not_invent_a_stage(self):
+        self.assertIsNone(self._stage("pumped down the stage seven times"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

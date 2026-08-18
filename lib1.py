@@ -25,7 +25,13 @@ FRAME_FIT_TOL = 75
 # "STG 1" on the newer ones (01397/01398 title theirs "Upper Montney - STG 1").
 # Only the spelling differs — same PRC/Chem Plot template underneath — so
 # matching one and not the other cost those files every chart they had.
-_STAGE = r"(?:Stage|STG)"
+# The KEYWORD is case-insensitive; the capture groups that follow are not, on
+# purpose — the second pattern below reads a trailing ALL-CAPS token as part of
+# the stage name ("1A HRF"), so it cannot simply be given re.I. ARC's Alberta
+# filings print "MIDDLE MONTNEY - STAGE 2" in caps and matched neither spelling,
+# which left 32 of 56 charts on 00269 with no stage at all: they collapsed under
+# one blank key and showed as a single "Stage ?" (#346).
+_STAGE = r"(?i:Stage|STG)"
 
 
 def detect(page):
