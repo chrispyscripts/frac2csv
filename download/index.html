@@ -38,6 +38,62 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.1.2</h2>
+    <ul>
+      <li><b>Please stop clicking Report on each empty file — a batch now
+        reports ONCE.</b> 141 reports arrived in three minutes from one run.
+        When several files in a row come back with nothing, the app waits for
+        the run to finish and sends a single report listing them all, so the
+        hand-written ones stay findable. A file dropped on its own still
+        reports on its own</li>
+      <li><b>A file with no data now says WHY, and often it is not a fault.</b>
+        &ldquo;No extractable data&rdquo; was the same sentence whether the
+        reader broke or the file simply has no charts in it, and there was no
+        way to tell from the outside. Now it says which: that no page draws a
+        plotted curve and there are no treatment charts to miss; or that the
+        pages are pictures and need OCR; or that the charts are there but
+        nothing readable names their axes. Several of the wells reported
+        recently are the first kind — WellOps daily reports that hold tables
+        and a wellbore schematic and never had a treatment chart</li>
+      <li><b>BJ: two whole vintages were coming back empty.</b> The 2022
+        filings label their legend with the axis side — &ldquo;WH Press (MPa)
+        (outer l.)&rdquo; — which stopped every curve finding its axis, and
+        some wells write the well number with hyphens
+        (<span class="mono">100-12-27-079-16W6</span>) where the reader only
+        knew the slash form. One 316-page well goes from nothing to 94 charts,
+        another from nothing to 14. These are the files behind a long run of
+        &ldquo;no extractable data&rdquo; reports</li>
+      <li><b>Liberty: filings from before the company renamed now read.</b>
+        Older reports print &ldquo;Liberty Oilfield Services LLC&rdquo; instead
+        of &ldquo;Liberty Energy&rdquo; and nothing else on the page identifies
+        the template, so whole wells came back empty. One goes from nothing to
+        84 charts across 41 stages</li>
+      <li><b>CalFrac/MView: a chart whose plot box is drawn in grey now reads.</b>
+        The reader only looked for a black one and reported &ldquo;no plot
+        frame found&rdquo; on charts that are perfectly clear. One well goes
+        from 0 charts to 123. A second fix stops a page whose gridlines are the
+        same length as its frame from losing its own top edge, which had a
+        30-zone chart reading 1125 minutes against an axis printed to 1350 —
+        that well now separates into 48 stages instead of one</li>
+      <li><b>Schlumberger: the ghost overlay works on vector charts</b>, so an
+        extracted curve can be checked against the printed one the same way it
+        can for BJ. And the annulus pressure trace is no longer left out — it
+        exports as its own channel rather than being folded into treating
+        pressure</li>
+      <li><b>Halliburton IFS: one file per frac now gives its schedule.</b> BJ
+        <i>Fracturing-Acidizing Treatment</i> sheets are read: a 218-page well
+        that reported no data gives a 124-row pumped schedule across 21 fracs,
+        one row per pump step</li>
+      <li><b>A dropped file list no longer exports as it goes.</b> It behaves
+        like a dropped PDF — extract, show, and you decide when and where to
+        export. A 67-file list used to write hundreds of CSVs into folders
+        nobody had chosen, and on a read-only drive quietly put them in
+        Downloads</li>
+      <li><b>Smaller things.</b> The queue reads top to bottom, so the file
+        being worked on is where you expect it. Reports carry each file&rsquo;s
+        full path, not just its name. The warning strip above a chart is back
+        to carrying only the re-export notice instead of every diagnostic</li>
+    </ul>
     <h2>v1.1.1</h2>
     <ul>
       <li><b>Halliburton IFS: the extreme spikes are gone.</b> Some IFS pages
