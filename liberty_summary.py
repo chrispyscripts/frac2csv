@@ -13,6 +13,9 @@ positional grid, so it parses with regex.
 """
 import re
 
+# see lib1: filings before the rename print "Liberty Oilfield Services LLC"
+_LIBERTY = re.compile(r"Liberty\s+(?:Energy|Oilfield)", re.I)
+
 # Order matters: _page_kind returns the FIRST pattern that matches.
 #
 # The last four are the 2025-era filings, which print none of the first four.
@@ -59,7 +62,7 @@ def detect_document(doc):
     """
     for p in range(min(doc.page_count, 400)):
         try:
-            if "Liberty Energy" in (doc[p].get_text() or ""):
+            if _LIBERTY.search(doc[p].get_text() or ""):
                 return True
         except Exception:
             continue

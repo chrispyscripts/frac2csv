@@ -34,9 +34,17 @@ FRAME_FIT_TOL = 75
 _STAGE = r"(?i:Stage|STG)"
 
 
+# The company renamed. Filings before it print "Liberty Oilfield Services LLC"
+# and nothing else identifies them, so requiring "Liberty Energy" left 85 chart
+# pages on 00313 unread and the whole file reporting no extractable data
+# (#372-#375, and the same across the ARC Liberty set). Same template either
+# way — only the name on the sheet changed.
+_LIBERTY = re.compile(r"Liberty\s+(?:Energy|Oilfield)", re.I)
+
+
 def detect(page):
     t = page.get_text()
-    return "Liberty Energy" in t and \
+    return _LIBERTY.search(t) is not None and \
         re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is not None
 
 

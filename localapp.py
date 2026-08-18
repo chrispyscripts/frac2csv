@@ -323,7 +323,11 @@ def _job_set(job, done, total):
 
 
 def process_path(path, fmt="both", tabs=True, seq=False, dest_folder="",
-                 job=""):
+                 job="", write=True):
+    """Extract one file from disk. With write=False nothing is saved — the
+    caller gets the data and decides when and where it lands, which is how a
+    dropped file has always behaved. A dropped TXT list used to be the one
+    place the app wrote files nobody had asked for yet."""
     doc = fitz.open(path)
     results, notes = pipeline.extract_document(
         doc, filename=os.path.basename(path),
@@ -334,6 +338,8 @@ def process_path(path, fmt="both", tabs=True, seq=False, dest_folder="",
 
     series = [r for r in results if r["type"] == "series"]
     written = []
+    if not write:
+        return stages, tables, notes, written, summary, ""
     src_dir = os.path.dirname(path)
     folder, skipped = export_folder(src_dir, dest_folder)
     base = os.path.splitext(os.path.basename(path))[0]
@@ -535,7 +541,8 @@ class Handler(BaseHTTPRequestHandler):
                     bool(req.get("xlsxTabs", True)),
                     req.get("stageLabel") == "seq",
                     req.get("destFolder", ""),
-                    str(req.get("job", "")))
+                    str(req.get("job", "")),
+                    bool(req.get("write", True)))
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "written": written,
                                         "summary": summary, "outDir": out_dir})

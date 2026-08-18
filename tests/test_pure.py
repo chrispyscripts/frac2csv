@@ -609,5 +609,22 @@ class FrameCandidateCap(unittest.TestCase):
         self.assertLessEqual(len(self._cap(cands)), 18)
 
 
+class LibertyCompanyRename(unittest.TestCase):
+    """#372-#375 — four ARC files reporting no extractable data. They ARE
+    Liberty; the company renamed. Filings before it print "Liberty Oilfield
+    Services LLC", detect required the literal "Liberty Energy", and nothing
+    else on the page identifies the template. 00313: 0 series -> 84.
+    """
+
+    def test_both_names_detect(self):
+        for name in ["Liberty Energy", "Liberty Oilfield Services LLC",
+                     "LIBERTY OILFIELD SERVICES", "liberty energy"]:
+            self.assertTrue(lib1._LIBERTY.search(name), name)
+
+    def test_an_unrelated_liberty_does_not(self):
+        for name in ["Liberty Mutual", "Statue of Liberty", "Libertyville"]:
+            self.assertIsNone(lib1._LIBERTY.search(name), name)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

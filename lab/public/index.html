@@ -1045,8 +1045,14 @@ $("mrun").addEventListener("click", async () => {
         try {
           const resp = await fetch("/api/process-path", {
             method: "POST", headers: { "Content-Type": "application/json" },
+            // write:false — a dropped LIST now behaves like a dropped FILE.
+            // It used to export every well as it went, so a run of 67 files
+            // wrote hundreds of CSVs into folders nobody had chosen yet, and
+            // on a read-only drive silently redirected them to ~/Downloads.
+            // Extract and show; the Export button decides when and where.
             body: JSON.stringify({ path: row.real, format: settings.format,
                                    xlsxTabs: settings.xlsxTabs, job,
+                                   write: false,
                                    destFolder: settings.destFolder }),
           });
           out = await resp.json();
@@ -1063,6 +1069,8 @@ $("mrun").addEventListener("click", async () => {
         render(q, base, out.stages || [], out.tables || [], out.notes || [], out.summary || []);
         const bits = [];
         if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
+        const nTab = (out.tables || []).length;
+        if (nTab) bits.push(`${nTab} table${nTab > 1 ? "s" : ""}`);
         if (out.written && out.written.length)
           bits.push(`${out.written.length} file${out.written.length > 1 ? "s" : ""} saved `
                     + (q._outDir ? `→ ${baseName(q._outDir)} (PDF folder read-only)`
