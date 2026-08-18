@@ -1650,7 +1650,12 @@ function showStage(entry, well, item) {
   updateOrigBar();
   scheduleOrigSync();
   $("pv-table").innerHTML = "";
-  $("pv-notes").textContent = (entry.notes || []).join("\n");
+  // the chart's own warnings sit with the file's notes: they are diagnostics,
+  // and they were invisible entirely before the alert was added
+  $("pv-notes").textContent = (entry.notes || [])
+    .concat(((item.meta && item.meta.warnings) || [])
+      .filter(w => !/^Corrected in /.test(w)))
+    .join("\n");
   showAlert(entry, item);
   renderDlbar(well);
   pushStacked();      // the stacked window follows whatever is on screen here
@@ -1663,7 +1668,15 @@ function showStage(entry, well, item) {
 // ever says that a CSV already sitting on the client's disk is wrong.
 function showAlert(entry, item) {
   const box = $("pv-alert");
-  const chart = ((item && item.meta && item.meta.warnings) || []);
+  // ONLY the re-export notice belongs here. The first cut showed every
+  // meta.warning, which put routine diagnostics — "stage/zone not found",
+  // "date not found" — in a big amber box they had never been in before.
+  // Carmine read them as faults and copied them into a bug report (#343),
+  // which is the exact opposite of what an alert is for: promote everything
+  // and you have promoted nothing. The rest still reach him, in pv-notes,
+  // where diagnostics live.
+  const chart = ((item && item.meta && item.meta.warnings) || [])
+    .filter(w => /^Corrected in /.test(w));
   const file = (entry && entry.notes || [])
     .filter(n => /^RE-EXPORT NOTICE/.test(n));
   const msgs = file.concat(chart);
