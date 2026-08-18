@@ -17,6 +17,15 @@ from frac_core import PageMeta, _resample
 PANEL_UNITS = {"Pressure": "MPa", "Rate": "m³/min", "Concentration": "kg/m³"}
 
 
+class NotAStageChart(ValueError):
+    """This page is a chart, and deliberately not exported as a stage.
+
+    Distinct from a parse failure so the caller can say "skipped" instead of
+    "failed". An honest skip and a broken parser look identical in the Lab,
+    and that confusion is what 197 "No extractable data" reports were made of.
+    """
+
+
 def detect(page):
     t = page.get_text()
     has_ticket = "Ticket#:" in t or "Ticket #:" in t
@@ -72,6 +81,26 @@ def extract_page(page, sample_sec=1.0):
     # runs in order, so the bare form is safe to fall back to. A ticket number
     # is never at risk — those print as "Ticket#: 40-015318", digits separated
     # from the "#" by the colon.
+    # A page whose Interval field names a RANGE of stages is Canyon's per-day
+    # OVERVIEW plot, not a stage: 00011 prints "#1 - 6", "#7-14", "#15 - 21"
+    # and "#22 - 25" on pages 161-167, after its 25 per-stage charts. Those
+    # four carried no depth, so the bare "#N" fallback below read each as the
+    # FIRST stage of its range and handed back stages 1, 7, 15 and 22 a second
+    # time — 420, 528, 414 and 241 minutes long against a 68-minute median.
+    # Same key as the real stage, so the Lab merged them and drew stage 1 on a
+    # 7-hour axis with the actual stage squeezed into the left fifth of it.
+    #
+    # Dropped rather than relabelled, for the reason the client already gave
+    # about SLB's whole-job plot: all of the data necessary is in the
+    # individual charts, at full resolution, and this is the same data zoomed
+    # out. The depth form must still win — "#1 - 3689.04m" is a stage, and the
+    # lookaheads are what keep 3689 from reading as the end of a range.
+    rng = re.search(r"#\s*(\d+)\s*-\s*(\d+)(?![\d.,])(?!\s*m\b)", text)
+    if rng and int(rng.group(2)) > int(rng.group(1)):
+        raise NotAStageChart(
+            f"charts stages "
+            f"{rng.group(1)}-{rng.group(2)} on one axis — each of those "
+            f"stages has its own chart in this report")
     m = (re.search(r"#(\d+)\s*-\s*[\d,.]+\s*m\b", text)
          or re.search(r"#\s*(\d+)\b", text))
     if m:

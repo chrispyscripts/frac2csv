@@ -1130,6 +1130,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 results.append(_series(_md(meta), samples, data,
                                        "Canyon chart", pno + 1, units,
                                        geom=getattr(meta, "geom", None)))
+            except canyon.NotAStageChart as e:
+                # a chart we chose not to export, not one that broke
+                notes.append(f"p{pno + 1}: Canyon overview page skipped — {e}")
             except Exception as e:
                 notes.append(f"p{pno + 1}: Canyon chart failed — {e}")
             continue

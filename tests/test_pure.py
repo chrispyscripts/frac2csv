@@ -8,6 +8,7 @@ comes from.
 Run: python3 -m pytest tests/ -q      (or: python3 -m unittest discover tests)
 """
 import os
+import re
 import sys
 import unittest
 
@@ -17,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import auto_raster as ar          # noqa: E402
 import frac_core                  # noqa: E402
+import canyon                     # noqa: E402
 import lib1                       # noqa: E402
 import liberty_summary            # noqa: E402
 import localapp                   # noqa: E402
@@ -348,6 +350,46 @@ class TableKind(unittest.TestCase):
     def test_unknown_titles_are_other_not_a_guess(self):
         for t in ["Tubular Data (Hal-1)", "Cluster Data (Hal-1)", "", None]:
             self.assertEqual(pipeline.table_kind(t), "other", str(t))
+
+
+class CanyonOverviewPage(unittest.TestCase):
+    """Canyon prints a per-day OVERVIEW plot covering several stages. Those
+    pages carry no depth, so the bare "#N" fallback read each as the FIRST
+    stage of its range: 00011 handed back stages 1, 7, 15 and 22 twice, the
+    second copy 420/528/414/241 minutes long against a 68-minute median, and
+    the Lab merged them by key and drew stage 1 on a 7-hour axis.
+
+    The depth form must keep winning — "#1 - 3689.04m" is a real stage, and
+    3689 must never read as the end of a range.
+    """
+
+    RANGE = re.compile(r"#\s*(\d+)\s*-\s*(\d+)(?![\d.,])(?!\s*m\b)")
+
+    def _is_overview(self, text):
+        m = self.RANGE.search(text)
+        return bool(m and int(m.group(2)) > int(m.group(1)))
+
+    def test_ranges_are_overviews(self):
+        for t in ["Interval: #1 - 6", "Interval: #7-14",
+                  "Interval: #15 - 21", "Interval: #22 - 25"]:
+            self.assertTrue(self._is_overview(t), t)
+
+    def test_a_depth_is_not_a_range(self):
+        # the trap: "3689" is a plausible second number, ".04m" is what says no
+        for t in ["Interval: #1 - 3689.04m", "Interval: #2 - 3638.03m",
+                  "Interval: #12 - 3,709.32 m"]:
+            self.assertFalse(self._is_overview(t), t)
+
+    def test_bare_stage_is_not_a_range(self):
+        # the 2017 layouts print "#1" alone and must keep working
+        for t in ["Interval: #1", "#14", "Ticket#: 40-010822"]:
+            self.assertFalse(self._is_overview(t), t)
+
+    def test_descending_pair_is_not_a_range(self):
+        self.assertFalse(self._is_overview("#6 - 1"))
+
+    def test_the_module_raises_a_distinct_type(self):
+        self.assertTrue(issubclass(canyon.NotAStageChart, ValueError))
 
 
 if __name__ == "__main__":
