@@ -20,6 +20,7 @@ import auto_raster as ar          # noqa: E402
 import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
 import halliburton_ifs as ifs     # noqa: E402
+import bj1                        # noqa: E402
 import bj_fracturing as bjf       # noqa: E402
 import canyon                     # noqa: E402
 import lib1                       # noqa: E402
@@ -624,6 +625,28 @@ class LibertyCompanyRename(unittest.TestCase):
     def test_an_unrelated_liberty_does_not(self):
         for name in ["Liberty Mutual", "Statue of Liberty", "Libertyville"]:
             self.assertIsNone(lib1._LIBERTY.search(name), name)
+
+
+class BjWellIdForms(unittest.TestCase):
+    """#371 — "there are charts stages for these BJ that are only reporting
+    tables". A well is named two ways in this corpus: the prairie DLS grid
+    ("100/12-15-081-18W6") and the northeast-BC NTS form
+    ("200/C-022-C-094-G-01"). detect required DLS, so an NTS-named filing
+    failed on every page: 01215 read 35 chart pages as nothing. 0 series -> 58
+    across 29 stages, and the UWI it derives matches the filename exactly.
+    """
+
+    def test_both_forms_are_well_ids(self):
+        self.assertTrue(bj1._WELL_ID.search("100/12-15-081-18W6"))
+        self.assertTrue(bj1._WELL_ID.search("200/C-022-C-094-G-01"))
+
+    def test_prose_and_part_numbers_are_not(self):
+        for s in ["no well here", "123/45", "Rate (m3/min)", "2025/01/18"]:
+            self.assertIsNone(bj1._WELL_ID.search(s), s)
+
+    def test_the_id_sits_inside_a_title_line(self):
+        line = "200/C-022-C-094-G-01 - Well D - Stage 14"
+        self.assertTrue(bj1._WELL_ID.search(line))
 
 
 if __name__ == "__main__":

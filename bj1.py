@@ -21,10 +21,21 @@ MONTHS = {m: i + 1 for i, m in enumerate(
 TIME_RE = re.compile(r"([A-Z][a-z]{2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 
 
+# A well is named two ways in this corpus and the template must know both.
+# DLS  "100/12-15-081-18W6"      — the prairie township grid
+# NTS  "200/C-022-C-094-G-01"    — northeast BC, and what 01215 prints
+# Requiring the DLS form alone failed detect on every page of an NTS-named
+# filing, so 35 chart pages read as nothing and the file came back tables-only
+# (#371, "there are charts stages for these BJ that are only reporting
+# tables"). "Stage" and a time label still have to be on the page too.
+_WELL_ID = re.compile(r"\d{3}/\d{2}-\d{2}-\d{3}-\d{2}W\d"
+                      r"|\d{3}/[A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
+
+
 def detect(page):
     t = page.get_text()
     return ("Stage" in t and TIME_RE.search(t) is not None
-            and re.search(r"\d{3}/\d{2}-\d{2}-\d{3}-\d{2}W\d", t) is not None)
+            and _WELL_ID.search(t) is not None)
 
 
 def _spans(page):
@@ -104,6 +115,17 @@ def extract_page(page, sample_sec=1.0):
     if m:
         meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups()[:6])
         meta.stage = str(int(m.group(7)))
+    else:
+        # The NTS-named filings ("200/C-022-C-094-G-01 - Well D - Stage 14")
+        # matched neither half of that pattern, so every chart came back as
+        # stage "?" even once detect let them through (#371). The UWI is the
+        # id with its separators dropped, which is the same shape the DLS
+        # branch above builds and what canon_uwi would make of it anyway.
+        mn = re.search(r"(\d{3})/([A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2})"
+                       r".*?Stage\s*(\d+)", text, re.S)
+        if mn:
+            meta.uwi = mn.group(1) + re.sub(r"-", "", mn.group(2)) + "00"
+            meta.stage = str(int(mn.group(3)))
     title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")
     meta.title = title[:60]
 
