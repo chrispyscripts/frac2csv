@@ -699,35 +699,73 @@ fileInput.addEventListener("change", () => { enqueue([...fileInput.files]); file
   if (dragging(e) && !leftcol.contains(e.target)) e.preventDefault();
 }));
 
-// Send the "this file produced nothing" report without being asked. The
-// outcome is appended to the file's own status line rather than shown on a
-// button, because the button is no longer about reporting — and a send that
-// quietly failed would leave the user believing it went.
-async function sendEmptyReport(entry) {
+// A file that produced nothing reports itself — but a BATCH reports ONCE.
+//
+// Sending per file was right for one dropped report and wrong the moment a
+// list was dropped: eight files from one run became eight GitHub issues in
+// twelve minutes, and the 163-file list on the desk would have filed 163. That
+// buries the hand-written reports that actually describe something, which is
+// the problem the "Report all empty" button was added to solve in the first
+// place. So empties collect for a few seconds and go as one.
+const EMPTY_BATCH_WAIT = 4000;
+let emptyPending = [];
+let emptyTimer = null;
+
+function queueEmptyReport(entry) {
+  emptyPending.push(entry);
+  if (emptyTimer) clearTimeout(emptyTimer);
+  emptyTimer = setTimeout(flushEmptyReports, EMPTY_BATCH_WAIT);
+}
+
+function tagEntry(entry, txt, title) {
   const st = entry.head.querySelector(".st");
-  const tail = txt => { const n = document.createElement("span");
-                        n.className = "rpttail"; n.textContent = " · " + txt;
-                        st.appendChild(n); };
+  if (!st) return;
+  const n = document.createElement("span");
+  n.className = "rpttail";
+  n.textContent = " · " + txt;
+  st.appendChild(n);
+  if (title) st.title = title;
+}
+
+async function flushEmptyReports() {
+  emptyTimer = null;
+  const batch = emptyPending;
+  emptyPending = [];
+  if (!batch.length) return;
+  const one = batch.length === 1;
+  const lines = batch.map(e => {
+    const notes = (e.notes || []).join(" | ");
+    return `- ${e.name}${notes ? "  —  " + notes : ""}`;
+  });
   try {
     const r = await fetch(FLAG_ENDPOINT, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        description: "No extractable data — " + entry.name,
-        reporter: "user (auto)",
+        description: one
+          ? "No extractable data — " + batch[0].name
+          : `No extractable data — ${batch.length} files in one batch`
+            + `\n\n${lines.join("\n")}`,
+        reporter: one ? "user (auto)" : "user (auto, batch)",
         diagnostics: {
           version: (localInfo && localInfo.version) || "web",
           build: localInfo && localInfo.local ? "desktop" : "web",
-          file: entry.name, provider: entry.provider || "unknown",
+          files: batch.length,
+          file: one ? batch[0].name : undefined,
+          provider: one ? (batch[0].provider || "unknown") : undefined,
           platform: navigator.platform, userAgent: navigator.userAgent,
-          notes: entry.notes || [],
+          notes: one ? (batch[0].notes || []) : undefined,
         },
       }) });
     const out = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(out.error || ("HTTP " + r.status));
-    tail(out.number ? "reported #" + out.number : "reported");
+    const tail = out.number
+      ? (one ? "reported #" + out.number
+             : `in report #${out.number} with ${batch.length - 1} more`)
+      : "reported";
+    batch.forEach(e => tagEntry(e, tail));
   } catch (err) {
-    tail("report not sent");
-    st.title = "Could not send: " + err.message;
+    batch.forEach(e => tagEntry(e, "report not sent",
+                               "Could not send: " + err.message));
   }
 }
 
@@ -774,7 +812,12 @@ function makeFileEntry(name) {
   prog.className = "fprog idle";
   prog.innerHTML = "<i></i>";
   el.appendChild(prog);
-  $("files").prepend(el);
+  // Appended, not prepended. The queue runs in the order files were given, so
+  // prepending listed it backwards: the file being worked on sat at the BOTTOM
+  // and the list read newest-first while the work read oldest-first. On a
+  // 200-file batch that means watching the progress travel up the screen.
+  // Now list order IS queue order, top to bottom.
+  $("files").append(el);
   const entry = {
     el, head, name, well: null, notes: [], items: [], provider: "",
     set(msg, cls) {
@@ -796,7 +839,7 @@ function makeFileEntry(name) {
       b.title = "Open this file's pages in the viewer";
       b.addEventListener("click", ev => { ev.stopPropagation(); showWholePdf(entry); });
       head.insertBefore(b, head.querySelector(".del"));
-      sendEmptyReport(entry);
+      queueEmptyReport(entry);
     },
     // frac 0..1, or null to park the bar. Each file owns its own bar, so a
     // queue shows every report's position at once.
