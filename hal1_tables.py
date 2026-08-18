@@ -41,6 +41,7 @@ is listed for viewing only (see DEFERRED).
   - stage_clock(doc): per-interval start/end datetimes from TREATMENT TIME
     TECHNICAL DATA — the wall clock hal1's plots do not carry.
 """
+import datetime
 import re
 
 # ---------------------------------------------------------------- sections
@@ -627,6 +628,139 @@ def chart_offset(events, t0_seconds):
     if not firsts:
         return None
     return float(t0_seconds) - min(firsts)
+
+
+# ------------------------------------------------------- chart wall clock
+#
+# A treatment plot's own time axis is an origin, not a date. hal1 reads it off
+# the picture and reports it as t0_seconds; what it means depends on how the
+# labels were PRINTED (auto_raster.CLOCK_*):
+#
+#   day_sod   "09 01:30"    day-of-month * 86400 + seconds of day
+#   sod       "03:30"       seconds of day, no day at all
+#   elapsed   "0  20  40"   minutes since the job started — no clock in it
+#
+# Turning that into a wall clock needs a calendar, and the report carries two
+# independent ones: the date the plot prints under its own axis ("Pump Time
+# (Start Date: 2025-08-30)", read by hal1.axis_caption_date), and the EVENT
+# LOG, which is vector text and exact. Where both exist they are made to agree
+# before anything is emitted; where they disagree the chart is left undated,
+# because a plausible wrong date in a client's CSV is worse than a blank one.
+#
+# The check that does the real work is containment: the plot opens shortly
+# before the interval's first logged event and closes after its last, so the
+# right calendar day is the one that puts the events inside the picture. It is
+# also what catches a misread axis — a stage whose plot claims six minutes
+# cannot hold a log that runs for hours.
+
+# How far outside the digitised window a logged event may still fall. The plot
+# opens a few minutes before the job and closes a few after (chart_offset's
+# median is -588s on 00382, -473s on 00407), so events land inside with room
+# to spare; this only has to absorb the axis fit's own error and an event
+# logged just off the edge of the picture.
+EVENT_SLACK_S = 900
+# ... and how many of them have to land there for a candidate day to be
+# believed. A count, not a fraction: an interval can be pumped twice and log
+# both treatments under the one number (00781 interval 2 runs 12:31-13:25 and
+# again 17:36-18:44), and half its events then fall outside the plot of
+# either one — which a fraction reads as failure and refuses a date the
+# printed caption independently agrees with. Three is still decisive, because
+# the wrong calendar day misses by a whole 86400 seconds and scores none.
+EVENT_HITS_MIN = 3
+
+
+def _sod_hms(seconds):
+    """43200.4 -> '12:00:00'."""
+    t = int(round(seconds)) % 86400
+    return f"{t // 3600:02d}:{t % 3600 // 60:02d}:{t % 60:02d}"
+
+
+def _event_times(events):
+    """[datetime] for the events that carry a parseable absolute stamp."""
+    out = []
+    for e in events or []:
+        m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})",
+                     str(e.get("time") or ""))
+        if m:
+            out.append(datetime.datetime(*(int(g) for g in m.groups())))
+    return out
+
+
+def _day_ok(cand, t0_seconds, axis_kind):
+    """A candidate date must carry the day-of-month the axis printed."""
+    if axis_kind != "day_sod":
+        return True
+    return cand.day == int(t0_seconds // 86400)
+
+
+def chart_datetime(t0_seconds, axis_kind, duration_s,
+                   start_date=None, events=None):
+    """When a treatment plot's LEFT EDGE is -> ('YYYY-MM-DD', 'HH:MM:SS').
+
+    Returns (None, None) unless the answer survives every check, so a caller
+    can pass the result straight into a CSV. `start_date` is the date printed
+    under the axis (a datetime.date), `events` that interval's rows from
+    event_log_index.
+    """
+    if axis_kind not in ("sod", "day_sod") or t0_seconds is None:
+        return None, None                     # an elapsed axis has no clock
+    if not 0 <= t0_seconds < 32 * 86400:
+        return None, None
+    sod = float(t0_seconds) % 86400.0
+    if axis_kind == "day_sod" and not 1 <= int(t0_seconds // 86400) <= 31:
+        return None, None
+
+    stamps = _event_times(events)
+    # Candidate days: every date within a fortnight of a reference the report
+    # states outright. A fortnight rather than a day or two only because
+    # "day_sod" has to be able to reach back across a month boundary to find
+    # the date whose day-of-month the axis printed.
+    refs = [d for d in (start_date,) if d is not None]
+    refs += [s.date() for s in stamps[:1]]
+    if not refs:
+        return None, None
+    cands = sorted({r + datetime.timedelta(days=k)
+                    for r in refs for k in range(-16, 17)})
+    cands = [c for c in cands if _day_ok(c, t0_seconds, axis_kind)]
+    if not cands:
+        return None, None
+
+    if stamps:
+        lo = datetime.timedelta(seconds=EVENT_SLACK_S)
+        hi = datetime.timedelta(seconds=(duration_s or 0) + EVENT_SLACK_S)
+        best, best_hits, runner_up = None, 0, 0
+        for c in cands:
+            left = datetime.datetime.combine(c, datetime.time()) + \
+                datetime.timedelta(seconds=sod)
+            hits = sum(1 for s in stamps if left - lo <= s <= left + hi)
+            if hits > best_hits:
+                best, runner_up, best_hits = c, best_hits, hits
+            elif hits > runner_up:
+                runner_up = hits
+        if (best is None or best_hits < min(EVENT_HITS_MIN, len(stamps))
+                or best_hits == runner_up):
+            return None, None
+        # The plot's own printed date has to agree with the log, or one of
+        # the two is misread and neither can be trusted.
+        if start_date is not None and abs((best - start_date).days) > 1:
+            return None, None
+        return best.isoformat(), _sod_hms(sod)
+
+    # No event log: the printed date is all there is.
+    if axis_kind == "sod":
+        # Nothing in a bare "03:30" can say which day it is, so the date the
+        # plot prints is taken as given. It is the date of the first tick,
+        # not of the left edge, so a plot that opens in the last minutes of
+        # the previous day is dated one day late — a few minutes of a stage
+        # that is hours long, and the alternative is no date at all.
+        return refs[0].isoformat(), _sod_hms(sod)
+    # "day_sod": the axis names the day of the month, so exactly one date
+    # beside the printed one can be right — and a chart that opened just
+    # before midnight is then dated to the day it really started on.
+    near = [c for c in cands if abs((c - refs[0]).days) <= 1]
+    if len(near) != 1:
+        return None, None
+    return near[0].isoformat(), _sod_hms(sod)
 
 
 # ------------------------------------------------------------- stage clock

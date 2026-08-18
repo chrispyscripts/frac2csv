@@ -235,7 +235,17 @@ def find_plot_area(img, masks):
 
 # ---------- OCR ----------
 
-def ocr_words(img_arr, psm=6, whitelist="0123456789:.-"):
+def ocr_boxes(img_arr, psm=6, whitelist="0123456789:.-"):
+    """Tesseract's TSV for one image -> one dict per word.
+
+    Keys: text, x0/y0/x1/y1 (pixels in `img_arr`), conf (0-100), and the
+    block/par/line triple tesseract groups by — which is what lets a caller
+    rebuild whole LINES. A legend entry has to be matched to its swatch as
+    one label, not as the four separate words it OCRs into.
+
+    An empty whitelist means "no restriction", which is what full-page label
+    OCR wants; the numeric callers pass their own.
+    """
     binpath = tesseract_path()
     if binpath is None:
         return []
@@ -243,11 +253,13 @@ def ocr_words(img_arr, psm=6, whitelist="0123456789:.-"):
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         Image.fromarray(img_arr.astype(np.uint8)).save(f.name)
         path = f.name
+    cmd = [binpath, path, "stdout", "--psm", str(psm)]
+    if whitelist:
+        cmd += ["-c", f"tessedit_char_whitelist={whitelist}"]
+    cmd.append("tsv")
     try:
         out = subprocess.run(
-            [binpath, path, "stdout", "--psm", str(psm), "-c",
-             f"tessedit_char_whitelist={whitelist}", "tsv"],
-            capture_output=True, text=True, timeout=120,
+            cmd, capture_output=True, text=True, timeout=120,
             # Tesseract writes UTF-8. Without saying so, Python decodes with
             # the locale codepage (cp1252 on a Canadian Windows box) and a
             # single stray byte raises UnicodeDecodeError inside the worker
@@ -261,11 +273,21 @@ def ocr_words(img_arr, psm=6, whitelist="0123456789:.-"):
         p = line.split("\t")
         if len(p) >= 12 and p[11].strip():
             try:
+                blk, par, ln = int(p[2]), int(p[3]), int(p[4])
                 x, y, w, h = int(p[6]), int(p[7]), int(p[8]), int(p[9])
+                conf = float(p[10])
             except ValueError:
                 continue
-            words.append((p[11].strip(), x + w / 2, y + h / 2))
+            words.append({"text": p[11].strip(), "x0": x, "y0": y,
+                          "x1": x + w, "y1": y + h, "conf": conf,
+                          "line": (blk, par, ln)})
     return words
+
+
+def ocr_words(img_arr, psm=6, whitelist="0123456789:.-"):
+    """[(text, centre_x, centre_y)] — the long-standing shape."""
+    return [(w["text"], (w["x0"] + w["x1"]) / 2, (w["y0"] + w["y1"]) / 2)
+            for w in ocr_boxes(img_arr, psm=psm, whitelist=whitelist)]
 
 
 def fit_ticks(pts, min_inliers=5):
@@ -751,7 +773,28 @@ def _label_band(strip):
 
 
 def time_calibration(img, x0, x1, y1):
-    """OCR time labels under the plot. HH:MM:SS or plain minutes."""
+    """OCR time labels under the plot -> (t0_seconds, seconds_per_pixel).
+
+    Kept for the callers that only want the scale; time_calibration_ex adds
+    which LABEL FORMAT the fit came from, which is what decides whether t0 is
+    a wall clock or an elapsed origin (see _time_fit).
+    """
+    got = time_calibration_ex(img, x0, x1, y1)
+    return None if got is None else (got[0], got[1])
+
+
+# What the labels under the axis turned out to be. The number itself cannot
+# say: "03:30" is 3h30 into the job on one vendor's chart and half past three
+# in the morning on another's, and reading the second as the first (or worse,
+# the other way round) invents a date. Only the format the labels were PRINTED
+# in distinguishes them, so it travels with the fit.
+CLOCK_SOD = "sod"          # HH:MM / HH:MM:SS — seconds of day, no date
+CLOCK_DAY_SOD = "day_sod"  # "DD HH:MM" or "MM-DD HH" — day*86400 + sod
+CLOCK_ELAPSED = "elapsed"  # bare minutes from the start of the job
+
+
+def time_calibration_ex(img, x0, x1, y1):
+    """time_calibration plus the label format -> (t0, sec_per_px, kind)."""
     H, W, _ = img.shape
     xa, xb = max(0, x0 - 60), min(W, x1 + 60)
     hi = min(y1 + 95, H)
@@ -782,7 +825,7 @@ def time_calibration(img, x0, x1, y1):
 
 
 def _time_fit(strip, xa, x0, x1):
-    """One candidate label strip -> (t0, seconds-per-pixel), or None."""
+    """One candidate label strip -> (t0, seconds-per-pixel, kind), or None."""
     if strip.size == 0:
         return None
     # small renders leave labels below OCR size: upscale 3x
@@ -807,13 +850,17 @@ def _time_fit(strip, xa, x0, x1):
                 clusters.append((start, i - gap)); start = None
     if start is not None:
         clusters.append((start, len(colhit) - 1))
-    pts_hms, pts_mms, pts_num = [], [], []
+    pts_day, pts_hms, pts_mms, pts_num = [], [], [], []
     for c0, c1 in clusters:
         if c1 - c0 < 40:
             continue
         crop = strip[:, max(0, c0 - 8):c1 + 9]
-        for text, _, _ in ocr_words(crop, psm=7, whitelist="0123456789:."):
+        # "-" is in the whitelist for the "MM-DD HH" render (see _md_hour).
+        # It can only ever be stripped back off again below, so no label that
+        # read cleanly without it reads differently with it.
+        for raw, _, _ in ocr_words(crop, psm=7, whitelist="0123456789:.-"):
             cx = (c0 + c1) / 6.0 + xa   # cluster coords are in 3x space
+            text = raw.strip("-")
             m = re.fullmatch(r"(\d{1,2}):(\d{2}):(\d{2})", text)
             if m:
                 pts_hms.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60
@@ -825,26 +872,38 @@ def _time_fit(strip, xa, x0, x1):
                 break
             m = re.fullmatch(r"(\d{2})(\d{2}):(\d{2})", text)
             if m:   # "DD HH:MM" with the space lost in OCR
-                pts_hms.append((int(m.group(1)) * 86400
+                pts_day.append((int(m.group(1)) * 86400
                                 + int(m.group(2)) * 3600
                                 + int(m.group(3)) * 60, cx))
+                break
+            v = _md_hour(text)
+            if v is not None:   # "MM-DD HH"
+                pts_day.append((v, cx))
                 break
             t = text.strip(".")
             if re.fullmatch(r"\d+(\.\d+)?", t):
                 pts_num.append((float(t) * 60, cx))   # assume minutes
                 break
-    # strict HH:MM:SS wins; other formats only when it's absent (mixing
-    # truncated misreads across formats poisons the fit)
-    for pts in (pts_hms, pts_mms, pts_num):
+    # dated labels win, then strict HH:MM:SS; the looser formats only when
+    # those are absent (mixing truncated misreads across formats poisons the
+    # fit). The kind travels out with the fit because it, not the number, is
+    # what says whether t0 is a wall clock.
+    for pts, kind in ((pts_day, CLOCK_DAY_SOD), (pts_hms, CLOCK_SOD),
+                      (pts_mms, CLOCK_SOD), (pts_num, CLOCK_ELAPSED)):
         if len(pts) < 4:
             continue
         vals = np.array([p[0] for p in pts], float)
         coords = np.array([p[1] for p in pts], float)
         order = np.argsort(coords)
         vals, coords = vals[order], coords[order]
-        if pts is pts_hms:
-            for i in range(1, len(vals)):             # unwrap midnight
-                if vals[i] < vals[i - 1] - 20000:
+        if pts is pts_hms or pts is pts_day:
+            # unwrap midnight — and, for the dated labels, a month rollover
+            # too: 31 -> 01 is a 30-DAY drop, and adding one day to it left
+            # the series still running backwards.
+            for i in range(1, len(vals)):
+                for _ in range(32):
+                    if vals[i] >= vals[i - 1] - 20000:
+                        break
                     vals[i:] += 86400
         fit = fit_ticks(list(zip(vals, coords)),
                         min_inliers=max(4, int(len(vals) * 0.5)))
@@ -860,10 +919,47 @@ def _time_fit(strip, xa, x0, x1):
                 fit2 = fit_ticks(list(zip(v2, coords)),
                                  min_inliers=max(4, int(len(v2) * 0.5)))
                 if fit2 and 600 <= fit2[1] * (x1 - x0) <= 100000:
-                    fit = fit2
+                    fit, vals = fit2, v2
+            else:
+                # read as MM:SS it IS elapsed time, not a time of day
+                kind = CLOCK_ELAPSED
+        # A first label of zero is the signature of an elapsed axis, whatever
+        # punctuation it wears: "0:00" and "0:00:00" are the start of a job,
+        # never a clock anyone prints. Refusing them here is what stops a
+        # 3-hour stage being dated to midnight.
+        if kind != CLOCK_ELAPSED and float(vals.min()) <= 0.0:
+            kind = CLOCK_ELAPSED
         if fit and fit[1] > 0:
-            return fit[0], fit[1]
+            return fit[0], fit[1], kind
     return None
+
+
+# "MM-DD HH": the hourly render of the Halliburton time axis. It is not a
+# variant anyone would design for — it is what the plot prints when a stage is
+# long enough that matplotlib picks hour ticks — and until the dash reached
+# the whitelist the label arrived as the bare digits "081518", which fell
+# through to the plain-number branch and was read as 81,518 MINUTES. Every one
+# of those pages then reported a ~6-minute treatment for a job the event log
+# times in hours (7 of 187 treatment plots sampled across 134 filings), and
+# the curves were resampled onto that fictional axis before export.
+_MD_HOUR = re.compile(r"(\d{2})-?(\d{2})-?(\d{2})$")
+
+
+def _md_hour(text):
+    """'08-15 18' (or '081518' with the dash lost) -> day*86400 + hour*3600.
+
+    Same units as the "DD HH:MM" branch — day of month, not a calendar
+    ordinal — because hal1_tables reads event-log stamps into exactly that
+    frame to check the axis against. Returns None unless all three fields are
+    real, which is what keeps a genuine six-digit number out of the clock.
+    """
+    m = _MD_HOUR.fullmatch(text)
+    if not m:
+        return None
+    mo, dd, hh = (int(g) for g in m.groups())
+    if not (1 <= mo <= 12 and 1 <= dd <= 31 and 0 <= hh <= 23):
+        return None
+    return dd * 86400 + hh * 3600
 
 
 # ---------- printed graphics inside the plot ----------

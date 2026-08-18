@@ -47,6 +47,7 @@ import re
 
 import numpy as np
 
+import ocr_labels
 from calfrac_summary import _rows
 
 # Singular and plural both appear as real ranges — "Zones 12-14" and "Zones
@@ -88,7 +89,11 @@ def is_chart_page(page):
     chart titles; the two that do not are exactly those schematic pages.
     """
     try:
-        text = page.get_text()
+        # OCR'd when the page's own text layer decodes to control characters
+        # (ocr_labels): the title line is what decides whether a page is a
+        # chart at all, so a Type3 filing with no readable title lost every
+        # one of its charts here, before any of them was looked at.
+        text = ocr_labels.page_text(page)
     except Exception:
         return True          # can't tell — don't drop it
     head = next((l.strip() for l in text.splitlines() if l.strip()), "")
@@ -111,7 +116,7 @@ def detect(page):
     through untouched.
     """
     try:
-        text = page.get_text()
+        text = ocr_labels.page_text(page)
     except Exception:
         return False
     if ZONES_CAPTION.search(text):

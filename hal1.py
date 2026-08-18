@@ -88,6 +88,53 @@ def _ocr_column(img, xa, xb, y0, y1):
     return out
 
 
+# Under the time axis the plot prints its own caption, and on every one of the
+# 187 treatment plots sampled across 134 filings it reads
+#   "Pump Time (Start Date: YYYY-MM-DD)"
+# That string is the only place the DATE of a raster treatment plot appears:
+# the page's text layer carries the well name, the UWI and the interval
+# number and nothing else, which is why every one of these charts has been
+# exported dated 2000-01-01 (Carmine, #368: "can we now add in smarts to get
+# the times and dates at least on ones like this that have it on the image").
+#
+# It is read as a whole phrase, not as a loose date: "Start Date:" followed by
+# an ISO date and a closing bracket is long enough that OCR noise cannot
+# counterfeit it, and a bare date floating anywhere under the axis could just
+# as easily be a tick label.
+_START_DATE = re.compile(r"Start\s*Date\s*[:.]?\s*"
+                         r"(\d{4})\s*-\s*(\d{1,2})\s*-\s*(\d{1,2})\s*\)")
+_CAPTION_WL = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+               "0123456789:()-. ")
+
+
+def axis_caption_date(img, x0, x1, y1):
+    """The plot's printed "Start Date" as (y, m, d), or None.
+
+    Read from the band under the time axis, which holds the tick labels and
+    the caption and nothing else. Nothing here is inferred: a date that does
+    not parse as a real calendar date is thrown away rather than repaired.
+    """
+    from PIL import Image
+    H, W = img.shape[0], img.shape[1]
+    strip = img[min(y1 + 1, H - 1):min(y1 + 140, H),
+                max(0, x0 - 80):min(W, x1 + 80)]
+    if strip.size == 0:
+        return None
+    pil = Image.fromarray(strip.astype(np.uint8))
+    pil = pil.resize((pil.width * 3, pil.height * 3), Image.LANCZOS)
+    words = ar.ocr_words(np.array(pil).astype(int), psm=6,
+                         whitelist=_CAPTION_WL)
+    m = _START_DATE.search(" ".join(w[0] for w in words))
+    if not m:
+        return None
+    y, mo, d = (int(g) for g in m.groups())
+    try:
+        import datetime
+        return datetime.date(y, mo, d)
+    except ValueError:
+        return None
+
+
 # The concentration axis is drawn INSIDE the frame (see the module docstring),
 # and matplotlib colours an axis's furniture to match its series — so the tick
 # stubs hard against the left rule and the rotated "Conc. [kg/m3]" title a
@@ -197,10 +244,10 @@ def extract_image(img, sample_sec=1.0):
     if box is None:
         raise ValueError("hal1: no frame")
     x0, y0, x1, y1 = box
-    tcal = ar.time_calibration(img, x0, x1, y1)
+    tcal = ar.time_calibration_ex(img, x0, x1, y1)
     if tcal is None:
         raise ValueError("hal1: time axis unreadable")
-    ta, tb = tcal
+    ta, tb, axis_kind = tcal
     t_start = ta + tb * x0
     n = int((ta + tb * x1) - t_start)
     if not (120 < n < 100000):
@@ -284,7 +331,12 @@ def extract_image(img, sample_sec=1.0):
     if not channels:
         raise ValueError("hal1: no channel calibrated; " + "; ".join(notes[:3]))
     info = {"plot": box, "t0_seconds": float(t_start),
-            "duration_s": int(n), "notes": notes}
+            "duration_s": int(n), "notes": notes,
+            # what the time axis was printed in, and the date printed beside
+            # it — everything hal1_tables.chart_datetime needs to turn this
+            # chart's own origin into a wall clock.
+            "axis_kind": axis_kind,
+            "start_date": axis_caption_date(img, x0, x1, y1)}
     return samples, channels, info
 
 
