@@ -3325,7 +3325,7 @@ function fvPayload(entry) {
   const { starts } = fvStarts(raw);
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
-    label: String(st.meta.stage || (i + 1)),
+    label: String(st.meta.stage || "?"),
     t0: starts[i],
     dsec: st.sample_sec || 1,
     n: st.n,
@@ -3412,6 +3412,20 @@ function fvApplyToEntry(entry, ed) {
 }
 
 function fvAlive() { return fvWin && !fvWin.closed; }
+// The other half of the selection loop: FracView highlights whatever stage
+// this window is showing. Sent on every stage-level change, which is exactly
+// where pushStacked already fires, so the two companion windows and the Lab
+// all move together instead of each following its own trail.
+function fvPushSel() {
+  if (!fvAlive()) return;
+  const entry = current && current.entry, it = current && current.item;
+  if (!entry) return;
+  try {
+    fvWin.postMessage({ type: "fv:sel", file: entry.name,
+                        label: (it && it.type === "stage")
+                               ? String(stageLabel(it)) : null }, "*");
+  } catch (e) { /* the window went away between the check and the send */ }
+}
 function fvPush() {
   if (!fvAlive()) return;
   const entry = current && current.entry;
@@ -3577,6 +3591,7 @@ function stackPayload() {
 
 // The stage-level state changed: new seq, and the child owes us a fresh ack.
 function pushStacked() {
+  fvPushSel();                   // FracView follows the same selection
   stackSeq++;                    // bumped even with no child listening, so a
   stackAckSeq = -1;              // window opened later cannot look "current"
   stackTries = 0;

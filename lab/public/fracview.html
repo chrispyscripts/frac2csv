@@ -146,7 +146,8 @@ function rawBounds(w) {
   return b;
 }
 function freshEdits(w) {
-  return { bounds: rawBounds(w), labels: w.stages.map(s => s.label), cuts: [] };
+  return { bounds: rawBounds(w), labels: w.stages.map(s => s.label),
+           origin: w.stages.map((_, i) => i), cuts: [] };
 }
 function nStages() { return edits.bounds.length - 1; }
 function stageSpan(i) { return { a: edits.bounds[i], b: edits.bounds[i + 1] }; }
@@ -492,18 +493,28 @@ const escapeHtml = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").r
 // finds none of the breaks, so the whole job arrives as a single stage called
 // "1-30". Numbering the pieces 1, 2, 3 … off that range is the difference
 // between a usable split and thirty stages called "1-30 (part 4)".
-function relabelRange(i0, count) {
-  const m = /^\s*(\d+)\s*[-–]\s*(\d+)(.*)$/.exec(String(edits.labels[i0] || ""));
+// Renumber every piece that came out of ONE extracted stage. The numbering
+// is always derived from that stage's ORIGINAL printed label, never from the
+// labels already on screen — reading those back gave "1 (1) (2)" on the second
+// piece, because the first had been overwritten by the time it was read.
+function relabelOrigin(orig) {
+  const idx = [];
+  for (let i = 0; i < nStages(); i++) if (edits.origin[i] === orig) idx.push(i);
+  const base = String((well.stages[orig] && well.stages[orig].label) || orig + 1);
+  if (idx.length <= 1) { edits.labels[idx[0]] = base; return; }
+  const m = /^\s*(\d+)\s*[-–]\s*(\d+)(.*)$/.exec(base);
   if (!m) {
-    for (let k = 0; k < count; k++)
-      edits.labels[i0 + k] = `${edits.labels[i0]} (${k + 1})`;
+    idx.forEach((i, k) => { edits.labels[i] = `${base} (${k + 1})`; });
     return;
   }
+  // "1-30" is a Calfrac sheet holding zones 1 through 30. Splitting it is the
+  // job this window exists for, so the pieces take those zone numbers.
   const lo = Number(m[1]), hi = Number(m[2]), suffix = m[3] || "";
-  for (let k = 0; k < count; k++) {
+  idx.forEach((i, k) => {
     const num = lo + k;
-    edits.labels[i0 + k] = num <= hi ? `${num}${suffix}` : `${hi}${suffix} (${num - hi + 1})`;
-  }
+    edits.labels[i] = num <= hi ? `${num}${suffix}`
+                                : `${hi}${suffix} (${num - hi + 1})`;
+  });
 }
 function splitAt(t) {
   const i = stageAtX(t);
@@ -511,15 +522,11 @@ function splitAt(t) {
   const s = stageSpan(i);
   if (t - s.a < 2000 || s.b - t < 2000) return;   // too thin to be meant
   pushUndo();
-  const label = edits.labels[i];
+  const orig = edits.origin[i];
   edits.bounds.splice(i + 1, 0, t);
-  edits.labels.splice(i + 1, 0, label);
-  // renumber this stage and everything that came out of the same original
-  let i0 = i;
-  while (i0 > 0 && edits.labels[i0 - 1] === label) i0--;
-  let cnt = 0;
-  while (i0 + cnt < nStages() && edits.labels[i0 + cnt] === label) cnt++;
-  relabelRange(i0, cnt);
+  edits.labels.splice(i + 1, 0, edits.labels[i]);
+  edits.origin.splice(i + 1, 0, orig);
+  relabelOrigin(orig);
   fillJump(); markDirty(); draw();
 }
 
@@ -533,6 +540,7 @@ function sendEdits() {
       window.opener.postMessage({
         type: "fv:edits", file: well.file,
         bounds: edits.bounds.slice(), labels: edits.labels.slice(),
+        origin: edits.origin.slice(),
         cuts: edits.cuts.map(c => ({ a: c.a, b: c.b })),
       }, "*");
     } catch (e) { /* the Lab went away — nothing to keep in step */ }
@@ -549,15 +557,32 @@ window.addEventListener("message", ev => {
     $("sub").textContent = "";
     return;
   }
+  // The Lab moved to a stage: highlight it here. Deliberately NOT routed
+  // through selectStage — that posts back, and the two windows would chase
+  // each other around the loop.
+  if (d.type === "fv:sel") {
+    if (!well || d.file !== well.file) return;
+    const i = d.label == null ? -1
+            : edits.labels.findIndex(l => String(l) === String(d.label));
+    selIdx = i;
+    $("jump").value = i >= 0 ? String(i) : "";
+    draw();
+    return;
+  }
   if (d.type !== "fv:well") return;
   well = d;
   MAXES = chanMax();
-  edits = (d.edits && d.edits.bounds && d.edits.bounds.length === d.stages.length + 1)
-    ? { bounds: d.edits.bounds.slice(), labels: d.edits.labels.slice(),
-        cuts: (d.edits.cuts || []).map(c => ({ a: c.a, b: c.b })) }
-    : (d.edits && d.edits.bounds ? { bounds: d.edits.bounds.slice(),
-        labels: d.edits.labels.slice(), cuts: (d.edits.cuts || []).slice() }
-       : freshEdits(d));
+  if (d.edits && d.edits.bounds && d.edits.bounds.length >= 2) {
+    const e = d.edits;
+    edits = { bounds: e.bounds.slice(), labels: e.labels.slice(),
+              // an edit saved before origins were tracked maps 1:1
+              origin: (e.origin && e.origin.length === e.bounds.length - 1)
+                      ? e.origin.slice()
+                      : e.bounds.slice(0, -1).map((_, i) => Math.min(i, d.stages.length - 1)),
+              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })) };
+  } else {
+    edits = freshEdits(d);
+  }
   undoStack = [];
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
   $("title").textContent = d.file || "well";
