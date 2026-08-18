@@ -199,49 +199,6 @@ class BlackAxisColumn(unittest.TestCase):
         self.assertFalse(lib1._axis_column(self._column([0.0, 0.5, 1.0])))
 
 
-class ReExportNotice(unittest.TestCase):
-    """The black-axis fix reaches data the client already exported, so the app
-    has to say so. This notice is the only place it ever does, and a warning
-    that goes quiet is worse than one that was never written — it reads as
-    "nothing to worry about". It is built from the named `rescaled` channels
-    on purpose: an earlier version parsed the human sentence out of
-    `warnings`, which meant rewording that sentence would have switched the
-    notice off in silence.
-    """
-
-    @staticmethod
-    def _series(*rescaled):
-        return {"type": "series", "meta": {"rescaled": list(rescaled)}}
-
-    def test_none_when_nothing_was_rescaled(self):
-        self.assertIsNone(pipeline._rescaled_note(
-            [self._series(), self._series()]))
-
-    def test_names_the_channel_and_counts_its_charts(self):
-        note = pipeline._rescaled_note(
-            [self._series("PFR-ZC FR CONC")] * 3)
-        self.assertIn("PFR-ZC FR CONC (3 charts)", note)
-        self.assertTrue(note.startswith("RE-EXPORT NOTICE"))
-
-    def test_singular_for_one_chart(self):
-        note = pipeline._rescaled_note([self._series("Hydr Pressure")])
-        self.assertIn("Hydr Pressure (1 chart)", note)
-
-    def test_says_multiplying_cannot_fix_an_old_export(self):
-        # the factor is x2 / x3 / x4 by page on PFR-ZC and non-constant on
-        # Hydr Pressure, so "just multiply it" produces a NEW wrong number
-        note = pipeline._rescaled_note([self._series("Hydr Pressure")])
-        self.assertIn("not a constant factor", note)
-
-    def test_ignores_tables_and_summaries(self):
-        rows = [{"type": "table", "meta": {"rescaled": ["nope"]}},
-                {"type": "summary"},
-                self._series("Hydr Pressure")]
-        note = pipeline._rescaled_note(rows)
-        self.assertIn("Hydr Pressure", note)
-        self.assertNotIn("nope", note)
-
-
 class LibertySummaryKinds(unittest.TestCase):
     """Carmine ran 299 Liberty files and got the Summary view on 10.
 

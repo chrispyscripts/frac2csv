@@ -494,7 +494,6 @@ where one stage stops and the next starts">FracView &#8599;</button>
 a picture of these panels and the extraction diagnostics">Flag Error</button>
           <div class="legend" id="pv-legend"></div>
         </div>
-        <div class="alert" id="pv-alert" hidden></div>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
         <div class="canvaswrap" id="origwrap" hidden>
           <canvas id="origgraph" width="1120" height="440"></canvas>
@@ -1748,38 +1747,9 @@ function showStage(entry, well, item) {
     .concat(((item.meta && item.meta.warnings) || [])
       .filter(w => !/^Corrected in /.test(w)))
     .join("\n");
-  showAlert(entry, item);
   renderDlbar(well);
   pushStacked();      // the stacked window follows whatever is on screen here
   updateTableBtn();
-}
-
-// The engine's per-chart warnings, plus this file's re-export notice. Kept
-// separate from pv-notes on purpose: notes are diagnostics you consult, this
-// is the one thing that has to be READ, because it is the only place the app
-// ever says that a CSV already sitting on the client's disk is wrong.
-function showAlert(entry, item) {
-  const box = $("pv-alert");
-  // ONLY the re-export notice belongs here. The first cut showed every
-  // meta.warning, which put routine diagnostics — "stage/zone not found",
-  // "date not found" — in a big amber box they had never been in before.
-  // Carmine read them as faults and copied them into a bug report (#343),
-  // which is the exact opposite of what an alert is for: promote everything
-  // and you have promoted nothing. The rest still reach him, in pv-notes,
-  // where diagnostics live.
-  const chart = ((item && item.meta && item.meta.warnings) || [])
-    .filter(w => /^Corrected in /.test(w));
-  const file = (entry && entry.notes || [])
-    .filter(n => /^RE-EXPORT NOTICE/.test(n));
-  const msgs = file.concat(chart);
-  if (!msgs.length) { box.hidden = true; box.textContent = ""; return; }
-  const escape = s => String(s).replace(/[&<>"]/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  box.innerHTML = msgs
-    .map(m => `<div>⚠ ${escape(m)
-      .replace(/^RE-EXPORT NOTICE/, "<b>RE-EXPORT NOTICE</b>")}</div>`)
-    .join("");
-  box.hidden = false;
 }
 
 // ---------- "Our Terms": one curated table shape across every provider ----------
@@ -2002,7 +1972,6 @@ function showTable(entry, t) {
   dl.appendChild(cb);
   addZipCount(dl);
   $("pv-notes").textContent = "";
-  showAlert(entry, null);   // the file's re-export notice outlives the chart view
   pushStacked();      // not a stage — the stacked window empties itself
   updateTableBtn();
 }
@@ -2033,7 +2002,6 @@ function showSummary(entry, item) {
   $("pv-title").textContent = g.title;
   $("pv-sub").textContent = `${n} page${n > 1 ? "s" : ""}  ·  rendered from the source PDF`;
   $("pv-dl").innerHTML = ""; $("pv-table").innerHTML = ""; $("pv-notes").textContent = "";
-  showAlert(entry, null);   // same — it is about the file, not this page
   renderSummaryPage(entry, item);
   pushStacked();      // not a stage — the stacked window empties itself
   updateTableBtn();
