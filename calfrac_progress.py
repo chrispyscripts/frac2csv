@@ -45,10 +45,9 @@ inventing a boundary.
 """
 import re
 
-import ocr_labels
-
 import numpy as np
 
+import ocr_labels
 from calfrac_summary import _rows
 
 # Singular and plural both appear as real ranges — "Zones 12-14" and "Zones

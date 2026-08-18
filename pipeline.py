@@ -24,7 +24,6 @@ import fitz
 
 import canyon
 import frac_core as fc
-import ocr_labels
 import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
@@ -33,6 +32,7 @@ import bj_summary
 import calfrac_summary
 import calfrac_progress as cprog
 import liberty_summary
+import ocr_labels
 import lib1
 import peloton_frac as pel
 import sanjel

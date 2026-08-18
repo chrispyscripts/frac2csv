@@ -139,6 +139,48 @@ def words(page, dpi=DPI):
     return out
 
 
+# A page can be drawn sideways without saying so. /Rotate 90 is honoured by
+# the renderer and handled by the derotation below, but Halliburton's IFS
+# report lays its charts out rotated INSIDE an upright page — 00971 p119 is
+# a landscape chart on a portrait sheet — and tesseract reads a column of
+# turned letters as "Us Ze Ga =o Ox aO". Three passes, and the turn that
+# reads best wins; only garbled pages pay for it, and only the good pass's
+# boxes are kept.
+_TURNS = (0, 1, 3)
+# what "reads best" means: total confidence over words that are actually
+# words. A page of turned text still returns plenty of one-character noise.
+_SCORE_MIN_CONF = 60.0
+_SCORE_MIN_LEN = 3
+# ...and when the upright pass has already read this many real words, the
+# page is upright and the other two turns are not worth their second and
+# third of a second on every chart page of a 382-page filing.
+_UPRIGHT_ENOUGH = 8
+
+
+def _words_read(boxes):
+    return sum(1 for b in boxes
+               if b["conf"] >= _SCORE_MIN_CONF and len(b["text"]) >= _SCORE_MIN_LEN)
+
+
+def _score(boxes):
+    return sum(b["conf"] for b in boxes
+               if b["conf"] >= _SCORE_MIN_CONF and len(b["text"]) >= _SCORE_MIN_LEN)
+
+
+def _unturn(box, k, w, h):
+    """A box read off np.rot90(img, k) -> the same box in img's pixels."""
+    x0, y0, x1, y1 = box
+    if k == 0:
+        return x0, y0, x1, y1
+    if k == 1:      # counter-clockwise: rotated (x, y) came from (w-1-y, x)
+        pts = [(w - 1 - y, x) for x in (x0, x1) for y in (y0, y1)]
+    else:           # k == 3, clockwise: rotated (x, y) came from (y, h-1-x)
+        pts = [(y, h - 1 - x) for x in (x0, x1) for y in (y0, y1)]
+    xs = [q[0] for q in pts]
+    ys = [q[1] for q in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _render_and_read(page, dpi):
     pix = page.get_pixmap(dpi=dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
@@ -147,12 +189,19 @@ def _render_and_read(page, dpi):
         img = img[..., :3]
     elif pix.n == 1:
         img = np.repeat(img, 3, axis=2)
+    h, w = img.shape[0], img.shape[1]
     # No whitelist: these are chart titles, legends and captions, and
     # restricting the alphabet on running text costs more than it buys.
     boxes = ar.ocr_boxes(img.astype(int), psm=PSM, whitelist="")
-    scale = 72.0 / dpi
-    derot = page.derotation_matrix
-    out = []
+    best_k = 0
+    if _words_read(boxes) < _UPRIGHT_ENOUGH:
+        best = _score(boxes)
+        for k in _TURNS[1:]:
+            alt = ar.ocr_boxes(np.rot90(img, k).astype(int), psm=PSM,
+                               whitelist="")
+            got = _score(alt)
+            if got > best:
+                best_k, best, boxes = k, got, alt
     for b in boxes:
         # Tesseract reports the INK; a PDF span reports the LINE BOX, which
         # is taller by the ascent and descent the glyphs happen not to use.
@@ -160,14 +209,24 @@ def _render_and_read(page, dpi):
         # rows by whether their boxes abut, and this chart stacks its three
         # value axes 6.1pt apart — spans overlap there, bare digit ink sits
         # 2.2pt clear, and the three axes came back as one column of 900
-        # with the rate axis reading 900 m3/min. Restore the line box.
+        # with the rate axis reading 900 m3/min. Restore the line box, in
+        # the pass's OWN orientation, where the text runs left to right.
         pad = _LINE_BOX_PAD * (b["y1"] - b["y0"])
-        r = fitz.Rect(b["x0"] * scale, (b["y0"] - pad) * scale,
-                      b["x1"] * scale, (b["y1"] + pad) * scale)
+        b["y0"] -= pad
+        b["y1"] += pad
+        if best_k:
+            b["x0"], b["y0"], b["x1"], b["y1"] = _unturn(
+                (b["x0"], b["y0"], b["x1"], b["y1"]), best_k, w, h)
+    scale = 72.0 / dpi
+    derot = page.derotation_matrix
+    out = []
+    for b in boxes:
+        r = fitz.Rect(b["x0"] * scale, b["y0"] * scale,
+                      b["x1"] * scale, b["y1"] * scale)
         r = r * derot
         r.normalize()
         out.append({"text": b["text"], "rect": r, "conf": b["conf"],
-                    "line": b["line"],
+                    "line": b["line"], "i": len(out),
                     # the box in the RENDER, kept because reading order and
                     # "the next word to the right" only exist there: on a
                     # /Rotate 90 page a line runs UP the page's own y axis
@@ -183,11 +242,12 @@ def _lines(page, dpi=DPI, min_conf=TEXT_CONF):
             groups.setdefault(w["line"], []).append(w)
     out = []
     for ws in groups.values():
-        # Reading order is the RENDER's left-to-right, and on a /Rotate 90
-        # page that is the page's own y axis running BACKWARDS. Sorting in
-        # page space spelt every title in reverse ("Surface ... (Surf:
-        # Paramount"), so the order tesseract emitted is kept instead.
-        ws.sort(key=lambda w: w["rbox"][0])
+        # Reading order is the order tesseract emitted the words in, and
+        # nothing else. Sorting by position spelt every title on a /Rotate 90
+        # page in reverse ("Surface ... (Surf: Paramount"), and on a page
+        # whose content is drawn sideways inside an upright sheet there is no
+        # page-space axis that runs the right way at all.
+        ws.sort(key=lambda w: w["i"])
         xs = [w["rect"] for w in ws]
         rect = fitz.Rect(min(r.x0 for r in xs), min(r.y0 for r in xs),
                          max(r.x1 for r in xs), max(r.y1 for r in xs))
@@ -264,14 +324,26 @@ def stage_number(page, dpi=DPI):
     frac_core.detect_text_meta takes off a readable page — an OCR'd chart
     and its vector twin must not disagree about what a stage is called.
     """
-    heads = [w for w in words(page, dpi)
-             if _STAGE_WORD.fullmatch(w["text"].strip(" :."))]
+    ws = words(page, dpi)
+    heads = [w for w in ws if _STAGE_WORD.fullmatch(w["text"].strip(" :."))]
     scale = 72.0 / dpi
     for head in heads[:3]:
+        # The number is the next word or two ON THE SAME LINE. Taking "the
+        # box to the right" instead only works while the page is upright,
+        # and IFS draws its charts sideways inside a portrait sheet.
+        mates = sorted((w for w in ws if w["line"] == head["line"]
+                        and w["i"] > head["i"]), key=lambda w: w["i"])[:2]
         x0, y0, x1, y1 = head["rbox"]
         h = max(1.0, y1 - y0)
-        clip = fitz.Rect((x0 - h * 0.3) * scale, (y0 - h * 0.4) * scale,
-                         (x1 + h * _STAGE_REACH) * scale, (y1 + h * 0.4) * scale)
+        for m in mates:
+            mx0, my0, mx1, my1 = m["rbox"]
+            x0, y0 = min(x0, mx0), min(y0, my0)
+            x1, y1 = max(x1, mx1), max(y1, my1)
+        if not mates:
+            x1 += h * _STAGE_REACH
+        pad = h * 0.4
+        clip = fitz.Rect((x0 - pad) * scale, (y0 - pad) * scale,
+                         (x1 + pad) * scale, (y1 + pad) * scale)
         try:
             img = _clip_image(page, clip, _STAGE_DPI)
         except Exception:
@@ -281,11 +353,13 @@ def stage_number(page, dpi=DPI):
             got = " ".join(w[0] for w in ar.ocr_words(img, psm=psm,
                                                       whitelist=_STAGE_WL))
             m = _STAGE_RE.search(got)
-            seen.add(str(int(m.group(1))) if m else None)
+            if m:
+                seen.add(str(int(m.group(1))))
+        # A mode that read no number at all has not contradicted anything —
+        # "Zone l" is a failure, not a second opinion. A mode that read a
+        # DIFFERENT number has, and then neither is used.
         if len(seen) == 1:
-            only = seen.pop()
-            if only is not None:
-                return only
+            return seen.pop()
     return None
 
 
