@@ -1182,6 +1182,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # the Hal-1 EVENT LOG, read once per document and only when a raster
     # treatment plot actually needs a calendar to date itself against
     _hal_events = [None]
+    # the SLB Stimulation Service Reports, same idea and same reason: the PRC
+    # chart page prints no date anywhere on it (#574)
+    _slb_service = [None]
 
     # year hint from the COMP filename survives client-side page chunking
     yhint = bj1.filename_year(filename)
@@ -1267,6 +1270,32 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             try:
                 for meta, samples, data, units in \
                         slb.extract_page_blocks(page, sample_sec):
+                    # A PRC chart carries a clock and no calendar: its own axis
+                    # says where sample 0 sits, nothing on the page says which
+                    # DAY. _zone_sheet_start answers that from a "Zone N
+                    # Summary" sheet, and the AER Montney filings print none —
+                    # 00011 has 54 Stimulation Service Reports and zero Zone
+                    # Summaries, so all 52 of its intervals came through
+                    # undated. Carmine, #574: "were Stimulation Service Report
+                    # page exsist we should be the date there", which is what
+                    # his corpus notes have said per file all along.
+                    #
+                    # Read once per document, and only when a chart actually
+                    # arrives without a date — a filing whose zone sheets
+                    # already answered pays nothing.
+                    if not getattr(meta, "date", ""):
+                        if _slb_service[0] is None:
+                            try:
+                                _slb_service[0] = slb.service_report_index(doc)
+                            except Exception:
+                                _slb_service[0] = {}
+                        try:
+                            _iv = int(str(getattr(meta, "stage", "")).strip())
+                        except (TypeError, ValueError):
+                            _iv = None
+                        _d = _slb_service[0].get(_iv)
+                        if _d:
+                            meta.date = _d
                     # A Zone Summary sheet is a picture, not a vector plot, and
                     # says so through page_source so the Lab's IMAGE badge and
                     # the ghost overlay both key off it. geom places the chart

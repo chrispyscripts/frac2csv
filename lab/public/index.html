@@ -3598,9 +3598,21 @@ const WIN_TAG = (() => {
 })();
 const winName = which => `carmine-${which}-${WIN_TAG}`;
 
+// NaN when the stage prints no date. The sentinel this used to substitute —
+// "2000-01-01" — is a perfectly finite instant, so a well where SOME stages
+// are dated and some are not read as a valid strictly-increasing clock with a
+// TWENTY-FOUR YEAR void in it, and Real Time drew exactly that. It stayed
+// hidden while whole templates came through undated, because then every stage
+// got the same sentinel, the clock was not increasing, and the synthetic path
+// caught it. Dating SLB and IFS makes the mixed file the ordinary case.
+//
+// fvStarts already handles a non-finite first entry — it falls back to the
+// same 2000-01-01 base for the synthetic axis — so the sentinel is still
+// there, in the one place where it means "no clock" rather than "the year
+// 2000".
 function fvStageStart(st) {
-  const d = new Date((st.meta.date || "2000-01-01") + "T" +
-                     (st.meta.start_time || "00:00:00"));
+  if (!st.meta.date) return NaN;
+  const d = new Date(st.meta.date + "T" + (st.meta.start_time || "00:00:00"));
   return d.getTime();
 }
 // Absolute start of every stage, and whether that clock is real.
@@ -3612,6 +3624,28 @@ function fvStageStart(st) {
 // printed clock is missing or not strictly increasing, lay the stages end to
 // end on a synthetic one instead. Same geometry, and nothing downstream is
 // told a made-up time: `synthetic` keeps it out of the exported timestamps.
+// FracView lays the stages END TO END along a clock, so rawBounds walks
+// w.stages in order and pushes each t0. That silently assumes the array is
+// already in time order — and a filing does not have to print it that way.
+// SLB 00011 prints interval 41's chart AFTER 45's: 46 charts whose dates are
+// strictly sequential when read by interval, arriving in an order that is not.
+// One page out of place made the whole well's clock look non-monotonic, which
+// sent fvStarts to its synthetic axis and took every void off Real Time on a
+// well whose clock is perfect.
+//
+// So order by the printed start before anything reads it. Only when EVERY
+// stage prints one: with a stage missing, there is nothing to sort on and the
+// original order is the best guess available, which is the case the synthetic
+// fallback already exists for.
+function fvOrdered(stages) {
+  const at = stages.map(fvStageStart);
+  if (!at.every(v => isFinite(v))) return stages;
+  return stages
+    .map((st, i) => ({ st, t: at[i], i }))
+    .sort((a, b) => (a.t - b.t) || (a.i - b.i))
+    .map(x => x.st);
+}
+
 function fvStarts(stages) {
   const raw = stages.map(fvStageStart);
   const ok = raw.every(v => isFinite(v)) &&
@@ -3629,7 +3663,7 @@ function fvStarts(stages) {
 function fvPayload(entry) {
   const w = entry && entry.well;
   if (!w || !w.stages.length) return { type: "fv:none" };
-  const raw = w.stagesRaw || w.stages;
+  const raw = fvOrdered(w.stagesRaw || w.stages);
   const { starts, synthetic } = fvStarts(raw);
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
@@ -3663,6 +3697,9 @@ function fvPayload(entry) {
 // samples, cut at the boundaries FracView holds.
 function applyFvEdits(raw, ed) {
   if (!ed || !ed.bounds || ed.bounds.length < 2) return raw;
+  // the same order FracView was shown, or the edit's bounds address stages
+  // this never displayed
+  raw = fvOrdered(raw);
   const { starts, synthetic } = fvStarts(raw);
   const cuts = ed.cuts || [];
   const p2 = n => String(n).padStart(2, "0");

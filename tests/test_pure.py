@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import auto_raster as ar          # noqa: E402
 import halliburton_ifs as hifs   # noqa: E402
+import slb                       # noqa: E402
 import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
 import halliburton_ifs as ifs     # noqa: E402
@@ -1247,6 +1248,83 @@ class IFSStartStamp(unittest.TestCase):
     def test_exactly_midnight(self):
         self.assertEqual(hifs._start_stamp("2021-11-10", 0.0),
                          ("2021-11-10", "00:00:00"))
+
+
+class SLBServiceReport(unittest.TestCase):
+    """Dating a PRC chart off the Stimulation Service Report (#574).
+
+    The PRC chart page carries a clock and no calendar. _zone_sheet_start
+    answers the day from a "Zone N Summary" sheet, and the AER Montney
+    filings print none: 00011 has 54 service reports and zero zone summaries,
+    so all 52 of its intervals came through undated.
+    """
+    class _Page:
+        """Just enough of a fitz page for _rows_by_y."""
+        def __init__(self, spans):
+            self._spans = spans
+
+        def get_text(self, kind=None):
+            return {"blocks": [{"lines": [{"spans": [
+                {"text": t, "bbox": (x, y, x + 40, y + 8)}
+                for t, x, y in self._spans]}]}]}
+
+    def test_value_is_the_cell_right_of_the_label(self):
+        """00011 p205, measured: label at x=382.5 y=112.9, value at x=444.5.
+
+        The text stream orders these by drawing order, so the value arrives
+        nowhere near its label in it — position is the only way to pair them.
+        """
+        page = self._Page([("Job Start Date", 382.5, 112.9),
+                           ("7/9/2018", 444.5, 112.5),
+                           ("Job End Date", 385.9, 126.9),
+                           ("7/10/2018", 444.5, 126.6)])
+        self.assertEqual(slb._service_report_start(page), datetime.date(2018, 7, 9))
+
+    def test_end_date_is_not_taken_for_the_start(self):
+        """Interval 1 ran across midnight: start 7/9, end 7/10. Reading the
+        wrong row dates the whole interval a day late."""
+        page = self._Page([("Job End Date", 385.9, 126.9),
+                           ("7/10/2018", 444.5, 126.6),
+                           ("Job Start Date", 382.5, 112.9),
+                           ("7/9/2018", 444.5, 112.5)])
+        self.assertEqual(slb._service_report_start(page), datetime.date(2018, 7, 9))
+
+    def test_a_date_left_of_the_label_is_not_its_value(self):
+        page = self._Page([("7/9/2018", 100.0, 112.5),
+                           ("Job Start Date", 382.5, 112.9)])
+        self.assertIsNone(slb._service_report_start(page))
+
+    def test_no_label(self):
+        page = self._Page([("Customer: Seven Generations", 8.4, 20.4)])
+        self.assertIsNone(slb._service_report_start(page))
+
+    def test_interval_read_from_the_header(self):
+        for text, want in (("License: 0483281 // Interval 1", "1"),
+                           ("License: 0483281 // Interval 52", "52"),
+                           ("License: 0483281 //Interval 7", "7")):
+            m = slb._SSR_INTERVAL.search(text)
+            self.assertIsNotNone(m, text)
+            self.assertEqual(m.group(1), want)
+
+    def test_letter_suffixed_interval_keys_on_the_number(self):
+        """00011 p575 heads a re-treatment "// Interval 42 B". The chart is
+        keyed by the number alone, so both reports land on 42."""
+        m = slb._SSR_INTERVAL.search("License: 0483281 // Interval 42 B")
+        self.assertEqual(m.group(1), "42")
+
+    def test_agreeing_duplicates_are_kept(self):
+        """00011 prints two reports each for intervals 5 and 42, and every
+        measured pair agrees."""
+        self.assertEqual(slb._resolve_service_dates({5: {"2018-07-11"}}),
+                         {5: "2018-07-11"})
+
+    def test_disagreeing_duplicates_are_dropped(self):
+        """A re-treatment on another day must not date the first one. An
+        undated chart is a visible gap; a chart dated off the wrong treatment
+        is a wrong answer wearing a date."""
+        got = slb._resolve_service_dates({42: {"2018-08-01", "2018-08-03"},
+                                          5: {"2018-07-11"}})
+        self.assertEqual(got, {5: "2018-07-11"})
 
 
 if __name__ == "__main__":

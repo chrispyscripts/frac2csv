@@ -984,6 +984,88 @@ def _zone_sheet_times(page):
     return got
 
 
+# ---- the Stimulation Service Report as a date source (#574) ----------------
+#
+# Carmine: "For SCLUM-1 were Stimulation Service Report page exsist we should
+# be the date there". His own corpus notes say the same thing per file, over
+# and over: "Date start from Stimulation Service report".
+#
+# It matters because the PRC chart path sets no date AT ALL. _zone_sheet_start
+# reads the printed START DATE off a "Zone N Summary" sheet, and the AER
+# Montney filings print none — 00011 has 54 Stimulation Service Reports and
+# zero Zone Summaries, so every one of its 54 intervals came through undated.
+#
+# The report is one page per interval, ahead of that interval's chart, and it
+# names itself in its own header: "License: 0483281 // Interval 1". So this
+# is an INDEX over the document, built once, keyed by interval — the same
+# shape hal1_tables.event_log_index gives the Hal-1 raster path, and for the
+# same reason: the date is not on the chart page.
+#
+# The value is taken positionally, exactly as _zone_sheet_times takes the zone
+# sheet's: first cell to the right of the label, on the label's own row. On
+# 00011 p205 the label sits at x=382.5 y=112.9 and its value "7/9/2018" at
+# x=444.5 y=112.5. The text stream orders these by drawing order, so the value
+# arrives nowhere near its label in it and reading the stream is not an option.
+_SSR_MARK = re.compile(r"Stimulation Service Report", re.I)
+_SSR_INTERVAL = re.compile(r"//\s*Interval\s+(\d{1,3})\b", re.I)
+_SSR_START_LABEL = re.compile(r"^Job\s+Start\s+Date$", re.I)
+
+
+def _service_report_start(page):
+    """The Job Start Date printed on one Stimulation Service Report page.
+
+    -> datetime.date, or None when the page does not print one.
+    """
+    for _y, cells in _rows_by_y(page):
+        for lx, lt in cells:
+            if not _SSR_START_LABEL.match(lt):
+                continue
+            for x, t in cells:
+                if x > lx and _is_date(t):
+                    return _date(t)
+    return None
+
+
+def service_report_index(doc):
+    """{interval number: date} from every Stimulation Service Report page.
+
+    Read once per document. An interval whose report prints no readable date
+    is left OUT rather than defaulted — a chart with no date says so, and a
+    chart dated by a guess does not.
+
+    An interval can carry MORE than one report: 00011 prints 54 reports for 52
+    intervals, because 5 and 42 were treated twice and the second is headed
+    "// Interval 42 B". The letter is a distinct treatment, exactly as it is on
+    IFS's "Interval 4A", but the chart is keyed by the number alone — so the
+    two collapse here. They agree on the date in every case measured, and
+    where two reports for one interval DISAGREE this drops the interval rather
+    than taking whichever came first. An undated chart is a visible gap; a
+    chart dated off the wrong treatment is a wrong answer wearing a date.
+    """
+    seen = {}
+    for pno in range(doc.page_count):
+        try:
+            page = doc[pno]
+            text = page.get_text()
+        except Exception:
+            continue
+        if not _SSR_MARK.search(text):
+            continue
+        m = _SSR_INTERVAL.search(text)
+        if not m:
+            continue
+        d = _service_report_start(page)
+        if d is None:
+            continue
+        seen.setdefault(int(m.group(1)), set()).add(d.strftime("%Y-%m-%d"))
+    return _resolve_service_dates(seen)
+
+
+def _resolve_service_dates(seen):
+    """{interval: {dates}} -> {interval: date}, dropping any that disagree."""
+    return {iv: next(iter(days)) for iv, days in seen.items() if len(days) == 1}
+
+
 def _zone_sheet_start(page):
     """(date, minutes-of-day) as printed on this Zone N Summary sheet.
 
