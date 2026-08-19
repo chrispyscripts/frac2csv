@@ -946,5 +946,71 @@ class OcrTimeAxisIsFittedNotMaximised(unittest.TestCase):
 
 
 
+class CalfracVariantPick(unittest.TestCase):
+    """Carmine, #550: Calfrac prints each zone twice, as a "Surface" sheet and
+    a "Bottom Hole" sheet, and BOTH were exported as stages. His rule: use
+    Surface when it carries all four channels, Bottom Hole when Surface has
+    only one conc curve. Keeping the two under separate keys is still right —
+    both carry Treating Pressure with different values (#341) — this only
+    settles which of them IS the stage.
+    """
+
+    @staticmethod
+    def _s(stage, chans):
+        return {"type": "series", "source": "CalFrac chart",
+                "meta": {"stage": stage}, "data": {c: [1.0] for c in chans}}
+
+    ALL4 = ("Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc")
+    THIN = ("Tr Press", "Slurry Rate", "WH Prop Conc")
+
+    def test_surface_wins_when_it_has_all_four(self):
+        res = [self._s("2 Surface", self.ALL4), self._s("2 BH", self.ALL4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        self.assertEqual([r["meta"]["stage"] for r in res], ["2"])
+        self.assertEqual(set(res[0]["data"]), set(self.ALL4))
+
+    def test_bottom_hole_wins_when_surface_has_one_conc(self):
+        """00100 zone 2: the Surface sheet carries only one conc curve, so the
+        reading is on the Bottom Hole sheet."""
+        res = [self._s("2 Surface", self.THIN), self._s("2 BH", self.ALL4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["meta"]["stage"], "2")
+        self.assertEqual(set(res[0]["data"]), set(self.ALL4))
+
+    def test_a_zone_printed_once_is_left_alone(self):
+        """Nothing to choose between, so nothing is renamed or dropped —
+        touching these would change every single-sheet Calfrac file."""
+        res = [self._s("3 Surface", self.THIN)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["meta"]["stage"], "3 Surface")
+        self.assertEqual(notes, [])
+
+    def test_other_providers_are_untouched(self):
+        res = [{"type": "series", "source": "Liberty chart",
+                "meta": {"stage": "2 Surface"}, "data": {"Tr Press": [1.0]}}]
+        pipeline._pick_variant(res, [])
+        self.assertEqual(res[0]["meta"]["stage"], "2 Surface")
+
+    def test_the_discarded_sheet_is_named_in_the_notes(self):
+        res = [self._s("2 Surface", self.THIN), self._s("2 BH", self.ALL4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        self.assertTrue(any("kept BH" in n for n in notes), notes)
+
+    def test_each_zone_is_decided_on_its_own_sheets(self):
+        res = [self._s("1 Surface", self.ALL4), self._s("1 BH", self.ALL4),
+               self._s("2 Surface", self.THIN), self._s("2 BH", self.ALL4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        self.assertEqual(sorted(r["meta"]["stage"] for r in res), ["1", "2"])
+        # zone 1 kept Surface, zone 2 kept BH
+        self.assertEqual(len(res), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

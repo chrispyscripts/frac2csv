@@ -980,6 +980,59 @@ def table_kind(title):
     return "other"
 
 
+_VARIANT_STAGE = re.compile(r"^(.*?)\s+(Surface|BH)$")
+# the four channels a Calfrac stage is supposed to carry
+_CANON4 = frozenset(("Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"))
+
+
+def _pick_variant(results, notes):
+    """One chart per zone where Calfrac printed the zone twice.
+
+    Calfrac prints each zone as a "… Surface" sheet and a "… Bottom Hole"
+    sheet. Both are real and both carry Treating Pressure with DIFFERENT
+    values, which is why they are kept under separate keys — merged, that
+    channel ends up holding two recordings (#341). But that left the question
+    of which of the two IS the stage unanswered, and both were exported.
+
+    Carmine's rule, #550: "we should be getting the stage label from the
+    surface and using the bottom if the surface only has one conc curve; if
+    the surface chart has our 4 curves we use it". On 00100 the Surface sheet
+    for zone 2 carries Tr Press, Slurry Rate and ONE conc — the reading he
+    wants there is the Bottom Hole sheet.
+
+    So: Surface wins when it carries all four canonical channels, otherwise
+    Bottom Hole does. Only zones that printed BOTH are touched — a zone with
+    one sheet has nothing to choose between and is left exactly as it was —
+    and the sheet not chosen is named in the notes rather than dropped
+    silently.
+    """
+    groups = {}
+    for r in results:
+        if r.get("type") != "series" or r.get("source") != "CalFrac chart":
+            continue
+        m = _VARIANT_STAGE.match(str((r.get("meta") or {}).get("stage") or ""))
+        if m:
+            groups.setdefault(m.group(1), {})[m.group(2)] = r
+
+    dropped = []
+    for base, g in sorted(groups.items()):
+        surf, bh = g.get("Surface"), g.get("BH")
+        if not surf or not bh:
+            continue
+        n_surf = len(_CANON4 & set(surf.get("data") or ()))
+        keep, drop = (surf, bh) if n_surf == len(_CANON4) else (bh, surf)
+        keep["meta"]["stage"] = base
+        dropped.append((base, "Surface" if drop is surf else "BH",
+                        "Surface" if keep is surf else "BH", n_surf))
+        results.remove(drop)
+    if dropped:
+        bits = ", ".join(f"{b} (kept {k})" for b, _d, k, _n in dropped)
+        notes.append(f"Calfrac prints each zone twice; kept one sheet per "
+                     f"zone — Surface when it carries all four channels, "
+                     f"Bottom Hole otherwise: {bits}")
+    return results
+
+
 def _normalise_tables(results, filename=None):
     fallback = pe.filename_uwi(filename) if filename else ""
     for r in results:
@@ -1827,5 +1880,6 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
     if not results:
         notes.append(_why_nothing(doc, npages, raster))
+    _pick_variant(results, notes)
     _normalise_tables(results, filename)
     return results, notes
