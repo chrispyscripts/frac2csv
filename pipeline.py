@@ -37,6 +37,7 @@ import lib1
 import peloton_frac as pel
 import sanjel
 import step_vec
+import aliases
 import pipeline_export as pe
 import sk_fracr as sk
 import slb
@@ -985,6 +986,62 @@ _VARIANT_STAGE = re.compile(r"^(.*?)\s+(Surface|BH)$")
 _CANON4 = frozenset(("Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"))
 
 
+def _drop_chemical_only(results, notes):
+    """A chart carrying no treatment channel is not a second stage.
+
+    Liberty and BJ print each stage twice: a treatment plot, then a chemical
+    plot on the very next page. Both are captioned with the same stage, so
+    they arrive as two charts under one key — 01792 has 106 charts for 53
+    stages, 00627 has 42 for 21, and every single key is doubled.
+
+    Carmine, #553: "it is double plotting the stages with the 2nd one being
+    the chemical, we should only display OUR TERMS."
+
+    The rule is the same for both providers and needs no template knowledge:
+    resolve each chart's channels through the alias table, and if a chart
+    contributes NOT ONE of the four canonical channels while a sibling under
+    the same stage does, it is the chemical sheet. It is dropped rather than
+    merged, because merged it brings only channels that never export and
+    never draw in Our Terms, while dragging its page into the stage's source
+    list and behind the ghost overlay.
+
+    Guarded so it can only ever remove a chart that adds nothing: if NO chart
+    under a key carries a canonical channel, every one is kept — a chemicals-
+    only well still comes through exactly as before.
+    """
+    canon = set(pe.CANON)
+
+    def treats(r):
+        for name in (r.get("data") or ()):
+            c = aliases.canon(name)
+            if (c or name) in canon:
+                return True
+        return False
+
+    groups = {}
+    for r in results:
+        if r.get("type") != "series":
+            continue
+        groups.setdefault((r.get("source"), str((r.get("meta") or {}).get("stage"))),
+                          []).append(r)
+    drop_ids = set()
+    for (_src, stage), g in groups.items():
+        if len(g) < 2:
+            continue
+        keep_ids = {id(r) for r in g if treats(r)}
+        if not keep_ids or len(keep_ids) == len(g):
+            continue                       # nothing to choose, or nothing spare
+        drop_ids |= {id(r) for r in g if id(r) not in keep_ids}
+    dropped = len(drop_ids)
+    if drop_ids:
+        results[:] = [r for r in results if id(r) not in drop_ids]
+    if dropped:
+        notes.append(f"{dropped} chemical-only chart(s) set aside: each shared a "
+                     f"stage with a treatment chart and carried none of the four "
+                     f"channels, so it doubled the stage without adding a reading")
+    return results
+
+
 def _pick_variant(results, notes):
     """One chart per zone where Calfrac printed the zone twice.
 
@@ -1024,7 +1081,10 @@ def _pick_variant(results, notes):
         keep["meta"]["stage"] = base
         dropped.append((base, "Surface" if drop is surf else "BH",
                         "Surface" if keep is surf else "BH", n_surf))
-        results.remove(drop)
+        # by identity — see _drop_chemical_only: == on these dicts can reach
+        # a numpy `samples` array and raise
+        _d = id(drop)
+        results[:] = [r for r in results if id(r) != _d]
     if dropped:
         bits = ", ".join(f"{b} (kept {k})" for b, _d, k, _n in dropped)
         notes.append(f"Calfrac prints each zone twice; kept one sheet per "
@@ -1881,5 +1941,6 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     if not results:
         notes.append(_why_nothing(doc, npages, raster))
     _pick_variant(results, notes)
+    _drop_chemical_only(results, notes)
     _normalise_tables(results, filename)
     return results, notes

@@ -1068,5 +1068,76 @@ class LibertyDatelessTimeAxis(unittest.TestCase):
         self.assertEqual(lib1._time_axis(spans), (None, "", None))
 
 
+class ChemicalOnlyChartDropped(unittest.TestCase):
+    """Carmine, #553: "it is double plotting the stages with the 2nd one being
+    the chemical, we should only display OUR TERMS". Liberty and BJ print a
+    treatment plot and then a chemical plot on the next page, both captioned
+    with the same stage — 01792 has 106 charts for 53 stages, 00627 has 42 for
+    21, and every key is doubled. A chart carrying none of the four channels
+    is not a second stage.
+    """
+
+    @staticmethod
+    def _s(stage, chans, source="BJ chart", page=1):
+        return {"type": "series", "source": source, "page": page,
+                "meta": {"stage": stage}, "data": {c: [1.0] for c in chans}}
+
+    TREAT = ("WH 2 Press", "CMB SLR Rate", "WH Density", "Density at Perfs")
+    CHEM = ("Comb FR Ratio",)
+
+    def test_the_chemical_sheet_is_dropped(self):
+        res = [self._s("1", self.TREAT, page=187), self._s("1", self.CHEM, page=188)]
+        notes = []
+        pipeline._drop_chemical_only(res, notes)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["page"], 187)
+        self.assertTrue(notes)
+
+    def test_liberty_named_chemicals_too(self):
+        res = [self._s("1", ("Treating Pressure", "Slurry Rate"), "Liberty chart", 105),
+               self._s("1", ("B487 CONC", "B701 CONC"), "Liberty chart", 106)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual([r["page"] for r in res], [105])
+
+    def test_a_chemicals_only_well_is_left_whole(self):
+        """If NO chart under the key carries a treatment channel there is
+        nothing to prefer, so everything is kept — otherwise a chemicals-only
+        well would lose every chart it has."""
+        res = [self._s("1", ("B487 CONC",), page=1), self._s("1", ("B701 CONC",), page=2)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual(len(res), 2)
+
+    def test_numpy_values_do_not_break_the_comparison(self):
+        """The unit tests used plain lists and passed; the real corpus holds
+        numpy arrays, and two charts under one stage can carry identical meta,
+        so `in`/remove() reached `samples` and raised "truth value of an array
+        is ambiguous". Caught on 01792, not here — hence this test."""
+        def s(stage, chans, page):
+            return {"type": "series", "source": "BJ chart", "page": page,
+                    "meta": {"stage": stage},          # identical on purpose
+                    "samples": np.arange(10.0),
+                    "data": {c: np.zeros(10) for c in chans}}
+        res = [s("1", self.TREAT, 187), s("1", self.CHEM, 188)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual([r["page"] for r in res], [187])
+
+    def test_a_lone_chart_is_never_touched(self):
+        res = [self._s("1", self.CHEM, page=1)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual(len(res), 1)
+
+    def test_different_stages_do_not_interact(self):
+        res = [self._s("1", self.TREAT, page=1), self._s("2", self.CHEM, page=2)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual(len(res), 2)
+
+    def test_two_treatment_charts_both_survive(self):
+        """Calfrac's Surface/BH pair both carry the four channels; choosing
+        between those is _pick_variant's job, not this one's."""
+        res = [self._s("1", self.TREAT, page=1), self._s("1", self.TREAT, page=2)]
+        pipeline._drop_chemical_only(res, [])
+        self.assertEqual(len(res), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
