@@ -2572,6 +2572,40 @@ function axisRange(c) {
   return { lo: 0, hi: niceCeil(c._vmax || 0) || 1, printed: false };
 }
 
+// What the channel table in a flag report should say an axis is.
+//
+// It used to print axisRange's lo..hi, which is the FRAME — the axis read at
+// the plot's frame edges, because that is what ghost has to be positioned
+// against. Correct for drawing, and wrong to hand a human: #571 reported
+// "scale for LIB-1 are not being extracted correctly" against a chart whose
+// axes read -4.02..106.06 and 115.35..5.29, on a page printing 0..100 and
+// 10..110. Both frame numbers were honestly measured. Neither is what is
+// printed on the sheet he is holding, so the report contradicted the source
+// and the extraction looked broken.
+//
+// The printed range leads now. The frame follows ONLY when the two disagree
+// by more than 1% of the span — which is the diagnostic, not noise: on
+// 00494 the frame is exact on stage 1 and out by 13% on stage 60, and that
+// spread is a real defect in the frame fit that must stay visible. Reporting
+// the round number alone would have hidden it.
+function axisReport(r) {
+  const pLo = (r.pLo != null && isFinite(r.pLo)) ? r.pLo : r.lo;
+  const pHi = (r.pHi != null && isFinite(r.pHi)) ? r.pHi : r.hi;
+  const out = `${round2(pLo)}..${round2(pHi)}` + (r.printed ? "" : " (guessed)");
+  const span = Math.abs(pHi - pLo);
+  if (!span || !isFinite(span)) return out;
+  // Compared as RANGES, not endpoint to endpoint. A frame can be stored
+  // descending — Liberty's conc axis comes back 1750..0 for a printed 0..1750
+  // — and matching lo against pLo there reports a 100% disagreement between
+  // two identical ranges. The DISPLAY keeps the original orientation, because
+  // that is how an inverted axis announces itself.
+  const off = Math.max(Math.abs(Math.min(r.lo, r.hi) - Math.min(pLo, pHi)),
+                       Math.abs(Math.max(r.lo, r.hi) - Math.max(pLo, pHi))) / span;
+  return off > 0.01
+    ? `${out} (frame ${round2(r.lo)}..${round2(r.hi)})`
+    : out;
+}
+
 // The scale a channel is drawn against. Hover dots and the nearest-line hit
 // test must use this too or they detach from the curve.
 function chanFrac(c, v) {
@@ -4502,7 +4536,7 @@ function flagDiagnostics() {
   d.channels = gState.channels.map(c => {
     const r = axisRange(c);
     return { key: c.key, unit: c.unit || "",
-             axis: `${round2(r.lo)}..${round2(r.hi)}${r.printed ? "" : " (guessed)"}`,
+             axis: axisReport(r),
              peak: round2(c._vmax) };
   });
   if (e && e.notes && e.notes.length) d.notes = e.notes.slice(0, 40);
