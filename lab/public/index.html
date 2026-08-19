@@ -77,6 +77,24 @@
   #flagdesc { width:100%; border:1px solid var(--line); border-radius:6px;
                 background:var(--panel2); color:var(--ink); font:inherit;
                 font-size:12.5px; padding:7px 9px; resize:vertical; }
+  th.unmapped { color:var(--mut); font-style:italic; white-space:nowrap; }
+  th.unmapped.absent { opacity:.55; }
+  th.unmapped .mapbtn { display:none; margin-left:6px; font:inherit;
+                        font-size:10.5px; font-weight:600; font-style:normal;
+                        border:1px solid var(--carmine); color:var(--carmine);
+                        background:var(--panel); border-radius:5px;
+                        padding:1px 6px; cursor:pointer; }
+  th.unmapped:hover .mapbtn { display:inline-block; }
+  .termlist { display:flex; flex-direction:column; gap:4px; margin-top:8px;
+              max-height:46vh; overflow-y:auto; }
+  .termopt { display:flex; justify-content:space-between; gap:12px;
+             align-items:baseline; text-align:left; font:inherit;
+             font-size:12.5px; padding:6px 10px; cursor:pointer;
+             border:1px solid var(--line); border-radius:6px;
+             background:var(--panel); color:var(--ink); }
+  .termopt:hover { border-color:var(--carmine); color:var(--carmine); }
+  .termopt i { color:var(--mut); font-style:normal;
+               font-family:var(--mono); font-size:11px; flex-shrink:0; }
   .flagshot { border:1px solid var(--line); border-radius:6px; overflow:hidden;
               background:var(--panel2); max-height:150px; }
   .flagshot img { width:100%; display:block; }
@@ -379,6 +397,22 @@
             <button type="button" class="btn" id="destpick">Browse…</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modalback" id="termmap" hidden>
+    <div class="modal" style="max-width:540px">
+      <div class="modalhead"><b id="termmap-title">Map term</b>
+        <button type="button" class="x"
+          onclick="document.getElementById('termmap').hidden=true">&times;</button></div>
+      <div class="modalbody">
+        <div class="sethint" id="termmap-sub"></div>
+        <div class="termlist" id="termmap-list"></div>
+      </div>
+      <div class="modalfoot">
+        <button type="button" class="btn" id="termmap-clear" hidden>Clear mapping</button>
+        <button type="button" class="btn" id="termmap-none">Not present in this report</button>
       </div>
     </div>
   </div>
@@ -1873,18 +1907,33 @@ function scaleCell(v, f) {
 }
 
 // -> {columns, rows, map:[{label, from, note}], missing:[label]}
-function curateTable(t) {
+function curateTable(t, provider) {
   const cols = t.columns || [];
   const map = [], missing = [];
   for (const term of OUR_TERMS) {
+    const label = term.unit ? `${term.label} (${term.unit})` : term.label;
     let hits = [];
-    cols.forEach((c, i) => {
+    // The client's own mapping outranks the patterns: he is looking at the
+    // report, they are guessing from a heading.
+    const custom = termMapGet(provider, term.key);
+    if (custom === TERM_ABSENT) {
+      map.push({ term, parts: [], label, absent: true });
+      continue;
+    }
+    if (custom) {
+      const ci = cols.findIndex(c => String(c) === custom);
+      if (ci >= 0) hits = [ci];
+    }
+    if (!hits.length) cols.forEach((c, i) => {
       const name = String(c || "");
       if (!term.accept.test(name)) return;
       if (term.reject && term.reject.test(name)) return;
       hits.push(i);
     });
-    if (!hits.length) { missing.push(term.label); continue; }
+    // Not found is still a COLUMN. Our Terms is a fixed shape — a filing that
+    // prints no average rate should show that field empty and say so, not
+    // quietly hand back a narrower table than the one beside it.
+    if (!hits.length) { missing.push(term.label); map.push({ term, parts: [], label }); continue; }
     if (!term.multi) {
       // rank by the term's preference list, then by first appearance
       if (term.prefer) {
@@ -1899,10 +1948,7 @@ function curateTable(t) {
       const conv = unitFactor(cols[i], term.unit);
       return { i, f: conv ? conv.f : 1, from: cols[i], conv };
     });
-    map.push({
-      term, parts,
-      label: term.unit ? `${term.label} (${term.unit})` : term.label,
-    });
+    map.push({ term, parts, label });
   }
   // A chemicals or QA sheet matches UWI and a stage label and nothing else —
   // two identity columns and no readings. Curating that produces a grid with
@@ -1910,7 +1956,7 @@ function curateTable(t) {
   // holds none of the fields you asked for". Those fall back to the full view.
   const MEASURED = new Set(["datetime", "top", "base", "prop",
                             "pavg", "ravg", "pmax", "pmin"]);
-  const thin = !map.some(m => MEASURED.has(m.term.key));
+  const thin = !map.some(m => m.parts.length && MEASURED.has(m.term.key));
   const columns = map.map(m => m.label);
   const rows = (t.rows || []).map(r =>
     map.map(m => m.parts
@@ -1922,11 +1968,34 @@ function curateTable(t) {
 
 let tableTerms = localStorage.getItem("f2c.tableTerms") || "ours";
 
+// Carmine's own mapping, for the terms the patterns do not find. Keyed by
+// PROVIDER rather than by file, because a heading a provider uses once it uses
+// on every filing it prints — teaching it "Avg BHP" on one Halliburton report
+// should answer for the rest of them.
+//
+// A term can also be marked NOT PRESENT, which is a real answer and not the
+// same as unanswered: it stops the column asking again on every table of that
+// provider while still exporting empty.
+const TERM_ABSENT = "\u0000absent";
+let termMap = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.termMap") || "{}"); }
+  catch (e) { return {}; }
+})();
+const termKey = (provider, term) => `${provider || "?"}::${term}`;
+function termMapGet(provider, term) { return termMap[termKey(provider, term)] || ""; }
+function termMapSet(provider, term, col) {
+  if (col) termMap[termKey(provider, term)] = col;
+  else delete termMap[termKey(provider, term)];
+  try { localStorage.setItem("f2c.termMap", JSON.stringify(termMap)); }
+  catch (e) { /* private mode — the mapping just will not outlive the tab */ }
+}
+
 function showTable(entry, t) {
   setPreviewMode("table");
   const E = v => String(v === null || v === undefined ? "" : v)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const cur = curateTable(t);
+  const provider = providerOf(t.source);
+  const cur = curateTable(t, provider);
   // A chemicals or proppant-inventory sheet carries none of Carmine's fields.
   // Showing it as an empty grid would look like a parse failure, so those fall
   // back to the full table and say why.
@@ -1959,13 +2028,62 @@ function showTable(entry, t) {
              `readings, so it is shown in full.</div>`;
   }
 
+  // An unmapped term is still a column: Our Terms is a fixed shape, and a
+  // field the patterns could not find asks to be told rather than vanishing.
+  const head = ours
+    ? cur.map.map(m => {
+        if (m.parts.length) return `<th>${E(m.label)}</th>`;
+        return `<th class="unmapped${m.absent ? " absent" : ""}" ` +
+               `title="${m.absent ? "marked not present" : "not identified"}">` +
+               `${E(m.label)}<button type="button" class="mapbtn" ` +
+               `data-term="${E(m.term.key)}">${m.absent ? "Not present" : "Map Term"}` +
+               `</button></th>`;
+      }).join("")
+    : view.columns.map(c => `<th>${E(c)}</th>`).join("");
   $("pv-table").innerHTML =
-    `<table><tr>${view.columns.map(c => `<th>${E(c)}</th>`).join("")}</tr>` +
+    `<table><tr>${head}</tr>` +
     view.rows.slice(0, 200).map(r =>
       `<tr>${view.columns.map((c, i) => `<td>${E(r[i])}</td>`).join("")}</tr>`).join("") +
     "</table>" +
     (view.rows.length > 200 ? `<div class="notes">Showing 200 of ${view.rows.length} rows — the CSV has all.</div>` : "") +
     legend;
+
+  $("pv-table").querySelectorAll(".mapbtn").forEach(btn => {
+    btn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      const key = btn.dataset.term;
+      const term = OUR_TERMS.find(x => x.key === key);
+      $("termmap-title").textContent =
+        term.unit ? `${term.label} (${term.unit})` : term.label;
+      $("termmap-sub").textContent =
+        `${provider} · ${t.title} — which column holds it? ` +
+        `Remembered for every ${provider} table.`;
+      const list = $("termmap-list"); list.innerHTML = "";
+      (t.columns || []).forEach((c, ci) => {
+        const row = document.createElement("button");
+        row.type = "button"; row.className = "termopt";
+        // a real value from the column, so a bare heading is not the only clue
+        const ex = (t.rows.find(r => String(r[ci] ?? "").trim()) || [])[ci];
+        row.innerHTML = `<span>${E(c)}</span>` +
+          (ex != null && String(ex).trim() ? `<i>${E(String(ex).slice(0, 24))}</i>` : "");
+        row.addEventListener("click", () => {
+          termMapSet(provider, key, String(c));
+          $("termmap").hidden = true; showTable(entry, t);
+        });
+        list.appendChild(row);
+      });
+      $("termmap-none").onclick = () => {
+        termMapSet(provider, key, TERM_ABSENT);
+        $("termmap").hidden = true; showTable(entry, t);
+      };
+      $("termmap-clear").hidden = !termMapGet(provider, key);
+      $("termmap-clear").onclick = () => {
+        termMapSet(provider, key, "");
+        $("termmap").hidden = true; showTable(entry, t);
+      };
+      $("termmap").hidden = false;
+    });
+  });
 
   const dl = $("pv-dl"); dl.innerHTML = "";
   const b = document.createElement("button"); b.className = "btn primary";
