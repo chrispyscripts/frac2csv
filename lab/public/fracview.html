@@ -48,6 +48,17 @@
   .state { font-size:11.5px; font-family:var(--mono); }
   .state.dirty { color:var(--warn); font-weight:600; }
   .state.clean { color:var(--ok); }
+  /* Zoom moved off the wheel — the wheel pans now — so it needs somewhere to
+     live that is reachable without a keyboard. */
+  .zoomctl { position:fixed; right:20px; bottom:20px; z-index:20;
+             display:flex; flex-direction:column; gap:6px; }
+  .zoomctl button { width:36px; height:36px; font:inherit; font-size:19px;
+                    font-weight:700; line-height:1; cursor:pointer;
+                    border:1px solid var(--line); border-radius:9px;
+                    background:var(--panel); color:var(--ink);
+                    box-shadow:0 1px 5px rgba(20,24,29,.14); }
+  .zoomctl button:hover { border-color:var(--carmine); color:var(--carmine); }
+  .zoomctl button:active { background:var(--panel2); }
 </style>
 </head>
 <body>
@@ -77,6 +88,13 @@ stage the width of its own duration.">
         <option value="row">Plot by row</option>
       </select>
     </span>
+    <span class="fld">Caption
+      <select id="captionmode" title="What labels each band: its position in the
+well, or the name the report prints on it">
+        <option value="number">Stage number</option>
+        <option value="label">Stage label</option>
+      </select>
+    </span>
     <span class="fld">Colours
       <select id="scheme" title="How the stage bands are tinted">
         <option value="alt">Alternating</option>
@@ -102,7 +120,8 @@ lost trace and is left alone.">Fill Gaps</button>
 <div class="wrap" id="wrap" hidden>
   <canvas id="cv" height="560"></canvas>
   <div class="hint">
-    <b>Scroll</b> to zoom, <b>drag</b> to pan — same as the Lab's graph.
+    <b>Scroll</b> to move along the well, <b>drag</b> to pan, and zoom with the
+    <b>+ / −</b> buttons bottom right (or ctrl/⌘ + scroll).
     <b>Click a stage</b> to highlight it here and bring the Lab's graph and the
     stacked window to the same one. <b>Double-click</b> inside a stage to split it
     there — a stage labelled as a range like <kbd>1-30</kbd> numbers its pieces
@@ -117,6 +136,11 @@ lost trace and is left alone.">Fill Gaps</button>
     sides, so a curve resting at zero or one that has not started yet is left
     alone. Every edit lands on the Lab's graphs and on the exported CSV.
   </div>
+</div>
+
+<div class="zoomctl" id="zoomctl" hidden>
+  <button type="button" id="zoomin" title="Zoom in">+</button>
+  <button type="button" id="zoomout" title="Zoom out">&minus;</button>
 </div>
 
 <div class="msg" id="msg">
@@ -145,6 +169,7 @@ let justDragged = false;     // so the click that ends a drag is not also acted 
 // well arrives, and an index would silently point at a different curve.
 const hiddenChans = new Set();
 let keyHits = [];           // [{name, x0, y0, x1, y1}] for hit-testing the key
+let captionMode = localStorage.getItem("f2c.fvCaption") || "number";
 let scheme = "alt";
 let hover = null;            // {x, t}
 let drag = null;             // {kind:"pan"|"bound"|"cut", ...}
@@ -381,7 +406,9 @@ function draw() {
       ctx.save();
       ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, PAD.t); ctx.clip();
       ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
-      const pos = String(i + 1);
+      const printedName = String(edits.labels[i] || "");
+      const pos = captionMode === "label" && printedName
+        ? printedName : String(i + 1);
       ctx.fillStyle = i === selIdx ? "#a31631" : "#14181d";
       ctx.fillText(pos, x0 + 4, PAD.t - 9);
       let cx = x0 + 6 + ctx.measureText(pos).width;
@@ -402,7 +429,7 @@ function draw() {
         cx += ctx.measureText(d).width + 6;
         ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
       }
-      const printed = String(edits.labels[i] || "");
+      const printed = captionMode === "label" ? "" : printedName;
       if (printed && printed !== pos && x1 - x0 > 40) {
         ctx.fillStyle = "#9aa1aa";
         ctx.fillText(printed, cx, PAD.t - 9);
@@ -609,13 +636,17 @@ function draw() {
       (si >= 0 ? `  ·  #${si + 1}` +
         (edits.labels[si] && String(edits.labels[si]) !== String(si + 1)
           ? ` (${edits.labels[si]})` : "") : "");
-    ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
-    const tw = ctx.measureText(label).width + 10;
+    // Twice the old size: this is the number being read off the chart while
+    // a boundary is placed, and 11px of it sat under the cursor.
+    ctx.font = "600 22px ui-monospace,Menlo,Consolas,monospace";
+    const tw = ctx.measureText(label).width + 18;
     const bx = Math.min(Math.max(PAD.l, x - tw / 2), w - PAD.r - tw);
-    ctx.fillStyle = "rgba(255,255,255,0.92)";
-    ctx.fillRect(bx, PAD.t + 2, tw, 16);
+    ctx.fillStyle = "rgba(255,255,255,0.94)";
+    ctx.fillRect(bx, PAD.t + 2, tw, 30);
+    ctx.strokeStyle = "rgba(20,24,29,0.10)"; ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, PAD.t + 2.5, tw - 1, 29);
     ctx.fillStyle = "#14181d";
-    ctx.fillText(label, bx + 5, PAD.t + 14);
+    ctx.fillText(label, bx + 9, PAD.t + 24);
   }
 }
 function niceStep(ms) {
@@ -744,6 +775,7 @@ window.addEventListener("message", ev => {
   if (d.type === "fv:none") {
     well = null;
     $("msg").hidden = false; $("wrap").hidden = true; $("tools").hidden = true;
+    $("zoomctl").hidden = true;
     $("title").textContent = "No well selected";
     $("sub").textContent = "";
     return;
@@ -778,6 +810,8 @@ window.addEventListener("message", ev => {
   undoStack = [];
   hiddenChans.clear();
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
+  $("zoomctl").hidden = false;
+  $("captionmode").value = captionMode;
   $("title").textContent = d.file || "well";
   $("sub").textContent = `${d.stages.length} stages extracted` +
     (d.uwi ? `  ·  ${d.uwi}` : "");
@@ -840,14 +874,35 @@ function selectStage(i) {
   } catch (e) { /* the Lab went away */ }
 }
 
+// The wheel moves ALONG the well instead of zooming: on a job of forty
+// stages, getting from one end to the other by dragging is the thing you do
+// most, and a wheel that zoomed meant grabbing and shoving the plot each time.
+// Zoom is on the buttons, bottom right — and still on ctrl/⌘ + wheel, which is
+// what a trackpad pinch sends.
+function viewSpan() { return view.b - view.a; }
+function panBy(dx) { setView(view.a + dx, view.b + dx); }
+function zoomBy(f) {
+  const mid = (view.a + view.b) / 2, half = viewSpan() * f / 2;
+  setView(mid - half, mid + half);
+  $("span").value = "";
+}
 cv.addEventListener("wheel", e => {
   if (!well) return;
   e.preventDefault();
-  const p = pos(e), t = T(p.x, p.w);
-  const f = Math.pow(1.0016, e.deltaY);           // wheel up = closer
-  setView(t - (t - view.a) * f, t + (view.b - t) * f);
-  $("span").value = "";
+  if (e.ctrlKey || e.metaKey) {                   // pinch / ctrl+wheel: zoom
+    const p = pos(e);
+    const at = view.a + (p.x - PAD.l) / (p.w - PAD.l - PAD.r) * viewSpan();
+    const f = Math.pow(1.0016, e.deltaY);
+    setView(at - (at - view.a) * f, at + (view.b - at) * f);
+    $("span").value = "";
+    return;
+  }
+  // both axes pan, so a trackpad's sideways swipe works as well as a wheel
+  const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+  panBy(d / 500 * viewSpan());
 }, { passive: false });
+$("zoomin").addEventListener("click", () => zoomBy(1 / 1.6));
+$("zoomout").addEventListener("click", () => zoomBy(1.6));
 
 cv.addEventListener("mousedown", e => {
   if (!well) return;
@@ -956,6 +1011,11 @@ $("span").addEventListener("change", e => {
   const sel = $("jump").value;
   const i = sel === "" ? Math.max(0, stageAtX((view.a + view.b) / 2)) : Number(sel);
   zoomStages(i, e.target.value);
+});
+$("captionmode").addEventListener("change", e => {
+  captionMode = e.target.value;
+  localStorage.setItem("f2c.fvCaption", captionMode);
+  draw();
 });
 $("scheme").addEventListener("change", e => { scheme = e.target.value; draw(); });
 $("timemode").addEventListener("change", e => {
