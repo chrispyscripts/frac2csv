@@ -69,6 +69,14 @@
         <option value="all" selected>All</option>
       </select>
     </span>
+    <span class="fld">Time
+      <select id="timemode" title="Real Time spaces the stages by the clock, so
+the wait between them is visible. Plot by row closes the gaps and gives every
+stage the width of its own duration.">
+        <option value="real">Real Time</option>
+        <option value="row">Plot by row</option>
+      </select>
+    </span>
     <span class="fld">Colours
       <select id="scheme" title="How the stage bands are tinted">
         <option value="alt">Alternating</option>
@@ -102,7 +110,8 @@ lost trace and is left alone.">Fill Gaps</button>
     <b>Adjust</b> mode drags the boundary between two stages to move where one ends
     and the next begins. <b>Trim</b> mode drags out a span to cut — grey while you
     are dragging, and once it lands you can still drag either edge to fine-tune;
-    click inside a cut to put it back.
+    <b>Click a name in the key</b> (top right) to switch that channel off, and
+    again to bring it back. Click inside a cut to put it back.
     <b>Fill Gaps</b> drags out a span where the trace was LOST and bridges the
     holes in it with a straight line — only holes with a real reading on both
     sides, so a curve resting at zero or one that has not started yet is left
@@ -131,6 +140,11 @@ let view = { a: 0, b: 1 };   // visible absolute span, ms
 let mode = "";               // "" | "adjust" | "trim" | "fill"
 let selIdx = -1;             // the stage highlighted here and on the Lab
 let justDragged = false;     // so the click that ends a drag is not also acted on
+// Channels switched off from the key, by name — same idea as the Lab's legend.
+// Held by NAME rather than index because the channel list is rebuilt whenever a
+// well arrives, and an index would silently point at a different curve.
+const hiddenChans = new Set();
+let keyHits = [];           // [{name, x0, y0, x1, y1}] for hit-testing the key
 let scheme = "alt";
 let hover = null;            // {x, t}
 let drag = null;             // {kind:"pan"|"bound"|"cut", ...}
@@ -140,6 +154,56 @@ const CH_COLORS = { "Tr Press": "#a31631", "Slurry Rate": "#1f6feb",
 const FALLBACK = ["#a31631", "#1f6feb", "#1e7a34", "#7a4fd6", "#b45309"];
 
 const PAD = { l: 54, r: 14, t: 26, b: 34 };
+
+// ---------- two ways to lay the stages along x ----------
+// Everything — bounds, cuts, fills, every sample — is held in REAL absolute
+// time, and always has been. The mode changes only where a moment is DRAWN, so
+// switching it cannot disturb an edit: it is a lens, not a different dataset.
+//
+// Real Time is the clock: hours of waiting between stages show up as hours of
+// empty axis, which is the point of it. Plot by row closes those gaps so each
+// stage takes the width of its own duration and the shapes can be compared
+// side by side.
+let timeMode = localStorage.getItem("f2c.fvTime") || "real";
+let dispMap = [];        // per stage: real [a,b] -> display [da,db]
+
+// A stage's band runs from its own start to the NEXT stage's start, so the
+// wait between two stages already sits INSIDE the earlier band — there is no
+// gap between bounds to close. What Plot by row removes is that idle tail: the
+// stretch after a stage's last sample and before the next one begins.
+function buildDispMap() {
+  dispMap = [];
+  let d = 0;
+  for (let i = 0; i < nStages(); i++) {
+    const a = edits.bounds[i], b = edits.bounds[i + 1];
+    if (timeMode === "real") { dispMap.push({ a, b, hi: b, da: a, db: b }); continue; }
+    const src = well.stages[edits.origin ? edits.origin[i] : i];
+    // where this stage's samples actually stop
+    const hi = src ? Math.min(b, src.t0 + src.n * src.dsec * 1000) : b;
+    const wdt = Math.max(1000, hi - a);
+    dispMap.push({ a, b, hi, da: d, db: d + wdt });
+    d += wdt;
+  }
+}
+// real -> display. Outside the stages the mapping continues linearly, so a
+// sample that sits just past the last boundary still draws where it belongs.
+function toDisp(t) {
+  if (timeMode === "real" || !dispMap.length) return t;
+  if (t < dispMap[0].a) return dispMap[0].da + (t - dispMap[0].a);
+  for (const m of dispMap) {
+    if (t < m.hi) return m.da + (t - m.a);
+    if (t < m.b) return m.db;          // idle tail collapses to the band's end
+  }
+  const L = dispMap[dispMap.length - 1];
+  return L.db + Math.max(0, t - L.hi);
+}
+function fromDisp(x) {
+  if (timeMode === "real" || !dispMap.length) return x;
+  if (x < dispMap[0].da) return dispMap[0].a + (x - dispMap[0].da);
+  for (const m of dispMap) if (x < m.db) return m.a + (x - m.da);
+  const L = dispMap[dispMap.length - 1];
+  return L.hi + (x - L.db);
+}
 
 // ---------- stage geometry ----------
 // A stage's samples live on its own clock: sample j is at t0 + j*dsec seconds.
@@ -273,8 +337,8 @@ function fit() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w, h };
 }
-const X = (t, w) => PAD.l + (t - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
-const T = (x, w) => view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a);
+const X = (t, w) => PAD.l + (toDisp(t) - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
+const T = (x, w) => fromDisp(view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a));
 
 function fmtClock(ms) {
   const d = new Date(ms), p = n => String(n).padStart(2, "0");
@@ -287,6 +351,7 @@ function fmtDay(ms) {
 
 function draw() {
   if (!well) return;
+  buildDispMap();          // bounds move with every edit
   const { ctx, w, h } = fit();
   const plotW = w - PAD.l - PAD.r, plotH = h - PAD.t - PAD.b;
   ctx.clearRect(0, 0, w, h);
@@ -319,10 +384,28 @@ function draw() {
       const pos = String(i + 1);
       ctx.fillStyle = i === selIdx ? "#a31631" : "#14181d";
       ctx.fillText(pos, x0 + 4, PAD.t - 9);
+      let cx = x0 + 6 + ctx.measureText(pos).width;
+      // The stage's own date, from the sheet — a job runs across days and the
+      // axis only prints the day it starts on, so which day a stage belongs to
+      // was not readable anywhere. Emphasised when it differs from the stage
+      // before it, which is where a day boundary actually falls.
+      const src = well.stages[edits.origin ? edits.origin[i] : i];
+      const d = src && src.date ? String(src.date) : "";
+      if (d && x1 - x0 > 46) {
+        const prevSrc = i > 0
+          ? well.stages[edits.origin ? edits.origin[i - 1] : i - 1] : null;
+        const isNewDay = !prevSrc || String(prevSrc.date || "") !== d;
+        ctx.font = (isNewDay ? "600 " : "") +
+                   "10px ui-monospace,Menlo,Consolas,monospace";
+        ctx.fillStyle = isNewDay ? "#a31631" : "#9aa1aa";
+        ctx.fillText(d, cx, PAD.t - 9);
+        cx += ctx.measureText(d).width + 6;
+        ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
+      }
       const printed = String(edits.labels[i] || "");
       if (printed && printed !== pos && x1 - x0 > 40) {
         ctx.fillStyle = "#9aa1aa";
-        ctx.fillText(printed, x0 + 6 + ctx.measureText(pos).width, PAD.t - 9);
+        ctx.fillText(printed, cx, PAD.t - 9);
       }
       ctx.restore();
     }
@@ -395,6 +478,7 @@ function draw() {
 
   for (let ni = 0; ni < names.length; ni++) {
     const name = names[ni];
+    if (hiddenChans.has(name)) continue;
     const mx = MAXES.get(name) || 1;
     ctx.lineWidth = 1.25;
     // Two passes once anything is cut: the whole curve faintly FIRST, so a
@@ -473,25 +557,42 @@ function draw() {
   const span = view.b - view.a;
   const step = niceStep(span / Math.max(2, Math.floor(plotW / 96)));
   const first = Math.ceil(view.a / step) * step;
-  for (let t = first; t <= view.b; t += step) {
+  for (let dt = first; dt <= view.b; dt += step) {
+    const t = fromDisp(dt);          // label the real clock at that position
     const x = X(t, w);
     ctx.strokeStyle = "#eceef1";
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     ctx.fillText(fmtClock(t), x, h - 18);
   }
   ctx.textAlign = "left";
-  ctx.fillText(fmtDay(view.a), PAD.l, h - 5);
+  ctx.fillText(fmtDay(fromDisp(view.a)) +
+               (timeMode === "row" ? "   ·   gaps closed" : ""), PAD.l, h - 5);
 
   // channel key
+  // The key is also the switch: click a name to drop that channel, click it
+  // again to bring it back — the Lab's legend behaves the same way, and on a
+  // well carrying nine channels reading any one of them means turning the rest
+  // off. Hit boxes are recorded as it draws, so they cannot drift from it.
   ctx.textAlign = "right";
   ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
   const kw = Math.max(...names.map(n => ctx.measureText(n).width)) + 12;
   ctx.fillStyle = "rgba(255,255,255,0.82)";
   ctx.fillRect(w - PAD.r - kw - 4, PAD.t + 2, kw, names.length * 14 + 4);
+  keyHits = [];
   let ky = PAD.t + 12;
   for (let ni = 0; ni < names.length; ni++) {
-    ctx.fillStyle = curveColor(names[ni], ni, Math.max(0, selIdx));
-    ctx.fillText(names[ni], w - PAD.r - 6, ky);
+    const nm = names[ni], off = hiddenChans.has(nm);
+    const tw = ctx.measureText(nm).width;
+    const rx = w - PAD.r - 6;
+    ctx.fillStyle = off ? "#b6bcc4"
+                        : curveColor(nm, ni, Math.max(0, selIdx));
+    ctx.fillText(nm, rx, ky);
+    if (off) {                       // struck through, so "off" is unmistakable
+      ctx.strokeStyle = "#b6bcc4"; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(rx - tw, ky - 3); ctx.lineTo(rx, ky - 3); ctx.stroke();
+    }
+    keyHits.push({ name: nm, x0: rx - tw - 4, x1: rx + 4, y0: ky - 11, y1: ky + 3 });
     ky += 14;
   }
   ctx.textAlign = "left";
@@ -526,7 +627,9 @@ function niceStep(ms) {
 
 // ---------- view control ----------
 function setView(a, b) {
-  const all = { a: edits.bounds[0], b: edits.bounds[edits.bounds.length - 1] };
+  buildDispMap();
+  const all = { a: toDisp(edits.bounds[0]),
+                b: toDisp(edits.bounds[edits.bounds.length - 1]) };
   const full = all.b - all.a || 1;
   let span = Math.min(Math.max(b - a, 2000), full * 1.5);
   let mid = (a + b) / 2;
@@ -537,7 +640,9 @@ function setView(a, b) {
   draw();
 }
 function viewAll() {
-  const a = edits.bounds[0], b = edits.bounds[edits.bounds.length - 1];
+  buildDispMap();
+  const a = toDisp(edits.bounds[0]),
+        b = toDisp(edits.bounds[edits.bounds.length - 1]);
   const pad = (b - a) * 0.02;
   view.a = a - pad; view.b = b + pad; draw();
 }
@@ -545,8 +650,9 @@ function zoomStages(centreIdx, count) {
   if (count === "all") { viewAll(); return; }
   const n = Number(count) || 1;
   const i0 = Math.max(0, Math.min(centreIdx - Math.floor((n - 1) / 2), nStages() - n));
-  const a = edits.bounds[Math.max(0, i0)];
-  const b = edits.bounds[Math.min(edits.bounds.length - 1, i0 + n)];
+  buildDispMap();
+  const a = toDisp(edits.bounds[Math.max(0, i0)]);
+  const b = toDisp(edits.bounds[Math.min(edits.bounds.length - 1, i0 + n)]);
   const pad = (b - a) * 0.03;
   view.a = a - pad; view.b = b + pad; draw();
 }
@@ -670,12 +776,14 @@ window.addEventListener("message", ev => {
     edits = freshEdits(d);
   }
   undoStack = [];
+  hiddenChans.clear();
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
   $("title").textContent = d.file || "well";
   $("sub").textContent = `${d.stages.length} stages extracted` +
     (d.uwi ? `  ·  ${d.uwi}` : "");
   fillJump();
   $("span").value = "all";
+  $("timemode").value = timeMode;
   selIdx = -1;
   viewAll();
   markDirty();
@@ -763,6 +871,10 @@ window.addEventListener("mousemove", e => {
   const p = pos(e);
   hover = { x: p.x, t: T(p.x, p.w) };
   if (!drag) {
+    if (keyHits.some(k => p.x >= k.x0 && p.x <= k.x1 &&
+                          p.y >= k.y0 && p.y <= k.y1)) {
+      cv.style.cursor = "pointer"; draw(); return;
+    }
     cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
       : (mode === "trim" || mode === "fill") ? "crosshair"
       : boundNear(p.x, p.w) > 0 ? "col-resize" : "grab";
@@ -809,6 +921,15 @@ cv.addEventListener("click", e => {
   if (!well) return;
   if (justDragged) { justDragged = false; return; }
   const p = pos(e), t = T(p.x, p.w);
+  // the key first: it sits over the plot, so a click there is not a stage pick
+  const hit = keyHits.find(k => p.x >= k.x0 && p.x <= k.x1 &&
+                                p.y >= k.y0 && p.y <= k.y1);
+  if (hit) {
+    if (hiddenChans.has(hit.name)) hiddenChans.delete(hit.name);
+    else hiddenChans.add(hit.name);
+    draw();
+    return;
+  }
   const list = regionList();             // click inside a span removes it
   if (list) {
     const i = list.findIndex(c => t >= c.a && t < c.b);
@@ -837,6 +958,11 @@ $("span").addEventListener("change", e => {
   zoomStages(i, e.target.value);
 });
 $("scheme").addEventListener("change", e => { scheme = e.target.value; draw(); });
+$("timemode").addEventListener("change", e => {
+  timeMode = e.target.value;
+  localStorage.setItem("f2c.fvTime", timeMode);
+  viewAll();                 // the axis means something different now
+});
 $("adjust").addEventListener("click", () => setMode("adjust"));
 $("trim").addEventListener("click", () => setMode("trim"));
 $("fill").addEventListener("click", () => setMode("fill"));

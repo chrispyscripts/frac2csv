@@ -133,7 +133,11 @@
   .prov:hover { border-color:var(--carmine); }
   /* split */
   .main { flex:1; display:flex; min-height:0; }
-  .left { width:264px; flex-shrink:0; border-right:1px solid var(--line);
+  /* 4/5 of the 900px maximum. It used to open at 264 — a hair above the
+     200 minimum — so a report name was truncated in almost every row and the
+     column had to be dragged wider before the list could be read at all.
+     A saved width still wins over this; see setLeftWidth. */
+  .left { width:720px; flex-shrink:0; border-right:1px solid var(--line);
           display:flex; flex-direction:column; min-height:0; position:relative; }
   /* drag the right edge to widen the file list — report names are long and
      the default column truncates most of them */
@@ -592,6 +596,7 @@ const themeName = "light";
 
 // ---- resizable file column ----
 const LEFT_MIN = 200, LEFT_MAX = 900;
+const LEFT_DEFAULT = Math.round(LEFT_MAX * 0.8);   // matches the CSS above
 function setLeftWidth(px, save) {
   const w = Math.round(Math.min(LEFT_MAX, Math.max(LEFT_MIN, px)));
   $("leftcol").style.width = w + "px";
@@ -599,7 +604,9 @@ function setLeftWidth(px, save) {
 }
 (() => {
   const stored = parseInt(localStorage.getItem("frac2csv-leftw") || "", 10);
-  if (isFinite(stored)) setLeftWidth(stored, false);
+  // Anyone who has already dragged it keeps their width; only a fresh profile
+  // gets the new default.
+  setLeftWidth(isFinite(stored) ? stored : LEFT_DEFAULT, false);
   const grip = $("lgrip");
   let startX = 0, startW = 0;
   const move = e => setLeftWidth(startW + (e.clientX - startX), false);
@@ -3331,6 +3338,10 @@ function fvPayload(entry) {
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
     label: String(st.meta.stage || "?"),
+    // The stage's own printed date. NOT derived from t0: where the sheets
+    // carry no clock, fvStarts lays the stages on a synthetic axis, and a
+    // date read back off that would be invented.
+    date: String(st.meta.date || ""),
     t0: starts[i],
     dsec: st.sample_sec || 1,
     n: st.n,
