@@ -1179,6 +1179,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # schematic/table pages that draw like charts — reported as one line, not
     # one per page: a 171-page report has dozens and they are not errors
     _not_charts = []
+    # Channels a Trican layout-B page traced and then had to drop. extract_
+    # image_b has always built these and nothing ever read them, so a chart
+    # that came back with three of its five channels said nothing about the
+    # other two — #564, where both proppant concentrations were missing from
+    # all 23 stages of 00583 and the report Carmine filed had no clue in it.
+    # {note text: [pages]}, so 23 pages of the same cause read as one line.
+    _trican_drops = {}
     # the Hal-1 EVENT LOG, read once per document and only when a raster
     # treatment plot actually needs a calendar to date itself against
     _hal_events = [None]
@@ -1465,6 +1472,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             try:
                 md, samples, chans, info = tcharts.extract_page_b(page,
                                                                   sample_sec)
+                for _n in (info.get("notes") or ()):
+                    _trican_drops.setdefault(str(_n), []).append(pno + 1)
                 data = {c["label"]: c["values"] for c in chans}
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
@@ -1590,6 +1599,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # Fill the stage number down onto those blank pages so build_well merges
     # the four channels into one stage, and drop the empty whole-job overview
     # pages (no curves) that would otherwise become phantom stages.
+    for _msg, _pages in sorted(_trican_drops.items()):
+        notes.append(
+            f"{_msg} — channel dropped on {len(_pages)} chart(s) "
+            f"(p{', p'.join(str(x) for x in _pages[:8])}"
+            f"{', …' if len(_pages) > 8 else ''}). The curve was traced; it is "
+            f"the axis that could not be read, so there is nothing to scale it "
+            f"against and it is left out rather than guessed at.")
     if _not_charts:
         notes.append(f"{len(_not_charts)} page(s) skipped as schematics or "
                      f"tables that draw like charts (p"
