@@ -254,10 +254,17 @@ function buildDispMap() {
   let d = 0;
   for (let i = 0; i < nStages(); i++) {
     const a = edits.bounds[i], b = edits.bounds[i + 1];
-    if (timeMode === "real") { dispMap.push({ a, b, hi: b, da: a, db: b }); continue; }
     const src = well.stages[edits.origin ? edits.origin[i] : i];
     // where this stage's samples actually stop
+    //
+    // Computed in BOTH modes now. Real Time used to set hi = b and return
+    // early, because the only consumer was Plot by row, which needed it to
+    // know what to collapse. But it is also the edge where a stage's readings
+    // end and the wait begins — and Real Time is the mode that has to draw
+    // that wait. With hi = b there was no wait to find: every band ran to the
+    // next stage's start and the void was indistinguishable from pumping.
     const hi = src ? Math.min(b, src.t0 + src.n * src.dsec * 1000) : b;
+    if (timeMode === "real") { dispMap.push({ a, b, hi, da: a, db: b }); continue; }
     const wdt = Math.max(1000, hi - a);
     dispMap.push({ a, b, hi, da: d, db: d + wdt });
     d += wdt;
@@ -472,6 +479,48 @@ function fit() {
 const X = (t, w) => PAD.l + (toDisp(t) - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
 const T = (x, w) => fromDisp(view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a));
 
+// The stretch between one stage's last reading and the next stage's first.
+//
+// Drawn rather than left blank, because blank is ambiguous: empty axis could
+// equally be a stage whose curves failed to trace. Hatching says the space is
+// accounted for and holds nothing, and the duration says how much of the job
+// it was — which on a real well is most of it. 00440 waits 34 hours between
+// stages 6 and 7.
+function drawVoid(ctx, x0, x1, plotH, tFrom, tTo) {
+  const wdt = x1 - x0;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, PAD.t, wdt, plotH); ctx.clip();
+  ctx.fillStyle = "rgba(105,112,119,0.05)";
+  ctx.fillRect(x0, PAD.t, wdt, plotH);
+  ctx.strokeStyle = "rgba(105,112,119,0.16)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = x0 - plotH; x < x1; x += 9) {     // 45°, so it reads as "none"
+    ctx.moveTo(x, PAD.t + plotH);
+    ctx.lineTo(x + plotH, PAD.t);
+  }
+  ctx.stroke();
+  const label = fmtSpan(tTo - tFrom) + " · no readings";
+  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+  if (wdt > ctx.measureText(label).width + 14) {
+    ctx.fillStyle = "rgba(255,255,255,0.82)";
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillRect(x0 + (wdt - tw) / 2, PAD.t + plotH / 2 - 9, tw, 16);
+    ctx.fillStyle = "#697077";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x0 + wdt / 2, PAD.t + plotH / 2 + 3);
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+}
+
+function fmtSpan(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), rm = mins % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
 function fmtClock(ms) {
   const d = new Date(ms), p = n => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
@@ -496,13 +545,29 @@ function draw() {
     const s = stageSpan(i);
     const x0 = Math.max(PAD.l, X(s.a, w)), x1 = Math.min(w - PAD.r, X(s.b, w));
     if (x1 <= PAD.l || x0 >= w - PAD.r) continue;
+    // A band runs to the NEXT stage's start, so the wait between two stages
+    // sits INSIDE the earlier one. Tinted end to end, a 30-minute stage
+    // followed by a six-hour wait was drawn as a six-hour stage — the void
+    // took the previous stage's colour and its number, and Real Time read as
+    // though the pumps never stopped.
+    //
+    // So the tint stops where the READINGS stop. What follows is nobody's
+    // stage: no colour, no caption, and its own hatch saying there is nothing
+    // recorded here. The BOUNDARY does not move — bounds[i+1] is still the
+    // next stage's start and still what a drag edits — only the paint changes.
+    //
+    // dispMap already knows where a stage's samples end: `hi` is the number
+    // Plot by row collapses to, and it is exactly the edge wanted here.
+    const m = dispMap[i] || null;
+    const xh = m ? Math.min(x1, Math.max(x0, X(Math.min(m.hi, s.b), w))) : x1;
     ctx.fillStyle = bandFill(i);
-    ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+    ctx.fillRect(x0, PAD.t, xh - x0, plotH);
+    if (xh < x1 - 0.5) drawVoid(ctx, xh, x1, plotH, m ? m.hi : s.a, s.b);
     if (i === selIdx) {                 // the stage the Lab is showing
       ctx.fillStyle = "rgba(163,22,49,0.07)";
-      ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+      ctx.fillRect(x0, PAD.t, xh - x0, plotH);
       ctx.strokeStyle = "rgba(163,22,49,0.5)"; ctx.lineWidth = 1.5;
-      ctx.strokeRect(x0 + 0.75, PAD.t + 0.75, x1 - x0 - 1.5, plotH - 1.5);
+      ctx.strokeRect(x0 + 0.75, PAD.t + 0.75, xh - x0 - 1.5, plotH - 1.5);
     }
     // POSITION first, printed name second.
     //
