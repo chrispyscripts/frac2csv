@@ -1012,5 +1012,61 @@ class CalfracVariantPick(unittest.TestCase):
         self.assertEqual(len(res), 2)
 
 
+class LibertyDatelessTimeAxis(unittest.TestCase):
+    """#549: three Liberty files failed "time labels not found" on every chart
+    page. The time labels were there — twelve a page, pure black. What was
+    missing was the DATE labels a working sheet prints beside them, so every
+    time label was skipped for want of a date partner and the axis came out
+    empty. These sheets print a bare "Time" axis and no date anywhere.
+    """
+
+    @staticmethod
+    def _t(text, cy):
+        return {"t": text, "cx": 0.0, "cy": float(cy), "color": 0}
+
+    def test_axis_is_fitted_from_clock_labels_alone(self):
+        spans = [self._t(x, cy) for x, cy in
+                 [("10:00", 100), ("10:30", 200), ("11:00", 300)]]
+        ab, date0, _win = lib1._time_axis(spans)
+        self.assertIsNotNone(ab)
+        a, b = ab
+        self.assertAlmostEqual(a + b * 300 - (a + b * 100), 3600.0, places=3)
+        self.assertEqual(date0, "")     # not printed, so not invented
+
+    def test_midnight_is_unwrapped(self):
+        """00930 p115 runs 22:56 -> 00:10. Evenly spaced here so the fit is
+        exact and the assertion is about the rollover, not least squares."""
+        spans = [self._t(x, cy) for x, cy in
+                 [("23:00", 100), ("23:30", 200), ("00:00", 300), ("00:30", 400)]]
+        ab, _d, _w = lib1._time_axis(spans)
+        a, b = ab
+        span_min = ((a + b * 400) - (a + b * 100)) / 60.0
+        self.assertAlmostEqual(span_min, 90.0, delta=0.1)   # not -1350
+
+    def test_direction_is_judged_on_monotonicity_not_rollover_count(self):
+        """Read backwards those labels are 00:10, 23:55, 23:26, 22:56 — which
+        never steps back by an hour, so a rollover COUNT scores it zero
+        against the correct order's one and picks it. That fitted a negative
+        slope and made p115 a 926-minute stage against 18-95 for the well."""
+        spans = [self._t(x, cy) for x, cy in
+                 [("22:56", 100), ("23:26", 200), ("23:55", 300), ("00:10", 400)]]
+        ab, _d, _w = lib1._time_axis(spans)
+        self.assertGreater(ab[1], 0, "time must increase with cy here")
+
+    def test_dates_still_win_when_the_sheet_prints_them(self):
+        """The fallback must not touch the 631 Liberty files that do."""
+        spans = [self._t(x, cy) for x, cy in
+                 [("10:00", 100), ("10:30", 200), ("11:00", 300)]]
+        spans += [{"t": "2022/04/04", "cx": 0.0, "cy": cy, "color": 0}
+                  for cy in (100, 200, 300)]
+        ab, date0, _w = lib1._time_axis(spans)
+        self.assertEqual(date0, "2022-04-04")
+        self.assertIsNotNone(ab)
+
+    def test_too_few_labels_still_refuses(self):
+        spans = [self._t("10:00", 100), self._t("10:30", 200)]
+        self.assertEqual(lib1._time_axis(spans), (None, "", None))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -304,11 +304,26 @@ function draw() {
       ctx.strokeStyle = "rgba(163,22,49,0.5)"; ctx.lineWidth = 1.5;
       ctx.strokeRect(x0 + 0.75, PAD.t + 0.75, x1 - x0 - 1.5, plotH - 1.5);
     }
-    if (x1 - x0 > 26) {
-      ctx.fillStyle = "#697077"; ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
+    // POSITION first, printed name second.
+    //
+    // A Liberty well prints a Treatment plot and a Chemical plot for each
+    // stage, so the printed names arrive in pairs — 00627 captions its bands
+    // "4 4 5 5 6 6 …" and there is nothing to tell one band from its twin,
+    // nor any way to ask for the one in between. The position is unique by
+    // construction, so it leads; the printed name rides behind it when the
+    // band is wide enough to hold it.
+    if (x1 - x0 > 13) {
       ctx.save();
       ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, PAD.t); ctx.clip();
-      ctx.fillText(edits.labels[i] || String(i + 1), x0 + 5, PAD.t - 9);
+      ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
+      const pos = String(i + 1);
+      ctx.fillStyle = i === selIdx ? "#a31631" : "#14181d";
+      ctx.fillText(pos, x0 + 4, PAD.t - 9);
+      const printed = String(edits.labels[i] || "");
+      if (printed && printed !== pos && x1 - x0 > 40) {
+        ctx.fillStyle = "#9aa1aa";
+        ctx.fillText(printed, x0 + 6 + ctx.measureText(pos).width, PAD.t - 9);
+      }
       ctx.restore();
     }
   }
@@ -488,8 +503,11 @@ function draw() {
     ctx.setLineDash([2, 3]);
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     ctx.setLineDash([]);
-    const src = srcAt(hover.t);
-    const label = `${fmtClock(hover.t)}${src ? "  ·  from " + src.label : ""}`;
+    const si = stageAtX(hover.t);
+    const label = fmtClock(hover.t) +
+      (si >= 0 ? `  ·  #${si + 1}` +
+        (edits.labels[si] && String(edits.labels[si]) !== String(si + 1)
+          ? ` (${edits.labels[si]})` : "") : "");
     ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
     const tw = ctx.measureText(label).width + 10;
     const bx = Math.min(Math.max(PAD.l, x - tw / 2), w - PAD.r - tw);
@@ -541,9 +559,15 @@ function stageAtX(t) {
 }
 function fillJump() {
   const sel = $("jump");
+  // Every entry is distinct even when the printed names repeat, which is what
+  // makes a band between two identically-named ones selectable at all.
   sel.innerHTML = `<option value="">— stage —</option>` +
-    Array.from({ length: nStages() }, (_, i) =>
-      `<option value="${i}">${escapeHtml(edits.labels[i] || String(i + 1))}</option>`).join("");
+    Array.from({ length: nStages() }, (_, i) => {
+      const printed = String(edits.labels[i] || "");
+      const txt = printed && printed !== String(i + 1)
+        ? `${i + 1}. ${printed}` : `${i + 1}`;
+      return `<option value="${i}">${escapeHtml(txt)}</option>`;
+    }).join("");
 }
 const escapeHtml = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 

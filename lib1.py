@@ -87,6 +87,49 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         pts.append((secs, ts["cy"]))
         if date0 is None:
             date0 = f"{y:04d}-{mo:02d}-{dd:02d}"
+    if len(pts) < 3 and len(times) >= 3:
+        # No usable date labels. Liberty's 2021 vintage prints a bare "Time"
+        # axis — 00928/00929/00930 carry twelve clock labels a page and no
+        # date anywhere on the sheet, in any format — and every one of those
+        # labels was being skipped for want of a date partner, so the page
+        # raised "time labels not found" when the times were right there.
+        #
+        # The clock alone fixes the axis, provided midnight is unwrapped:
+        # 00930 p115 runs 22:56 -> 00:10. Direction is not assumed — a
+        # rotated sheet can run time either way down the page — so both
+        # orders are unwrapped and judged.
+        #
+        # Judged on MONOTONICITY, not on rollover count. Counting rollovers
+        # picks the wrong order here: read backwards the labels are 00:10,
+        # 23:55, 23:40 … which never steps backwards by an hour, so it scores
+        # ZERO rollovers against the correct order's one, wins, and fits a
+        # negative slope — p115 came out as a 926-minute stage against 18-95
+        # for every other stage on the well. Whichever order is chronological
+        # is non-decreasing once unwrapped; the reverse is not.
+        def _walk(seq):
+            out, day, prev, bad = [], 0, None, 0
+            for ts in seq:
+                q = [int(x) for x in ts["t"].split(":")]
+                sod = q[0] * 3600 + q[1] * 60 + (q[2] if len(q) > 2 else 0)
+                if prev is not None and sod < prev - 3600:
+                    day += 1                      # midnight
+                v = day * 86400 + sod
+                if out and v < out[-1][0]:
+                    bad += 1                      # went backwards anyway
+                prev = sod
+                out.append((v, ts["cy"]))
+            span = (out[-1][0] - out[0][0]) if out else 0
+            return out, bad, span
+
+        by_cy = sorted(times, key=lambda s: s["cy"])
+        fwd = _walk(by_cy)
+        rev = _walk(list(reversed(by_cy)))
+        # fewest backward steps, then the tighter span — a wrongly ordered
+        # read inflates the span rather than shortening it
+        pts = min((fwd, rev), key=lambda r: (r[1], r[2]))[0]
+        # date stays unknown: it is not printed on these sheets, and the file
+        # name carries the REPORT date, which is not the stage's.
+        date0 = ""
     if len(pts) < 3:
         return None, "", None
     # Liberty prints the first/last time labels AT the plot frame edges, but
