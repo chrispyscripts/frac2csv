@@ -120,6 +120,8 @@ well, or the name the report prints on it">
     </span>
     <button type="button" class="btn" id="adjust" title="Drag the boundary between two stages to move where one ends and the next begins">Adjust</button>
     <button type="button" class="btn" id="trim" title="Drag across the chart to cut a span out of the data">Trim</button>
+    <button type="button" class="btn" id="undo" title="Undo the last edit">Undo</button>
+    <button type="button" class="btn" id="reset" title="Throw away every edit and go back to what was extracted">Reset</button>
     <span class="state clean" id="state">no edits</span>
   </div>
 </div>
@@ -158,6 +160,24 @@ well, or the name the report prints on it">
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+
+// Bind through this, never straight onto $(id).
+//
+// d15cf0d deleted FracView's Undo and Reset buttons from the markup and left
+// their handlers behind. Those bind at TOP LEVEL, so `$("undo")` came back
+// null and the TypeError took out every statement below it — including
+// hello(), the last line in the file and the only thing that tells the Lab
+// this window exists. FracView then waited forever, on every well and every
+// provider, with the Lab sitting behind it holding the data. One missing
+// button turned the whole view dark, and nothing on screen said why.
+//
+// So: warn, and carry on. A control whose element is gone is one broken
+// control; it must never again be able to silence the window.
+function bind(id, ev, fn) {
+  const node = $(id);
+  if (!node) { console.warn(`FracView: no #${id} to bind "${ev}" to`); return; }
+  node.addEventListener(ev, fn);
+}
 
 // ---------- what the parent sent, and what we have done to it ----------
 // `well` is read-only: the stages exactly as extracted. `edits` is the whole
@@ -375,7 +395,8 @@ function markDirty() {
     el.textContent = "edited · " + bits.join(" · ");
     el.className = "state dirty";
   }
-  $("undo").disabled = !undoStack.length;
+  const ub = $("undo");
+  if (ub) ub.disabled = !undoStack.length;
   sendEdits();
 }
 function pushUndo() {
@@ -861,11 +882,20 @@ function sendEdits() {
 window.addEventListener("message", ev => {
   const d = ev.data;
   if (!d || typeof d !== "object") return;
-  if (d.type === "fv:none") {
+  if (d.type === "fv:none" || d.type === "fv:error") {
     well = null;
+    // "Pick a well" is the right thing to say when nothing is selected and
+    // exactly the wrong thing when the Lab tried and failed: the two looked
+    // identical from here, so a broken well read as an idle window and
+    // nobody went looking for a cause.
+    $("msg").textContent = d.type === "fv:error"
+      ? `Could not build this well — ${d.error || "no reason given"}` +
+        (d.file ? ` (${d.file})` : "") + ". The Lab's console has the stack."
+      : "Pick a well in the Lab — FracView follows whatever is selected there.";
     $("msg").hidden = false; $("wrap").hidden = true; $("tools").hidden = true;
     $("zoomctl").hidden = true;
-    $("title").textContent = "No well selected";
+    $("title").textContent = d.type === "fv:error" ? "Could not build this well"
+                                                   : "No well selected";
     $("sub").textContent = "";
     return;
   }
@@ -987,8 +1017,8 @@ cv.addEventListener("wheel", e => {
   const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
   panBy(d / 500 * viewSpan());
 }, { passive: false });
-$("zoomin").addEventListener("click", () => zoomBy(1 / 1.6));
-$("zoomout").addEventListener("click", () => zoomBy(1.6));
+bind("zoomin", "click", () => zoomBy(1 / 1.6));
+bind("zoomout", "click", () => zoomBy(1.6));
 
 cv.addEventListener("mousedown", e => {
   if (!well) return;
@@ -1071,36 +1101,36 @@ cv.addEventListener("dblclick", e => {
 });
 cv.addEventListener("mouseleave", () => { hover = null; draw(); });
 
-$("jump").addEventListener("change", e => {
+bind("jump", "change", e => {
   const i = Number(e.target.value);
   if (!isFinite(i) || e.target.value === "") return;
   zoomStages(i, $("span").value || "1");
   selectStage(i);
 });
-$("span").addEventListener("change", e => {
+bind("span", "change", e => {
   const sel = $("jump").value;
   const i = sel === "" ? Math.max(0, stageAtX((view.a + view.b) / 2)) : Number(sel);
   zoomStages(i, e.target.value);
 });
-$("captionmode").addEventListener("change", e => {
+bind("captionmode", "change", e => {
   captionMode = e.target.value;
   localStorage.setItem("f2c.fvCaption", captionMode);
   draw();
 });
-$("scheme").addEventListener("change", e => { scheme = e.target.value; draw(); });
-$("timemode").addEventListener("change", e => {
+bind("scheme", "change", e => { scheme = e.target.value; draw(); });
+bind("timemode", "change", e => {
   timeMode = e.target.value;
   localStorage.setItem("f2c.fvTime", timeMode);
   viewAll();                 // the axis means something different now
 });
-$("adjust").addEventListener("click", () => setMode("adjust"));
-$("trim").addEventListener("click", () => setMode("trim"));
-$("undo").addEventListener("click", () => {
+bind("adjust", "click", () => setMode("adjust"));
+bind("trim", "click", () => setMode("trim"));
+bind("undo", "click", () => {
   if (!undoStack.length) return;
   edits = JSON.parse(undoStack.pop());
   fillJump(); markDirty(); draw();
 });
-$("reset").addEventListener("click", () => {
+bind("reset", "click", () => {
   if (!well) return;
   pushUndo();
   edits = freshEdits(well);
@@ -1111,13 +1141,29 @@ window.addEventListener("resize", () => draw());
 
 // Tell the Lab we exist. It may have been open before this window was, so the
 // handshake is ours to start — same reasoning as the stacked window.
+//
+// And keep asking. Asking ONCE is not enough: reload the Lab and its new
+// context holds no handle to this window, so nothing is ever pushed here
+// again. The stacked window learned this already — its own comment names the
+// same failure. Three occasions, debounced, because focus and
+// visibilitychange both fire on a single alt-tab.
+let askedAt = -1e9;
 function hello() {
+  const now = Date.now();
+  if (now - askedAt < 400) return;
+  askedAt = now;
   if (window.opener && !window.opener.closed) {
     try { window.opener.postMessage({ type: "fv:ready" }, "*"); } catch (e) { /* noop */ }
   }
 }
 hello();
 setTimeout(hello, 250);
+window.addEventListener("focus", hello);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) hello(); });
+// Only while nothing is loaded. Once a well is on screen the Lab pushes on
+// every change, and a well that IS showing must not be rebuilt underneath an
+// edit in progress.
+setInterval(() => { if (!well) hello(); }, 2000);
 </script>
 </body>
 </html>

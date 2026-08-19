@@ -3570,6 +3570,34 @@ const fvEdits = new Map();          // file name -> {bounds, labels, cuts}
 let fvWin = null;
 let fvFile = "";
 
+// ---- child windows belong to ONE Lab, not to the browser -------------------
+//
+// window.open(url, NAME) reuses any window already carrying that name. The
+// three companion windows were named by constants, so the moment a second Lab
+// is open — which is the documented way to run this, two instances on their
+// own ports so a tier sweep gets real parallelism — both instances fight over
+// one FracView. The second click steals the window, `window.opener` still
+// points at whichever Lab opened it first, and the fv:ready handshake is
+// delivered to a Lab that may have nothing selected. The instance actually
+// showing the well never gets asked, so FracView sits on "Waiting for the
+// Lab…" forever, on any provider.
+//
+// The port separates two instances; the sessionStorage tag separates two tabs
+// on ONE instance. It survives a reload, which is what lets a Lab reconnect to
+// its own already-open FracView rather than orphaning it.
+const WIN_TAG = (() => {
+  let t = "";
+  try {
+    t = sessionStorage.getItem("f2c.win") || "";
+    if (!t) {
+      t = Math.random().toString(36).slice(2, 8);
+      sessionStorage.setItem("f2c.win", t);
+    }
+  } catch (e) { t = Math.random().toString(36).slice(2, 8); }
+  return `${location.port || "x"}-${t}`;
+})();
+const winName = which => `carmine-${which}-${WIN_TAG}`;
+
 function fvStageStart(st) {
   const d = new Date((st.meta.date || "2000-01-01") + "T" +
                      (st.meta.start_time || "00:00:00"));
@@ -3717,7 +3745,20 @@ function fvPushSel() {
 function fvPush() {
   if (!fvAlive()) return;
   const entry = current && current.entry;
-  try { fvWin.postMessage(entry ? fvPayload(entry) : { type: "fv:none" }, "*"); }
+  // Built OUTSIDE the send's try. That catch is for the window going away
+  // mid-send, and it used to wrap the build as well — so any error putting
+  // the payload together was swallowed under a comment about something else,
+  // and FracView's only symptom was silence. A view that cannot be built has
+  // to say why, in the window that is waiting for it.
+  let payload;
+  try {
+    payload = entry ? fvPayload(entry) : { type: "fv:none" };
+  } catch (e) {
+    console.error("FracView payload failed", e);
+    payload = { type: "fv:error", file: entry ? entry.name : "",
+                error: String((e && e.message) || e) };
+  }
+  try { fvWin.postMessage(payload, "*"); }
   catch (e) { /* the window went away between the check and the send */ }
   fvFile = entry ? entry.name : "";
 }
@@ -3725,6 +3766,14 @@ function fvPush() {
 window.addEventListener("message", ev => {
   const d = ev.data;
   if (!d || typeof d !== "object") return;
+  // Adopt the sender. A reloaded Lab starts with fvWin null, so an already
+  // open FracView could ask and be ignored: fvPush returns early when the
+  // handle is missing, and the handle is exactly what a reload throws away.
+  // The stacked window has done this since its own reconnect fix; FracView
+  // asked once on load and was then unreachable for the rest of the session,
+  // which is why it sat on "Waiting for the Lab…" on every provider.
+  if (String(d.type || "").startsWith("fv:") && ev.source &&
+      (d.type === "fv:ready" || !fvAlive())) fvWin = ev.source;
   if (d.type === "fv:ready") { fvPush(); return; }
   // FracView picked a stage: bring this window — and through it the stacked
   // one, which already follows this window — to the same stage. Matched on the
@@ -3766,7 +3815,7 @@ $("fvbtn").addEventListener("click", () => {
   msg.hidden = true;
   // Wider than the stacked window by default: this one is read along the time
   // axis, and a whole job's stages at once is the point of it.
-  const w = window.open("fracview.html", "carmine-fracview",
+  const w = window.open("fracview.html", winName("fracview"),
                         "width=1500,height=780");
   if (!w) {
     msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
@@ -4012,7 +4061,7 @@ $("tablebtn").addEventListener("click", () => {
   // stackbtn gets a window only because it opens a real URL. Sized and placed
   // so it lands beside the app instead of on top of it.
   const w = window.open(
-    "", "carmine-tables",
+    "", winName("tables"),
     `popup=1,width=1150,height=850,left=${Math.max(0, (window.screenX || 0) + 60)},` +
     `top=${Math.max(0, (window.screenY || 0) + 60)}`);
   if (!w) {
@@ -4081,7 +4130,7 @@ $("stackbtn").addEventListener("click", () => {
   msg.hidden = true;
   // Nothing may be awaited above this line: a window.open() that is not
   // directly inside the click handler is treated as unrequested and blocked.
-  const w = window.open("stacked.html", "carmine-stacked",
+  const w = window.open("stacked.html", winName("stacked"),
                         "width=980,height=1000");
   if (!w) {
     msg.textContent = "Pop-up blocked — allow pop-ups for this page, then click again.";
