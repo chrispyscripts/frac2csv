@@ -96,8 +96,8 @@
     </span>
     <span class="fld">Time
       <select id="timemode" title="Real Time spaces the stages by the clock, so
-the wait between them is visible. Plot by row closes the gaps and gives every
-stage the width of its own duration.">
+the wait between them is visible at its full length. Plot by row closes those
+gaps and labels the axis with the row number of the exported CSV.">
         <option value="real">Real Time</option>
         <option value="row">Plot by row</option>
       </select>
@@ -263,6 +263,71 @@ function fromDisp(x) {
   return L.hi + (x - L.db);
 }
 
+// ---------- where a moment lands in the exported CSV ----------
+// Carmine reads a feature off this chart and then goes hunting for it in the
+// CSV, so the number on the axis has to be the CSV's OWN line number, not a
+// sample index. wellCSV writes the header, then the units row, then every
+// stage block in order, one line per sample — so the first reading of the
+// well is line 3, and Excel's row numbers agree because the xlsx MAIN sheet
+// is built from the same model.
+//
+// Built from the SAME arithmetic applyFvEdits exports with: the samples of
+// any source stage falling inside the edited band, ordered by absolute time.
+// That is what makes a boundary drag move the row numbers exactly as far as
+// it moves the export, instead of the axis and the file disagreeing.
+//
+// Cuts are deliberately NOT subtracted. A trimmed span is blanked rather than
+// deleted — applyFvEdits pushes null and says why — so those lines are still
+// in the file and still hold their row numbers.
+const CSV_HEADER_ROWS = 2;          // head + unit_row, per wellCSV
+let rowMap = [];
+
+function buildRowMap() {
+  rowMap = [];
+  if (!well) return;
+  let base = CSV_HEADER_ROWS;
+  for (let i = 0; i < nStages(); i++) {
+    const a = edits.bounds[i], b = edits.bounds[i + 1];
+    const parts = [];
+    for (const st of well.stages) {
+      const step = (st.dsec || 1) * 1000;
+      if (st.t0 + st.n * step <= a || st.t0 >= b) continue;
+      const j0 = Math.max(0, Math.ceil((a - st.t0) / step));
+      const j1 = Math.min(st.n, Math.ceil((b - st.t0) / step));
+      if (j1 > j0) parts.push({ t0: st.t0, step, j0, j1, base: 0 });
+    }
+    parts.sort((x, y) => (x.t0 + x.j0 * x.step) - (y.t0 + y.j0 * y.step));
+    let n = 0;
+    for (const p of parts) { p.base = n; n += p.j1 - p.j0; }
+    rowMap.push({ a, b, base, parts, n });
+    base += n;
+  }
+}
+
+// absolute time -> 1-based CSV line, or 0 where nothing is exported.
+// 0 is the honest answer in a stage's idle tail: the chart still draws that
+// span in Real Time, and no line of the file corresponds to it.
+function rowAt(t) {
+  for (const m of rowMap) {
+    if (t < m.a || t >= m.b) continue;
+    for (const p of m.parts) {
+      const j = Math.floor((t - p.t0) / p.step);
+      if (j >= p.j0 && j < p.j1) return m.base + p.base + (j - p.j0) + 1;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+// The stage's OWN printed date. Never derived from t0: where the sheets carry
+// no clock the stages sit on a synthetic axis, and a date read back off that
+// would be invented — which is the whole reason `synthetic` is sent over.
+function printedDay(t) {
+  const st = srcAt(t);
+  if (st && st.date) return st.date;
+  return well && well.synthetic ? "" : fmtDay(t);
+}
+
 // ---------- stage geometry ----------
 // A stage's samples live on its own clock: sample j is at t0 + j*dsec seconds.
 // `bounds` holds one absolute cut point per stage START, so bounds[i] is where
@@ -398,6 +463,9 @@ function fmtDay(ms) {
 function draw() {
   if (!well) return;
   buildDispMap();          // bounds move with every edit
+  buildRowMap();           // ...and so do the row numbers
+  // Plot by row prints row number over clock, so the axis needs a second line
+  PAD.b = timeMode === "row" ? 48 : 34;
   const { ctx, w, h } = fit();
   const plotW = w - PAD.l - PAD.r, plotH = h - PAD.t - PAD.b;
   ctx.clearRect(0, 0, w, h);
@@ -601,11 +669,29 @@ function draw() {
     const x = X(t, w);
     ctx.strokeStyle = "#eceef1";
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
-    ctx.fillText(fmtClock(t), x, h - 18);
+    if (timeMode === "row") {
+      // The row leads, because it is the number being carried to the CSV; the
+      // clock stays under it, because a row on its own says nothing about when.
+      const r = rowAt(t);
+      ctx.fillStyle = "#14181d";
+      ctx.fillText(r ? String(r) : "—", x, h - 31);
+      ctx.fillStyle = "#697077";
+      ctx.fillText(fmtClock(t), x, h - 19);
+    } else {
+      ctx.fillText(fmtClock(t), x, h - 18);
+    }
   }
   ctx.textAlign = "left";
-  ctx.fillText(fmtDay(fromDisp(view.a)) +
-               (timeMode === "row" ? "   ·   gaps closed" : ""), PAD.l, h - 5);
+  ctx.fillStyle = "#697077";
+  const foot = [];
+  // The day comes off the stage's printed date, so it is still right on a file
+  // whose stages were laid end to end for want of a clock.
+  const day = printedDay(fromDisp(view.a));
+  if (day) foot.push(day);
+  if (well.synthetic)
+    foot.push("no printed clock — stages laid end to end, so this axis is not a wall clock");
+  if (timeMode === "row") foot.push("row = line in the exported CSV · gaps closed");
+  ctx.fillText(foot.join("   ·   "), PAD.l, h - 5);
 
   // channel key
   renderKey(names);
@@ -618,21 +704,39 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     ctx.setLineDash([]);
     const si = stageAtX(hover.t);
-    const label = fmtClock(hover.t) +
-      (si >= 0 ? `  ·  #${si + 1}` +
-        (edits.labels[si] && String(edits.labels[si]) !== String(si + 1)
-          ? ` (${edits.labels[si]})` : "") : "");
+    // Row first: this is the box read while pointing at a feature that then
+    // has to be found in the CSV. The clock and the day ride with it so the
+    // number can be checked against the file's own DATETIME column.
+    const hr = rowAt(hover.t);
+    const hday = printedDay(hover.t);
+    const bits = [];
+    if (hr) bits.push(`row ${hr}`);
+    bits.push(fmtClock(hover.t));
+    if (hday) bits.push(hday);
+    if (si >= 0) bits.push(`#${si + 1}` +
+      (edits.labels[si] && String(edits.labels[si]) !== String(si + 1)
+        ? ` (${edits.labels[si]})` : ""));
+    const label = bits.join("  ·  ");
     // Twice the old size: this is the number being read off the chart while
-    // a boundary is placed, and 11px of it sat under the cursor.
-    ctx.font = "600 22px ui-monospace,Menlo,Consolas,monospace";
-    const tw = ctx.measureText(label).width + 18;
+    // a boundary is placed, and 11px of it sat under the cursor. It now also
+    // carries the row and the day, so it steps down a size at a time rather
+    // than running off the plot — clamping alone would push the left edge
+    // under PAD.l and clip the row number, which is the part being read.
+    const avail = w - PAD.l - PAD.r;
+    let fpx = 22;
+    do {
+      ctx.font = `600 ${fpx}px ui-monospace,Menlo,Consolas,monospace`;
+      if (ctx.measureText(label).width + 18 <= avail) break;
+    } while ((fpx -= 2) >= 12);
+    const tw = Math.min(avail, ctx.measureText(label).width + 18);
     const bx = Math.min(Math.max(PAD.l, x - tw / 2), w - PAD.r - tw);
+    const bh = fpx + 8;
     ctx.fillStyle = "rgba(255,255,255,0.94)";
-    ctx.fillRect(bx, PAD.t + 2, tw, 30);
+    ctx.fillRect(bx, PAD.t + 2, tw, bh);
     ctx.strokeStyle = "rgba(20,24,29,0.10)"; ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, PAD.t + 2.5, tw - 1, 29);
+    ctx.strokeRect(bx + 0.5, PAD.t + 2.5, tw - 1, bh - 1);
     ctx.fillStyle = "#14181d";
-    ctx.fillText(label, bx + 9, PAD.t + 24);
+    ctx.fillText(label, bx + 9, PAD.t + 2 + bh - 8);
   }
 }
 function niceStep(ms) {

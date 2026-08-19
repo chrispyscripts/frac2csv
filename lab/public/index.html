@@ -3547,7 +3547,7 @@ function fvPayload(entry) {
   const w = entry && entry.well;
   if (!w || !w.stages.length) return { type: "fv:none" };
   const raw = w.stagesRaw || w.stages;
-  const { starts } = fvStarts(raw);
+  const { starts, synthetic } = fvStarts(raw);
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
     label: String(st.meta.stage || "?"),
@@ -3568,8 +3568,12 @@ function fvPayload(entry) {
       return { name: chanName(c), unit: c.unit || "", values: vals };
     }),
   }));
+  // `synthetic` rides along because FracView draws a CLOCK. Without it the
+  // stages-laid-end-to-end fallback was labelled "Real Time" and printed
+  // times off a timeline nobody ever measured — the one reading on that axis
+  // that must never look authoritative.
   return { type: "fv:well", file: entry.name, uwi: (raw[0].meta.uwi || ""),
-           stages, edits: fvEdits.get(entry.name) || null };
+           synthetic, stages, edits: fvEdits.get(entry.name) || null };
 }
 
 // The whole of the edit's meaning: rebuild the stage list from the original
