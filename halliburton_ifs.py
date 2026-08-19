@@ -11,6 +11,7 @@ tick-label positions — no frame detection required.
 """
 import re
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 import fitz
 import numpy as np
@@ -231,14 +232,94 @@ def _time_axis(spans):
     a, b = _fit(vals)
     if b <= 0:
         return None, ""
-    # a date label like 3/3/2019 often sits under the first tick
-    date = ""
-    for s in spans:
-        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s["t"])
-        if m:
-            date = f"{int(m.group(3)):04d}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
-            break
+    date = _axis_date(spans, row)
     return (a, b), date
+
+
+# Two printed forms, one place. The BC filings label the axis "3/3/2019"; the
+# AER Montney ones print ISO, "2021-10-27" — and only the slash form was read,
+# so every HAL-2 vector chart in that set came through with NO date. Carmine,
+# #575: "not showing date times for these HAL-2 vector time it does for the
+# image one HAL-1 type !!!!". He is comparing against Hal-1 raster, which
+# dates itself off the document's EVENT LOG; IFS has no such cascade and never
+# needed one, because the date is printed right there on the chart.
+#
+# Where it sits, measured on 00328 p102/p103/p107: one row under the clock
+# labels (y 486.3 against 474.2) and TWICE — once at the left end of the
+# plotted window and once at the right. So the label is anchored to the axis
+# row rather than hunted across the page, and the LEFT one wins, because that
+# is where the chart starts and what start_time is counted from. A page-wide
+# scan would let a header or a footer date outrank the axis.
+#
+# The slash form is deliberately NOT widened to accept day-first. This same
+# document prints "14/11/2021" and "27/10/2021" on p91/p97, which are plainly
+# D/M, so a general slash rule would have to guess which half is the month —
+# and a wrong guess moves a stage to another month in silence. ISO cannot be
+# misread, and the M/D branch keeps its reading on the filings it was written
+# for.
+#
+# What it does NOT keep is emitting a month it just read as 14. "14/11/2021"
+# used to come out "2021-14-11": a string that is truthy, so start_time was
+# then computed off it, that no calendar accepts, and that reaches the CSV's
+# DATETIME column and FracView's clock as garbage rather than as absence. A
+# date that cannot exist is not a date. Rejected, not swapped — swapping would
+# read the unambiguous ones day-first while still reading "3/4/2021" the other
+# way round, which is a worse answer than no answer.
+_D_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+_D_MDY = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
+
+
+def _mdy(m):
+    """'3/3/2019' -> '2019-03-03'. '' when the fields cannot be a date."""
+    mon, day, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1 <= mon <= 12 and 1 <= day <= 31):
+        return ""
+    return f"{yr:04d}-{mon:02d}-{day:02d}"
+
+
+def _start_stamp(label_date, t_min_all):
+    """(date, start_time) for a chart's first sample. -> ('YYYY-mm-dd', 'HH:MM:SS')
+
+    `label_date` is what the axis PRINTS and `t_min_all` is the first sample's
+    offset in the tick fit's own seconds, midnight already unwrapped — so it
+    goes negative when the data starts before the first tick, and past 86400
+    when it starts after the last midnight the axis crossed. Floor-dividing by
+    a day is therefore the whole correction, and the clock below has always
+    been right: Python's floor semantics already turn -305 into 23:54:55.
+    """
+    shift = int(t_min_all // 86400)
+    if shift:
+        label_date = (datetime.strptime(label_date, "%Y-%m-%d")
+                      + timedelta(days=shift)).strftime("%Y-%m-%d")
+    h = int(t_min_all // 3600) % 24
+    mnt = int(t_min_all % 3600 // 60)
+    s = int(t_min_all % 60)
+    return label_date, f"{h:02d}:{mnt:02d}:{s:02d}"
+
+
+def _axis_date(spans, row):
+    """The date printed under the time axis. -> 'YYYY-mm-dd' or ''."""
+    row_cy = sum(s["cy"] for s in row) / len(row)
+    found = []
+    for s in spans:
+        if not 0 < s["cy"] - row_cy < 40:      # the row directly beneath
+            continue
+        m = _D_ISO.fullmatch(s["t"])
+        if m:
+            found.append((s["cx"], f"{m.group(1)}-{m.group(2)}-{m.group(3)}"))
+            continue
+        m = _D_MDY.fullmatch(s["t"])
+        if m and _mdy(m):
+            found.append((s["cx"], _mdy(m)))
+    if found:
+        return min(found)[1]
+    # Unchanged fallback: the filings this was written for are still read the
+    # way they always were, even if their label does not sit under the axis.
+    for s in spans:
+        m = _D_MDY.fullmatch(s["t"])
+        if m and _mdy(m):
+            return _mdy(m)
+    return ""
 
 
 def _legend(spans):
@@ -550,10 +631,21 @@ def extract_page(page, sample_sec=1.0):
     meta.axes_frame = axes_frame
     # start time of day for DATETIME column
     if meta.date:
-        h = int(t_min_all // 3600) % 24
-        mnt = int(t_min_all % 3600 // 60)
-        s = int(t_min_all % 60)
-        meta.start_time = f"{h:02d}:{mnt:02d}:{s:02d}"
+        # The printed date labels the FIRST TICK, not the first sample, and a
+        # stage that starts just before midnight is drawn with its ticks on
+        # the next day. 00328 p227 is the case: ticks 00:00, 00:10, 00:20 all
+        # labelled 2021-11-10, while the chart's own data begins 23:54:55 —
+        # six minutes earlier, on the 9th. Read verbatim, that stage was filed
+        # a day late, and one stage out of order is enough to make the whole
+        # well's clock non-monotonic, which is exactly what sends FracView to
+        # its synthetic axis and takes every void off the Real Time view.
+        #
+        # t_min_all is in the SAME seconds the tick fit produced, with midnight
+        # already unwrapped, so it goes negative when the data starts before
+        # the first tick. Its floor-division by a day IS the correction, and
+        # the time below has always been right — Python's floor semantics
+        # already turn -305 into 23:54:55. Only the date was missing the shift.
+        meta.date, meta.start_time = _start_stamp(meta.date, t_min_all)
     return meta, samples, data, chinfo
 
 

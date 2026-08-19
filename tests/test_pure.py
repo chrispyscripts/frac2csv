@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import auto_raster as ar          # noqa: E402
+import halliburton_ifs as hifs   # noqa: E402
 import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
 import halliburton_ifs as ifs     # noqa: E402
@@ -1137,6 +1138,115 @@ class ChemicalOnlyChartDropped(unittest.TestCase):
         res = [self._s("1", self.TREAT, page=1), self._s("1", self.TREAT, page=2)]
         pipeline._drop_chemical_only(res, [])
         self.assertEqual(len(res), 2)
+
+
+class IFSAxisDate(unittest.TestCase):
+    """The date printed under an IFS time axis (#575).
+
+    HAL-2 vector charts came through with no date at all on the AER Montney
+    set: the axis label is ISO there and only "3/3/2019" was read. Measured on
+    00328 p102/p103/p107, the label sits one row under the clock labels and
+    appears TWICE — left end and right end of the plotted window.
+    """
+    @staticmethod
+    def _s(t, cx, cy):
+        return {"t": t, "cx": cx, "cy": cy, "x0": cx, "x1": cx, "color": 0}
+
+    def _row(self):
+        # the winning clock-label row, as _time_axis hands it over
+        return [self._s("07:30", 141.0, 477.0), self._s("07:40", 212.7, 477.0),
+                self._s("07:50", 284.5, 477.0)]
+
+    def test_iso_under_the_axis(self):
+        """00328 p102: ISO at both ends, and the LEFT one is where it starts."""
+        row = self._row()
+        spans = row + [self._s("2021-10-27", 136.0, 489.0),
+                       self._s("2021-10-27", 566.3, 489.0)]
+        self.assertEqual(hifs._axis_date(spans, row), "2021-10-27")
+
+    def test_left_end_wins_over_right(self):
+        """A chart running past midnight prints two different days."""
+        row = self._row()
+        spans = row + [self._s("2021-11-14", 566.3, 489.0),   # right end first
+                       self._s("2021-11-13", 136.0, 489.0)]
+        self.assertEqual(hifs._axis_date(spans, row), "2021-11-13")
+
+    def test_slash_form_still_read(self):
+        """The BC filings this was written for are unchanged."""
+        row = self._row()
+        spans = row + [self._s("3/3/2019", 136.0, 489.0)]
+        self.assertEqual(hifs._axis_date(spans, row), "2019-03-03")
+
+    def test_slash_form_off_the_axis_still_found(self):
+        """Fallback: a label that does not sit under the axis is read as before,
+        so no filing that worked can stop working."""
+        row = self._row()
+        spans = row + [self._s("3/3/2019", 40.0, 120.0)]      # up in a header
+        self.assertEqual(hifs._axis_date(spans, row), "2019-03-03")
+
+    def test_iso_off_the_axis_is_ignored(self):
+        """294 ISO dates sit in 00328's tables. Only the axis row may date a
+        chart — a page-wide ISO scan would let a table cell win."""
+        row = self._row()
+        spans = row + [self._s("2021-11-10", 40.0, 120.0)]
+        self.assertEqual(hifs._axis_date(spans, row), "")
+
+    def test_row_above_the_axis_is_ignored(self):
+        """Only BENEATH the clock. The plot area is above it."""
+        row = self._row()
+        spans = row + [self._s("2021-10-27", 136.0, 460.0)]
+        self.assertEqual(hifs._axis_date(spans, row), "")
+
+    def test_day_first_slashes_are_not_guessed_at(self):
+        """00328 prints "14/11/2021" on p91. Widening the slash rule to accept
+        day-first would mean guessing which half is the month, and a wrong
+        guess moves a stage to another month silently. Month 14 is not a
+        month, so this must not become a date."""
+        row = self._row()
+        spans = row + [self._s("14/11/2021", 136.0, 489.0)]
+        got = hifs._axis_date(spans, row)
+        self.assertNotEqual(got[:7] if got else "", "2021-14")
+
+    def test_nothing_printed(self):
+        row = self._row()
+        self.assertEqual(hifs._axis_date(row, row), "")
+
+
+class IFSStartStamp(unittest.TestCase):
+    """The axis date labels the FIRST TICK, not the first sample (#575).
+
+    00328 p227 draws ticks 00:00, 00:10, 00:20 all labelled 2021-11-10 while
+    the chart's own data begins at 23:54:55 — six minutes earlier, on the 9th.
+    Taken verbatim that stage is filed a day late, and ONE stage out of order
+    makes the whole well's clock non-monotonic, which is what sends FracView
+    to its synthetic axis and takes every void off the Real Time view.
+    """
+    def test_starts_before_the_first_tick(self):
+        """p227, measured: t_min_all is -305s against a 00:00 first tick."""
+        self.assertEqual(hifs._start_stamp("2021-11-10", -305.0),
+                         ("2021-11-09", "23:54:55"))
+
+    def test_ordinary_chart_is_untouched(self):
+        self.assertEqual(hifs._start_stamp("2021-10-27", 3600.0),
+                         ("2021-10-27", "01:00:00"))
+
+    def test_late_evening_start_stays_on_its_own_day(self):
+        """23:54:55 measured FORWARD from a midnight origin is the same day —
+        only the sign of the offset moves the date."""
+        self.assertEqual(hifs._start_stamp("2021-11-10", 86095.0),
+                         ("2021-11-10", "23:54:55"))
+
+    def test_starts_after_a_midnight_the_axis_crossed(self):
+        self.assertEqual(hifs._start_stamp("2021-11-10", 90000.0),
+                         ("2021-11-11", "01:00:00"))
+
+    def test_month_and_year_roll_over(self):
+        self.assertEqual(hifs._start_stamp("2022-01-01", -1.0),
+                         ("2021-12-31", "23:59:59"))
+
+    def test_exactly_midnight(self):
+        self.assertEqual(hifs._start_stamp("2021-11-10", 0.0),
+                         ("2021-11-10", "00:00:00"))
 
 
 if __name__ == "__main__":
