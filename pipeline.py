@@ -920,10 +920,34 @@ def _bj_totals(doc):
 # formatting. The seconds export has one house style, and a table sitting
 # beside it in the same folder should read the same way.
 
-_DATE_COL = re.compile(r"(?:^|_)(start|end|date|time|datetime)(?:$|_)", re.I)
+# Which table columns hold a moment in time.
+#
+# This matched on "_" boundaries, so it caught the schedule parsers' snake_case
+# (`start_time`, `date`) and MISSED every column a report actually titles —
+# "Date (YYYY-MM-DD)", "Start Time (YYYY-MM-DD hh-mm-ss)", "Job Date". Those
+# went out in whatever shape the filing printed them, while the seconds CSV
+# beside them used YYYY-mm-dd HH:MM:SS.
+# Matched against the name with "_" read as a space, so `start_time` and
+# "Start Time" are the same column to this — "_" is a word character, so a
+# plain \b would have quietly dropped every snake_case name the schedule
+# parsers emit.
+_DATE_COL = re.compile(r"\b(start|end|date|time|datetime)\b", re.I)
+# ...but a DURATION is not a moment. "Total Pump Time (hh:mm:ss)" and "Down
+# Time" hold elapsed spans, and 01:30:00 parsed as a clock would export as
+# 1900-01-01 01:30:00 — a date nobody wrote.
+_SPAN_COL = re.compile(r"\b(?:down|pump(?:ing)?|total|elapsed|cumulative|"
+                       r"shut[- ]?in|treating|per)\b[^)]*\btime\b|"
+                       r"\btime\s*(?:/|per)|"
+                       r"\btime\b[^)]*\(\s*(?:min|sec|hour)",
+                       re.I)
 _DT_FORMATS = ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%y %H:%M",
                "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S",
-               "%Y/%m/%d %H:%M", "%d/%m/%Y %H:%M", "%m/%d/%Y", "%Y-%m-%d")
+               "%Y/%m/%d %H:%M", "%d/%m/%Y %H:%M",
+               # Halliburton's Treatment Time table writes the clock with
+               # hyphens: "2025-08-30 03-16-07"
+               "%Y-%m-%d %H-%M-%S", "%Y-%m-%d %H-%M",
+               "%m/%d/%Y", "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%y", "%d-%b-%Y",
+               "%b %d, %Y", "%d %b %Y")
 
 
 def canon_uwi(raw):
@@ -1102,7 +1126,8 @@ def _normalise_tables(results, filename=None):
         cols = list(r.get("columns") or [])
         rows = [list(x) for x in (r.get("rows") or [])]
         for i, c in enumerate(cols):
-            if not _DATE_COL.search(str(c)):
+            name = str(c).replace("_", " ")
+            if not _DATE_COL.search(name) or _SPAN_COL.search(name):
                 continue
             for row in rows:
                 if i < len(row):

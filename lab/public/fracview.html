@@ -37,6 +37,20 @@
   .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn:disabled { opacity:.35; pointer-events:none; }
   .wrap { padding:12px 18px 20px; }
+  /* The key used to be painted in the top-right of the plot, where the hover
+     readout lands — at 22px that box sat straight on top of it. Out here it
+     collides with nothing and the channels become real buttons. */
+  .chankey { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 9px; }
+  .chankey button { display:inline-flex; align-items:center; gap:6px;
+                    font:inherit; font-size:11.5px; font-weight:600;
+                    cursor:pointer; border:1px solid var(--line);
+                    border-radius:999px; padding:3px 11px 3px 8px;
+                    background:var(--panel); color:var(--ink); }
+  .chankey button i { width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+  .chankey button:hover { border-color:var(--carmine); }
+  .chankey button.off { color:var(--mut); background:var(--panel2);
+                        text-decoration:line-through; }
+  .chankey button.off i { opacity:.28; }
   canvas { width:100%; display:block; background:var(--panel);
            border:1px solid var(--line); border-radius:8px; }
   .hint { font-size:11.5px; color:var(--mut); margin-top:8px; line-height:1.7; }
@@ -106,18 +120,12 @@ well, or the name the report prints on it">
     </span>
     <button type="button" class="btn" id="adjust" title="Drag the boundary between two stages to move where one ends and the next begins">Adjust</button>
     <button type="button" class="btn" id="trim" title="Drag across the chart to cut a span out of the data">Trim</button>
-    <button type="button" class="btn" id="fill"
-            title="Drag across a span where the trace was LOST and its gaps are
-bridged with a straight line. Only holes with a real reading on BOTH sides are
-filled — a curve resting at zero, or one that has not started yet, is not a
-lost trace and is left alone.">Fill Gaps</button>
-    <button type="button" class="btn" id="undo" title="Undo the last edit">Undo</button>
-    <button type="button" class="btn" id="reset" title="Throw away every edit and go back to what was extracted">Reset</button>
     <span class="state clean" id="state">no edits</span>
   </div>
 </div>
 
 <div class="wrap" id="wrap" hidden>
+  <div class="chankey" id="chankey"></div>
   <canvas id="cv" height="560"></canvas>
   <div class="hint">
     <b>Scroll</b> to move along the well, <b>drag</b> to pan, and zoom with the
@@ -129,7 +137,7 @@ lost trace and is left alone.">Fill Gaps</button>
     <b>Adjust</b> mode drags the boundary between two stages to move where one ends
     and the next begins. <b>Trim</b> mode drags out a span to cut — grey while you
     are dragging, and once it lands you can still drag either edge to fine-tune;
-    <b>Click a name in the key</b> (top right) to switch that channel off, and
+    <b>Click a channel</b> in the strip above the chart to switch it off, and
     again to bring it back. Click inside a cut to put it back.
     <b>Fill Gaps</b> drags out a span where the trace was LOST and bridges the
     holes in it with a straight line — only holes with a real reading on both
@@ -161,14 +169,39 @@ let well = null;             // {file, uwi, stages:[{key,label,t0,dsec,n,channel
 let edits = null;            // {bounds:[ms...], labels:[...], cuts:[{a,b}]}
 let undoStack = [];
 let view = { a: 0, b: 1 };   // visible absolute span, ms
-let mode = "";               // "" | "adjust" | "trim" | "fill"
+let mode = "";               // "" | "adjust" | "trim"
 let selIdx = -1;             // the stage highlighted here and on the Lab
 let justDragged = false;     // so the click that ends a drag is not also acted on
 // Channels switched off from the key, by name — same idea as the Lab's legend.
 // Held by NAME rather than index because the channel list is rebuilt whenever a
 // well arrives, and an index would silently point at a different curve.
 const hiddenChans = new Set();
-let keyHits = [];           // [{name, x0, y0, x1, y1}] for hit-testing the key
+let keySig = "";            // so the strip is rebuilt only when it changes
+
+function renderKey(names) {
+  const sig = names.join("|") + "\u0000" + scheme + "\u0000" + selIdx +
+              "\u0000" + [...hiddenChans].sort().join(",");
+  if (sig === keySig) return;
+  keySig = sig;
+  const host = $("chankey");
+  host.innerHTML = "";
+  names.forEach((nm, ni) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = hiddenChans.has(nm) ? "off" : "";
+    b.title = hiddenChans.has(nm) ? "Show this channel" : "Hide this channel";
+    const sw = document.createElement("i");
+    sw.style.background = curveColor(nm, ni, Math.max(0, selIdx));
+    b.appendChild(sw);
+    b.appendChild(document.createTextNode(nm));
+    b.addEventListener("click", () => {
+      if (hiddenChans.has(nm)) hiddenChans.delete(nm); else hiddenChans.add(nm);
+      keySig = "";                 // force the strip to restyle
+      draw();
+    });
+    host.appendChild(b);
+  });
+}
 let captionMode = localStorage.getItem("f2c.fvCaption") || "number";
 let scheme = "alt";
 let hover = null;            // {x, t}
@@ -181,7 +214,7 @@ const FALLBACK = ["#a31631", "#1f6feb", "#1e7a34", "#7a4fd6", "#b45309"];
 const PAD = { l: 54, r: 14, t: 26, b: 34 };
 
 // ---------- two ways to lay the stages along x ----------
-// Everything — bounds, cuts, fills, every sample — is held in REAL absolute
+// Everything — bounds, cuts, every sample — is held in REAL absolute
 // time, and always has been. The mode changes only where a moment is DRAWN, so
 // switching it cannot disturb an edit: it is a lens, not a different dataset.
 //
@@ -244,7 +277,7 @@ function rawBounds(w) {
 }
 function freshEdits(w) {
   return { bounds: rawBounds(w), labels: w.stages.map(s => s.label),
-           origin: w.stages.map((_, i) => i), cuts: [], fills: [] };
+           origin: w.stages.map((_, i) => i), cuts: [] };
 }
 function nStages() { return edits.bounds.length - 1; }
 function stageSpan(i) { return { a: edits.bounds[i], b: edits.bounds[i + 1] }; }
@@ -264,28 +297,16 @@ function inCut(t) {
   for (const c of edits.cuts) if (t >= c.a && t < c.b) return true;
   return false;
 }
-// A span the user has marked as LOST TRACE rather than absent data. Inside
-// one a hole in the curve is bridged; outside it a hole stays a hole. The
-// distinction is the client's: a proppant curve resting at zero, or one that
-// has not started yet, is not missing data and must never be filled — only a
-// hole with a real reading either side is.
-function inFill(t) {
-  for (const f of (edits.fills || [])) if (t >= f.a && t < f.b) return true;
-  return false;
-}
-
 function markDirty() {
-  if (!edits.fills) edits.fills = [];
-  const n = edits.cuts.length, nf = edits.fills.length;
+  const n = edits.cuts.length;
   const moved = edits.bounds.length !== well.stages.length + 1 ||
                 edits.bounds.some((v, i) => v !== rawBounds(well)[i]);
   const el = $("state");
-  if (!n && !nf && !moved) { el.textContent = "no edits"; el.className = "state clean"; }
+  if (!n && !moved) { el.textContent = "no edits"; el.className = "state clean"; }
   else {
     const bits = [];
     if (moved) bits.push(`${nStages()} stages`);
     if (n) bits.push(`${n} cut${n > 1 ? "s" : ""}`);
-    if (nf) bits.push(`${nf} filled`);
     el.textContent = "edited · " + bits.join(" · ");
     el.className = "state dirty";
   }
@@ -438,22 +459,6 @@ function draw() {
     }
   }
 
-  // fill spans — green, because they ADD a reading where a cut removes one
-  for (const f of (edits.fills || [])) {
-    const x0 = Math.max(PAD.l, X(f.a, w)), x1 = Math.min(w - PAD.r, X(f.b, w));
-    if (x1 <= x0) continue;
-    ctx.fillStyle = "rgba(30,122,52,0.11)";
-    ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
-    ctx.strokeStyle = "rgba(30,122,52,0.55)"; ctx.lineWidth = 1;
-    ctx.setLineDash([5, 3]);
-    ctx.strokeRect(x0 + 0.5, PAD.t + 0.5, x1 - x0 - 1, plotH - 1);
-    ctx.setLineDash([]);
-    if (mode === "fill") {
-      ctx.fillStyle = "#1e7a34";
-      for (const x of [x0, x1]) ctx.fillRect(x - 2.5, PAD.t + plotH / 2 - 9, 5, 18);
-    }
-  }
-
   // cuts, over the bands and under the ink
   for (const c of edits.cuts) {
     void 0;
@@ -519,9 +524,20 @@ function draw() {
       const ch = st.channels.find(c => c.name === name);
       if (!ch) continue;
       const step = st.dsec * 1000;
-      // only the samples inside the view, and never more than one per pixel
-      const j0 = Math.max(0, Math.floor((view.a - st.t0) / step) - 1);
-      const j1 = Math.min(ch.values.length - 1, Math.ceil((view.b - st.t0) / step) + 1);
+      // Only the samples inside the view, and never more than one per pixel.
+      //
+      // view.a/view.b are DISPLAY coordinates, and st.t0 is real time. Those
+      // are the same thing in Real Time and NOT in Plot by row, where the idle
+      // is collapsed — comparing them there produced an empty window and drew
+      // no curves at all. Row mode maps a display span onto a piecewise, non
+      // monotonic set of real intervals, so there is no single real window to
+      // clip against: take the whole stage and let the stride decimate it and
+      // the clip discard what is off screen.
+      let j0 = 0, j1 = ch.values.length - 1;
+      if (timeMode === "real") {
+        j0 = Math.max(0, Math.floor((view.a - st.t0) / step) - 1);
+        j1 = Math.min(j1, Math.ceil((view.b - st.t0) / step) + 1);
+      }
       if (j1 <= j0) continue;
       const stride = Math.max(1, Math.floor((j1 - j0) / Math.max(1, plotW * 2)));
       // `si` walks forward with t instead of being searched for per sample —
@@ -546,11 +562,7 @@ function draw() {
         // solid pass: a cut is a gap, so what you see is what exports.
         // ghost pass: draw straight through it — that IS the point.
         if (!ghost && inCut(t)) { pen = false; continue; }
-        // A hole inside a fill span keeps the pen DOWN, so the next real
-        // sample joins straight to the last one — which is the interpolation,
-        // drawn exactly as it will be exported. Outside a fill span a hole
-        // still lifts the pen.
-        if (!isFinite(v)) { if (!inFill(t)) pen = false; continue; }
+        if (!isFinite(v)) { pen = false; continue; }
         const x = X(t, w);
         const y = PAD.t + plotH - (v / mx) * (plotH - 6) - 3;
         if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
@@ -596,33 +608,7 @@ function draw() {
                (timeMode === "row" ? "   ·   gaps closed" : ""), PAD.l, h - 5);
 
   // channel key
-  // The key is also the switch: click a name to drop that channel, click it
-  // again to bring it back — the Lab's legend behaves the same way, and on a
-  // well carrying nine channels reading any one of them means turning the rest
-  // off. Hit boxes are recorded as it draws, so they cannot drift from it.
-  ctx.textAlign = "right";
-  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
-  const kw = Math.max(...names.map(n => ctx.measureText(n).width)) + 12;
-  ctx.fillStyle = "rgba(255,255,255,0.82)";
-  ctx.fillRect(w - PAD.r - kw - 4, PAD.t + 2, kw, names.length * 14 + 4);
-  keyHits = [];
-  let ky = PAD.t + 12;
-  for (let ni = 0; ni < names.length; ni++) {
-    const nm = names[ni], off = hiddenChans.has(nm);
-    const tw = ctx.measureText(nm).width;
-    const rx = w - PAD.r - 6;
-    ctx.fillStyle = off ? "#b6bcc4"
-                        : curveColor(nm, ni, Math.max(0, selIdx));
-    ctx.fillText(nm, rx, ky);
-    if (off) {                       // struck through, so "off" is unmistakable
-      ctx.strokeStyle = "#b6bcc4"; ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(rx - tw, ky - 3); ctx.lineTo(rx, ky - 3); ctx.stroke();
-    }
-    keyHits.push({ name: nm, x0: rx - tw - 4, x1: rx + 4, y0: ky - 11, y1: ky + 3 });
-    ky += 14;
-  }
-  ctx.textAlign = "left";
+  renderKey(names);
 
   // hover readout
   if (hover && !drag) {
@@ -763,7 +749,6 @@ function sendEdits() {
         bounds: edits.bounds.slice(), labels: edits.labels.slice(),
         origin: edits.origin.slice(),
         cuts: edits.cuts.map(c => ({ a: c.a, b: c.b })),
-        fills: (edits.fills || []).map(f => ({ a: f.a, b: f.b })),
       }, "*");
     } catch (e) { /* the Lab went away — nothing to keep in step */ }
   }, 90);
@@ -802,13 +787,13 @@ window.addEventListener("message", ev => {
               origin: (e.origin && e.origin.length === e.bounds.length - 1)
                       ? e.origin.slice()
                       : e.bounds.slice(0, -1).map((_, i) => Math.min(i, d.stages.length - 1)),
-              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })),
-              fills: (e.fills || []).map(f => ({ a: f.a, b: f.b })) };
+              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })) };
   } else {
     edits = freshEdits(d);
   }
   undoStack = [];
   hiddenChans.clear();
+  keySig = "";
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
   $("zoomctl").hidden = false;
   $("captionmode").value = captionMode;
@@ -838,9 +823,7 @@ function boundNear(x, w) {
 // Which committed cut edge is under the cursor. Trim used to be a one-shot —
 // drag it out and the only correction was to delete it and drag again — so a
 // span that wanted moving by two seconds meant redoing the whole gesture.
-function regionList() {
-  return mode === "trim" ? edits.cuts : mode === "fill" ? edits.fills : null;
-}
+function regionList() { return mode === "trim" ? edits.cuts : null; }
 function cutEdgeNear(x, w) {
   const list = regionList();
   if (!list) return null;
@@ -854,8 +837,7 @@ function setMode(m) {
   mode = (mode === m) ? "" : m;
   $("adjust").classList.toggle("on", mode === "adjust");
   $("trim").classList.toggle("on", mode === "trim");
-  $("fill").classList.toggle("on", mode === "fill");
-  cv.style.cursor = (mode === "trim" || mode === "fill") ? "crosshair" : "grab";
+  cv.style.cursor = mode === "trim" ? "crosshair" : "grab";
   draw();
 }
 
@@ -913,9 +895,7 @@ cv.addEventListener("mousedown", e => {
     drag = { kind: "cutedge", ...edge, list: regionList(), moved: false };
     return;
   }
-  if (mode === "trim" || mode === "fill") {
-    pushUndo(); drag = { kind: "cut", a: t, b: t, into: mode }; return;
-  }
+  if (mode === "trim") { pushUndo(); drag = { kind: "cut", a: t, b: t }; return; }
   const bi = boundNear(p.x, p.w);
   if (bi > 0) { pushUndo(); drag = { kind: "bound", i: bi, moved: false }; return; }
   drag = { kind: "pan", x: p.x, a: view.a, b: view.b, moved: false, down: p.x };
@@ -926,12 +906,8 @@ window.addEventListener("mousemove", e => {
   const p = pos(e);
   hover = { x: p.x, t: T(p.x, p.w) };
   if (!drag) {
-    if (keyHits.some(k => p.x >= k.x0 && p.x <= k.x1 &&
-                          p.y >= k.y0 && p.y <= k.y1)) {
-      cv.style.cursor = "pointer"; draw(); return;
-    }
     cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
-      : (mode === "trim" || mode === "fill") ? "crosshair"
+      : mode === "trim" ? "crosshair"
       : boundNear(p.x, p.w) > 0 ? "col-resize" : "grab";
     draw(); return;
   }
@@ -961,8 +937,7 @@ window.addEventListener("mouseup", () => {
   const d = drag; drag = null;
   if (d.kind === "cut") {
     const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
-    const into = d.into === "fill" ? edits.fills : edits.cuts;
-    if (b - a > 1500) { into.push({ a, b }); justDragged = true; markDirty(); }
+    if (b - a > 1500) { edits.cuts.push({ a, b }); justDragged = true; markDirty(); }
     else undoStack.pop();               // a click, not a drag — no edit made
   } else if (d.kind === "bound" || d.kind === "cutedge") {
     if (d.moved) { justDragged = true; markDirty(); } else undoStack.pop();
@@ -976,15 +951,6 @@ cv.addEventListener("click", e => {
   if (!well) return;
   if (justDragged) { justDragged = false; return; }
   const p = pos(e), t = T(p.x, p.w);
-  // the key first: it sits over the plot, so a click there is not a stage pick
-  const hit = keyHits.find(k => p.x >= k.x0 && p.x <= k.x1 &&
-                                p.y >= k.y0 && p.y <= k.y1);
-  if (hit) {
-    if (hiddenChans.has(hit.name)) hiddenChans.delete(hit.name);
-    else hiddenChans.add(hit.name);
-    draw();
-    return;
-  }
   const list = regionList();             // click inside a span removes it
   if (list) {
     const i = list.findIndex(c => t >= c.a && t < c.b);
@@ -995,7 +961,7 @@ cv.addEventListener("click", e => {
 });
 
 cv.addEventListener("dblclick", e => {
-  if (!well || mode === "trim" || mode === "fill") return;
+  if (!well || mode === "trim") return;
   const p = pos(e);
   splitAt(T(p.x, p.w));
 });
@@ -1025,7 +991,6 @@ $("timemode").addEventListener("change", e => {
 });
 $("adjust").addEventListener("click", () => setMode("adjust"));
 $("trim").addEventListener("click", () => setMode("trim"));
-$("fill").addEventListener("click", () => setMode("fill"));
 $("undo").addEventListener("click", () => {
   if (!undoStack.length) return;
   edits = JSON.parse(undoStack.pop());

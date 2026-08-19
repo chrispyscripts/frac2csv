@@ -92,7 +92,10 @@ const ORIGIN = (location.origin && location.origin !== "null") ? location.origin
 // so one time position is one x position all the way down the window.
 const PAD = { L: 64, R: 14, T: 10, B: 10 };
 const AXIS_H = 28;        // extra bottom room on the last chart for time labels
-const ROW_H = 128;        // css px per chart body
+const ROW_H = 256;        // css px per chart body — doubled from 128, because
+                          // a channel gets a quarter of its own axis range in
+                          // most stages and 128px left the interesting part of
+                          // the curve inside a few dozen pixels
 const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
             ink: "#14181d", mut: "#697077" };
 
