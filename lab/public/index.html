@@ -85,6 +85,16 @@
                         background:var(--panel); border-radius:5px;
                         padding:1px 6px; cursor:pointer; }
   th.unmapped:hover .mapbtn { display:inline-block; }
+  /* a term the table does not print, filled from the chart that does */
+  th.derived { white-space:nowrap; }
+  th.derived i { font-style:normal; font-size:10.5px; color:var(--mut);
+                 margin-left:5px; }
+  th.derived .mapbtn { display:none; margin-left:6px; font:inherit;
+                       font-size:10.5px; font-weight:600; font-style:normal;
+                       border:1px solid var(--carmine); color:var(--carmine);
+                       background:var(--panel); border-radius:5px;
+                       padding:1px 6px; cursor:pointer; }
+  th.derived:hover .mapbtn { display:inline-block; }
   .termlist { display:flex; flex-direction:column; gap:4px; margin-top:8px;
               max-height:46vh; overflow-y:auto; }
   .termopt { display:flex; justify-content:space-between; gap:12px;
@@ -1906,8 +1916,53 @@ function scaleCell(v, f) {
   return String(Math.round(out * 1e6) / 1e6);
 }
 
+// ---- Stage Label from the chart, where the table has no column for it ----
+//
+// BJ's "Totals — per-interval frac summary" prints `Interval #` and nothing
+// that names the stage; the chart above it prints the name. Measured on two
+// vintages (00636 2022, 00440 2024): the table genuinely has no label column,
+// so a blank Stage Label there is the schema telling the truth, not a matcher
+// miss. Where the chart knows a name the table lacks, carry it across.
+//
+// Two guards, because a wrong join invents data that looks like a reading:
+//
+//   - ONE chart per stage number, or nothing. BJ 00636 charts stage 5 twice
+//     ("5" and "5 (2)", a Gel Pill for Wireline run on its own time axis) and
+//     the table has a single row for interval 5. There is no honest way to
+//     say which chart that row is, so the column stays empty.
+//   - The name must say MORE than the number. "5", "05" and "Stage 05" only
+//     repeat what Stage Number already holds — filling the column with those
+//     would dress a duplicate up as new information. "HRF 5A" or a named zone
+//     does add something, and that is the case worth carrying.
+//
+// The Calfrac Surface/BH suffix is dropped first: #546 settled that the
+// variant is a chart TYPE, not part of the stage's name.
+function chartStageLabels(items) {
+  const byNum = new Map();
+  for (const it of items || []) {
+    if (!it || it.type !== "stage") continue;
+    const shown = stageDisplay(stageLabel(it));
+    const n = stageNum(shown);
+    if (n === 1e9) continue;                       // no number to join on
+    if (byNum.has(n)) { byNum.set(n, null); continue; }   // ambiguous — poisoned
+    byNum.set(n, shown);
+  }
+  const out = new Map();
+  for (const [n, shown] of byNum) if (shown && labelAddsInfo(shown, n)) out.set(n, shown);
+  return out;
+}
+
+// does `shown` carry anything beyond the stage number itself?
+function labelAddsInfo(shown, n) {
+  const rest = String(shown)
+    .replace(/\b(stage|zone|interval)\b/ig, " ")
+    .replace(new RegExp("\\b0*" + n + "\\b"), " ")
+    .replace(/[\s\-\u2013\u2014:#.()]+/g, "");
+  return rest.length > 0;
+}
+
 // -> {columns, rows, map:[{label, from, note}], missing:[label]}
-function curateTable(t, provider) {
+function curateTable(t, provider, chartLabels) {
   const cols = t.columns || [];
   const map = [], missing = [];
   for (const term of OUR_TERMS) {
@@ -1933,7 +1988,12 @@ function curateTable(t, provider) {
     // Not found is still a COLUMN. Our Terms is a fixed shape — a filing that
     // prints no average rate should show that field empty and say so, not
     // quietly hand back a narrower table than the one beside it.
-    if (!hits.length) { missing.push(term.label); map.push({ term, parts: [], label }); continue; }
+    if (!hits.length) {
+      const derive = term.key === "stagelabel"
+        ? deriveStageLabel(map, chartLabels) : null;
+      if (derive) { map.push({ term, parts: [], label, derive }); continue; }
+      missing.push(term.label); map.push({ term, parts: [], label }); continue;
+    }
     if (!term.multi) {
       // rank by the term's preference list, then by first appearance
       if (term.prefer) {
@@ -1959,11 +2019,28 @@ function curateTable(t, provider) {
   const thin = !map.some(m => m.parts.length && MEASURED.has(m.term.key));
   const columns = map.map(m => m.label);
   const rows = (t.rows || []).map(r =>
-    map.map(m => m.parts
+    map.map(m => m.derive ? m.derive(r) : m.parts
       .map(p => scaleCell(r[p.i], p.f))
       .filter(v => v !== "")
       .join(" ").trim()));
   return { columns, rows, map, missing, thin };
+}
+
+// -> row => label, or null when the join cannot be made honestly.
+//
+// Stage Number is resolved before Stage Label in OUR_TERMS, so by the time
+// this runs its column is already in `map` — the join keys off the table's
+// own number, not off row order, because a table can skip or reorder stages.
+function deriveStageLabel(map, chartLabels) {
+  if (!chartLabels || !chartLabels.size) return null;
+  const no = map.find(m => m.term.key === "stageno" && m.parts.length);
+  if (!no) return null;                     // no number to key off
+  const i = no.parts[0].i;
+  return row => {
+    const n = stageNum(row[i]);
+    const hit = chartLabels.get(n);
+    return hit || "";
+  };
 }
 
 let tableTerms = localStorage.getItem("f2c.tableTerms") || "ours";
@@ -1995,7 +2072,7 @@ function showTable(entry, t) {
   const E = v => String(v === null || v === undefined ? "" : v)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const provider = providerOf(t.source);
-  const cur = curateTable(t, provider);
+  const cur = curateTable(t, provider, chartStageLabels(entry.secItems));
   // A chemicals or proppant-inventory sheet carries none of Carmine's fields.
   // Showing it as an empty grid would look like a parse failure, so those fall
   // back to the full table and say why.
@@ -2004,20 +2081,32 @@ function showTable(entry, t) {
   const fellBack = tableTerms === "ours" && !ours;
 
   $("pv-title").textContent = t.title;
+  // Count what was actually FILLED. `cur.columns` is the fixed schema, so it
+  // is always OUR_TERMS.length — reading it as the hit count printed
+  // "11 of 11 terms found" over a table with four empty columns.
+  const nFound = cur.map.filter(m => m.parts.length).length;
+  const nChart = cur.map.filter(m => m.derive).length;
   $("pv-sub").textContent = ours
-    ? `${t.rows.length} rows · ${cur.columns.length} of ${OUR_TERMS.length} terms found`
+    ? `${t.rows.length} rows · ${nFound} of ${OUR_TERMS.length} terms found` +
+      (nChart ? ` · ${nChart} from the chart` : "")
     : `${t.rows.length} rows × ${t.columns.length} columns`;
   clearGraph();
 
   let legend = "";
   if (ours) {
     const conv = cur.map.filter(m => m.parts.some(p => p.conv));
-    const bits = cur.map.map(m =>
+    const bits = cur.map.filter(m => m.parts.length).map(m =>
       `<div><b>${E(m.label)}</b> ← ${m.parts.map(p =>
         E(p.from) + (p.conv ? ` <i>×${p.f}</i>` : "")).join(" + ")}</div>`).join("");
+    const drawn = cur.map.filter(m => m.derive).map(m => m.label);
     legend =
       `<div class="notes"><div style="margin-bottom:4px"><b>Mapped from this table's own headings</b></div>` +
       bits +
+      (drawn.length
+        ? `<div style="margin-top:6px">From the chart, not this table: ` +
+          `${E(drawn.join(", "))} — matched on stage number, and only where ` +
+          `one chart carries that stage and names it something the number ` +
+          `does not already say.</div>` : "") +
       (cur.missing.length
         ? `<div style="margin-top:6px">Not on this table: ${E(cur.missing.join(", "))}</div>` : "") +
       (conv.length
@@ -2033,6 +2122,12 @@ function showTable(entry, t) {
   const head = ours
     ? cur.map.map(m => {
         if (m.parts.length) return `<th>${E(m.label)}</th>`;
+        // Filled from the chart: a real column, but it says so, and Map Term
+        // still overrides it if the table does print a label after all.
+        if (m.derive) return `<th class="derived" title="not on this table — ` +
+               `taken from the chart with the same stage number">` +
+               `${E(m.label)}<i>↖ chart</i><button type="button" class="mapbtn" ` +
+               `data-term="${E(m.term.key)}">Map Term</button></th>`;
         return `<th class="unmapped${m.absent ? " absent" : ""}" ` +
                `title="${m.absent ? "marked not present" : "not identified"}">` +
                `${E(m.label)}<button type="button" class="mapbtn" ` +
