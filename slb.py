@@ -818,6 +818,22 @@ def _extract_core(page, sample_sec=1.0):
     text = page.get_text()
 
     data, units, labels = {}, {}, {}
+    # The axis each curve was actually read against, reported alongside it.
+    #
+    # This page KNOWS its axes — it just never said so. meta.axes was set in
+    # exactly one place in this module, the raster Zone-sheet path, so every
+    # vector PRC chart arrived carrying no axis at all and the Lab fell back
+    # to `{lo: 0, hi: niceCeil(peak), printed: false}` — a rounded PEAK, drawn
+    # and exported as though it were the printed scale, and shown as
+    # "(guessed)". That is #558, #560, #570 and #574: four reports, one
+    # template, all of them "scale not picked up correctly".
+    #
+    # It also explains the part of #570 that looked strangest. Carmine: "gets
+    # rate correctly but not pressure or conc — is it to do with the
+    # multiplier". A rounded peak lands near the true axis for rate, whose
+    # printed top really is close to its maximum reading, and nowhere near it
+    # for pressure or concentration, which are drawn well below theirs.
+    scales, frames = {}, {}
     tmin_all, tmax_all = None, None
     for rgb, arr in curves.items():
         col, kind, mult, label = wanted[rgb]
@@ -826,6 +842,15 @@ def _extract_core(page, sample_sec=1.0):
             continue
         mult = mult * _axis_multiplier(ax["title"], kind)
         a, b = ax["fit"]
+        # The frame edges, not the outermost ticks. Ghost stretches the source
+        # page so exactly those two rows fill the Lab's plot rect, so this is
+        # the pair a curve has to be placed against to land on its own printed
+        # ink. Both go through the same `mult` the values did — the legend's
+        # "x 10" is divided out of the curve, so an axis still carrying it
+        # would disagree with the numbers by that factor.
+        frames[col] = ((a + b * frame[1]) / mult, (a + b * frame[3]) / mult)
+        scales[col] = (min(ax["lo"], ax["hi"]) / mult,
+                       max(ax["lo"], ax["hi"]) / mult)
         t = ta + tb * arr[:, 0]
         v = (a + b * arr[:, 1]) / mult
         order = np.argsort(t, kind="stable")
@@ -867,6 +892,8 @@ def _extract_core(page, sample_sec=1.0):
     meta.geom = {"axis": "y" if rot else "x",
                  "ta": float(_t0), "tb": float(-_tb if rot else _tb),
                  "v0": float(frame[1]), "v1": float(frame[3])}
+    meta.axes = scales
+    meta.axes_frame = frames
     meta.stage = page_stage(page) or ""
     meta.start_time = str(start).split(".")[0].rjust(8, "0")
     meta.duration_min = float(tmax_all - tmin_all)
