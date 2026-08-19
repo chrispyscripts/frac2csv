@@ -268,6 +268,20 @@
   canvas#graph, canvas#origgraph { width:100%; height:auto;
                  background:var(--panel);
                  border:1px solid var(--line); border-radius:8px; display:block; }
+  /* Which stage the two charts above and below are showing. It sits between
+     them because that is where the eye already is when our curves are being
+     compared against the original sheet. */
+  .stagerule { display:flex; align-items:center; gap:10px;
+               margin:2px 18px 0; padding:5px 0 7px;
+               border-top:1px solid var(--line); }
+  .stagerule .sr-f { display:flex; align-items:baseline; gap:6px; }
+  .stagerule .sr-k { font-family:var(--mono); font-size:10px; color:var(--mut);
+                     font-weight:700; letter-spacing:.08em; }
+  .stagerule .sr-v { font-family:var(--mono); font-size:14px; color:var(--ink);
+                     font-weight:700; }
+  .stagerule .sr-sep { flex:0 0 1px; align-self:stretch; background:var(--line);
+                       margin:0 4px; }
+  .stagerule .sr-var { font-size:11px; color:var(--mut); }
   .legendrow { display:flex; align-items:flex-start; gap:14px; padding:2px 18px 10px; }
   /* Controls that appear and disappear between stages keep their box, so the
      row stays put instead of reflowing under the cursor. visibility also
@@ -543,6 +557,7 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
           <div class="legend" id="pv-legend"></div>
         </div>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
+        <div class="stagerule" id="stagerule" hidden></div>
         <div class="canvaswrap" id="origwrap" hidden>
           <canvas id="origgraph" width="1120" height="440"></canvas>
         </div>
@@ -1759,6 +1774,7 @@ function setPreviewMode(mode) {
   const isSum = mode === "summary", isTable = mode === "table";
   $("graphwrap").hidden = isSum || isTable;
   $("legendrow").hidden = isSum || isTable;
+  $("stagerule").hidden = isSum || isTable;
   if (isSum || isTable) $("origwrap").hidden = true;
   $("sumwrap").hidden = !isSum;
 }
@@ -1772,8 +1788,47 @@ function fromImage(source) {
   return /\(raster\)|\braster\b/i.test(String(source || ""));
 }
 
+// The two things the CSV calls a stage, named the way it names them.
+//
+// STAGE is the sequential position and LABEL is the chart's own printed name;
+// wellModel decides both for the export, including the fallback where a
+// template prints no name at all ("?" is no use in a deliverable, so the
+// position stands in). This reads the same rule off the same item, so the
+// strip between the charts and the file it exports cannot disagree about
+// which stage is on screen.
+//
+// The Surface/BH suffix rides as its own tag rather than inside the label —
+// #546 settled that it is a chart TYPE, not part of the stage's name.
+function stageIdentity(item) {
+  const key = String(item.key == null ? "" : item.key);
+  const no = Number.isFinite(item.seq) ? String(item.seq) : "";
+  const bare = key === "?" || key === "";
+  return { no, label: bare ? no : stageDisplay(key), variant: stageVariant(key) };
+}
+
+// Between the two charts on purpose: when our curves are being checked
+// against the original sheet, the eye is already in that gap, and the stage
+// identity was only in the title three panels up.
+function renderStageRule(item) {
+  const el = $("stagerule");
+  if (!item || item.type !== "stage") { el.hidden = true; return; }
+  const id = stageIdentity(item);
+  const E = v => String(v).replace(/&/g, "&amp;")
+                          .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const fld = (k, v) => `<div class="sr-f"><span class="sr-k">${k}</span>` +
+                        `<span class="sr-v">${E(v)}</span></div>`;
+  const parts = [];
+  if (id.no) parts.push(fld("STAGE", id.no));
+  if (id.no && id.label) parts.push('<span class="sr-sep"></span>');
+  if (id.label) parts.push(fld("LABEL", id.label));
+  if (id.variant) parts.push(`<span class="sr-var">(${E(id.variant)})</span>`);
+  el.innerHTML = parts.join("");
+  el.hidden = !parts.length;
+}
+
 function showStage(entry, well, item) {
   setPreviewMode("graph");
+  renderStageRule(item);
   const M = item.meta;
   // the full file name, not the UWI — the UWI is already in the sub-line and
   // several files can share one
