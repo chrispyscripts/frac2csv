@@ -38,6 +38,85 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.3.0</h2>
+    <ul>
+      <li><b>FracView would not open at all.</b> It sat on &ldquo;Waiting for
+        the Lab&hellip;&rdquo; on every well, on every report type, with the
+        Lab right behind it holding the data. A button removed from the
+        toolbar took the whole window down with it. Fixed, and Undo and Reset
+        are back</li>
+      <li><b>Halliburton IFS charts now carry their date and time.</b> Every
+        stage on these was coming through with no date at all and a start time
+        of 00:00:00 &mdash; on one 306-page report, all 41 of them. The date is
+        printed under the chart's clock; we were only reading one of the two
+        ways these reports write it. A stage that begins just before midnight
+        is also no longer filed a day late</li>
+      <li><b>Schlumberger charts now carry their date.</b> Where the report has
+        no Zone Summary sheet, the date is taken from the Stimulation Service
+        Report page for that interval, as you asked. One well went from every
+        interval undated to all 52 dated</li>
+      <li><b>Schlumberger scales.</b> The PRC charts were drawn against a
+        rounded-off peak instead of the axis printed beside them, which is why
+        the rate looked right and the pressure and concentration did not. They
+        now read the printed axis &mdash; 0&ndash;90 where the sheet prints
+        0&ndash;90. <b>Nothing you have already exported is wrong:</b> the
+        numbers were always read off the real axis. What changes is where the
+        curve sits against the original sheet, and what the axis says</li>
+      <li><b>A flag report now quotes the axis the SHEET prints.</b> It was
+        quoting an internal measurement instead &mdash; that is why Liberty
+        axes came back as &minus;4.02&hellip;106.06 on a chart printing
+        0&ndash;100. Both numbers are shown when they disagree</li>
+      <li><b>A channel that goes missing now says why.</b> On Trican charts two
+        proppant concentration curves were absent from every stage with no
+        explanation. They are traced fine; it is the concentration axis on that
+        vintage we cannot read yet, so there is nothing to scale them against.
+        The report says so now instead of leaving you to guess</li>
+      <li>Trican &ldquo;Mainline Pressure&rdquo; is now recognised as Treating
+        Pressure, and BJ &ldquo;SLR Rate&rdquo; as Slurry Rate</li>
+      <li><b>FracView Real Time shows the waiting.</b> The gap between one
+        stage finishing and the next starting is drawn as its own shaded span
+        with its length on it &mdash; &ldquo;5h 30m &middot; no readings&rdquo;
+        &mdash; instead of being coloured in as part of the stage before it</li>
+      <li><b>FracView Plot by row numbers the axis with the CSV's row
+        number</b>, so a feature on the chart can be found in the spreadsheet.
+        The clock sits under it and the date below that</li>
+      <li>FracView lays the stages out in clock order even when the report
+        prints them out of order</li>
+      <li>A strip between the two charts shows the stage number and the stage
+        label, named the way the CSV names them</li>
+      <li>Tables: the eleven terms are always shown, and <b>Map Term</b> lets
+        you point one at the right column when the heading is unfamiliar &mdash;
+        remembered for every report from that provider</li>
+    </ul>
+    <h2>v1.2.1</h2>
+    <ul>
+      <li><b>Every stage appears once.</b> BJ and Liberty print each stage
+        twice &mdash; the treatment plot, then a chemical plot on the next page
+        &mdash; and both were being shown. One well had 106 charts for 53
+        stages. The chemical sheet is set aside where it carries none of the
+        four channels</li>
+      <li>CalFrac wells that print a zone twice now show one chart per zone:
+        the Surface sheet when it is complete, otherwise Bottom Hole</li>
+      <li>Liberty charts that print no date labels are now read instead of
+        being dropped</li>
+    </ul>
+    <h2>v1.2.0</h2>
+    <ul>
+      <li><b>FracView</b> &mdash; a new window showing every stage of a well end
+        to end, with the boundary between stages draggable. Where the automatic
+        split puts a boundary in the wrong place you can move it, cut a span
+        out, or split one stage into two, and the graphs and the CSV both
+        follow. Fill Gaps bridges a trace the reader lost</li>
+      <li><b>Chart labels are read by OCR</b> where the report draws them as
+        pictures rather than text, in whatever direction they were printed</li>
+      <li>The stage label no longer has the chart type stuck on the end of it
+        (&ldquo;04 Surface&rdquo;)</li>
+      <li>Tables can open the PDF page they came from</li>
+      <li>The UWI in the file name leads; the one printed inside the report is
+        the fallback, because the printed one is sometimes a neighbouring
+        well's</li>
+      <li>MView is now called CalFrac</li>
+    </ul>
     <h2>v1.1.2</h2>
     <ul>
       <li><b>Please stop clicking Report on each empty file — a batch now
