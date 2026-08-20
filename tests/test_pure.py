@@ -1328,6 +1328,67 @@ class SLBServiceReport(unittest.TestCase):
         self.assertEqual(got, {5: "2018-07-11"})
 
 
+class TricanDerivedConcAxis(unittest.TestCase):
+    """The borrowed concentration axis, and the check it has to pass (#564).
+
+    Layout B's concentration axis prints ONE label and it is "0" — rendering
+    00583 p33's right margin shows ten ticks on Wellhead Rate and a lone zero
+    on Concentration (kg/m3). A fit needs three, so both conc channels were
+    dropped on every page of the file.
+
+    The axis is not missing, it is shared: layout A's own SERIES table reads
+    its conc traces against the "rate" axis at 100x, which is why layout B
+    bothers to print only the zero. Derived that way and checked against the
+    "Conc Average .. Maximum .." the page prints for itself, three pages land
+    within 0.6% — 480.4 against 483.1, 539.1 against 537.0, 553.8 against
+    552.2.
+    """
+    @staticmethod
+    def _chan(key, peak):
+        return {"key": key, "label": key, "values": np.array([0.0, peak, 0.0])}
+
+    def _run(self, printed, peaks):
+        chans = [{"key": "mainline", "label": "Mainline Pressure",
+                  "values": np.array([1.0, 2.0])}]
+        chans += [self._chan(k, p) for k, p in peaks]
+        meta = {"printed": {} if printed is None else {"conc_max": printed}}
+        info = {"notes": []}
+        out = tc._check_derived_conc(chans, meta, info)
+        return [c["key"] for c in out], info["notes"]
+
+    def test_agreeing_with_the_printed_maximum_is_kept(self):
+        """p33: traced 480.4 against a printed 483.1."""
+        keys, notes = self._run(483.1, [("wh_conc", 470.0), ("dh_conc", 480.4)])
+        self.assertIn("dh_conc", keys)
+        self.assertIn("wh_conc", keys)
+        self.assertTrue(any("read from the rate axis" in n for n in notes))
+
+    def test_disagreeing_is_dropped_not_shipped(self):
+        """A concentration on a borrowed scale that contradicts the sheet is a
+        plausible wrong number, and those are the ones that get believed."""
+        keys, notes = self._run(483.1, [("wh_conc", 120.0), ("dh_conc", 118.0)])
+        self.assertNotIn("dh_conc", keys)
+        self.assertNotIn("wh_conc", keys)
+        self.assertIn("mainline", keys)
+        self.assertTrue(any("did not agree" in n for n in notes))
+
+    def test_no_printed_maximum_means_nothing_to_check_against(self):
+        keys, notes = self._run(None, [("dh_conc", 480.4)])
+        self.assertNotIn("dh_conc", keys)
+        self.assertTrue(any("prints no Conc Maximum" in n for n in notes))
+
+    def test_a_page_with_no_conc_channels_is_untouched(self):
+        keys, notes = self._run(483.1, [])
+        self.assertEqual(keys, ["mainline"])
+        self.assertEqual(notes, [])
+
+    def test_either_curve_may_carry_the_printed_peak(self):
+        """The two share one axis, so one of them matching settles the scale —
+        the printed Maximum does not say which curve it belongs to."""
+        keys, _ = self._run(483.1, [("wh_conc", 480.4), ("dh_conc", 120.0)])
+        self.assertIn("dh_conc", keys)
+
+
 class TricanRuleRow(unittest.TestCase):
     """Telling a dotted rule from a curve that lies on the same row.
 

@@ -881,6 +881,17 @@ def b_time_axis(img, x0, x1, y1):
 B_AXIS_RANGE = {"press": (10.0, 250.0), "rate": (1.5, 60.0),
                 "conc": (50.0, 5000.0)}
 
+# Concentration per unit of the rate axis. Layout A hard-codes the same 100 in
+# its SERIES table ("concentration traces are read at 100x and the rate
+# straight off"); layout B prints only the zero on its conc axis for the same
+# reason — the two axes are one.
+CONC_PER_RATE = 100.0
+# How far the traced maximum may sit from the one the page prints before the
+# derivation is refused. 0.6% is the worst of three measured pages, so 8%
+# leaves room for a curve clipped at the frame or a peak one pixel wide
+# without ever letting a wrong scale through.
+CONC_CHECK_TOL = 0.08
+
 
 def _is_rule_row(mask, r, x0, x1):
     """Does this row of the mask hold a dotted RULE rather than a curve?
@@ -916,6 +927,32 @@ def extract_image_b(img, sample_sec=1.0):
     for axis, rng in B_AXIS_RANGE.items():
         f = _axis_fit(pts.get(axis, []), rows, y0, y1)
         fits[axis] = _plausible(_snap_zero(f, y0, y1), y0, y1, rng)
+
+    # The concentration axis usually prints ONE label, and it is "0".
+    #
+    # Rendering 00583 p33's right margin and reading it: the Wellhead Rate
+    # axis prints ten ticks, 0 through 9, and the Concentration (kg/m³) axis
+    # prints a single 0. A fit needs three, so there was never an axis to
+    # find and both conc channels were dropped on every page of the file —
+    # which is #564, and which read as a tracing failure when it is not one.
+    #
+    # It is not missing, it is SHARED. Layout A says so already, in its own
+    # SERIES table: its two conc traces are read against the "rate" axis with
+    # a factor of 100. Same vendor, same chart family — rate 0..10 is conc
+    # 0..1000, which is why the concentration axis bothers to print only its
+    # zero.
+    #
+    # Derived, never assumed: the caller checks the result against the
+    # "Conc Average .. Maximum .." line the page prints for itself, and drops
+    # the channels if the two disagree. Against that answer key on three
+    # pages this lands within 0.6% — 480.4 against a printed 483.1, 539.1
+    # against 537.0, 553.8 against 552.2.
+    if fits.get("conc") is None and fits.get("rate") is not None:
+        ra, rb, rn = fits["rate"]
+        fits["conc"] = (ra * CONC_PER_RATE, rb * CONC_PER_RATE, rn)
+        info_conc_derived = True
+    else:
+        info_conc_derived = False
 
     masks = b_masks(img)
     # The dotted gridlines are drawn in (92,97,5) — the SAME colour as the WH
@@ -985,6 +1022,7 @@ def extract_image_b(img, sample_sec=1.0):
                          + "; ".join(notes[:3]))
     info = {"plot": (x0, y0, x1, y1), "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": notes,
+            "conc_derived": info_conc_derived,
             "axes": {k: None if v is None else (v[0] + v[1] * y1,
                                                 v[0] + v[1] * y0)
                      for k, v in fits.items()}}
@@ -1062,4 +1100,54 @@ def extract_page_b(page, sample_sec=1.0):
         raise ValueError("trican-B: implausible stage duration "
                          f"{info['duration_s']}s")
     _attach_geom(page, im, img, info)
-    return page_meta_b(page), samples, channels, info
+    meta = page_meta_b(page)
+    if info.get("conc_derived"):
+        channels = _check_derived_conc(channels, meta, info)
+    return meta, samples, channels, info
+
+
+def _check_derived_conc(channels, meta, info):
+    """Believe the borrowed conc axis only if the page's own numbers agree.
+
+    The scale came from the rate axis rather than from ticks of its own, so it
+    is a derivation and has to answer to something. The page prints its own
+    "Conc Average .. Maximum .. kg/m³" for the stage, and that is the check:
+    the traced maximum has to land on the printed one.
+
+    Refused rather than shipped when it does not. A concentration on a
+    borrowed scale that disagrees with the sheet is a plausible wrong number,
+    and those are the ones that reach a CSV and get believed.
+    """
+    printed = (meta.get("printed") or {}).get("conc_max")
+    conc = [c for c in channels if c.get("key") in ("wh_conc", "dh_conc")]
+    if not conc:
+        return channels
+    if not printed:
+        info["notes"].append(
+            "Prop Conc: axis read from the rate axis, and this page prints no "
+            "Conc Maximum to check it against")
+        return [c for c in channels if c not in conc]
+    best, hit = None, False
+    for c in conc:
+        v = np.asarray(c["values"], float)
+        v = v[np.isfinite(v)]
+        if not v.size:
+            continue
+        peak = float(v.max())
+        if best is None or abs(peak - printed) < abs(best - printed):
+            best = peak
+        if abs(peak - printed) <= CONC_CHECK_TOL * max(1.0, printed):
+            hit = True
+    if hit:
+        info["notes"].append(
+            f"Prop Conc: no ticks on the concentration axis, so it is read "
+            f"from the rate axis x{CONC_PER_RATE:g} — the same scale layout A "
+            f"uses. Checked against this page's printed Conc Maximum "
+            f"{printed:g} kg/m3 (traced {best:.1f}).")
+        return channels
+    info["notes"].append(
+        f"Prop Conc: axis read from the rate axis x{CONC_PER_RATE:g} did not "
+        f"agree with the page's printed Conc Maximum {printed:g} kg/m3 "
+        f"(traced {best if best is None else round(best, 1)}) — dropped rather "
+        f"than exported on a scale that does not hold")
+    return [c for c in channels if c not in conc]
