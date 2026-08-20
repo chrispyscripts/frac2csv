@@ -271,6 +271,16 @@
   /* Which stage the two charts above and below are showing. It sits between
      them because that is where the eye already is when our curves are being
      compared against the original sheet. */
+  /* a stage whose clock runs backwards, and the button that fixes it */
+  .badtime { color:var(--carmine); font-weight:700; margin-left:6px; cursor:help; }
+  .fixtime { margin-left:6px; font:inherit; font-size:10px; font-weight:600;
+             border:1px solid var(--carmine); color:var(--carmine);
+             background:var(--panel); border-radius:5px; padding:0 5px;
+             cursor:pointer; }
+  .stagerow.badtime-row { background:rgba(163,22,49,0.06); }
+  .timewarn { margin:6px 18px 0; padding:7px 10px; border-radius:7px;
+              border:1px solid var(--carmine); color:var(--carmine);
+              background:rgba(163,22,49,0.06); font-size:12px; }
   .stagerule { display:flex; align-items:center; gap:10px;
                margin:2px 18px 0; padding:5px 0 7px;
                border-top:1px solid var(--line); }
@@ -556,6 +566,7 @@ where one stage stops and the next starts">FracView &#8599;</button>
 a picture of these panels and the extraction diagnostics">Flag Error</button>
           <div class="legend" id="pv-legend"></div>
         </div>
+        <div class="timewarn" id="timewarn" hidden></div>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
         <div class="stagerule" id="stagerule" hidden></div>
         <div class="canvaswrap" id="origwrap" hidden>
@@ -1718,6 +1729,28 @@ function selectFile(entry) {
   tog.querySelectorAll("button").forEach(b =>
     b.classList.toggle("on", b.dataset.v === entry.viewMode));
   const list = $("stages"); list.innerHTML = "";
+  // Which stages start before the one before them ended. Computed once for
+  // the well rather than per row, and only for the seconds view — a table has
+  // no clock to be wrong about.
+  applyTimeFixes(entry.well);
+  const issues = entry.well ? stageTimeIssues(entry.well.stages) : [];
+  const badTimes = new Set(issues.map(x => String(x.st.meta.stage || "")));
+  // Say it out loud. A clock that runs backwards is not something to leave
+  // for someone to notice: it is one stage in sixty on a well that otherwise
+  // looks perfect, and it reaches the CSV looking like data.
+  const tw = $("timewarn");
+  if (issues.length) {
+    const names = issues.map(x => String(x.st.meta.stage || "?"));
+    tw.textContent =
+      `⚠ ${names.length} stage${names.length > 1 ? "s start" : " starts"} `
+      + `before the stage before ${names.length > 1 ? "them" : "it"} finished `
+      + `— ${names.join(", ")}. The printed date or time is wrong. `
+      + `Use "Fix time" beside the stage in the list to correct it; the `
+      + `correction follows into the graphs and the CSV.`;
+    tw.hidden = false;
+  } else {
+    tw.hidden = true;
+  }
   let lastKind = null;
   for (const it of entry.items) {
     // a heading above each run of tables of one kind, so a 14-table filing
@@ -1734,21 +1767,34 @@ function selectFile(entry) {
     lastKind = grp;
     const row = document.createElement("div");
     row.className = "stagerow";
-    if (it.type === "stage")
+    if (it.type === "stage") {
       // The stage's own printed name on the left — including any tag the
       // report appends to it ("1A HRF", "2A PW"), which distinguishes stages
       // that would otherwise read alike — and the sequence flush right.
+      const bad = badTimes.has(String(it.key));
+      const fixed = it.meta && timeFixGet({ meta: it.meta });
       row.innerHTML = `<span class="stg">Stage ${stageDisplay(stageLabel(it))}`
         + (stageVariant(it.key)
             ? ` <span class="ch">${stageVariant(it.key)}</span>` : "")
+        + (bad ? `<span class="badtime" title="This stage starts before the `
+                 + `one before it finished — its printed date or time is `
+                 + `wrong">&#9888;</span>`
+                 + `<button type="button" class="fixtime">Fix time</button>` : "")
+        + (fixed ? `<span class="ch" title="time corrected by hand">edited</span>`
+                 : "")
         + `</span><span class="seqno">${it.seq}</span>`;
+      if (bad) row.classList.add("badtime-row");
+    }
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
         + `<span class="ch">${it.group.pages.length} pg</span>`;
     else
       row.innerHTML = `<span>${(it.table.title.split(" — ")[0])}</span>`
         + `<span class="ch">${it.table.rows.length} rows</span>`;
-    row.addEventListener("click", () => selectItem(entry, entry.well, it, row));
+    row.addEventListener("click", ev => {
+      if (ev.target.closest(".fixtime")) { ev.stopPropagation(); askTimeFix(entry, it); return; }
+      selectItem(entry, entry.well, it, row);
+    });
     list.appendChild(row);
     it._row = row;
   }
@@ -1786,6 +1832,7 @@ function setPreviewMode(mode) {
   $("graphwrap").hidden = isSum || isTable;
   $("legendrow").hidden = isSum || isTable;
   $("stagerule").hidden = isSum || isTable;
+  if (isTable) $("timewarn").hidden = true;
   if (isSum || isTable) $("origwrap").hidden = true;
   $("sumwrap").hidden = !isSum;
 }
@@ -3595,6 +3642,135 @@ function updateOrigBar() {
     $("origlbl").textContent = `PDF p.${pages[i]} — whole page` +
       (pages.length > 1 ? `  (${i + 1}/${pages.length})` : "");
   }
+}
+
+// ---------- a stage whose clock runs backwards ----------------------------
+//
+// Carmine: mislabelled times happen more often than they should. They are
+// hard to see one stage at a time and obvious across a well — 00495 has 66
+// stages and exactly one, 3B, dated 2023-11-02 04:51, before stage 1 begins.
+//
+// The rule is the one FracView's Sequence view draws: laid out correctly a
+// well's stages step forward in time, so a stage that starts before the one
+// before it ended is a clock that is wrong. It is nearly always a small
+// human slip in the source — a day, an hour, AM for PM — which is why a
+// correction is worth offering rather than just a warning.
+function stageStartMs(st) {
+  const o = timeFixGet(st);
+  const d = o ? o.date : (st.meta.date || "");
+  const t = o ? o.time : (st.meta.start_time || "00:00:00");
+  if (!d) return NaN;
+  const ms = new Date(`${d}T${t || "00:00:00"}`).getTime();
+  return isFinite(ms) ? ms : NaN;
+}
+
+function stageEndMs(st) {
+  const a = stageStartMs(st);
+  if (!isFinite(a)) return NaN;
+  return a + (st.n || 0) * ((st.sample_sec || 1) * 1000);
+}
+
+// -> [{i, st, prevEnd}] for every stage that starts before its predecessor
+// finished. Stages with no printed clock are skipped, not guessed at.
+function stageTimeIssues(stages) {
+  const out = [];
+  let prev = null, prevEnd = NaN;
+  for (let i = 0; i < stages.length; i++) {
+    const a = stageStartMs(stages[i]);
+    if (!isFinite(a)) continue;
+    if (prev !== null && isFinite(prevEnd) && a < prevEnd)
+      out.push({ i, st: stages[i], prev, prevEnd });
+    prev = i;
+    prevEnd = stageEndMs(stages[i]);
+  }
+  return out;
+}
+
+// A correction the user typed, per file + stage. Kept beside termMap and for
+// the same reason: it is the client's knowledge of his own documents, and it
+// should outlive the tab.
+let timeFix = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.timeFix") || "{}"); }
+  catch (e) { return {}; }
+})();
+function timeFixKey(st) {
+  const f = (current && current.entry && current.entry.name) || "?";
+  return `${f}::${st.meta.stage || "?"}`;
+}
+function timeFixGet(st) { return timeFix[timeFixKey(st)] || null; }
+function timeFixSet(st, date, time) {
+  const k = timeFixKey(st);
+  if (date) timeFix[k] = { date, time: time || "00:00:00" };
+  else delete timeFix[k];
+  try { localStorage.setItem("f2c.timeFix", JSON.stringify(timeFix)); }
+  catch (e) { /* private mode — the correction just will not outlive the tab */ }
+}
+
+// Put every correction into effect: the graphs, FracView and the CSV all read
+// meta.date / meta.start_time, so writing them there is the whole application.
+// The ORIGINAL is kept so a correction can be undone and so the export can
+// still say what the sheet actually printed.
+function applyTimeFixes(well) {
+  if (!well) return;
+  for (const st of well.stages) {
+    const o = timeFixGet(st);
+    if (o) {
+      if (st.meta._date0 === undefined) {
+        st.meta._date0 = st.meta.date || "";
+        st.meta._time0 = st.meta.start_time || "";
+      }
+      st.meta.date = o.date;
+      st.meta.start_time = o.time;
+    } else if (st.meta._date0 !== undefined) {
+      st.meta.date = st.meta._date0;
+      st.meta.start_time = st.meta._time0;
+      delete st.meta._date0;
+      delete st.meta._time0;
+    }
+  }
+}
+
+// The correction dialog. Deliberately a prompt rather than a modal: the fix
+// is two short strings the user already knows, it happens rarely, and the
+// value here is that the correction EXISTS and reaches the export — not that
+// it has chrome.
+function askTimeFix(entry, item) {
+  const st = (entry.well.stages || []).find(
+    x => String(x.meta.stage || "") === String(item.key)) || { meta: item.meta };
+  const cur = timeFixGet(st);
+  const shownDate = cur ? cur.date : (st.meta.date || "");
+  const shownTime = cur ? cur.time : (st.meta.start_time || "00:00:00");
+  const printed = st.meta._date0 !== undefined
+    ? `${st.meta._date0} ${st.meta._time0}` : `${shownDate} ${shownTime}`;
+  const d = window.prompt(
+    `Stage ${item.key} starts before the stage before it finished.\n\n` +
+    `The sheet prints: ${printed}\n\n` +
+    `Corrected DATE (YYYY-MM-DD), or blank to undo the correction:`,
+    shownDate);
+  if (d === null) return;
+  if (!d.trim()) { timeFixSet(st, "", ""); reRender(entry); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
+    alert("Date must read YYYY-MM-DD — nothing changed."); return;
+  }
+  const t = window.prompt(`Corrected START TIME (HH:MM:SS):`, shownTime);
+  if (t === null) return;
+  if (!/^\d{1,2}:\d{2}(:\d{2})?$/.test(t.trim())) {
+    alert("Time must read HH:MM or HH:MM:SS — nothing changed."); return;
+  }
+  const tt = t.trim().length <= 5 ? t.trim() + ":00" : t.trim();
+  timeFixSet(st, d.trim(), tt);
+  reRender(entry);
+}
+
+// A correction changes the clock, so everything keyed off it is rebuilt: the
+// stage list (its ordering and its warning), the graph, and FracView.
+function reRender(entry) {
+  applyTimeFixes(entry.well);
+  entry.secItems = stageItems(entry.well.stages);
+  if (entry.viewMode !== "summary") entry.items = entry.secItems;
+  selectFile(entry);
+  if (fvAlive()) fvPush();
+  updateCount();
 }
 
 // ---------- FracView: every stage end to end, and the boundaries between ----
