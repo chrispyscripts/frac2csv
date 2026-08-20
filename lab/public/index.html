@@ -1361,7 +1361,18 @@ function wellModel(stages) {
     const seqNo = String(bi + 1);
     // templates that report no printed stage name give "?", which is no use
     // in a deliverable — fall back to the position
-    const label = (String(key) === "?" || String(key) === "") ? seqNo : String(key);
+    //
+    // And the chart TYPE is not part of the name. Calfrac prints each zone
+    // twice, as "… Surface" and "… Bottom Hole", and the key has to keep that
+    // or the two merge and one channel ends up holding two recordings. The
+    // LABEL column does not: #546 settled that "04 Surface" is a stage called
+    // 04, and #580 is the same complaint reaching the CSV — "the word surface
+    // has creeped into the stage label, it was not there a number of versions
+    // back". It arrived with #550 in v1.2.1, which is when these keys started
+    // carrying the suffix. Every VIEW already strips it through stageDisplay;
+    // the export was the one place still shipping it.
+    const label = (String(key) === "?" || String(key) === "")
+      ? seqNo : stageDisplay(String(key));
     const grp = groups.get(key);
     const M = grp[0].meta;
     const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));

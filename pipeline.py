@@ -193,6 +193,67 @@ def _why_nothing(doc, npages, raster):
     return base + "."
 
 
+# Chars on a chart page below which it is drawing its labels rather than
+# writing them. Carmine's number, and the measurement backs it: on 00121, a
+# known vector-no-text filing, every one of 21 sampled chart pages carries
+# EXACTLY ZERO readable characters, while a normal vector filing carries 323
+# to 1077 on the same kind of page (00011 median 323, 00494 median 376). The
+# gap is absolute, so 100 is not a tuned threshold — it is the middle of a
+# chasm.
+VECTOR_TEXT_MAX = 100
+
+
+def vector_no_text(doc, sample=60):
+    """Is this a filing whose CHARTS draw their labels as outlines?
+
+    -> {"verdict": bool, "chart_pages": int, "with_text": int, "median": int}
+
+    The question has to be asked of the pages that draw curves, not of the
+    document, and that is the whole trick. 00121 carries 288,439 characters
+    across 577 pages and 129 of those pages have text on them — by any
+    document-wide count it is a text PDF. But the text is all cover sheets and
+    tables, and not one character of it is on a chart: the labels there are
+    converted to outlines, so no text-based detector can ever fire on them.
+
+    Cheap by construction — sampled, and the drawing scan stops as soon as a
+    page is known to be curvey — so it can be asked of a file before anything
+    expensive is attempted on it.
+    """
+    npages = len(doc)
+    if not npages:
+        return {"verdict": False, "chart_pages": 0, "with_text": 0, "median": 0}
+    step = max(1, npages // max(1, sample))
+    counts = []
+    for i in range(0, npages, step):
+        try:
+            page = doc[i]
+        except Exception:
+            continue
+        sat = 0
+        try:
+            for d in page.get_drawings():
+                for key in ("color", "fill"):
+                    c = d.get(key)
+                    if c and max(c[:3]) - min(c[:3]) > 0.35:
+                        sat += len(d["items"]) or 1
+                if sat > 500:
+                    break
+        except Exception:
+            pass
+        if sat <= 500:
+            continue
+        t = page.get_text("text") or ""
+        counts.append(sum(1 for ch in t if ch.isprintable() and not ch.isspace()))
+    if not counts:
+        return {"verdict": False, "chart_pages": 0, "with_text": 0, "median": 0}
+    counts.sort()
+    med = counts[len(counts) // 2]
+    return {"verdict": med < VECTOR_TEXT_MAX,
+            "chart_pages": len(counts),
+            "with_text": sum(1 for c in counts if c >= VECTOR_TEXT_MAX),
+            "median": int(med)}
+
+
 def _series(meta, samples, data, source, page=None, units=None, labels=None,
             geom=None, scales=None, frames=None):
     # `scales` is each curve's PRINTED tick range — what the y-axis reads.

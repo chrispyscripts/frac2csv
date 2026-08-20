@@ -1328,6 +1328,75 @@ class SLBServiceReport(unittest.TestCase):
         self.assertEqual(got, {5: "2018-07-11"})
 
 
+class VectorNoText(unittest.TestCase):
+    """Identifying a filing whose CHARTS draw their labels instead of writing
+    them (#548, #569, #582).
+
+    The question has to be asked of the pages that draw curves, not of the
+    document, and that is the whole trick. 00121 carries 288,439 characters
+    over 577 pages with 129 of them holding text — by any document-wide count
+    it is a text PDF. But none of that text is on a chart. Measured on the
+    chart pages alone the separation is absolute:
+
+        00121  21 chart pages,  0 with text,  median   0 chars
+        00011  10 chart pages, 10 with text,  median 323
+        00494  29 chart pages, 29 with text,  median 376
+
+    So 100 is not a tuned threshold, it is the middle of a chasm.
+    """
+    class _Doc:
+        """Enough of a fitz document for vector_no_text."""
+        def __init__(self, pages): self._p = pages
+        def __len__(self): return len(self._p)
+        def __getitem__(self, i): return self._p[i]
+
+    class _Page:
+        def __init__(self, chars, curvey):
+            self._t = "x" * chars
+            self._c = curvey
+        def get_text(self, _kind="text"): return self._t
+        def get_drawings(self):
+            if not self._c: return []
+            return [{"color": (1.0, 0.0, 0.0), "items": [0] * 600}]
+
+    def _doc(self, spec):
+        return self._Doc([self._Page(c, k) for c, k in spec])
+
+    def test_charts_with_no_text_at_all(self):
+        """00121: text everywhere EXCEPT the charts."""
+        d = self._doc([(2000, False)] * 10 + [(0, True)] * 20)
+        got = pipeline.vector_no_text(d)
+        self.assertTrue(got["verdict"])
+        self.assertEqual(got["with_text"], 0)
+
+    def test_a_normal_filing_is_not_claimed(self):
+        d = self._doc([(2000, False)] * 10 + [(376, True)] * 20)
+        self.assertFalse(pipeline.vector_no_text(d)["verdict"])
+
+    def test_a_text_heavy_document_does_not_hide_it(self):
+        """The document-wide count is the trap: masses of text on cover pages
+        says nothing about whether a chart can be read."""
+        d = self._doc([(20000, False)] * 50 + [(0, True)] * 5)
+        self.assertTrue(pipeline.vector_no_text(d)["verdict"])
+
+    def test_no_chart_pages_claims_nothing(self):
+        """A raster filing draws no vector curves, so this has no opinion —
+        it must not call every scanned report vector-no-text."""
+        d = self._doc([(1000, False)] * 20)
+        got = pipeline.vector_no_text(d)
+        self.assertFalse(got["verdict"])
+        self.assertEqual(got["chart_pages"], 0)
+
+    def test_empty_document(self):
+        self.assertFalse(pipeline.vector_no_text(self._doc([]))["verdict"])
+
+    def test_a_stray_labelled_chart_does_not_rescue_the_file(self):
+        """One chart page in twenty carrying a caption is still a file whose
+        charts cannot be read — the median decides, not the maximum."""
+        d = self._doc([(0, True)] * 19 + [(800, True)])
+        self.assertTrue(pipeline.vector_no_text(d)["verdict"])
+
+
 class TricanDroppedDecimal(unittest.TestCase):
     """The decimal point OCR loses off an elapsed-time label (#581).
 
