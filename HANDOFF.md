@@ -182,6 +182,14 @@ what a future session needs to KNOW rather than what shipped.
   CURVES, not of the document — 00121 carries 288,439 characters over 577
   pages and not one is on a chart. Median chart-page characters: **0** on the
   hits, **347** on everything else. There is no threshold to tune.
+  - **It is two jobs, not one.** Split by whether the DOCUMENT carries any
+    text: **79 are labels-only** (text everywhere but the charts — 00121 has
+    288,439 characters over 577 pages) and **105 have no readable character
+    anywhere at all** (00147 is 256 pages of nothing). The 79 are the
+    tractable half and where the SLB OCR work applies; on the 105 even the
+    vendor cannot be read from the text layer, so detection, tables and dates
+    all have to come off the render, and nothing in the tree does that today.
+    Lists for both are in `batch-lists/vector-no-text/`.
   - Nuvista's zero is NOT a clean negative. Only 7 of its 233 files register a
     chart page at all: its charts are RASTER, a different class this detector
     structurally cannot see. Read its zero as "not this class".
