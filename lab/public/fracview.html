@@ -102,6 +102,15 @@ gaps and labels the axis with the row number of the exported CSV.">
         <option value="row">Plot by row</option>
       </select>
     </span>
+    <span class="fld">View
+      <select id="viewmode" title="Channels draws the curves. Sequence draws one
+line: the stage's position in the well against the clock. Laid out correctly
+that is a single ascending staircase, so anything that runs backwards is a
+stage whose date or time is wrong.">
+        <option value="channels">Channels</option>
+        <option value="sequence">Sequence</option>
+      </select>
+    </span>
     <span class="fld">Caption
       <select id="captionmode" title="What labels each band: its position in the
 well, or the name the report prints on it">
@@ -243,6 +252,19 @@ const PAD = { l: 54, r: 14, t: 26, b: 34 };
 // stage takes the width of its own duration and the shapes can be compared
 // side by side.
 let timeMode = localStorage.getItem("f2c.fvTime") || "real";
+// Channels or the stage-sequence line. Carmine checks our CSVs in FracPrep by
+// plotting STAGE against time: right, it is one ascending staircase, and a
+// stage whose clock is wrong drops out of the line where nothing else would
+// show it. 00495 is the case — 66 stages, and 3B alone dated 2023-11-02
+// 04:51, before stage 1 begins. Reviewed one stage at a time that is
+// invisible; on this graph it is the only thing you see.
+let viewMode = localStorage.getItem("f2c.fvView") || "channels";
+
+// How x is spaced. Plot by row closes the idle gaps, which is right for
+// comparing stage shapes and wrong for the Sequence view: that view exists to
+// judge the clock, and a clock with its waits removed is not one. So Sequence
+// always reads real time, whatever the Time control says.
+function spacing() { return viewMode === "sequence" ? "real" : timeMode; }
 let dispMap = [];        // per stage: real [a,b] -> display [da,db]
 
 // A stage's band runs from its own start to the NEXT stage's start, so the
@@ -264,7 +286,7 @@ function buildDispMap() {
     // that wait. With hi = b there was no wait to find: every band ran to the
     // next stage's start and the void was indistinguishable from pumping.
     const hi = src ? Math.min(b, src.t0 + src.n * src.dsec * 1000) : b;
-    if (timeMode === "real") { dispMap.push({ a, b, hi, da: a, db: b }); continue; }
+    if (spacing() === "real") { dispMap.push({ a, b, hi, da: a, db: b }); continue; }
     const wdt = Math.max(1000, hi - a);
     dispMap.push({ a, b, hi, da: d, db: d + wdt });
     d += wdt;
@@ -273,7 +295,7 @@ function buildDispMap() {
 // real -> display. Outside the stages the mapping continues linearly, so a
 // sample that sits just past the last boundary still draws where it belongs.
 function toDisp(t) {
-  if (timeMode === "real" || !dispMap.length) return t;
+  if (spacing() === "real" || !dispMap.length) return t;
   if (t < dispMap[0].a) return dispMap[0].da + (t - dispMap[0].a);
   for (const m of dispMap) {
     if (t < m.hi) return m.da + (t - m.a);
@@ -283,7 +305,7 @@ function toDisp(t) {
   return L.db + Math.max(0, t - L.hi);
 }
 function fromDisp(x) {
-  if (timeMode === "real" || !dispMap.length) return x;
+  if (spacing() === "real" || !dispMap.length) return x;
   if (x < dispMap[0].da) return dispMap[0].a + (x - dispMap[0].da);
   for (const m of dispMap) if (x < m.db) return m.a + (x - m.da);
   const L = dispMap[dispMap.length - 1];
@@ -535,7 +557,7 @@ function draw() {
   buildDispMap();          // bounds move with every edit
   buildRowMap();           // ...and so do the row numbers
   // Plot by row prints row number over clock, so the axis needs a second line
-  PAD.b = timeMode === "row" ? 48 : 34;
+  PAD.b = spacing() === "row" ? 48 : 34;
   const { ctx, w, h } = fit();
   const plotW = w - PAD.l - PAD.r, plotH = h - PAD.t - PAD.b;
   ctx.clearRect(0, 0, w, h);
@@ -657,6 +679,14 @@ function draw() {
   ctx.strokeStyle = "#e3e5e8"; ctx.lineWidth = 1;
   ctx.strokeRect(PAD.l + 0.5, PAD.t + 0.5, plotW - 1, plotH - 1);
 
+  if (viewMode === "sequence") {
+    drawSequence(ctx, w, h, plotW, plotH);
+    renderKey([]);
+    drawTimeAxis(ctx, w, h, plotW, plotH);
+    drawHover(ctx, w, h, plotH);
+    return;
+  }
+
   // curves — one polyline per channel per source stage, drawn in absolute time
   const names = [];
   for (const st of well.stages) for (const c of st.channels)
@@ -688,7 +718,7 @@ function draw() {
       // clip against: take the whole stage and let the stride decimate it and
       // the clip discard what is off screen.
       let j0 = 0, j1 = ch.values.length - 1;
-      if (timeMode === "real") {
+      if (spacing() === "real") {
         j0 = Math.max(0, Math.floor((view.a - st.t0) / step) - 1);
         j1 = Math.min(j1, Math.ceil((view.b - st.t0) / step) + 1);
       }
@@ -744,6 +774,112 @@ function draw() {
     }
   }
 
+  drawTimeAxis(ctx, w, h, plotW, plotH);
+  // channel key
+  renderKey(names);
+
+  drawHover(ctx, w, h, plotH);
+}
+
+// ---------- the Sequence view: position against the clock -----------------
+//
+// One line. Y is the stage's position in the well — the same number the CSV's
+// STAGE column carries — and X is the clock. Laid out correctly that is a
+// single ascending staircase: each stage sits a step above the one before it
+// and further along in time. A stage whose date or time is wrong leaves the
+// line, and there is nowhere for it to hide.
+//
+// This is the check Carmine runs on our exports in FracPrep, and it earns its
+// place: 00495 has 66 stages and exactly one of them, 3B, is dated
+// 2023-11-02 04:51 — before stage 1 starts. Stage by stage that is invisible.
+// Here it is a line running two days backwards.
+//
+// Note it is drawn against `edits.bounds`, so a boundary you drag moves this
+// line too — it diagnoses what would be exported, not what was extracted.
+function seqPoints() {
+  const out = [];
+  for (let i = 0; i < nStages(); i++) {
+    const m = dispMap[i];
+    if (!m) continue;
+    out.push({ i, seq: i + 1, a: m.a, hi: Math.max(m.a, Math.min(m.hi, m.b)) });
+  }
+  return out;
+}
+
+// Which steps run backwards: the next stage begins before this one's readings
+// ended. Kept apart from the drawing so the rule can be tested against real
+// wells rather than eyeballed on a canvas.
+function seqBreaks(pts) {
+  const out = [];
+  for (let k = 0; k + 1 < pts.length; k++)
+    if (pts[k + 1].a < pts[k].hi) out.push(k);
+  return out;
+}
+
+function drawSequence(ctx, w, h, plotW, plotH) {
+  const pts = seqPoints();
+  if (!pts.length) return;
+  const top = PAD.t + 6, bot = PAD.t + plotH - 6;
+  const maxSeq = pts.length;
+  const Y = seq => bot - (maxSeq <= 1 ? 0 : (seq - 1) / (maxSeq - 1)) * (bot - top);
+
+  // gridlines at round positions, so a step can be read off as a number
+  const step = Math.max(1, Math.round(maxSeq / 8));
+  ctx.font = "10px ui-monospace,Menlo,Consolas,monospace";
+  ctx.textAlign = "right";
+  for (let n = 1; n <= maxSeq; n += step) {
+    const y = Y(n);
+    ctx.strokeStyle = "#eceef1";
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(w - PAD.r, y); ctx.stroke();
+    ctx.fillStyle = "#9aa1aa";
+    ctx.fillText(String(n), PAD.l - 5, y + 3);
+  }
+  ctx.textAlign = "left";
+
+  // the staircase: a tread across each stage's readings, a riser to the next
+  const breaks = new Set(seqBreaks(pts));
+  const back = breaks.size;
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k], nx = pts[k + 1];
+    const y = Y(p.seq);
+    const xa = X(p.a, w), xb = X(p.hi, w);
+    ctx.strokeStyle = "#1f6feb"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(Math.max(xa + 1, xb), y); ctx.stroke();
+    if (!nx) continue;
+    // A riser that leans BACKWARDS is the whole point of this view: the next
+    // stage begins before this one ended. Drawn in the flag colour and
+    // counted, because a picture that shows a fault without naming it still
+    // leaves someone to notice it.
+    const goesBack = breaks.has(k);
+    ctx.strokeStyle = goesBack ? "#a31631" : "#1f6feb";
+    ctx.lineWidth = goesBack ? 2.5 : 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.max(xa + 1, xb), y);
+    ctx.lineTo(X(nx.a, w), Y(nx.seq));
+    ctx.stroke();
+    if (goesBack) {                       // ring the stage that broke the line
+      ctx.fillStyle = "rgba(163,22,49,0.16)";
+      const bx = Math.min(X(nx.a, w), xb), bw = Math.abs(xb - X(nx.a, w));
+      ctx.fillRect(bx, PAD.t, Math.max(2, bw), plotH);
+    }
+  }
+
+  ctx.font = "600 12px ui-monospace,Menlo,Consolas,monospace";
+  ctx.fillStyle = back ? "#a31631" : "#1e7a34";
+  ctx.fillText(back
+      ? (back === 1
+          ? "1 stage starts before the one before it ended — its date or time is wrong"
+          : `${back} stages start before the one before them ended — their `
+            + "dates or times are wrong")
+      : "every stage starts after the one before it — the clock is consistent",
+    PAD.l + 6, PAD.t + 14);
+  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+}
+
+// The time axis and the footer under it. Pulled out of draw() so the
+// Sequence view can share them — it swaps what is drawn INSIDE the plot,
+// not the clock along the bottom.
+function drawTimeAxis(ctx, w, h, plotW, plotH) {
   // time axis
   ctx.fillStyle = "#697077"; ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
   ctx.textAlign = "center";
@@ -755,7 +891,7 @@ function draw() {
     const x = X(t, w);
     ctx.strokeStyle = "#eceef1";
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
-    if (timeMode === "row") {
+    if (spacing() === "row") {
       // The row leads, because it is the number being carried to the CSV; the
       // clock stays under it, because a row on its own says nothing about when.
       const r = rowAt(t);
@@ -776,12 +912,15 @@ function draw() {
   if (day) foot.push(day);
   if (well.synthetic)
     foot.push("no printed clock — stages laid end to end, so this axis is not a wall clock");
-  if (timeMode === "row") foot.push("row = line in the exported CSV · gaps closed");
+  if (spacing() === "row") foot.push("row = line in the exported CSV · gaps closed");
+  if (viewMode === "sequence") foot.push("stage position against the clock");
   ctx.fillText(foot.join("   ·   "), PAD.l, h - 5);
 
-  // channel key
-  renderKey(names);
+}
 
+// The crosshair and its readout box, shared by both views for the same
+// reason.
+function drawHover(ctx, w, h, plotH) {
   // hover readout
   if (hover && !drag) {
     const x = X(hover.t, w);
@@ -996,6 +1135,7 @@ window.addEventListener("message", ev => {
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
   $("zoomctl").hidden = false;
   $("captionmode").value = captionMode;
+  $("viewmode").value = viewMode;
   $("title").textContent = d.file || "well";
   $("sub").textContent = `${d.stages.length} stages extracted` +
     (d.uwi ? `  ·  ${d.uwi}` : "");
@@ -1183,6 +1323,11 @@ bind("captionmode", "change", e => {
   draw();
 });
 bind("scheme", "change", e => { scheme = e.target.value; draw(); });
+bind("viewmode", "change", e => {
+  viewMode = e.target.value;
+  localStorage.setItem("f2c.fvView", viewMode);
+  draw();
+});
 bind("timemode", "change", e => {
   timeMode = e.target.value;
   localStorage.setItem("f2c.fvTime", timeMode);
