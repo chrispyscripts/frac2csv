@@ -113,7 +113,7 @@ def detect(page):
 
 def is_entire_treatment(page):
     # lettered intervals ("Interval 4A - Entire Treatment") count too
-    return re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*Entire Treatment",
+    return re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–—]\s*Entire Treatment",
                      _page_text(page)) is not None
 
 
@@ -337,9 +337,34 @@ def _axis_columns(spans, box=None):
     # interval 3 (41 events) that phantom column took axis B, which pushed
     # Slurry Rate onto a 17..20 scale and BOTH concentrations onto the rate
     # axis: WH Prop Conc came back as 16.59 kg/m3 on a 0..16 scale (#77).
-    if out:
+    if out and not ocr:
         tallest = max(c["y_hi"] - c["y_lo"] for c in out)
         out = [c for c in out if c["y_hi"] - c["y_lo"] >= 0.6 * tallest]
+    elif out:
+        # Same guard, measured differently, because OCR breaks its premise.
+        # "Labelled the full height" assumes the labels are all there; OCR
+        # found 3 of the rate axis' 5 on 00148 p136, so it spanned 164.9
+        # against a 197.6 threshold and was thrown away — after which axis B
+        # inherited the CONCENTRATION column and Slurry Rate read 628 against
+        # a printed 0..20.
+        #
+        # What actually separates an axis from a marker ladder is where it
+        # reaches ZERO. Every real axis on that page extrapolates to within a
+        # fraction of a point of the same span — A 329.3, B 329.8, C 329.4,
+        # because they all run the height of one frame — while #77's phantom
+        # column of event numbers 17..20, stepping by one over a fifth of the
+        # frame, would have to run about 440 to reach zero. The reference is
+        # the column with the MOST ticks, which is the best-evidenced fit on
+        # the page.
+        def _zero_span(c):
+            if abs(c["b"]) < 1e-9:
+                return c["y_hi"] - c["y_lo"]
+            ys = (c["y_lo"], c["y_hi"], -c["a"] / c["b"])
+            return max(ys) - min(ys)
+
+        ref = _zero_span(max(out, key=lambda c: c["n"]))
+        if ref > 0:
+            out = [c for c in out if 0.8 <= _zero_span(c) / ref <= 1.25]
     out.sort(key=lambda c: c["x"])
     return out
 
@@ -734,7 +759,7 @@ def extract_page(page, sample_sec=1.0):
     if m:
         meta.stage = m.group(1)
     meta.date = date
-    t = re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-\u2013]\s*[A-Za-z ]+", text)
+    t = re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-\u2013\u2014]\s*[A-Za-z ]+", text)
     _head = text.strip().splitlines()
     meta.title = (t.group(0).strip() if t
                   else " ".join(_head[0].split()) if _head else "")[:60]

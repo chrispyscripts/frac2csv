@@ -1349,7 +1349,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # its ten intervals produced nothing at all, silently, through the
             # same no-note skip the comment above describes.
             titled = re.search(
-                r"Interval\s+(\d{1,3}[A-Za-z]?)\s*[-–]\s*(?:Entire|Main)\s+"
+                r"Interval\s+(\d{1,3}[A-Za-z]?)\s*[-\u2013\u2014]\s*(?:Entire|Main)\s+"
                 r"Treatment", text)
             # v4.2.0 names no interval at all — the section number carries it
             sect = None if titled else ifs.section_stage(page)
