@@ -261,6 +261,7 @@ def _axis_columns(spans, box=None):
     if cur:
         clusters.append(cur)
 
+    _min_chain = 3 if ocr else 4
     out = []
     for group in clusters:
         # Four labels is the guard that keeps a stray pair from becoming an
@@ -296,7 +297,12 @@ def _axis_columns(spans, box=None):
                         chain.append(group[k])
                         exp_y = group[k]["cy"] + gap
                         exp_v = val(group[k]) + vstep
-                if len(chain) >= 4:
+                # Four ticks is what proves a column is an axis and not a
+                # coincidence. OCR drops labels rather than inventing them —
+                # 00148 p136 returns 3 of the rate axis' 5 and 3 of the
+                # concentration axis' 5 — so three is enough on an OCR page:
+                # two points fit the line and the third has to land on it.
+                if len(chain) >= _min_chain:
                     chains.append(chain)
         if not chains:
             continue
@@ -313,7 +319,7 @@ def _axis_columns(spans, box=None):
             best_chain = min(keep, key=off)
         else:
             best_chain = max(keep, key=len)
-        if len(best_chain) < 4:
+        if len(best_chain) < _min_chain:
             continue
         vals = [(val(s), s["cy"]) for s in best_chain]
         a, b = _fit(vals)
