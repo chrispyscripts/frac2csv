@@ -163,6 +163,60 @@ still v1.4.0, so NONE of this has reached him.
 
 ## Open, top of the list
 
+- **DATE/TIME COVERAGE IS MEASURED. `validation-tools/datetime_sweep.py`,
+  60 files sampled across BOTH drives, run through the SHIPPED code.** It
+  aggregates by the `source` each chart reports and counts dated and clocked
+  SEPARATELY, because they fail for different reasons.
+
+        template                              charts  date%  time%
+        Halliburton IFS chart                    191   100%   100%
+        SLB Zone Summary chart (raster)           62   100%   100%
+        Halliburton treatment plot (raster)       49   100%   100%
+        Liberty chart                             42   100%   100%
+        Canyon chart                              25   100%   100%
+        Sanjel chart                              22   100%   100%
+        STEP surface chart (raster)              777    98%   100%
+        CalFrac chart                            738    94%    71%
+        STEP chemical chart (raster)             600    94%   100%
+        Trican treatment chart (raster)          254    85%    85%
+        SLB PRC chart                            115    43%   100%
+
+  **Six of eleven types are already at 100/100.** The goal is three gaps, and
+  they are FILE-level, not scattered:
+    - **CalFrac clocks.** 00020 and 00027 are 81 charts each, fully dated and
+      with ZERO start times; 00018 the same. 174 charts in three files.
+    - **SLB PRC dates.** 00588 (0 of 15) and 00445 (0 of 47) are total misses.
+    - **Older CalFrac (2014-15)**: 00007, 00033, 00022 have neither.
+  Four sampled files produced no charts at all — one each from STEP, Trican,
+  ARC and Nuvista.
+
+- **AND THE CAUSE IS ONE THING, WITH ONE ANSWER.** 00020 has no Treatment
+  Summary grid ANYWHERE — 493 pages, zero — and its charts plot "Time (min)"
+  from 0, so there is no wall clock on them either. That is the same shape as
+  00121: the reader depends on a vendor summary sheet and the sheet is not in
+  the document.
+  - **The operator's DAILY OPERATIONS REPORT is the general source.** 00020's
+    "Daily Completion Operations" pages carry the time log with the stage in
+    it, exactly as 00121's Peloton pages do:
+
+        08:00 | 11:30 | 3.50 | 11.50 FRAC | PP | ... | Frac Stage # 1 (...)
+
+    with the page's own Report Date. Stage -> (date, start time), from the
+    OPERATOR's document, so it does not care which vendor pumped the job.
+    That is why it answers the SLB gap and the CalFrac gap at once.
+  - `validation-tools/fraclog.py` is a working prototype of that reader,
+    already validated on 00121 against the charts' own clocks (32 of 36).
+  - **The verification is NOT symmetric, and this is the trap.** 00121's
+    charts print a clock, so the log can be CHECKED against them — that is
+    how the lost-PM bug surfaced. 00020's charts are elapsed minutes, so the
+    log would be the only authority and a wrong stage->time mapping would be
+    invisible. Where there is nothing to check against, the value must be
+    labelled as coming from the daily report rather than the chart.
+  - **Do NOT read "stage N" from free text.** A comment ending "ready to Frac
+    Stage #" is followed by the next cell, a clock, and a loose regex reads
+    "16:30" as stage 16. Read it only from inside a FRAC row.
+
+
 - **#588 — an OCR'd clock kept its PM (`1068870`), and the method that found
   it is reusable.** Every AFTERNOON chart in a pure-vector SLB filing was
   read twelve hours early: OCR returns "4:43" and "PM" as separate words and
