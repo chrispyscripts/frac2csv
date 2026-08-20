@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 import fitz
 import numpy as np
 
+import ocr_labels
 from frac_core import PageMeta
 
 STD_NAMES = [
@@ -26,15 +27,94 @@ STD_NAMES = [
 ]
 
 
+def _page_text(page):
+    """The page's text, OCR'd when it has none of its own.
+
+    An IFS filing can be drawn with every string converted to outlines: 00148
+    is 116 chart pages and NOT ONE readable character, so `"(IFS v" in text`
+    was false and no Halliburton chart in the file was ever looked at. The
+    page is an ordinary IFS chart otherwise — "Interval 1 - Entire Treatment",
+    axes 0..100 MPa / 0..20 m3/min / 0..1000 kg/m3, full legend.
+    """
+    t = page.get_text()
+    if len(t.strip()) > _OCR_TEXT_MIN or not ocr_labels.available():
+        return t
+    try:
+        return ocr_labels.page_text(page) or t
+    except Exception:
+        return t
+
+
+# Below this many characters a page is drawing its labels rather than writing
+# them. An outlined IFS page carries 0; a normal one carries hundreds.
+_OCR_TEXT_MIN = 40
+
+
+def _outline_colours(page):
+    """[(rect, int_rgb)] for the coloured vector fills that DRAW the glyphs.
+
+    This module keys the legend to the curves by the TEXT's colour — a name
+    and its axis letter are the pair that share one — and OCR returns words
+    with no colour at all. But an outlined page has not lost the colour: the
+    glyphs are filled paths and each carries the colour the text used to have.
+    Measured on 00148 p136: "Treating"/"Pressure" come back (1,0,0),
+    "Backside" (1,0,1), "Slurry"/"Rate" (0,.5,.5), "Slurry"/"Conc" (0,1,0),
+    the second "Conc" (.5,.5,0) and "Interval" black — which is exactly what
+    the page draws.
+    """
+    out = []
+    for d in page.get_drawings():
+        c = d.get("fill") or d.get("color")
+        if c is None:
+            continue
+        try:
+            rgb = (int(round(c[0] * 255)) << 16 | int(round(c[1] * 255)) << 8
+                   | int(round(c[2] * 255)))
+        except Exception:
+            continue
+        out.append((fitz.Rect(d["rect"]), rgb))
+    return out
+
+
+def _ocr_spans(page, rotated):
+    """_spans() for a page whose labels are outlines. [] when OCR is absent."""
+    if not ocr_labels.available():
+        return []
+    try:
+        words = ocr_labels.words(page)
+    except Exception:
+        return []
+    fills = _outline_colours(page)
+    out = []
+    for w in words:
+        t = (w.get("text") or "").strip()
+        if not t:
+            continue
+        r = fitz.Rect(w["rect"])
+        tally = defaultdict(int)
+        for rect, rgb in fills:
+            # a glyph's own path sits INSIDE the word box; the curve behind it
+            # and the frame around it are far larger, so size keeps them out
+            if rect.width < r.width * 3 and rect.height < r.height * 3 \
+                    and r.intersects(rect):
+                tally[rgb] += 1
+        colour = max(tally.items(), key=lambda kv: kv[1])[0] if tally else 0
+        cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+        if rotated:
+            cx, cy = _unrotate(cx, cy)
+        out.append({"t": t, "cx": cx, "cy": cy, "ocr": True,
+                    "x0": r.x0, "x1": r.x1, "color": colour})
+    return out
+
+
 def detect(page):
-    text = page.get_text()
-    return "(IFS v" in text
+    return "(IFS v" in _page_text(page)
 
 
 def is_entire_treatment(page):
     # lettered intervals ("Interval 4A - Entire Treatment") count too
     return re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*Entire Treatment",
-                     page.get_text()) is not None
+                     _page_text(page)) is not None
 
 
 def page_rotated(page):
@@ -49,7 +129,27 @@ def page_rotated(page):
                 vert += len(line.get("spans", []))
             else:
                 horiz += len(line.get("spans", []))
-    return vert > horiz and vert >= 3
+    if vert or horiz:
+        return vert > horiz and vert >= 3
+    # A page whose strings are outlines has no text lines to take a direction
+    # from, so the count comes back 0 to 0 and the page is called upright by
+    # default. 00148 is not: /Rotate 90, "HALLIBURTON" measures 17pt wide by
+    # 144pt tall, and its clock labels 04:10..04:50 sit at a CONSTANT x with
+    # varying y. Called upright, the chart is read against the wrong axes and
+    # the time labels are never found at all.
+    #
+    # This is the same defect fb6b1a3 fixed in slb._rotated, and the same
+    # remedy: when there is no text to take a direction from, take it from
+    # the shape of the OCR words.
+    if not ocr_labels.available():
+        return False
+    try:
+        words = ocr_labels.words(page)
+    except Exception:
+        return False
+    tall = sum(1 for w in words
+               if (w["rect"][3] - w["rect"][1]) > (w["rect"][2] - w["rect"][0]))
+    return tall > (len(words) - tall) and tall >= 3
 
 
 def _unrotate(x, y):
@@ -74,6 +174,8 @@ def _spans(page, rotated=None):
                     cx, cy = _unrotate(cx, cy)
                 out.append({"t": t, "cx": cx, "cy": cy,
                             "x0": x0, "x1": x1, "color": span.get("color", 0)})
+    if not out:
+        return _ocr_spans(page, rotated)
     return out
 
 
@@ -121,14 +223,38 @@ def visible_plot_box(page):
 
 def _axis_columns(spans, box=None):
     """Cluster numeric black tick labels into vertical columns."""
+    ocr = any(s.get("ocr") for s in spans)
     nums = [s for s in spans if s["color"] == 0 and
             re.fullmatch(r"-?\d+(\.\d+)?", s["t"].replace(",", ""))]
+    if ocr:
+        # A tick MARK beside its label reads as a minus sign: 00148 p136's
+        # concentration column comes back "-0", "-500", "1000". A leading
+        # minus is dropped only when the column carries a larger positive
+        # too, so a genuinely negative axis — which would be negative
+        # throughout — is never rewritten.
+        pos = {abs(float(s["t"].replace(",", ""))) for s in nums
+               if not s["t"].startswith("-")}
+        for s in nums:
+            if s["t"].startswith("-"):
+                bare = s["t"][1:]
+                try:
+                    if any(v > abs(float(bare)) for v in pos):
+                        s["t"] = bare
+                except ValueError:
+                    pass
     # cluster on label centers (alignment varies by axis side); tick digits
-    # are short so centers stay within ~6 pt per column
+    # are short so centers stay within ~6 pt per column — but an OCR'd label
+    # is only as tight as its box, and a wider number pulls its centre off
+    # the column: on 00148 p136 "1000" landed 11 pt from "500" and the
+    # concentration axis split into two columns of one and two, so it was
+    # never read at all. Widen the window rather than change what is
+    # measured; the near edge is not available in the same frame as cx here,
+    # because a rotated page's spans carry unrotated centres and raw edges.
     nums.sort(key=lambda s: s["cx"])
+    span_ = 14 if ocr else 6
     clusters, cur = [], [nums[0]] if nums else []
     for s in nums[1:]:
-        if s["cx"] - cur[-1]["cx"] > 6:
+        if s["cx"] - cur[-1]["cx"] > span_:
             clusters.append(cur); cur = [s]
         else:
             cur.append(s)
@@ -137,7 +263,12 @@ def _axis_columns(spans, box=None):
 
     out = []
     for group in clusters:
-        if len(group) < 4:
+        # Four labels is the guard that keeps a stray pair from becoming an
+        # axis. OCR loses labels rather than inventing them — 00148's rate
+        # column returns 3 of its 5 — so on an OCR page three is allowed,
+        # which is still enough to fit a line AND check it against a third
+        # point. Text pages are unchanged.
+        if len(group) < (3 if ocr else 4):
             continue
         # keep the longest chain that is evenly spaced in y AND arithmetic in
         # value (drops strays: section numbers, stray decimals, event-marker
@@ -322,6 +453,66 @@ def _axis_date(spans, row):
     return ""
 
 
+# OCR mangles the superscript in a unit — "m³/min" comes back "m/min" and
+# "kg/m³" as "kg/m?". These are the only two units an IFS treatment legend
+# prints for these channels, so the repair is a lookup and not a guess.
+_OCR_UNITS = {"m/min": "m3/min", "m?/min": "m3/min", "m3/min": "m3/min",
+              "kg/m?": "kg/m3", "kg/m": "kg/m3", "kg/m3": "kg/m3"}
+
+
+def _ocr_legend_spans(spans):
+    """Rebuild whole legend entries from OCR words. -> (named, letters).
+
+    A PDF writes "Treating Pressure (MPa)" as ONE span and _legend matches on
+    exactly that shape. OCR returns 'Treating', 'Pressure', '(MPa)' and the
+    axis letter as four words, so nothing matched and 00148 failed with
+    "legend not found" on all 116 of its chart pages.
+
+    An entry is the words of ONE COLOUR on ONE ROW, in reading order, and the
+    colour is what keeps two entries printed side by side apart — the legend
+    has two columns, and on 00148 p136 the red "Treating Pressure" and the
+    magenta "Backside Pressure" share a row at cy 98. The trailing token is
+    the axis letter, which OCR renders as "B_" or "Cc" often enough that it
+    is taken as a letter followed by noise rather than matched exactly.
+    """
+    # Cluster the rows, do not bucket them: OCR puts the words of one line
+    # within a point or two of each other, and rounding cy to a fixed grid
+    # SPLITS a row whenever it straddles a boundary. The red row's words came
+    # back at cy 99.2, 97.9, 99.0 and 97.9 — one grid step apart — and the
+    # entry was lost while the teal row two lines down survived by luck.
+    by_colour = defaultdict(list)
+    for s in spans:
+        if s["color"] == 0:
+            continue
+        by_colour[s["color"]].append(s)
+    rows = {}
+    for colour, items in by_colour.items():
+        for s in sorted(items, key=lambda x: x["cy"]):
+            hit = next((k for k in rows
+                        if k[0] == colour and abs(k[1] - s["cy"]) <= 4.0), None)
+            rows.setdefault(hit or (colour, s["cy"]), []).append(s)
+    named, letters = [], []
+    for (colour, _band), items in rows.items():
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda s: s["cx"])
+        letter = None
+        m = re.match(r"^([A-F])[^A-Za-z0-9]?[a-z]?$", items[-1]["t"])
+        if m and len(items) > 2:
+            letter = dict(items[-1], t=m.group(1))
+            items = items[:-1]
+        text = " ".join(x["t"] for x in items)
+        m = re.match(r"(.+?)\s*\(([^)]*)\)\s*$", text)
+        if not m:
+            continue
+        unit = _OCR_UNITS.get(m.group(2).strip(), m.group(2).strip())
+        named.append(dict(items[0], t=f"{m.group(1).strip()} ({unit})",
+                          cx=items[0]["cx"], color=colour))
+        if letter:
+            letters.append(letter)
+    return named, letters
+
+
 def _legend(spans):
     """[(series_name, unit, color_int, axis_letter)] from legend rows."""
     out = []
@@ -345,6 +536,8 @@ def _legend(spans):
     named = [s for s in spans if s["color"] != 0 and
              re.search(r"\(([^)]+)\)\s*$", s["t"]) and len(s["t"]) > 8]
     letters = [s for s in spans if s["color"] != 0 and re.fullmatch(r"[A-F]", s["t"])]
+    if not named and any(s.get("ocr") for s in spans):
+        named, letters = _ocr_legend_spans(spans)
     for s in named:
         add(s, letters)
 
@@ -411,7 +604,7 @@ def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {column: values}, channel_info) for an IFS chart page."""
     rotated = page_rotated(page)
     spans = _spans(page, rotated)
-    text = page.get_text()
+    text = _page_text(page)
     tfit, date = _time_axis(spans)
     if tfit is None:
         raise ValueError("IFS: time axis labels not found")
@@ -432,7 +625,26 @@ def extract_page(page, sample_sec=1.0):
     rest = [ax for ax in letters_used if ax != "A"]
     right = columns[1:] if len(columns) > 1 else columns
     for i, ax in enumerate(rest):
-        mapping[ax] = right[min(i, len(right) - 1)]
+        if i >= len(right):
+            # There is no column for this letter. The clamp that used to sit
+            # here — right[min(i, len(right) - 1)] — pinned every surplus
+            # letter to the LAST column, which on an OCR'd page silently read
+            # the rate and the concentration off the PRESSURE axis: 00148 p136
+            # returned Slurry Rate 62.8 against a printed 0..20 and BH Prop
+            # Conc 22.7 against 0..1000, both of which are exactly their true
+            # value as a percentage of full scale on A. A peak outside its own
+            # axis is this project's clearest tell that something not on the
+            # curve is being read as data, and the guard has to refuse rather
+            # than guess. The channel is dropped; the chart keeps what it can
+            # prove.
+            if any(x.get("ocr") for x in spans):
+                continue
+            mapping[ax] = right[-1]
+            continue
+        mapping[ax] = right[i]
+    legend = [e for e in legend if e[3] in mapping]
+    if not legend:
+        raise ValueError("IFS: no legend series could be tied to an axis")
 
     # collect stroked SEGMENTS per legend color. Segments, not loose points:
     # a segment is one stretch of pen-down, and the union of their time spans
@@ -517,8 +729,9 @@ def extract_page(page, sample_sec=1.0):
         meta.stage = m.group(1)
     meta.date = date
     t = re.search(r"Interval\s+\d{1,3}[A-Za-z]?\s*[-\u2013]\s*[A-Za-z ]+", text)
+    _head = text.strip().splitlines()
     meta.title = (t.group(0).strip() if t
-                  else " ".join(text.strip().splitlines()[0].split()))[:60]
+                  else " ".join(_head[0].split()) if _head else "")[:60]
 
     # The PLOT FRAME, in the same coordinates the points are read in. Every
     # tick column brackets the same frame vertically except where its labels
