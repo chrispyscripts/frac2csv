@@ -1641,6 +1641,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                             _zone_clocks[0], _zone_times[0],
                                             _sheet_dates[0]):
                     pmeta, psamples, pdata, pgeom = part
+                    # Recorded whether or not this page names a zone. MView's
+                    # Bottom Hole page prints no caption, so its stage is
+                    # blank here and the tag would be dropped on the floor —
+                    # and it is the one page that most needs it, because the
+                    # fill-down below is about to hand it its neighbour's
+                    # zone number.
+                    pmeta["mv"] = _variant or ""
                     if _variant and pmeta.get("stage"):
                         pmeta["stage"] = f"{pmeta['stage']}{_variant}"
                     results.append(_series(pmeta, psamples, pdata,
@@ -1648,6 +1655,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                            geom=pgeom, scales=scales))
                 continue
             _mm = _md(meta)
+            _mm["mv"] = _variant or ""          # same reason as above
             if _variant and _mm.get("stage"):
                 _mm["stage"] = f"{_mm['stage']}{_variant}"
             results.append(_series(_mm, samples, data,
@@ -1704,11 +1712,22 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # Pressure, and that channel would then hold two recordings —
             # exactly the collision _mview_variant was added to prevent.
             #
-            # Stripped, the partner lands on the bare zone: "1" beside
-            # "1 Surface". Distinct keys, nothing merges. It is not tagged
-            # "1 BH", which is the part still to do — the tag is known when
-            # the page is read and gone by the time this runs.
-            r["meta"]["stage"] = _VARIANT_STAGE.sub(r"\1", str(last_stage))
+            # Stripped, then the page's OWN tag goes back on: the partner
+            # of "1 Surface" is "1 BH", not "1 Surface" and not a bare "1".
+            # A page with no tag of its own — the 2013-vintage concentration
+            # continuation this fill-down was written for — keeps the bare
+            # zone, exactly as it did before.
+            _own = r["meta"].get("mv") or ""
+            if _own:
+                r["meta"]["stage"] = (_VARIANT_STAGE.sub(r"\1", str(last_stage))
+                                      + _own)
+            else:
+                # No tag of its own: the 2013-vintage concentration
+                # continuation this fill-down was written for. It takes the
+                # previous key WHOLE, tag included, exactly as it always has —
+                # it is the same sheet continued, so it has to land on the same
+                # key or the four channels never merge.
+                r["meta"]["stage"] = last_stage
         keep.append(r)
     results[:] = keep
 
