@@ -77,5 +77,27 @@ is(flagged([st("1", "2024-05-26", "10:00:00", 30), st("2", "", ""),
             st("3", "2024-05-26", "09:00:00", 30)]),
    ["3"], "3 is still measured against 1");
 
+
+console.log("\n00540 — one stage drawn as TWO plots is still one stage (#589)");
+// STEP prints a Surface and a Chemical plot of the same stage on one page, and
+// serialize() sends one entry per CHART. The pair starts seconds apart, so
+// comparing a stage against its own other plot flagged all 51 stages of a well
+// that runs perfectly in order. Carmine caught it: "they appear to be
+// sequencing properly."
+const pair = (stage, date, t1, t2, mins = 120) =>
+  [st(stage, date, t1, mins), st(stage, date, t2, mins)];
+is(flagged([...pair("1", "2023-03-12", "17:20:04", "17:19:58"),
+            ...pair("2", "2023-03-13", "01:31:29", "01:31:30"),
+            ...pair("3", "2023-03-13", "10:24:14", "10:24:17")]),
+   [], "51-stage well: no plot is compared against its own twin");
+// and the guard still bites when the NEXT stage really does overlap
+is(flagged([...pair("1", "2023-03-12", "17:20:04", "17:19:58"),
+            ...pair("2", "2023-03-12", "18:00:00", "18:00:02")]),
+   ["2"], "a real overlap between two-plot stages is still caught");
+// an unnumbered stage must not merge with the next unnumbered one
+is(flagged([st("", "2023-03-12", "10:00:00", 60),
+            st("", "2023-03-12", "10:30:00", 60)]),
+   [""], "blank stage names are not treated as one stage");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

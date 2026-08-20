@@ -3674,13 +3674,28 @@ function stageEndMs(st) {
 // finished. Stages with no printed clock are skipped, not guessed at.
 function stageTimeIssues(stages) {
   const out = [];
-  let prev = null, prevEnd = NaN;
+  let prev = null, prevEnd = NaN, prevKey = null;
   for (let i = 0; i < stages.length; i++) {
     const a = stageStartMs(stages[i]);
     if (!isFinite(a)) continue;
+    // This list is one entry per CHART, not per stage — serialize() appends
+    // every series result and only build_well groups them. A STEP page draws
+    // its Surface and Chemical plots of the SAME stage, so 00540 arrives as
+    // 102 entries in 51 pairs whose starts differ by SECONDS, and comparing
+    // the pair against itself flagged all 51 while the well ran perfectly in
+    // order — 8 hours a stage, three days, nothing overlapping (#589).
+    // One stage's several plots are one stage: take the latest end among them
+    // and compare the NEXT stage against that.
+    const key = String(stages[i].meta.stage || "");
+    if (key !== "" && key === prevKey) {
+      const e = stageEndMs(stages[i]);
+      if (isFinite(e) && (!isFinite(prevEnd) || e > prevEnd)) prevEnd = e;
+      continue;
+    }
     if (prev !== null && isFinite(prevEnd) && a < prevEnd)
       out.push({ i, st: stages[i], prev, prevEnd });
     prev = i;
+    prevKey = key;
     prevEnd = stageEndMs(stages[i]);
   }
   return out;
