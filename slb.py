@@ -397,7 +397,8 @@ def _spans(page, rot):
             r = w["rect"]
             x0, y0, x1, y1 = _box(rot, (r[0], r[1], r[2], r[3]))
             out.append({"t": t, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                        "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2})
+                        "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2,
+                        "ocr": True})
     except Exception:
         return out                      # OCR is a bonus, never a dependency
     return out
@@ -600,6 +601,39 @@ def _value_axes(spans, frame):
 _SWATCH_MIN, _SWATCH_MAX = 12.0, 60.0
 
 
+# The swatch stroke itself OCRs as a dash glued to the first word of its own
+# label — "—GORV", "—Prop", "—BH" on 00121 p134 — so the dash comes off the
+# front before the label is classified.
+_SWATCH_DASH = re.compile(r"^[\s\u2014\u2013\u2012\u2010~=_-]+")
+
+
+def _ocr_label(spans, cy, sw_x0, next_x0):
+    """One swatch's label, joined from the OCR words that belong to it.
+
+    OCR hands back a WORD at a time, so "Treating Pressure" arrives as two
+    spans and the nearest-span rule below reads "Pressure" — which classifies
+    as nothing, and left every colour on 00121's chart unowned (#569, #582).
+
+    Joining is only safe with a bound on the far end, because this legend is a
+    single ROW: all five keys share cy 529.1, so "everything to the right"
+    swallows the whole row and every swatch reads the same string. The bound is
+    the NEXT swatch on the line. And the near end cannot be the swatch's right
+    edge either — tesseract merges the stroke into the first word, so that word
+    STARTS left of where the swatch ends. Overlap on the near side, centre on
+    the far side.
+
+    A previous attempt joined words globally in _spans instead, and had to be
+    backed out: it fixed the legend and broke the time axis, because the tick
+    labels got joined too. Nothing here touches a span any other reader sees.
+    """
+    got = [s for s in spans
+           if abs(s["cy"] - cy) <= 12
+           and s["x1"] > sw_x0                    # overlaps or follows
+           and s["cx"] < next_x0]                 # before the next key
+    got.sort(key=lambda s: s["x0"])
+    return _SWATCH_DASH.sub("", " ".join(s["t"] for s in got)).strip()
+
+
 def _legend(page, rot, frame, spans):
     """-> [(rgb, label)] read off the page's own key.
 
@@ -608,7 +642,7 @@ def _legend(page, rot, frame, spans):
     not used: the SLB legend is also where the scale multiplier is printed,
     so the label has to be read anyway and reading it settles the colour too.
     """
-    out = []
+    keys = []
     for d in page.get_drawings():
         # A stroked key is one segment. The filled vintage draws the same
         # 20.8 x 1.6pt sliver as a closed outline of six items, so it needs
@@ -628,17 +662,28 @@ def _legend(page, rot, frame, spans):
         cy = (y0 + y1) / 2
         if cy <= frame[3] + 2:
             continue                       # inside or above the plot
-        label, bestd = "", 1e9
-        for s in spans:
-            if abs(s["cy"] - cy) > 12:
-                continue
-            if s["x0"] < x1 - 3:
-                continue
-            d2 = s["x0"] - x1
-            if d2 < bestd and d2 < 90:
-                bestd, label = d2, s["t"]
+        keys.append({"color": color, "x0": x0, "x1": x1, "cy": cy})
+    keys.sort(key=lambda k: (k["cy"], k["x0"]))
+    ocr = any(s.get("ocr") for s in spans)
+    out = []
+    for i, k in enumerate(keys):
+        if ocr:
+            # where the NEXT key on this same row starts — the far bound
+            nxt = next((n["x0"] for n in keys[i + 1:]
+                        if abs(n["cy"] - k["cy"]) <= 12), float("inf"))
+            label = _ocr_label(spans, k["cy"], k["x0"], nxt)
+        else:
+            label, bestd = "", 1e9
+            for s in spans:
+                if abs(s["cy"] - k["cy"]) > 12:
+                    continue
+                if s["x0"] < k["x1"] - 3:
+                    continue
+                d2 = s["x0"] - k["x1"]
+                if d2 < bestd and d2 < 90:
+                    bestd, label = d2, s["t"]
         if label:
-            out.append((tuple(round(c, 3) for c in color), label))
+            out.append((tuple(round(c, 3) for c in k["color"]), label))
     return out
 
 
