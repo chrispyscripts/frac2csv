@@ -78,6 +78,7 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from frac_core import PageMeta, _resample
+import ocr_labels
 
 # ---------------------------------------------------------------- detection
 
@@ -109,10 +110,28 @@ def detect_prc(page):
     naming the plot cannot be mistaken for one.
     """
     text = page.get_text()
-    if _head(page) != PRC_TITLE:
+    if _head(page) == PRC_TITLE:
+        return ("Customer:" in text and re.search(r"^License:", text, re.M)
+                is not None)
+    # A page whose strings are outlines has no head to read.
+    #
+    # The head check is there so a table of contents naming the plot cannot be
+    # taken for one, and the Customer/License pair is what corroborates it. On
+    # a page with no text layer the reading ORDER is lost — tesseract returns
+    # 00121 p134 with "Schlumberger" first and "PRC Plot" further down — but
+    # both corroborating markers survive intact, so the title is accepted
+    # anywhere on the page and the pair still has to be there. A contents page
+    # carries neither.
+    if not ocr_labels.available():
         return False
-    return ("Customer:" in text and re.search(r"^License:", text, re.M)
-            is not None)
+    try:
+        if not ocr_labels.garbled(page):
+            return False
+        text = ocr_labels.page_text(page) or ""
+    except Exception:
+        return False
+    return (PRC_TITLE in text and "Customer:" in text
+            and re.search(r"^License:", text, re.M) is not None)
 
 
 # ------------------------------------------------- per-page classification
@@ -302,6 +321,31 @@ def _box(rot, bbox):
 
 
 def _spans(page, rot):
+    """The page's text, as spans — OCR'd when the page has none to give.
+
+    A PRC chart can be perfectly drawn and carry not one readable character:
+    the curves are real strokes and the frame is a real rectangle, but every
+    string on it has been converted to outlines. Swept over Carmine's newer
+    drive, 184 of 2,917 filings are like that, and their chart pages hold a
+    MEDIAN OF ZERO readable characters against 347 on everything else. 00121
+    is one — 577 pages, 288,439 characters, and none of them on a chart.
+
+    Everything this module does downstream reads spans: the time axis, the
+    value axes, the legend, the interval caption, and detect_prc itself. So
+    the page failed at the first gate and 21 chart pages of real vector
+    curves were thrown away for want of a legend — issues #548, #569, #582.
+
+    Rendering the page and reading the labels back recovers them. Measured on
+    00121 p134: "Schlumberger" and "PRC Plot" at confidence 96, "License:
+    0492089 // Interval 1" at 92-97, and both tick columns — 100.0/90.0/80.0
+    and 500/450/400 — at 96-97, with 25 numeric spans placed in page
+    coordinates.
+
+    ONLY when the page has nothing of its own. A filing with a text layer is
+    read exactly as before; nothing here can put an OCR guess where a printed
+    string exists. And the geometry is untouched either way — this reads
+    labels, never curves.
+    """
     out = []
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
@@ -312,6 +356,21 @@ def _spans(page, rot):
                 x0, y0, x1, y1 = _box(rot, span["bbox"])
                 out.append({"t": t, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
                             "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2})
+    if out or not ocr_labels.available():
+        return out
+    try:
+        if not ocr_labels.garbled(page):
+            return out
+        for w in ocr_labels.words(page):
+            t = (w.get("text") or "").strip()
+            if not t:
+                continue
+            r = w["rect"]
+            x0, y0, x1, y1 = _box(rot, (r[0], r[1], r[2], r[3]))
+            out.append({"t": t, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                        "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2})
+    except Exception:
+        return out                      # OCR is a bonus, never a dependency
     return out
 
 
@@ -750,7 +809,19 @@ def page_stage(page):
     12 charts four separate runs. Keeping the printed suffix keeps them
     four stages, in the same style as CalFrac's "9A" / "12 Attempt 2".
     """
-    m = _LICENSE.search(page.get_text())
+    text = page.get_text()
+    m = _LICENSE.search(text)
+    if not m and ocr_labels.available():
+        # An outlined page has no License line to search. It is still printed
+        # there — 00121 p134 reads "License:", "0492089", "//", "Interval",
+        # "1" — so read it off the render, for the same reason and under the
+        # same guard as _spans and detect_prc: only when the page carries no
+        # text of its own.
+        try:
+            if ocr_labels.garbled(page):
+                m = _LICENSE.search(ocr_labels.page_text(page) or "")
+        except Exception:
+            m = None
     if not m:
         return None
     n = _INTERVAL.search(m.group(0))
