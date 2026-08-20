@@ -1116,6 +1116,26 @@ window.addEventListener("message", ev => {
     return;
   }
   if (d.type !== "fv:well") return;
+  // A re-push of the SAME well is a reconnect, not a new well.
+  //
+  // This window asks the Lab for its state on focus, so that a Lab which was
+  // reloaded can find it again. The answer is a full fv:well payload, and
+  // rebuilding on it threw away the span, the zoom, the selection and any
+  // hidden channel — so every time Carmine came back from another tab the
+  // view had reset to All and zoomed out. The ask is right; unconditionally
+  // starting over on the answer was not.
+  //
+  // Same file, same stage count: keep what is on screen. An edit in progress
+  // survives too, because `edits` is not touched.
+  const sameWell = !!(well && d.file === well.file &&
+                      (d.stages || []).length === (well.stages || []).length);
+  if (sameWell) {
+    well = d;
+    MAXES = chanMax();
+    $("title").textContent = d.file || "well";
+    draw();
+    return;
+  }
   well = d;
   MAXES = chanMax();
   if (d.edits && d.edits.bounds && d.edits.bounds.length >= 2) {

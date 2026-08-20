@@ -92,10 +92,12 @@ const ORIGIN = (location.origin && location.origin !== "null") ? location.origin
 // so one time position is one x position all the way down the window.
 const PAD = { L: 64, R: 14, T: 10, B: 10 };
 const AXIS_H = 28;        // extra bottom room on the last chart for time labels
-const ROW_H = 256;        // css px per chart body — doubled from 128, because
-                          // a channel gets a quarter of its own axis range in
-                          // most stages and 128px left the interesting part of
-                          // the curve inside a few dozen pixels
+const ROW_H = 512;        // css px per chart body — doubled again, from 256,
+                          // at Carmine's ask. A channel gets a quarter of its
+                          // own axis range in most stages, so even at 256 the
+                          // part being read sat inside a band a few dozen
+                          // pixels tall. The window scrolls; height is cheap
+                          // and the shape of the curve is the whole point
 const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
             ink: "#14181d", mut: "#697077" };
 

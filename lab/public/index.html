@@ -3709,7 +3709,12 @@ function fvPayload(entry) {
     t0: starts[i],
     dsec: st.sample_sec || 1,
     n: st.n,
-    channels: st.channels.map(c => {
+    // Our Terms only, exactly as the Lab's own graph and the stacked window
+    // already do it — both gate on inMode(), and FracView was the one view
+    // that did not, so a vendor extra like Gorv Pressure or Monitor Pressure
+    // drew here and nowhere else. Switching Curve naming to "As extracted"
+    // still shows everything, so nothing is hidden for good.
+    channels: st.channels.filter(inMode).map(c => {
       const src = c.values, len = src.length;
       const vals = new Float64Array(len);      // block copy, no boxed nulls
       for (let j = 0; j < len; j++) {
