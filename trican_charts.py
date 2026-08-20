@@ -242,6 +242,37 @@ def _first_row_band(strip):
     return None
 
 
+def _fix_dropped_points(pts, dotted):
+    """Put back the decimal point OCR lost. -> pts
+
+    This vintage prints one decimal place on every elapsed-time tick — "394.0",
+    "404.0", "414.0". When tesseract loses the point the label comes back as
+    "4140": exactly ten times its own value, and it does that to some labels on
+    a row and not others.
+
+    00016 p48 is the case, and it cost a whole stage. Five of its eight labels
+    read 4140, 4240, 4340, 4440 and 4540 while 394.0, 404.0 and 467.2 survived
+    intact. RANSAC then had a five-point MAJORITY agreeing on a slope ten times
+    too steep, so the misreads became the inliers and the correct labels the
+    outliers. The frame anchor below could not rescue it either, because it
+    takes its two ends from the inliers and those no longer reached the frame.
+    The stage came out at 732 minutes against its neighbours' 64 to 84, tripped
+    the implausible-duration guard, and Trican stage 6 left the export entirely
+    with one line in the notes to say why.
+
+    The mix is the evidence. A row that prints decimals prints them on every
+    tick, so a label WITHOUT one sitting among labels WITH one has lost it, and
+    dividing by ten is not a guess — it is the inverse of what happened. Left
+    alone: a row where nothing carries a decimal, which is an integer axis with
+    nothing to repair, and any dotless value that is not a multiple of ten,
+    which cannot have come from a lost point.
+    """
+    if len(pts) != len(dotted) or not any(dotted) or all(dotted):
+        return pts
+    return [(v, cx) if has_dot or v % 10 else (v / 10.0, cx)
+            for (v, cx), has_dot in zip(pts, dotted)]
+
+
 def time_axis(img, x0, x1, y1):
     """Read the "Elapsed Time (min)" labels -> (minutes at x0, min/px).
 
@@ -262,6 +293,7 @@ def time_axis(img, x0, x1, y1):
         return None
     lab = strip[band[0]:band[1], :]
     pts = []
+    dotted = []                 # did this label's OCR keep its decimal point?
     for ca, cb in _ink_columns(lab, gap=8):
         if cb - ca < 8:
             continue
@@ -276,9 +308,11 @@ def time_axis(img, x0, x1, y1):
             t = text.strip(".")
             if re.fullmatch(r"\d+(\.\d+)?", t):
                 pts.append((float(t), cx))
+                dotted.append("." in t)
                 break
     if len(pts) < 3:
         return None
+    pts = _fix_dropped_points(pts, dotted)
     fit = _ransac(pts, x0, x1)
     if fit is None:
         return None

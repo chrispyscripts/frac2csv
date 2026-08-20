@@ -1328,6 +1328,49 @@ class SLBServiceReport(unittest.TestCase):
         self.assertEqual(got, {5: "2018-07-11"})
 
 
+class TricanDroppedDecimal(unittest.TestCase):
+    """The decimal point OCR loses off an elapsed-time label (#581).
+
+    00016 p48 cost a whole stage. This vintage prints one decimal place on
+    every tick, and tesseract dropped it on five of the eight: 4140, 4240,
+    4340, 4440, 4540 against an intact 394.0, 404.0 and 467.2. Five agreeing
+    misreads outvoted three correct labels, RANSAC fitted a slope ten times
+    too steep, the frame anchor could not help because it takes its ends from
+    the inliers — and the stage came out 732 minutes against its neighbours'
+    64 to 84, tripped the duration guard and left the export.
+    """
+    def test_the_real_p48_row(self):
+        pts = [(394.0, 107), (404.0, 215), (4140, 323), (4240, 431),
+               (4340, 539), (4440, 647), (4540, 755), (467.2, 898)]
+        dotted = [True, True, False, False, False, False, False, True]
+        got = tc._fix_dropped_points(pts, dotted)
+        self.assertEqual([v for v, _x in got],
+                         [394.0, 404.0, 414.0, 424.0, 434.0, 444.0, 454.0, 467.2])
+
+    def test_an_all_decimal_row_is_untouched(self):
+        pts = [(320.0, 107), (330.0, 205), (340.0, 303)]
+        got = tc._fix_dropped_points(pts, [True, True, True])
+        self.assertEqual(got, pts)
+
+    def test_an_integer_axis_is_untouched(self):
+        """Nothing carries a point, so nothing lost one."""
+        pts = [(10, 107), (20, 205), (30, 303)]
+        got = tc._fix_dropped_points(pts, [False, False, False])
+        self.assertEqual(got, pts)
+
+    def test_a_dotless_value_that_is_not_a_multiple_of_ten_is_left(self):
+        """A lost point always leaves a multiple of ten behind. 417 cannot
+        have come from one, so it is some other misread and not ours to
+        'fix'."""
+        pts = [(394.0, 107), (417, 323), (467.2, 898)]
+        got = tc._fix_dropped_points(pts, [True, False, True])
+        self.assertEqual([v for v, _x in got], [394.0, 417, 467.2])
+
+    def test_mismatched_bookkeeping_changes_nothing(self):
+        pts = [(394.0, 107), (4140, 323)]
+        self.assertEqual(tc._fix_dropped_points(pts, [True]), pts)
+
+
 class TricanDerivedConcAxis(unittest.TestCase):
     """The borrowed concentration axis, and the check it has to pass (#564).
 
