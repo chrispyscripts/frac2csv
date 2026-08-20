@@ -1,8 +1,8 @@
 # Frac2CSV — session handoff
 
-Rewritten 2026-08-13. Repo: `frac-pdf-extract/frac2csv` (the git repo is that
-directory, **not** the parent). Shipped: **v0.9.10**, tagged and building as a
-Windows EXE, notes live on the download page.
+Rewritten 2026-08-13, updated 2026-08-20. Repo: `frac-pdf-extract/frac2csv`
+(the git repo is that directory, **not** the parent). Shipped: **v1.4.0**,
+tagged and building as a Windows EXE, notes live on the download page.
 
 ## Read this first
 
@@ -17,15 +17,36 @@ Two rules earned the hard way, and both caught real defects again tonight:
    measure it again after the fix.
 
 A corollary worth its own line: **check your harness before you trust its
-result.** The first before/after run this session reported "no change on every
-channel" because the harness unpacked four return values as three and silently
-recorded 103 errors. The number that looks like a null result is often a bug in
-how you measured.
+result.** The first before/after run of the 2026-08-13 session reported "no
+change on every channel" because the harness unpacked four return values as
+three and silently recorded 103 errors. The number that looks like a null
+result is often a bug in how you measured.
+
+It happened twice more on 2026-08-20, both times producing a confident and
+wrong answer:
+
+- A probe measuring a fix REIMPLEMENTED the old code inline, so it could not
+  see the change it was written to measure. Measure through the real call
+  path, never through a copy of it.
+- A before/after harness ran `git stash push` on an already-clean tree, so
+  its "before" was the current code and the diff was empty. An IDENTICAL
+  result is only meaningful if you have proved the two sides actually differ —
+  check that the branch under test is even reached.
+
+And one about agents: a subagent reported "89 files errored" as fact. The
+rows said otherwise, because it had already retried them. **Read the data the
+agent read** before repeating what it concluded.
 
 ## In flight right now
 
-Nothing is running. The CalFrac corpus pass that was live at the last handoff
-finished; its result is in the v0.9.10 numbers below.
+`batch-lists/vector-no-text/profile_providers.py` is identifying which vendor
+each of the 184 pure-vector filings belongs to, one OCR per file, appending to
+`providers.tsv`. Resumable — re-run it and it carries on. Its answer decides
+whether finishing the SLB OCR path (below) is worth it or whether the effort
+belongs elsewhere.
+
+Three local app instances are running and ALL of them predate the 2026-08-20
+parser work. Cycle them before testing anything.
 
 ## Two drives, and they drop
 
@@ -89,6 +110,34 @@ IFS and Hal-1 clusters.
 early test issues, and several open ones (#100, #102, #110) are Carmine saying
 something *works*. Read the body before treating a number as a defect.
 
+## Landed 2026-08-19/20 (v1.3.0, v1.4.0)
+
+Fully described in the git log and on the download page; what follows is only
+what a future session needs to KNOW rather than what shipped.
+
+- **FracView could not open at all, on any well, for most of a day.** A button
+  removed from the markup left its handler bound at top level, the TypeError
+  killed every statement below it — including the one that announces the window
+  to the Lab — and the symptom was "Waiting for the Lab…" forever. Bindings now
+  go through `bind()`, which warns and carries on. If a companion window ever
+  goes silent again, read its console before anything else.
+- **SLB PRC charts never reported an axis.** `meta.axes` was set in exactly one
+  place in `slb.py`, the raster Zone-sheet path, so every vector chart fell to
+  the Lab's rounded-peak fallback and read "(guessed)". Four reports, one cause.
+  **No exported value changed** — 306 channels measured identical — because the
+  values always came off the real tick fit. Only the axis reported and drawn
+  against was invented.
+- **Two date sources added.** HAL-2 vector charts read their ISO axis label
+  (00328: 41 undated stages -> 41 dated); SLB PRC charts read the Stimulation
+  Service Report when no Zone Summary sheet exists (00011: 52 of 52 intervals).
+  Both were verified against dates the reports print elsewhere for themselves.
+- **A stage whose clock runs backwards is now detected on open**, with a manual
+  correction that reaches the CSV. The rule is "starts before the previous one
+  ENDED", so a long wait between stages is never mistaken for a fault.
+- **Trican layout B**: the rate trace was losing 41% of itself to a gridline
+  guard, and both concentrations were dropped for want of an axis that turned
+  out to be shared. See the two entries under "do not re-litigate".
+
 ## Landed in v0.9.10
 
 - **Trican conc at zero (#105, #109).** `extract_image` cropped the plot as
@@ -124,6 +173,39 @@ something *works*. Read the body before treating a number as a defect.
   no geometry, so Compare Original fitted the whole sheet, tables and all.
 
 ## Open, highest value first
+
+- **The pure-vector class is bundled and measured.** 184 of 2,917 filings on
+  `/Volumes/CnC-2TB-ssd` draw their chart labels as outlines: 127 in
+  AER-Frac-Montney-ARC, 57 in BCER-Frac, 0 in Nuvista and Paramount. Lists of
+  20 and an INDEX are in `batch-lists/vector-no-text/`. The test is
+  `pipeline.vector_no_text()`, and it must be asked of the pages that DRAW
+  CURVES, not of the document — 00121 carries 288,439 characters over 577
+  pages and not one is on a chart. Median chart-page characters: **0** on the
+  hits, **347** on everything else. There is no threshold to tune.
+  - Nuvista's zero is NOT a clean negative. Only 7 of its 233 files register a
+    chart page at all: its charts are RASTER, a different class this detector
+    structurally cannot see. Read its zero as "not this class".
+- **SLB reads three of the gates on a pure-vector page; it stops at the
+  fourth.** `_spans`, `detect_prc` and `page_stage` all fall back to
+  `ocr_labels` when — and only when — a page carries no text of its own. On
+  00121 that took pages 131-260 from 0 detected to 19 detected and named.
+  It now fails at `_time_axis`: three clock labels are wanted among the OCR
+  spans and are not being found, though the render plainly holds them ("5:07
+  AM" reads at the top of the page text). Behind that gate are the value axes
+  and the legend, and THOSE are where accuracy starts to matter — a wrong
+  answer there becomes a number in a CSV rather than a page that is skipped.
+  Feasibility is not in doubt: labels read at confidence 92-97, both tick
+  columns included.
+- **Liberty's frame fit drifts, and the drift is measured.** Over all 85
+  charts / 522 channels of 00494, frame-vs-printed error runs median 2.27%,
+  p90 4.40%, worst 13.02%, with 49% of channels over 3%. The on-screen tick
+  labels snap to the printed number but only within 2.5%, which is why some
+  stages look right and others do not. That tolerance was deliberately NOT
+  widened — it is the only thing between a drifting fit and a chart showing
+  round numbers it did not earn. The tell that it is a fit error rather than a
+  frame that legitimately extends past its ticks: stage 60's conc reads
+  -227.94..1640.05 against a printed 0..1750 — low end outward, high end
+  INWARD.
 
 - **THE 2025 FILINGS: THREE DIFFERENT PROBLEMS, not one.** An earlier version
   of this file said "33 have NO detector firing at all... one document class
@@ -242,7 +324,22 @@ something *works*. Read the body before treating a number as a defect.
   not in any build. Decide whether to finish or delete them.
 - **#73** — the Alberta `AB_WCF` file is not on any drive. Ask Carmine for it.
 
-## Two things measured and settled — do not re-litigate
+## Measured and settled — do not re-litigate
+
+- **Trican layout B's gridline colour cannot be found by colour.** This
+  template tints each axis's rules to MATCH that axis's own curve, so the
+  obvious fix — pick the rule colour by what dominates across all the rule
+  rows — fails: the rate blue still wins 10/12, 10/13 and 9/11 on three pages
+  of 00583. Structure separates them and colour never will. A rule is ~360
+  runs of ONE pixel; the curve on the row beside it is 8 runs of median 22.
+- **Trican WH Prop Conc's gaps are not fillable from DH.** Over all 23 chart
+  pages of 00583: 109 blank runs, 8,148 columns, and 6,882 of those columns —
+  84% — are before its first reading or after its last. That is the pad and
+  the flush, and `ct.resample` is right to hand back nothing. Of the 66
+  mid-chart runs, exactly ONE has WH at zero on both sides. Filling from the
+  neighbouring curve would invent a concentration for the other 65. This is
+  the third time this class has been attempted; the handoff warned about it
+  and was right again.
 
 - **Trican gridlines are not a defect.** Carmine suggested removing the
   horizontal grid lines. They are pure neutral grey `(211,211,211)`, zero
