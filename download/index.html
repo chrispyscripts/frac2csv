@@ -38,6 +38,53 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.4.0</h2>
+    <ul>
+      <li><b>A Trican stage was going missing entirely.</b> Its elapsed-time
+        labels print one decimal place and the reader dropped the point on
+        five of the eight &mdash; &ldquo;414.0&rdquo; came back as
+        &ldquo;4140&rdquo; &mdash; so five misreads outvoted three good ones,
+        the stage measured 732 minutes against its neighbours' 64 to 84, and
+        it was thrown out as impossible. 00016 goes from 28 stages to 29</li>
+      <li><b>Trican image charts: the rate trace was losing 41% of itself</b>
+        to a guard that mistook the curve for a gridline. On this layout the
+        gridlines are drawn in the same colour as the curve they belong to,
+        so the two can only be told apart by shape &mdash; a rule is hundreds
+        of one-pixel dashes, a curve is a handful of long runs. It asks the
+        row now</li>
+      <li><b>And both Trican proppant concentrations were missing from every
+        page.</b> The concentration axis prints only its zero, because it
+        SHARES the rate axis at 100&times; &mdash; the same scale your other
+        Trican layout has always used. Checked against the Conc Maximum each
+        page prints for itself: 480.4 against a printed 483.1, 539.1 against
+        537.0, 553.8 against 552.2. Three channels became five</li>
+      <li><b>CalFrac charts headed &ldquo;Zone #1&rdquo; now read their
+        zone.</b> The hash sat where a space was expected, so 00525's 100
+        charts came through with no stage at all and merged into one. It now
+        reads 50 zones, one sheet each, all four terms on every one</li>
+      <li><b>A stage whose clock runs backwards is now caught the moment you
+        open the file.</b> A banner over the graph and a mark against the
+        stage in the list. Mislabelled times are hard to see one stage at a
+        time and obvious across a well &mdash; 00495 has 66 stages and one of
+        them is dated two days before the job starts. <b>&ldquo;Fix
+        time&rdquo;</b> beside the flagged stage takes the corrected date and
+        time and carries it into the graphs and the CSV; the sheet's original
+        is kept, so you can undo it</li>
+      <li><b>FracView has a Sequence view</b> &mdash; one line, the stage's
+        position against the clock. Laid out correctly it is a single
+        ascending staircase, so a stage whose clock is wrong leaves the line
+        where nothing else would show it</li>
+      <li><b>FracView Real Time shows the waiting.</b> The gap between one
+        stage finishing and the next starting is drawn as its own shaded span
+        with its length on it &mdash; &ldquo;5h 30m &middot; no readings&rdquo;
+        &mdash; instead of being coloured in as part of the stage before it</li>
+      <li>Coming back to FracView from another tab no longer resets the view
+        to All and zooms out, and only Our Terms are drawn there now, as
+        everywhere else</li>
+      <li>The chart type no longer rides along in the stage label: a stage
+        called &ldquo;1 Surface&rdquo; exports as 1</li>
+      <li>Stacked charts are twice the height</li>
+    </ul>
     <h2>v1.3.0</h2>
     <ul>
       <li><b>FracView would not open at all.</b> It sat on &ldquo;Waiting for
