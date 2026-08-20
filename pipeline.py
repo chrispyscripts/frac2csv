@@ -121,6 +121,26 @@ def _mview_variant(page):
     return ""
 
 
+# Placed on the corpus, not on one file. Over all 10,068 IFS pages in the 56
+# __HAL filings, the largest image on a page that CHARTS FINE is 102,750px and
+# the largest on a table of contents is 27,000, while the smallest image on a
+# page whose chart is a bitmap is 245,403 — a 2.4x gap with nothing in it. The
+# midpoint is the honest place to stand: ~1.55x clear of both sides, where the
+# 200k this started at sat only 1.23x below the smallest real chart. The two
+# values classify the measured corpus IDENTICALLY, because the gap is empty;
+# the midpoint is for the files nobody has looked at yet.
+_BIG_IMAGE_PX = 160_000
+
+
+def _has_big_image(page):
+    """Does this page carry an image big enough to BE the chart?"""
+    try:
+        return any(im[2] * im[3] > _BIG_IMAGE_PX
+                   for im in page.get_images(full=True))
+    except Exception:
+        return False
+
+
 def _why_nothing(doc, npages, raster):
     """Say WHY a file produced nothing, not just that it did.
 
@@ -1240,6 +1260,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # schematic/table pages that draw like charts — reported as one line, not
     # one per page: a 171-page report has dozens and they are not errors
     _not_charts = []
+    # IFS pages that name an interval and carry the chart as a BITMAP instead
+    # of vector art. The reader is a vector reader, so it finds no strokes and
+    # the page is skipped — which is correct, but it used to happen in total
+    # silence: 00611's Interval 27 vanished with no note and no error, and the
+    # only reason anyone noticed is that Carmine counts sequential stages
+    # (#557). [(page, label)], reported as one line.
+    _ifs_raster = []
     # Channels a Trican layout-B page traced and then had to drop. extract_
     # image_b has always built these and nothing ever read them, so a chart
     # that came back with three of its five channels said nothing about the
@@ -1312,7 +1339,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # its ten intervals produced nothing at all, silently, through the
             # same no-note skip the comment above describes.
             titled = re.search(
-                r"Interval\s+\d{1,3}[A-Za-z]?\s*[-–]\s*(?:Entire|Main)\s+"
+                r"Interval\s+(\d{1,3}[A-Za-z]?)\s*[-–]\s*(?:Entire|Main)\s+"
                 r"Treatment", text)
             # v4.2.0 names no interval at all — the section number carries it
             sect = None if titled else ifs.section_stage(page)
@@ -1332,6 +1359,23 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                            frames=getattr(meta, "axes_frame", None)))
                 except Exception as e:
                     notes.append(f"p{pno + 1}: IFS chart failed — {e}")
+            elif (titled or sect) and _has_big_image(page):
+                # An IFS page that names an interval and prints no clock is
+                # normally the table of contents, which lists every interval
+                # title in the report and is right to be skipped — that is what
+                # the clock count above is for. A page carrying a LARGE image
+                # is a different animal: the chart IS there, rendered as a
+                # bitmap rather than drawn. 00611 p261 is Interval 27 in three
+                # 2702px images and ONE vector path, against 192 paths and
+                # 32,936 items on the vector chart page beside it. No reader
+                # covers that layout yet, so the interval genuinely produces
+                # nothing — but it must not do so in silence, which is the same
+                # defect as #564 and 00183: an honest gap and a parser failure
+                # look identical when neither says anything.
+                _ifs_raster.append(
+                    (pno + 1,
+                     f"Interval {titled.group(1)}" if titled
+                     else f"section {sect[0]}"))
             continue
 
         if slb.detect(page):
@@ -1675,6 +1719,14 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             f"{', …' if len(_pages) > 8 else ''}). The curve was traced; it is "
             f"the axis that could not be read, so there is nothing to scale it "
             f"against and it is left out rather than guessed at.")
+    if _ifs_raster:
+        notes.append(
+            f"{len(_ifs_raster)} interval chart(s) drawn as a bitmap "
+            f"instead of vector art, so nothing was extracted from them: "
+            f"{', '.join(f'{lbl} (p{pg})' for pg, lbl in _ifs_raster[:8])}"
+            f"{', …' if len(_ifs_raster) > 8 else ''}. The chart is in the "
+            f"PDF and can be read by eye; it is this reader that cannot, "
+            f"because it looks for stroked curves and finds a picture.")
     if _not_charts:
         notes.append(f"{len(_not_charts)} page(s) skipped as schematics or "
                      f"tables that draw like charts (p"
