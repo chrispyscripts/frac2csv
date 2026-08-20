@@ -296,6 +296,23 @@ def detect_document(doc):
 
 
 def _rotated(page):
+    """Is this chart drawn turned on the page?
+
+    Read from the direction its text lines run — except that a page whose
+    strings are outlines HAS no text lines, so the count comes back 0 to 0 and
+    the page is called upright by default. It is not: 00121 p134 draws the
+    same chart as any other PRC page with the frame portrait (88..475 wide by
+    96..704 tall, where an upright one is 81..667 by 87..475) and its clock
+    labels running DOWN the right-hand side at a constant x, where an upright
+    page has them along the bottom at a constant y.
+
+    That is Carmine's "Rotated and fully vector SCHLUM-1" (#569), and called
+    upright the whole chart is read against the wrong pair of axes.
+
+    So when there is no text to take a direction from, take it from the OCR:
+    68 of 00121 p134's 79 words come back taller than they are wide, which is
+    what vertical text looks like once the render is mapped into page space.
+    """
     vert = horiz = 0
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
@@ -305,7 +322,19 @@ def _rotated(page):
                 vert += n
             else:
                 horiz += n
-    return vert > horiz and vert >= 3
+    if vert or horiz:
+        return vert > horiz and vert >= 3
+    if not ocr_labels.available():
+        return False
+    try:
+        if not ocr_labels.garbled(page):
+            return False
+        words = ocr_labels.words(page)
+    except Exception:
+        return False
+    tall = sum(1 for w in words
+               if (w["rect"][3] - w["rect"][1]) > (w["rect"][2] - w["rect"][0]))
+    return tall > (len(words) - tall) and tall >= 3
 
 
 def _pt(rot, x, y):
@@ -907,7 +936,24 @@ def _extract_core(page, sample_sec=1.0):
     scales, frames = {}, {}
     tmin_all, tmax_all = None, None
     for rgb, arr in curves.items():
-        col, kind, mult, label = wanted[rgb]
+        # A colour the legend did not claim is skipped, not raised.
+        #
+        # _curves is handed the wanted colours, but a page can still return one
+        # that is not among them, and this used to index straight into `wanted`
+        # — so the whole page failed with a bare tuple for a message,
+        # "SLB PRC chart failed — (1.0, 0.0, 0.0)", which says nothing about
+        # what went wrong. It is the same unhelpful shape _ink's comment
+        # records from the grey-curve bug.
+        #
+        # It matters most on the outlined pages: their legend text is OCR'd a
+        # WORD at a time, so "Treating Pressure (MPa)" arrives as "Pressure"
+        # and _classify claims nothing, leaving every curve on the page
+        # unowned. Dropping the curve loses that channel; raising loses the
+        # page and the other three with it.
+        hit = wanted.get(rgb)
+        if hit is None:
+            continue
+        col, kind, mult, label = hit
         ax = _pick_axis(axes, kind)
         if ax is None:
             continue
