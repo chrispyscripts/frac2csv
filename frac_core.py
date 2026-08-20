@@ -455,7 +455,16 @@ def detect_text_meta(page, meta=None):
     if not meta.uwi:
         meta.warnings.append("UWI not found in page text")
 
-    m = re.search(r"(?:Zone|Stage)\s+(\d+)", text)
+    # "Zone #1" as well as "Zone 1". The hash is a real caption form — MView
+    # heads its 2021 Strathcona charts "102/06-21 - Zone #1" — and requiring
+    # whitespace between the word and the number missed every one of them, so
+    # a 100-chart filing came through with the stage unknown on all of it and
+    # every chart merged under one "?" key (#579).
+    #
+    # A separator is still REQUIRED: a hash, or space, or both. "Zone1" does
+    # not match and neither does a bare "Zone12" appearing inside some longer
+    # token, which is what the original \s+ was protecting against.
+    m = re.search(r"(?:Zone|Stage)(?:\s*#\s*|\s+)(\d+)", text)
     if m:
         meta.stage = m.group(1)
     elif ocr_labels.garbled(page):

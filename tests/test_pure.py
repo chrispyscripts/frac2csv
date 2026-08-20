@@ -1328,6 +1328,44 @@ class SLBServiceReport(unittest.TestCase):
         self.assertEqual(got, {5: "2018-07-11"})
 
 
+class ZoneCaptionHash(unittest.TestCase):
+    """"Zone #1" is a zone caption too (#579).
+
+    MView heads its 2021 Strathcona charts "102/06-21 - Zone #1". The pattern
+    required whitespace between the word and the number, so none of them
+    matched: 00525 came through with the stage unknown on all 100 of its
+    charts and every one merged under a single "?" key.
+
+    A separator is still required. "Zone1" must not match, which is what the
+    original \\s+ was protecting against.
+    """
+    PAT = re.compile(r"(?:Zone|Stage)(?:\s*#\s*|\s+)(\d+)")
+
+    def _stage(self, text):
+        m = self.PAT.search(text)
+        return m.group(1) if m else None
+
+    def test_the_hash_form(self):
+        self.assertEqual(self._stage("102/06-21 - Zone #1"), "1")
+        self.assertEqual(self._stage("Zone #12"), "12")
+        self.assertEqual(self._stage("Zone # 9"), "9")
+
+    def test_the_plain_form_still_reads(self):
+        self.assertEqual(self._stage("Zone 8"), "8")
+        self.assertEqual(self._stage("Stage 05"), "05")
+        self.assertEqual(self._stage("Stage  7"), "7")
+
+    def test_a_separator_is_required(self):
+        """"Zone1" is not a caption, and neither is Zone inside a longer
+        token."""
+        self.assertIsNone(self._stage("Zone1"))
+
+    def test_a_range_caption_is_left_to_its_own_reader(self):
+        """"Zones 5 - 24" is a multi-zone Progress page — ZONES_CAPTION owns
+        it, and matching "Zone" here would claim the page as a single stage."""
+        self.assertIsNone(self._stage("Zones 5 - 24"))
+
+
 class VectorNoText(unittest.TestCase):
     """Identifying a filing whose CHARTS draw their labels instead of writing
     them (#548, #569, #582).

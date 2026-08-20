@@ -1689,7 +1689,26 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         if st:
             last_stage = st
         elif last_stage:
-            r["meta"]["stage"] = last_stage     # blank conc page -> its stage
+            # The ZONE carries down; the sheet type does not.
+            #
+            # last_stage is the whole key, "1 Surface" and all. Copying it
+            # verbatim was harmless only while these pages had no zone to
+            # inherit — 00525 heads its charts "102/06-21 - Zone #1" and the
+            # caption reader wanted whitespace, so every page came out blank
+            # and nothing was ever filled down.
+            #
+            # With the zones reading (#579) it mattered at once: MView pairs
+            # each zone as a captioned "… Surface" page and an uncaptioned
+            # "… Bottom Hole" one, so all 50 zones of 00525 became 100 charts
+            # under 50 keys, each pair merged. Both sheets carry Treating
+            # Pressure, and that channel would then hold two recordings —
+            # exactly the collision _mview_variant was added to prevent.
+            #
+            # Stripped, the partner lands on the bare zone: "1" beside
+            # "1 Surface". Distinct keys, nothing merges. It is not tagged
+            # "1 BH", which is the part still to do — the tag is known when
+            # the page is read and gone by the time this runs.
+            r["meta"]["stage"] = _VARIANT_STAGE.sub(r"\1", str(last_stage))
         keep.append(r)
     results[:] = keep
 
