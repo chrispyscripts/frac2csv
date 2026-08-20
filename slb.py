@@ -489,6 +489,45 @@ def _clock_minutes(text):
     return h * 60 + mi + sec / 60.0
 
 
+_MERIDIEM = re.compile(r"^[APap]\.?[Mm]\.?$")
+
+
+def _ocr_meridiem(spans):
+    """{id(clock span): 'AM'|'PM'} for pages whose labels came from OCR.
+
+    A PDF writes "4:43 PM" as ONE span. Tesseract reads it as two words, so
+    _clock_minutes — which parses a single string — sees "4:43", finds no
+    meridiem, and takes it as 4:43 in the morning. Every afternoon chart in a
+    pure-vector filing came out TWELVE HOURS EARLY, and silently: 00121 p134
+    is genuinely AM, so the file's first chart looked perfectly right.
+
+    Caught by an independent source rather than by inspection — the Peloton
+    daily report's FRAC time-log rows date and time each stage, and 22 of
+    00121's 36 logged stages disagreed with the chart by 709-719 minutes.
+    Nothing but a lost PM makes a gap sit that tightly around 720.
+
+    The marker is the next word along the axis, so each clock takes the
+    nearest meridiem that FOLLOWS it and sits on its own line.
+    """
+    marks = [s for s in spans if _MERIDIEM.match(s["t"])]
+    if not marks:
+        return {}
+    out = {}
+    for s in spans:
+        if not _CLOCK.match(s["t"]) or _MERIDIEM.match(s["t"]):
+            continue
+        best, bestd = None, 1e9
+        for m in marks:
+            if abs(m["cy"] - s["cy"]) > 6:
+                continue                   # a different row of labels
+            gap = m["x0"] - s["x1"]
+            if -1.0 <= gap < min(bestd, 30.0):
+                bestd, best = gap, m["t"]
+        if best:
+            out[id(s)] = best.upper().replace(".", "")[:2]
+    return out
+
+
 def _time_axis(spans, frame):
     """-> (a, b, first_clock_minutes) for minutes = a + b*x, or None.
 
@@ -499,6 +538,7 @@ def _time_axis(spans, frame):
     running backwards for 23 hours.
     """
     pts = []
+    meridiem = _ocr_meridiem(spans) if any(x.get("ocr") for x in spans) else {}
     for s in spans:
         if not (frame[1] - 30 <= s["cy"] <= frame[3] + 40):
             continue
@@ -507,6 +547,11 @@ def _time_axis(spans, frame):
         mins = _clock_minutes(s["t"])
         if mins is None:
             continue
+        ap = meridiem.get(id(s))
+        if ap and _CLOCK.match(s["t"]) and not _CLOCK.match(s["t"]).group(4):
+            fixed = _clock_minutes(f"{s['t']} {ap}")
+            if fixed is not None:
+                mins = fixed
         if not (frame[0] - 25 <= s["cx"] <= frame[2] + 25):
             continue
         pts.append((s["cx"], mins))
