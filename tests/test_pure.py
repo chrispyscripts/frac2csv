@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auto_raster as ar          # noqa: E402
 import halliburton_ifs as hifs   # noqa: E402
 import slb                       # noqa: E402
+import trican_charts as tc       # noqa: E402
 import fitz                       # noqa: E402
 import frac_core                  # noqa: E402
 import halliburton_ifs as ifs     # noqa: E402
@@ -1325,6 +1326,69 @@ class SLBServiceReport(unittest.TestCase):
         got = slb._resolve_service_dates({42: {"2018-08-01", "2018-08-03"},
                                           5: {"2018-07-11"}})
         self.assertEqual(got, {5: "2018-07-11"})
+
+
+class TricanRuleRow(unittest.TestCase):
+    """Telling a dotted rule from a curve that lies on the same row.
+
+    Trican layout B tints each axis's gridlines to match that axis's CURVE, so
+    colour cannot separate them. Every row in the detected list used to be
+    blanked full-width whether it held a rule or not: on 00583 p33 rows 132
+    and 136 are adjacent, only 132 is a rule, and blanking 136 took the rate
+    curve out for its whole width — WH Slurry Rate fell from 96.6% of columns
+    carrying ink to 59.9%, leaving 41.6% of the exported series NaN.
+
+    Along the row the two are nothing alike. Measured on that page: a rule is
+    ~360 runs of ONE pixel; the curve at row 136 is 8 runs of median 22.
+    """
+    @staticmethod
+    def _mask(row_pixels, r=5, h=12, x0=0, x1=None):
+        w = len(row_pixels) + 10
+        m = np.zeros((h, w), bool)
+        m[r, 5:5 + len(row_pixels)] = row_pixels
+        return m
+
+    def test_dotted_rule_fires(self):
+        """1-on-1-off across the plot — 00583's rules exactly."""
+        row = np.zeros(720, bool)
+        row[::2] = True
+        m = self._mask(row)
+        self.assertTrue(tc._is_rule_row(m, 5, 0, m.shape[1]))
+
+    def test_the_curve_row_is_spared(self):
+        """p33 row 136: 8 runs, median 22, longest 46."""
+        row = np.zeros(720, bool)
+        for start in (10, 90, 170, 250, 330, 410, 490, 570):
+            row[start:start + 22] = True
+        m = self._mask(row)
+        self.assertFalse(tc._is_rule_row(m, 5, 0, m.shape[1]))
+
+    def test_a_flat_curve_lying_along_a_rule_row_is_spared(self):
+        """The dangerous case: one long unbroken run is a curve, not a rule,
+        however much of the row it covers."""
+        row = np.zeros(720, bool)
+        row[100:500] = True
+        m = self._mask(row)
+        self.assertFalse(tc._is_rule_row(m, 5, 0, m.shape[1]))
+
+    def test_too_little_ink_is_not_a_rule(self):
+        """A handful of specks must not license blanking the row."""
+        row = np.zeros(720, bool)
+        row[::40] = True                      # 18 dashes, under the floor
+        m = self._mask(row)
+        self.assertFalse(tc._is_rule_row(m, 5, 0, m.shape[1]))
+
+    def test_empty_row(self):
+        m = self._mask(np.zeros(720, bool))
+        self.assertFalse(tc._is_rule_row(m, 5, 0, m.shape[1]))
+
+    def test_three_pixel_dashes_still_read_as_a_rule(self):
+        """Not every vintage dots at one pixel; 00583 shows runs up to 3."""
+        row = np.zeros(720, bool)
+        for i in range(0, 720, 6):
+            row[i:i + 3] = True
+        m = self._mask(row)
+        self.assertTrue(tc._is_rule_row(m, 5, 0, m.shape[1]))
 
 
 if __name__ == "__main__":

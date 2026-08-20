@@ -882,6 +882,23 @@ B_AXIS_RANGE = {"press": (10.0, 250.0), "rate": (1.5, 60.0),
                 "conc": (50.0, 5000.0)}
 
 
+def _is_rule_row(mask, r, x0, x1):
+    """Does this row of the mask hold a dotted RULE rather than a curve?
+
+    A dotted rule is dozens of one-pixel dashes spread across the plot; a
+    curve crossing or lying along the row is a handful of long runs. On
+    00583 p33 the rule rows carry ~360 runs of median length 1 and the curve
+    row carries 8 of median 22, so the two are not close.
+    """
+    v = np.asarray(mask[r, x0 + 5:x1 - 5], bool)
+    idx = np.flatnonzero(v)
+    if len(idx) < 20:
+        return False
+    cuts = np.flatnonzero(np.diff(idx) > 1) + 1
+    runs = [len(g) for g in np.split(idx, cuts)]
+    return len(runs) >= 20 and float(np.median(runs)) <= 3.0
+
+
 def extract_image_b(img, sample_sec=1.0):
     img = np.asarray(img).astype(int)
     x0, y0, x1, y1, rows = b_box(img)
@@ -906,16 +923,39 @@ def extract_image_b(img, sample_sec=1.0):
     # rules in it and the trace reads 499 kg/m3 (a gridline) instead of 162.
     # Blank the gridline rows out of any mask whose colour collides; a curve
     # loses 3px where it crosses a rule, which curve_positions bridges.
-    mid = rows[len(rows) // 2]
-    band = img[mid, x0 + 5:x1 - 5]
-    band = band[band.sum(axis=1) < 720]
-    if len(band):
+    # The rule colour is read PER ROW, and a row is only blanked when it
+    # actually holds a rule.
+    #
+    # Two things were wrong. The colour was taken from the middle row alone
+    # and applied to all of them — but this template tints each axis's rules
+    # to match that axis's curve, so the top rule is Prop Conc olive while the
+    # rest are Slurry Rate blue, and one sample cannot describe both.
+    #
+    # Worse, every row in `rows` was blanked across the FULL WIDTH whether it
+    # held a rule or not. On 00583 p33 rows 132 and 136 are adjacent and only
+    # 132 is a rule: 136 is the rate curve. Blanking it took the curve out for
+    # its whole horizontal extent, and WH Slurry Rate went from 96.6% of
+    # columns carrying ink to 59.9%, leaving 40.8% of the trace as NaN for
+    # resample to bridge or blank. That is the "interpolation" everyone was
+    # looking at — the interpolator was fine, what it was handed was not.
+    #
+    # A rule and a curve do not look alike along the row. Measured on that
+    # page: a rule is ~360 runs of ONE pixel, a 1-on-1-off dotted line; the
+    # curve at row 136 is 8 runs with a median of 22 and a longest of 46. So
+    # ask the row.
+    for r in rows:
+        seg = img[r, x0 + 5:x1 - 5]
+        band = seg[seg.sum(axis=1) < 720]
+        if not len(band):
+            continue
         vals, counts = np.unique(band, axis=0, return_counts=True)
         gcol = vals[counts.argmax()]
         for key, col, _l, _u, _a in B_SERIES:
-            if ((np.array(col) - gcol) ** 2).sum() <= B_RADIUS ** 2:
-                for r in rows:
-                    masks[key][max(0, r - 1):r + 2, :] = False
+            if ((np.array(col) - gcol) ** 2).sum() > B_RADIUS ** 2:
+                continue
+            if not _is_rule_row(masks[key], r, x0, x1):
+                continue                  # the curve happens to run here
+            masks[key][max(0, r - 1):r + 2, :] = False
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
     for key, _c, label, unit, axis in B_SERIES:
