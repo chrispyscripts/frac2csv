@@ -1017,6 +1017,28 @@ def extract_image_b(img, sample_sec=1.0):
                          "ticks": ntick, "coverage": cov,
                          "axis_frame": (float(a + bb * y0),
                                         float(a + bb * y1))})
+        # A sparse channel is not necessarily a broken one, and on this
+        # template it usually is not. Say where the absence is, because "WH
+        # Prop Conc is 31% empty" reads as a fault and "it is not drawn until
+        # a third of the way in" reads as the chart.
+        #
+        # Measured over all 23 chart pages of 00583: WH Prop Conc has 109
+        # blank runs totalling 8,148 columns, and 6,882 of those columns —
+        # 84% — are before its first reading or after its last. That is the
+        # pad and the flush, where the wellhead concentration has not started
+        # or has finished, and ct.resample is right to hand back nothing
+        # rather than extend the curve into them.
+        if cov < 0.9:
+            lit = np.flatnonzero(sub.any(axis=0))
+            drawn = (lit[0] / sub.shape[1], (lit[-1] + 1) / sub.shape[1])
+            inner = sub[:, lit[0]:lit[-1] + 1].any(axis=0)
+            holes = int(np.count_nonzero(np.diff(np.concatenate(
+                ([True], inner, [True]))) == -1))
+            notes.append(
+                f"{label}: drawn from {drawn[0]*100:.0f}% to {drawn[1]*100:.0f}% "
+                f"of the chart's width, with {holes} gap(s) inside that span. "
+                f"Outside it the chart draws no curve, so nothing is exported "
+                f"there rather than the trace being extended")
     if not channels:
         raise ValueError("trican-B: no channel calibrated; "
                          + "; ".join(notes[:3]))
