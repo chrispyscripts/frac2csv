@@ -111,6 +111,74 @@ something *works*. Read the body before treating a number as a defect.
 
 ## Landed 2026-08-20, after v1.4.0 — NOT in any build yet
 
+Four fixes, all pushed, none tagged. The client runs the EXE and the EXE is
+still v1.4.0, so NONE of this has reached him.
+
+- **A legend OCR'd a word at a time is read as whole labels (#582/#569,
+  `bb30490`). 00121 went from 64 chart pages detected and ZERO extracted to
+  64 of 64**, intervals 1-60. Everything else on the page already worked
+  after fb6b1a3; only the legend failed, because OCR hands back a WORD at a
+  time and "Treating Pressure" arrived as "Pressure", so `_classify` owned
+  nothing and every colour on the chart went unclaimed. Two things make the
+  join non-obvious and both are measured on p134: the legend is a single ROW
+  (all five keys share cy 529.1, so "everything to the right" gives every key
+  the same string — the bound is the NEXT key), and tesseract merges the
+  swatch STROKE into the first word of its own label, which is what "—GORV",
+  "—Prop" and "—BH" are, so the label starts LEFT of where the swatch ends.
+  Overlap on the near side, centre on the far side.
+  - Runs ONLY for pages whose labels came from OCR. 00011 is bit-identical:
+    54 detected, 46 extracted, 230 peaks, none moved.
+  - Supersedes the attempt backed out in fb6b1a3, which joined words globally
+    in `_spans` and broke the time axis by joining the tick numbers too.
+  - Verified against the RENDER, not the parser: legend reads Treating
+    Pressure / Slurry Rate x 10 / GORV / Prop Con / BH Prop Con, peaks 77.90,
+    9.47, 87.59, 236.61, 233.82 against printed axes 0..100 and 0..500, clock
+    3:06 AM. The x10 multiplier is only knowable BECAUSE the legend reads.
+
+- **A chart that fails no longer hands its identity to the other one (#585,
+  `a9f05f2`).** `_extract_new` named each plot by ORDINAL POSITION. 00344's
+  surface plot raises "time axis unreadable" on all 32 pages, so the chemical
+  plot arrived first, inherited the treatment tag, and its Combined Clean Rate
+  went out as **"Slurry Rate" on the chemical chart's own 0..16 axis** — a
+  legal rate scale, so `impossible_axis` passed it. An upstream failure became
+  downstream WRONG DATA. The tag now comes from the caption the page prints
+  above each plot. 4 charts -> 27, zero carrying a surface name. Four other
+  STEP files bit-identical over 737 channels.
+  - **Still open and now isolated: 00344's surface plot — the one with
+    pressure, rate and both concentrations — is unreadable on all 32 pages.**
+    That is the data Carmine actually wants and it is untouched.
+
+- **One stage drawn as two plots is one stage (#589, `d8916e7`).** The
+  backwards-clock warning fired on all 51 stages of 00540 and Carmine asked
+  whether it was real. It was not. `serialize()` sends the Lab one entry per
+  CHART; only `build_well` groups by stage. A STEP page draws Surface and
+  Chemical of the SAME stage, so the well arrived as 102 entries in 51 pairs
+  starting SECONDS apart, and each pair was compared against itself. The well
+  runs perfectly: ~8 h a stage over three days, nothing overlapping.
+  - A warning that cries wolf on every stage of a good well is how the next
+    real one gets ignored. 13 tests now, was 10.
+
+- **An interval charted as a bitmap says so instead of vanishing (#557,
+  `0a27a33`).** See below — unchanged from this morning.
+
+## Open, top of the list
+
+- **#588 — 00121 gives no tables and no dates/times.** The charts now read;
+  the text around them does not. This file is the labels-only pure-vector
+  class, so its tables and its Zone Summary date are outlines exactly as the
+  legend was. The SLB path already has the OCR machinery (`_spans`,
+  `detect_prc`, `page_stage`, and now `_legend`); the tables and the date
+  need the same treatment. This is the natural next step and it is on a file
+  that already half-works.
+- **00148 and the Halliburton half of the pure-vector class.** 280 pages,
+  **746 characters in the whole document, and not ONE detector fires** — not
+  slb, step1, lib1, bj1, canyon, hal1, and no IFS marker. It is labels-only
+  (29 chart pages, 0 chars on them) and `providers.tsv` calls it Hal.
+  **00121 works and 00148 cannot, for one reason: SLB is the only reader with
+  an OCR fallback.** Halliburton has none, so there is no chain to extend —
+  it has to be built. Bigger job than 00121 was.
+
+
 - **An interval charted as a bitmap says so instead of vanishing (#557,
   `0a27a33`).** Carmine reported 00611 losing stage 27 and could only find it
   by spotting a gap in the sequential numbering. The chart IS in the PDF:
