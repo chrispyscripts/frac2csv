@@ -39,14 +39,13 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
-`batch-lists/vector-no-text/profile_providers.py` is identifying which vendor
-each of the 184 pure-vector filings belongs to, one OCR per file, appending to
-`providers.tsv`. Resumable — re-run it and it carries on. Its answer decides
-whether finishing the SLB OCR path (below) is worth it or whether the effort
-belongs elsewhere.
+Nothing is running. Both jobs the last handoff listed have finished:
+`providers.tsv` and `curvelen.tsv` each carry all 184 rows with no errors.
+What they say is under "The pure-vector class" below, and curvelen's answer
+is not the one it was built to give.
 
-Three local app instances are running and ALL of them predate the 2026-08-20
-parser work. Cycle them before testing anything.
+Three local app instances are still running and ALL of them predate the
+2026-08-20 parser work. Cycle them before testing anything.
 
 ## Two drives, and they drop
 
@@ -109,6 +108,53 @@ IFS and Hal-1 clusters.
 **Issues are a running log, not a to-do state.** Nothing is closed except the
 early test issues, and several open ones (#100, #102, #110) are Carmine saying
 something *works*. Read the body before treating a number as a defect.
+
+## Landed 2026-08-20, after v1.4.0 — NOT in any build yet
+
+- **An interval charted as a bitmap says so instead of vanishing (#557,
+  `0a27a33`).** Carmine reported 00611 losing stage 27 and could only find it
+  by spotting a gap in the sequential numbering. The chart IS in the PDF:
+  p261 draws Interval 27 as three 2702x736 images and ONE vector path, where
+  the chart page beside it draws 192 paths and 32,936 items. `halliburton_ifs`
+  is a vector reader, so it found no clock labels, failed the gate and
+  `continue`d — no note, no error, interval gone.
+  - The skip is right; the SILENCE was the defect, and it had already cost
+    data twice before (the branch's own comment records 24 of 36 IFS files,
+    and six of 00001's ten intervals, lost the same way).
+  - The previous session's attempt went into the IFS *exception* handler,
+    which sits inside the branch the page never enters. It could not fire and
+    was correctly reverted rather than shipped. The working place is the gate.
+  - **Sized, over 56 __HAL files: 11 pages in 8 files, one to four intervals
+    each.** Silent on the other 48, zero errors, 2,456 charts extracted. Two
+    independent passes (real `extract_document`, and a per-page image census
+    using a different rule) agree on 11-in-8.
+  - The threshold is placed on 10,068 IFS pages, not on one file: largest
+    image on a page that charts fine 102,750px, on a table of contents
+    27,000, smallest on a bitmap chart page 245,403. Empty gap, so it sits at
+    the midpoint. Getting there took catching two of my own overclaims — the
+    "two orders of magnitude" gap was true only of 00611, and the first census
+    pooled each page's logo into the chart population and produced a
+    meaningless 0.1x ratio. Per-page maxima is what the code actually tests.
+  - **No exported value can change**: the new branch is reached only when the
+    old one already skipped the page, and it appends a note and nothing else.
+
+- **Still open, and now sized: the raster IFS reader.** An IFS-layout chart
+  rendered as a bitmap has no template. `hal1`'s raster path is a different
+  layout and answers "time axis unreadable" on the same page. It is worth
+  building: 11 charts across 8 of 56 HAL files, and TESTING.md puts the full
+  Halliburton tier at ~510 files. 00242 alone loses four intervals
+  (1, 5, 20, 24). The three verified examples are 00611 p261, 00124 p246 and
+  00123 p276 — each one path plus large images, neighbours drawing 150-210.
+
+- **00611 charts interval 3 and interval 17 TWICE, and both are legitimate.**
+  The charts say so themselves: "Interval 3 – Main Treatment (No Ball Seat)"
+  (p135) against "Interval 3 – Main Treatment" (p138), and "Interval 17 –
+  Main Treatment (Part A)" (p208) against "(Part B)" (p211). Not the #550/#553
+  doubling defect. But both collapse onto one stage number in the CSV, so the
+  export carries two stage-3 blocks and two stage-17 blocks with nothing to
+  tell them apart — the parenthetical is right there in the title and is not
+  being used. That is the shape `_split_bj_windows`/`_window_tags` already
+  solves for BJ. Not investigated further, and NOT a #557 symptom.
 
 ## Landed 2026-08-19/20 (v1.3.0, v1.4.0)
 
@@ -190,6 +236,33 @@ what a future session needs to KNOW rather than what shipped.
     vendor cannot be read from the text layer, so detection, tables and dates
     all have to come off the render, and nothing in the tree does that today.
     Lists for both are in `batch-lists/vector-no-text/`.
+  - **`curvelen.py` has finished (184/184, no errors) and its answer is NOT
+    a threshold.** It was built to split the 184 by longest stroked path, so
+    the files with charts to read could be told from the ones where "no
+    extractable data" is simply true. The values do not fall into two groups.
+    They collapse onto a handful of EXACT repeated numbers — 82 on 76 files,
+    464 on 34, 999 on 15, 1,046 on 8. **133 of 184 sit on four values.** An
+    identical maximum across dozens of files is a shared template, not a
+    measurement of content, and a `>=1000` rule would have thrown the 999 and
+    1,046 clusters onto the wrong side of the line. Do not tune this number.
+  - **The lead worth chasing is VARIETY, not magnitude** — how many distinct
+    per-page maxima a document has. Sampled on one file per cluster (FIVE
+    files, so this is a lead and not a result):
+
+        00121  577 pages  longest 6,443  distinct maxima 130  <- known charts
+        00147  256 pages  longest   999  distinct maxima  53
+        00274  253 pages  longest    82  distinct maxima  11
+        00913  198 pages  longest   464  distinct maxima   7  <- furniture
+        01756  118 pages  longest 1,046  distinct maxima   5
+
+    The furniture files draw 5-11 different things across 118-253 pages. The
+    known-charts file draws 130. **By variety, the 999 cluster (15 files)
+    sits with 00121, not with the furniture** — which is the opposite of what
+    its round-looking number suggests, and 999 looks like a ceiling rather
+    than a measurement, so check that before trusting it. Verify by RENDERING
+    a page from the 999 and 1,046 clusters before acting on any of this: the
+    whole point of the split is deciding which files deserve OCR work, and
+    getting it wrong sends the effort at documents with no charts in them.
   - Nuvista's zero is NOT a clean negative. Only 7 of its 233 files register a
     chart page at all: its charts are RASTER, a different class this detector
     structurally cannot see. Read its zero as "not this class".
