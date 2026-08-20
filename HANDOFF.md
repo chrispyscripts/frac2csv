@@ -175,7 +175,7 @@ still v1.4.0, so NONE of this has reached him.
     the stage number, so they date and time each stage INDEPENDENTLY of the
     chart. 22 of 36 logged stages disagreed by 709-719 minutes; nothing but a
     lost PM sits that tightly around 720. After the fix: agreement 14 -> 32.
-  - `scratchpad/fraclog.py` is that harness. Point it at any filing with
+  - `validation-tools/fraclog.py` is that harness. Point it at any filing with
     Peloton daily reports and it scores the charts against the log.
   - **Do NOT read "stage N" from the free text of a daily report.** A comment
     ending "ready to Frac Stage #" is followed by the next cell, a clock, and
@@ -184,16 +184,27 @@ still v1.4.0, so NONE of this has reached him.
   - Four stages still disagree. Not explained, and NOT assumed to share the
     cause.
 
-- **Dates for the pure-vector class are not one problem.** A pure-vector
-  chart prints a clock and no calendar, so the day comes from a sheet
-  elsewhere — and which sheet differs per file. `scratchpad/datesrc.py`
-  surveys all 184 for the four the readers know (SSR, Zone Summary, Frac
-  Stage Details, STEP Daily Stage Summary). On the first 41 rows, **34 of the
-  labels-only files carry NONE of them** and 7 carry daily reports, so the
-  sheet-based route covers a minority and the daily-report route above is
-  worth generalising. Finish that survey before building.
-  - Some templates need no sheet at all: 00148's IFS charts print
-    "2022-02-12" directly on the time axis, and that is already read.
+- **Dates for the pure-vector class: the survey is DONE and it kills the
+  obvious plan.** A pure-vector chart prints a clock and no calendar, so the
+  day has to come from somewhere else. `validation-tools/datesrc.py` asked all
+  184 files which of the four sheets the readers know is present IN THE TEXT
+  LAYER; `validation-tools/datesrc-partial.tsv` is the full result.
+
+        105  no-text      (no known sheet)
+         68  labels-only  (no known sheet)
+          7  labels-only  daily reports      <- the 00121 route
+          4  labels-only  STEP Daily Stage Summary
+
+  **173 of 184 carry NONE of them**, and of those only 38 print a date-shaped
+  string anywhere in the document at all. So chasing summary sheets is a dead
+  end for this class: eleven files, and seven of those are already reachable.
+  - **The date has to come off the CHART.** That is not speculation — 00148's
+    IFS charts print "2022-02-12" directly under the time axis, `_axis_date`
+    already reads exactly that, and the OCR work on `ifs-ocr-wip` returns the
+    right date for p136 today. Whatever reads a pure-vector chart gets its
+    date for free; nothing else has to be built for it.
+  - So the ordering is: make the chart readable, and the date follows. Do NOT
+    start by building a date pipeline.
 
 - **00148 / IFS-on-outlines is on branch `ifs-ocr-wip` and MUST NOT be
   merged as it stands.** 116 chart pages, no readable character, no
