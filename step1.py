@@ -986,6 +986,43 @@ def _place_on_clock(img, info):
     return True
 
 
+# These pages caption each plot in their own text layer, directly above it —
+# "Surface Chart" at y56 over the image at y92, "Chemical Chart" at y399 over
+# the image at y410, on every one of 00344's 32 chart pages.
+_CHART_CAPTIONS = (("Surface Chart", "t"), ("Surface Treatment Plot", "t"),
+                   ("Chemical Chart", "c"), ("Chemical Treatment Plot", "c"))
+
+
+def _caption_tag(page, rect):
+    """Which chart is this image, read from the caption printed above it?
+
+    The alternative — and what this replaces — is to call the first image that
+    EXTRACTS the treatment chart and the next one chemical. That holds only
+    while both succeed. On 00344 the surface plot raises "time axis
+    unreadable" on all 32 chart pages, so the chemical plot arrived first,
+    inherited the treatment tag, and was exported under the surface chart's
+    channel names: its D-Clean Rate curve went out as "Slurry Rate" against
+    the chemical chart's own 0..16 axis, which is a legal rate scale and so
+    passed impossible_axis untouched (#585). A failure upstream turned into
+    wrong data downstream, which is the worst shape a bug can take here.
+
+    Position within the page is not the test either — the tiled path's own
+    comment records 00184/00185 putting a second TREATMENT chart where the
+    chemical one usually sits. The caption is the page's own answer.
+    """
+    best, bestd = None, 1e9
+    for phrase, tag in _CHART_CAPTIONS:
+        try:
+            hits = page.search_for(phrase)
+        except Exception:
+            continue
+        for r in hits:
+            gap = rect.y0 - r.y1
+            if -2.0 <= gap < min(bestd, 120.0):
+                bestd, best = gap, tag
+    return best
+
+
 def _extract_new(page, sample_sec=1.0):
     doc = page.parent
     text = page.get_text()
@@ -1045,15 +1082,27 @@ def _extract_new(page, sample_sec=1.0):
             pix = fitz.Pixmap(fitz.csRGB, pix)
         img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
             pix.height, pix.width, 3)
-        tag = "t" if not out else "c"
+        try:
+            r = page.get_image_rects(im[0])[0]
+        except Exception:
+            r = None
+        # The page says which chart this is; ordinal position only says which
+        # one got here first, and that is a different question the moment one
+        # of them fails. See _caption_tag.
+        cap = _caption_tag(page, r) if r is not None else None
+        tag = cap or ("t" if not out else "c")
         try:
             samples, chans, info = _extract_new_chart(img, sample_sec)
-        except ValueError:
+        except ValueError as e:
+            # A plot that cannot be read is a plot the report HAS and we do
+            # not, so it is worth a line. 00344 loses its surface chart on all
+            # 32 pages to "time axis unreadable" and said nothing at all.
+            meta.setdefault("skipped", []).append(
+                f"{'surface' if tag == 't' else 'chemical'} chart — {e}")
             continue
         _name_chemical(tag, chans)
         try:
-            r = page.get_image_rects(im[0])[0]
-            if r.width > 1 and r.height > 1:
+            if r is not None and r.width > 1 and r.height > 1:
                 info["geom"] = _page_geom(info, pix.width / r.width,
                                           pix.height / r.height, r.x0, r.y0)
         except Exception:

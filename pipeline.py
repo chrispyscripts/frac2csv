@@ -1267,6 +1267,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # only reason anyone noticed is that Carmine counts sequential stages
     # (#557). [(page, label)], reported as one line.
     _ifs_raster = []
+    # STEP plots that could not be read, {reason: [pages]} — one line per
+    # cause rather than one per page, the same shape as _trican_drops.
+    _step_skips = {}
     # Channels a Trican layout-B page traced and then had to drop. extract_
     # image_b has always built these and nothing ever read them, so a chart
     # that came back with three of its five channels said nothing about the
@@ -1600,6 +1603,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         if raster and step1.detect(page):
             try:
                 md, charts = step1.extract_page(page, sample_sec)
+                # A plot step1 could not read is one the report HAS and we do
+                # not. 00344 loses its SURFACE chart — the one with pressure,
+                # rate and both concentrations on it — on all 32 of its chart
+                # pages, and said nothing whatever: the page still produced a
+                # result, so it never looked like a failure (#585).
+                for _s in (md.get("skipped") or ()):
+                    _step_skips.setdefault(str(_s), []).append(pno + 1)
                 if md.get("kind") == "main":
                     for tag, samples, chans, info in charts:
                         data = {c["label"]: c["values"] for c in chans}
@@ -1719,6 +1729,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             f"{', …' if len(_pages) > 8 else ''}). The curve was traced; it is "
             f"the axis that could not be read, so there is nothing to scale it "
             f"against and it is left out rather than guessed at.")
+    for _msg, _pages in sorted(_step_skips.items()):
+        notes.append(
+            f"{_msg} — on {len(_pages)} page(s) "
+            f"(p{', p'.join(str(x) for x in _pages[:8])}"
+            f"{', …' if len(_pages) > 8 else ''}). That plot's channels are "
+            f"missing from this file; the other plot on the page, if any, "
+            f"came through.")
     if _ifs_raster:
         notes.append(
             f"{len(_ifs_raster)} interval chart(s) drawn as a bitmap "
