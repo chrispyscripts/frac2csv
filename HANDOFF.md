@@ -163,6 +163,61 @@ still v1.4.0, so NONE of this has reached him.
 
 ## Open, top of the list
 
+- **#588 — an OCR'd clock kept its PM (`1068870`), and the method that found
+  it is reusable.** Every AFTERNOON chart in a pure-vector SLB filing was
+  read twelve hours early: OCR returns "4:43" and "PM" as separate words and
+  `_clock_minutes` parses one string. 00121 p134 is genuinely AM, so the
+  file's first chart looked right and nothing said otherwise.
+  - **It was found by an ORACLE, not by reading code.** 00121 carries no
+    Stimulation Service Report, no Zone Summary and no Frac Stage Details —
+    only 129 Peloton "Regulatory_Daily Completion and Workover" sheets. Those
+    print a Report Date and a Time Log whose FRAC rows carry a start time and
+    the stage number, so they date and time each stage INDEPENDENTLY of the
+    chart. 22 of 36 logged stages disagreed by 709-719 minutes; nothing but a
+    lost PM sits that tightly around 720. After the fix: agreement 14 -> 32.
+  - `scratchpad/fraclog.py` is that harness. Point it at any filing with
+    Peloton daily reports and it scores the charts against the log.
+  - **Do NOT read "stage N" from the free text of a daily report.** A comment
+    ending "ready to Frac Stage #" is followed by the next cell, a clock, and
+    a loose regex reads "16:30" as stage 16. Read it only from inside a FRAC
+    row.
+  - Four stages still disagree. Not explained, and NOT assumed to share the
+    cause.
+
+- **Dates for the pure-vector class are not one problem.** A pure-vector
+  chart prints a clock and no calendar, so the day comes from a sheet
+  elsewhere — and which sheet differs per file. `scratchpad/datesrc.py`
+  surveys all 184 for the four the readers know (SSR, Zone Summary, Frac
+  Stage Details, STEP Daily Stage Summary). On the first 41 rows, **34 of the
+  labels-only files carry NONE of them** and 7 carry daily reports, so the
+  sheet-based route covers a minority and the daily-report route above is
+  worth generalising. Finish that survey before building.
+  - Some templates need no sheet at all: 00148's IFS charts print
+    "2022-02-12" directly on the time axis, and that is already read.
+
+- **00148 / IFS-on-outlines is on branch `ifs-ocr-wip` and MUST NOT be
+  merged as it stands.** 116 chart pages, no readable character, no
+  Halliburton reader with an OCR fallback. Five gates now clear — detect,
+  rotation (the page is /Rotate 90 and `page_rotated` had no text lines to
+  measure), time axis, legend rebuilt from OCR words grouped by colour and
+  row, and the tick columns. Stage, date and Tr Press (77.6 against a printed
+  0..100) all come out right.
+  - **It mis-maps the other axes and exports plausible wrong numbers.** The
+    letter->column mapping clamps surplus letters onto the last column, so
+    Slurry Rate read 62.83 against a printed 0..20 and BH Prop Conc 22.7
+    against 0..1000 — each exactly its true value as a percentage of full
+    scale on the PRESSURE axis. Removing the clamp drops the concentration
+    and the rate is STILL 62.83.
+  - The fix is to tie each letter to the column it actually labels — the
+    letters print AT their columns (black 'A' at cx -700, 'B' at cx -133 on
+    p136) and that position is the association, not left-to-right order —
+    and then to check every peak against its own axis before returning, the
+    way `step1.impossible_axis` already does.
+  - The legend colour recovery is the reusable piece: an outlined glyph is a
+    FILLED PATH carrying the colour the text had, so a word's colour is the
+    dominant fill inside its box. Measured exact on p136 for all five series.
+
+
 - **#588 — 00121 gives no tables and no dates/times.** The charts now read;
   the text around them does not. This file is the labels-only pure-vector
   class, so its tables and its Zone Summary date are outlines exactly as the
