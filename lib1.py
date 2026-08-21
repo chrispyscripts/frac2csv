@@ -660,6 +660,20 @@ def extract_page(page, sample_sec=1.0):
 
     tick_x = [x for pts in ticks.values() for _, x, _ in pts]
     x_lo, x_hi = min(tick_x) - 10, max(tick_x) + 10
+    # Smaller cx is a HIGHER value, so that -10 admits ink ten points above
+    # the topmost tick — above the axis maximum by construction. On a page
+    # with a text layer that slack is harmless padding. On an OCR'd one it is
+    # where the legend's colour swatch and the frame's own top edge live, and
+    # it is the whole of the remaining overshoot: 00919 p111 put Slurry Rate's
+    # peak at 26.63, which is exactly the value this bound maps to (cx 125.4),
+    # against a chart that peaks at 14. Btm Prop Conc reached 1598 the same
+    # way while its curve lies flat on zero.
+    #
+    # Nothing real is lost. Curve ink above the top tick was being clipped to
+    # the top tick anyway, so dropping it changes a reported "axis maximum"
+    # into the true peak inside the axis.
+    if any(x.get("ocr") for x in spans):
+        x_lo = min(tick_x)
     tl_cy = [s["cy"] for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
     # Clip curve ink to the plot FRAME, not to the time-LABEL span. The last
