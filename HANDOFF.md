@@ -667,6 +667,106 @@ what a future session needs to KNOW rather than what shipped.
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
 
+## Liberty, read page by page — what a one-page sample was hiding
+
+Every Liberty number on record before this was measured on ONE page per file,
+the busiest chart in each. Reading all 3,774 pages of the 22 outlined files
+found seven defects, and only two of them ever announced themselves. The rest
+are silent: the CSV simply has less in it, or the numbers are quietly high.
+
+**The corpus is bigger than this file said.** 425 Liberty filings, not 19:
+403 carry the printed marker and 22 have no text layer at all. The outlined
+set includes five nobody had listed — 00998, 01000, 01001, 01002, 01003 — and
+a first pass missed 00913 and 00914 because "textless" was defined as all but
+one sampled page blank; half the sampled pages is the right cut. A Liberty
+MARKER is not a Liberty CHART: 129 of the 403 also name another vendor, so
+the file list has to come from detect firing, not from the name.
+
+Baseline over the 22 outlined files, before the fixes below:
+
+    3,774 pages   1,261 chart pages   1,227 extracted (97.3%)
+    34 failures: 26 implausible duration, 4 no legend/ticks,
+                 3 no time labels, 1 day out of range
+    dated 98.0%   clocked 100%   staged 96.8%
+    values outside their printed axis: 0
+
+That last line is the v1.5.0 axis work holding up across 1,227 pages.
+
+### The seven
+
+1. **A channel going missing.** A colour needs four tick labels to earn an
+   axis, and OCR reads 00915 p108's rate ladder as [12, 16, 20] — three
+   labels, evenly stepped and evenly spaced. No fit, and Slurry Rate is
+   dropped from the page with nothing to say it was there. 22 of that file's
+   24 treatment charts lose it. Three labels even in value AND even in
+   position are now accepted; three bad reads do not land on both grids.
+2. **A channel overwriting another.** Both greens come back "Prop Conc" when
+   OCR drops the "Btm", and the dict kept one. It kept the LAST, so the
+   bottom-hole curve was landing under the surface name. The first is kept
+   now and the clash is numbered — "Prop Conc #2" — rather than guessed at.
+3. **A misread day killing the page.** The old repair wanted three readable
+   dates and a majority; OCR leaves two. A chart is contiguous, so the day
+   advances exactly where the clock wraps. Do NOT infer direction by counting
+   rollovers — that is written up under _walk and it broke p106 when I did it
+   anyway. The shortest consistent reading wins instead.
+4. **A stage dated a day late.** start_time came off the window start, the
+   date off whichever label the fit anchored on. Both come from the same
+   instant now.
+5. **Legend words read down the page instead of along it.** OCR turns chart
+   ink into "|" 300 points below the legend row and in the same colour; that
+   outlier makes the vertical spread larger, and on a row every word shares a
+   coordinate so the sort ties and the name arrives in span order. "475 CONC"
+   became "CONC 475" on 28 pages.
+6. **_snap_name compared title case against a list that is not all title
+   case**, so "GORV Pressure" could not be reached by any variant of itself.
+   Both sides lowered. Measured: every additive code still matches nothing
+   even at 0.70, and BH/WH stays refused.
+7. **A curve losing its bottom.** The worst, and the quietest. 00913 p133
+   prints 0 on all five ladders and OCR reads none of them. The AXIS is
+   extended to zero for that case; the INK bound was not, so it stopped a
+   whole step higher and both proppant concentrations read a floor of ~193
+   kg/m3 through the third of the stage the sheet draws flat at zero.
+
+### Settled, do not re-investigate
+
+- **The ink-heavy pages the detector passes over are wellbore schematics**,
+  not missed charts — "Well Summary (schematic) - By Job", checked on six
+  files, 10-12 pages each. This is the same trap the earlier session fell
+  into with a saturation count; the count is a candidate signal only.
+- **GORV Pressure really does run flat near the top of its axis.** I assumed
+  it was clipped, rendered the page, and measured the line at 76.4 on a 0-80
+  axis against our 76. The extractor was right and the eyeball was wrong.
+- **daily reports are not charts.** The operator's sheet names the service
+  company and the stage it fracced, which is everything detect asks for, so
+  00915 p50 came through as a broken Liberty chart. daily_ops knows the
+  shape; it missed the title because "Daily Completion and WS" is its "Daily
+  Completion & WS" marker with the ampersand spelled out.
+
+### Still open on this template
+
+- **A two-label ladder.** 00913 p133's blue ladder OCRs as [12, 16] — below
+  even the three-label rule — so Slurry Rate is dropped from that page. Two
+  points do determine a line; what they do not carry is any evidence that
+  they are a ladder. Needs a different kind of check, not a lower count.
+- **GORV's maximum reports the axis top exactly** (80.0) while the curve runs
+  flat at 76. Some magenta ink reaches the top tick and red on the same page
+  does not do this — the difference is not understood yet.
+- **The light-green concentration keeps a floor of 38** on 00915 p110 rather
+  than 0, and misses its final drop to zero. Better than the 200 it was.
+- Names still arriving mangled past the snapper: "BH Con" (73 pages),
+  "—— BN Con" (23), "B701 NC" (15), "LTM PUMP B701 CONC" (13). The additive
+  codes cannot go in _CANON_NAMES without risking exactly the mislabel the
+  cutoff exists to prevent.
+
+### Harnesses, in scratchpad — rebuild rather than reinvent
+
+`lib_inv.py` (which files are Liberty), `lib_id.py` (OCR-identify the
+textless ones), `lib_detect.py` (chart pages per file), `lib_pages.py` +
+`lib_sweep.py` (per-page analysis, one JSON per file, restartable),
+`lib_report.py` (the numbers above), `ab.py` + `ab_diff.py` (before/after
+digests; the spec always includes a TEXT-LAYER file, because every change
+here is gated on OCR pages and that file proves the gate holds).
+
 ## Liberty on outlined pages — SHIPPED in v1.5.0
 
 19 of the client's 37 failing files are Liberty filings with no text layer.
