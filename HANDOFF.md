@@ -535,3 +535,33 @@ Two leads, in order:
 
 Do NOT merge the branch until a rendered page agrees channel by channel.
 Wrong concentrations in a CSV are worse than the nothing they replace.
+
+### Liberty: what the curve collector actually sees (measured, 00919 p111)
+
+Two hypotheses tried and BOTH DISPROVED by measurement — recorded so they are
+not tried a third time:
+
+    type=s items=200 rect=(98,419)-(296,469)   the real curve, inside the plot
+    type=f items=37  rect=(201,122)-(208,129)  LEGEND glyphs, above the plot
+    type=f items=22  rect=(77,402)-(83,410)    TICK LABEL glyphs, left of it
+
+On an outlined page those glyphs are filled vector paths in the series colour,
+and the collector takes filled paths deliberately (2025 filings draw curves
+that way). So they LOOK like the cause. Clipping them out — on the value axis
+for the legend, on the time axis for the tick labels, both verified to be the
+right axes — changed NOTHING. The numbers are identical with and without.
+
+So the glyphs are not what produces the wrong values. What remains:
+
+    Prop Conc      300.0  = the MINIMUM of its fitted axis
+    Slurry Rate     25.0  = the MAXIMUM of its fitted axis
+    Btm Prop Conc 1500.0  = the MAXIMUM
+    GORV Pressure   75.0  = the MAXIMUM
+    Treating Press  37.87 = correct, and the only one NOT on a bound
+
+Every wrong channel sits exactly on a fitted bound, which is the signature of
+CLAMPING into a mis-fitted range rather than of tracing the wrong ink. And the
+ladders come back missing their zero: blue [10,15,20,25], green [300..1500],
+red [15..75]. Look there next — at where a traced value is clipped to
+(v_lo_ax, v_hi_ax), and at whether a ladder missing its bottom tick makes that
+range wrong.
