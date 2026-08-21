@@ -2009,7 +2009,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     except Exception:
         th, trows = {}, []
     if len(trows) >= 2:
-        cols = [c for c in trican2.COLUMNS if any(c in r for r in trows)]
+        # columns_for, not a filter over COLUMNS: the chemical and proppant
+        # columns are named by the job's own products and cannot be in a
+        # fixed list, so the reader is asked what these rows actually carry.
+        cols = trican2.columns_for(trows)
         results.append({
             "type": "table",
             "title": (th.get("well") or "well") + " — per-stage engineering data (Trican)",

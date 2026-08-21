@@ -34,20 +34,52 @@ FIELD_MAP = {
     ("SURFACE PRESSURE", "Average Pad"): "avg_pad_mpa",
     ("SURFACE PRESSURE", "Average Proppant"): "avg_prop_mpa",
     ("DH RATE", "Maximum"): "rate_max_m3min",
+    # Printed and populated on 137 of 140 stage pages measured, and dropped
+    # for want of a key — the section walk only keeps what FIELD_MAP names.
+    ("DH RATE", "Average Pad"): "rate_avg_pad_m3min",
     ("DH RATE", "Average"): "rate_avg_m3min",
     ("DH RATE", "Minimum"): "rate_min_m3min",
     ("DH CONC", "Maximum"): "conc_max_kgm3",
     ("DH CONC", "Average"): "conc_avg_kgm3",
     ("DH SLURRY VOLUME", "Pad"): "pad_vol_m3",
     ("DH SLURRY VOLUME", "Proppant"): "prop_vol_m3",
+    ("DH SLURRY VOLUME", "Flush/Spacer"): "flush_spacer_m3",
     ("FLUID", "Water"): "water_m3",
     ("TIME", "Total Time"): "total_time_min",
 }
 COLUMNS = ["stage", "start", "finish", "total_time_min", "breakdown_mpa",
            "max_mpa", "avg_mpa", "min_mpa", "isip_mpa", "avg_pad_mpa",
            "avg_prop_mpa", "rate_max_m3min", "rate_avg_m3min", "rate_min_m3min",
-           "conc_max_kgm3", "conc_avg_kgm3", "pad_vol_m3", "prop_vol_m3",
+           "rate_avg_pad_m3min", "conc_max_kgm3", "conc_avg_kgm3",
+           "pad_vol_m3", "prop_vol_m3", "flush_spacer_m3",
            "water_m3", "proppant_t", "proppant_types"]
+
+
+def _slug(name):
+    """'Sand 50/140' -> 'sand_50_140', 'CRC-C 30/50' -> 'crc_c_30_50'."""
+    out = re.sub(r"[^0-9A-Za-z]+", "_", name.strip().lower()).strip("_")
+    return out or "x"
+
+
+def columns_for(rows):
+    """The fixed schema, plus whatever per-product columns these rows carry.
+
+    A chemical or a proppant is named by the JOB, not by the template — this
+    sample alone prints Busan 94, CC-7, FR-9 and S-2 as additives and six
+    different proppants — so they cannot live in a fixed list. They were
+    handled by not being emitted at all (chemicals) or by being summed into
+    one number and a names string (proppant), which is why a report that
+    prints 0.17 t of 50/140 beside 48 t of 40/70 came out as one figure.
+
+    Per-product columns instead, appended in a stable order so two files of
+    the same job line up: the fixed schema first, then chemicals, then
+    proppants, each alphabetically.
+    """
+    have = {k for r in rows for k in r}
+    fixed = [c for c in COLUMNS if c in have]
+    chem = sorted(k for k in have if k.startswith("chem_"))
+    prop = sorted(k for k in have if k.startswith("prop_") and k.endswith("_t"))
+    return fixed + chem + prop
 
 
 def detect(page):
@@ -156,6 +188,18 @@ def parse_page(page):
             if v is not None and "tonne" in pumped:
                 prop_t += v
                 prop_types.append(label)
+                # ...and keep the product's OWN tonnage. The sum and the names
+                # string stay exactly as they were, so nothing downstream that
+                # reads them changes; this only adds the split they hide.
+                row[f"prop_{_slug(label)}_t"] = v
+        elif sec == "CHEMICAL":
+            # Every additive row measured is populated on every stage page —
+            # 141 of 141, four products — and not one of them reached the
+            # output, because the section had no FIELD_MAP entry and the walk
+            # keeps only what FIELD_MAP names.
+            v = _num(pumped)
+            if v is not None:
+                row[f"chem_{_slug(label)}_l"] = v
         else:
             key = FIELD_MAP.get((sec, label))
             if key:
