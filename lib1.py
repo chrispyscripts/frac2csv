@@ -740,7 +740,15 @@ def extract_page(page, sample_sec=1.0):
         if len(pts) < 40:
             continue
         arr = np.array(pts)
-        keep = ((arr[:, 0] >= x_lo) & (arr[:, 0] <= x_hi) &
+        # x_lo is the GLOBAL top tick across every colour, so ink above THIS
+        # series' own top still gets in — GORV read 80.22 against a printed
+        # 0..75 because magenta's own 75 sits below the page's highest tick.
+        # Each series is bounded by its own ladder: the position its maximum
+        # tick occupies, with a point of slack for pen width.
+        x_lo_c = x_lo
+        if any(x.get("ocr") for x in spans) and abs(b) > 1e-9:
+            x_lo_c = max(x_lo, (v_hi_ax - a) / b - 1.0)
+        keep = ((arr[:, 0] >= x_lo_c) & (arr[:, 0] <= x_hi) &
                 (arr[:, 1] >= y_lo) & (arr[:, 1] <= y_hi))
         arr = arr[keep]
         if len(arr) < 40:
