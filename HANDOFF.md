@@ -593,3 +593,32 @@ is feeding `fits[blue]` or the collected points — check, in order:
 The one channel that is CORRECT (Treating Pressure 37.87 vs ~38 printed) is
 the one whose ladder includes enough of its range. Every wrong channel's
 ladder is missing its zero.
+
+### Liberty: what is left, after four disproved theories
+
+Four things that LOOK like the cause and are not — each disproved by
+measurement, so nobody spends the hour again:
+
+  1. legend glyphs traced as curve ink — clipped them out, no change
+  2. tick-label glyphs traced as curve ink — clipped them out, no change;
+     `keep` already excludes both, they never reach the fit
+  3. the real curve being filtered out by the value bounds — it is not:
+     x_lo/x_hi come from ALL colours' ticks, and magenta's ladder has its
+     zero, so the bounds reach past the curve
+  4. a unit-keyed borrow via unit_fit — no: fits[blue] exists, so
+     `fits.get(color) or unit_fit.get(unit)` never falls through
+
+WHAT REMAINS. Computing blue's fit by hand from its own ticks:
+
+    25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
+    value = 36.43 - 0.07742 * cx
+    curve at cx 419..469  ->  3.99 .. 0.12
+    np.clip(v, 10, 25)    ->  10.0
+
+That says Slurry Rate must be 10.0. The extractor returns 25.0. So the fit the
+CODE builds is not the fit those ticks imply, and the one step between them is
+the gridline snapping just above the fit — "snap each label to its gridline"
+— which on OCR'd label centroids may be pairing labels with the wrong rules.
+Print `fits[0x0000ff]` against the hand fit above; if they differ, it is the
+snap, and it is the last thing standing between these 19 files and correct
+values.
