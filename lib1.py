@@ -655,6 +655,30 @@ def _arith_ladder(pts):
             and abs(dx2 - dx1) <= 0.05 * abs(dx1))     # and even in position
 
 
+def _stamp(t):
+    """Absolute seconds -> ('YYYY-MM-DD', 'HH:MM:SS'), ROUNDED to the second.
+
+    t is a fit through label centroids and lands a hair either side of the
+    second it means — 35099.9997 for a chart the sheet labels 09:45. Truncating
+    that gave 09:44:59, and every Liberty start time came out a second short:
+    19:59:59 for a printed 20:00, 01:49:59 for 01:50.
+
+    A second is nothing until the chart starts at MIDNIGHT. Then 00:00:00
+    truncates to 23:59:59 on the day before, the date follows it back, and a
+    chart whose clock is perfect trips the backwards-clock warning. Carmine
+    found it on 00269 stage 15: the axis reads 2023/01/17 00:00, we reported
+    Jan 16, and the flag pointed at stage 16 for stage 15's date.
+
+    Both halves come from the SAME rounded instant, so they cannot disagree.
+    """
+    import datetime as _dt
+    n = int(round(t))
+    d = _dt.date(2000, 1, 1) + _dt.timedelta(days=n // 86400)
+    s = n % 86400
+    return (f"{d.year:04d}-{d.month:02d}-{d.day:02d}",
+            f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}")
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -1055,13 +1079,23 @@ def extract_page(page, sample_sec=1.0):
     # after the stage that follows it. t_lo is absolute seconds on the same
     # epoch the labels were converted into, so the day is simply read back
     # out of it and the two can no longer disagree.
+    # ROUNDED to the second, not truncated.
+    #
+    # t_lo is a fit through label centroids and lands a hair either side of
+    # the second it means — 35099.9997 for a chart the sheet labels 09:45.
+    # Truncating that gives 09:44:59, and every Liberty start time came out a
+    # second short: 19:59:59 for a printed 20:00, 01:49:59 for 01:50.
+    #
+    # A second is nothing until the chart starts at midnight. Then 00:00:00
+    # truncates to 23:59:59 on the day BEFORE, the date moves back with it,
+    # and the stage looks like it begins a day early — which trips the
+    # backwards-clock warning on a chart whose clock is perfect. Carmine
+    # found it on 00269 stage 15: the axis reads 2023/01/17 00:00 and we
+    # reported Jan 16, so the flag pointed at stage 16 for stage 15's date.
+    _d0, _clk = _stamp(t_lo)
     if date:
-        import datetime as _dt0
-        _d0 = _dt0.date(2000, 1, 1) + _dt0.timedelta(days=int(t_lo // 86400))
-        meta.date = f"{_d0.year:04d}-{_d0.month:02d}-{_d0.day:02d}"
-    day_sec = t_lo % 86400
-    meta.start_time = (f"{int(day_sec // 3600):02d}:{int(day_sec % 3600 // 60):02d}"
-                       f":{int(day_sec % 60):02d}")
+        meta.date = _d0
+    meta.start_time = _clk
     # chart geometry in PAGE coordinates for the synced original-chart view:
     # elapsed seconds e -> page coord along `axis` = (t_lo + e - ta) / tb;
     # v0/v1 span the plot across the other dimension. (For landscape pages
