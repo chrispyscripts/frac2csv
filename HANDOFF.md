@@ -41,6 +41,35 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+**Paused mid-sweep, 2026-08-21.** The Liberty page-by-page analysis was
+extended from the 22 outlined filings to the whole corpus and stopped at
+**116 of 395 text-layer files** when the machine was closed. Results so far:
+11,333 pages, 4,718 chart pages, **4,716 extracted (100.0%)**, 100% dated,
+clocked and staged. The only two failures are one page twice, and it is
+LIBERTY'S OWN typo: 00498 p199/p200 print a final tick of "2023/11/05 01:35"
+in a sequence running 01:50, 01:58, 02:05, 02:13, 02:20 — it should read
+02:28. Verified by rendering the page. Refusing it is correct behaviour.
+
+To resume — the sweep skips files already written, so just re-run it:
+
+    cd frac2csv
+    python3 validation-tools/liberty-sweep/lib_sweep.py \
+        validation-tools/liberty-sweep/list_textlayer.json <outdir> 4
+
+The partial results were in the session scratchpad and are gone with it; the
+harnesses and file lists are preserved under `validation-tools/liberty-sweep/`
+(lib_inv, lib_id, lib_detect, lib_pages, lib_sweep, lib_report, ab, ab_diff).
+Re-running from scratch costs about an hour.
+
+Also stopped: the textless-Halliburton sweep at **103 of 136 files** (100
+extracting, 2,816 series). Same restartable shape, list built from
+`textless_rest.json` — that one was scratchpad-only and needs rebuilding with
+lib_inv + lib_id.
+
+**Not started:** the 419 Trican layout-B files found by the corpus scan, of
+which only 4 are verified.
+
+
 Nothing is running. `providers.tsv` and `curvelen.tsv` each carry all 184
 rows with no errors; what they say is under "The pure-vector class" below,
 and curvelen's answer is not the one it was built to give.
