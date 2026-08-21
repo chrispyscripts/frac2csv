@@ -651,10 +651,33 @@ def extract_page(page, sample_sec=1.0):
     # x order take B, C, D...  (IFS convention)
     letters_used = sorted({ax for *_, ax in legend})
     mapping = {}
-    if "A" in letters_used:
+
+    # ...except that the page SAYS which column is which. IFS prints the axis
+    # letter directly above its own tick column — on 00148 p136 a black "A" at
+    # cx -700 over the pressure ladder and a black "B" at cx -133 over the
+    # rate — and reading that beats inferring it from left-to-right order.
+    # Order is what put Slurry Rate on the concentration axis at 628 against a
+    # printed 0..20: OCR had dropped the rate column entirely, so "B" became
+    # whatever happened to be second. A letter matched to the column beneath
+    # it cannot slide like that, and a letter with no column near it maps to
+    # nothing, which is the honest answer.
+    placed = {}
+    for s_ in spans:
+        if s_["color"] != 0 or not re.fullmatch(r"[A-F]", s_["t"]):
+            continue
+        near = min(columns, key=lambda c: abs(c["x"] - s_["cx"]))
+        if abs(near["x"] - s_["cx"]) <= 40:
+            placed.setdefault(s_["t"], near)
+    for ax in letters_used:
+        if ax in placed:
+            mapping[ax] = placed[ax]
+    if len(mapping) == len(letters_used):
+        pass                                # the page named every one of them
+    elif "A" in letters_used and "A" not in mapping:
         mapping["A"] = columns[0]
-    rest = [ax for ax in letters_used if ax != "A"]
-    right = columns[1:] if len(columns) > 1 else columns
+    rest = [ax for ax in letters_used if ax != "A" and ax not in mapping]
+    right = [c for c in columns[1:] if c not in mapping.values()] or \
+        [c for c in columns if c not in mapping.values()]
     for i, ax in enumerate(rest):
         if i >= len(right):
             # There is no column for this letter. The clamp that used to sit
@@ -871,6 +894,31 @@ def extract_page(page, sample_sec=1.0):
             axes[col] = (float(min(p_lo, p_hi)), float(max(p_lo, p_hi)))
             axes_frame[col] = (float(acol["a"] + acol["b"] * v_top),
                                float(acol["a"] + acol["b"] * v_bot))
+    # AN AXIS THAT CANNOT BELONG TO THIS CHANNEL. Checking the value against
+    # the axis it was READ from cannot work — a mis-mapped channel is inside
+    # that axis by construction, which is why 00148 p271's Slurry Rate of 721
+    # sat happily within the 0..1000 it had been read against while the check
+    # threw away 12 legitimate rates whose curves touch their own top tick.
+    #
+    # What IS knowable is that a slurry rate is never drawn on a 0..1000 axis.
+    # These are the printed ranges this corpus actually uses — pressure 0..80
+    # and 0..100, rate 0..20 and 0..24, concentration 0..1000 — widened well
+    # past them so only an axis belonging to a DIFFERENT channel is refused.
+    # Same idea as step1.impossible_axis, which does this for STEP.
+    for col in list(data):
+        rng = axes.get(col)
+        if not rng:
+            continue
+        top = max(abs(rng[0]), abs(rng[1]))
+        lim = {"Tr Press": (10.0, 300.0), "Backside Pressure": (10.0, 300.0),
+               "GORV Press": (10.0, 300.0), "Slurry Rate": (2.0, 100.0),
+               "BH Prop Conc": (50.0, 5000.0),
+               "WH Prop Conc": (50.0, 5000.0)}.get(col)
+        if lim and not (lim[0] <= top <= lim[1]):
+            del data[col]
+            chinfo.pop(col, None)
+            axes.pop(col, None)
+            axes_frame.pop(col, None)
     meta.axes = axes
     meta.axes_frame = axes_frame
     # start time of day for DATETIME column

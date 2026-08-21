@@ -105,13 +105,93 @@ def _spans(page):
         r = fitz.Rect(w["rect"])
         tally = defaultdict(int)
         for rect, rgb in fills:
-            if rect.width < r.width * 3 and rect.height < r.height * 3 \
-                    and r.intersects(rect):
-                tally[rgb] += 1
+            # CONTAINED in the word, not merely touching it. Legend entries
+            # sit close together and a glyph from the neighbour overlaps the
+            # box: sampling on intersection gave "CONC" of the green XE363
+            # entry a RED colour and the red J475 entry a green one, which is
+            # the difference between naming a channel and mislabelling it.
+            inter = rect & r
+            area = max(rect.width, 0.01) * max(rect.height, 0.01)
+            iarea = max(inter.width, 0.0) * max(inter.height, 0.0)
+            if iarea / area < 0.7:
+                continue
+            if rect.width > r.width or rect.height > r.height * 1.2:
+                continue
+            tally[rgb] += 1
         out.append({"t": t, "cx": (r.x0 + r.x1) / 2, "cy": (r.y0 + r.y1) / 2,
                     "color": (max(tally.items(), key=lambda kv: kv[1])[0]
                               if tally else 0),
                     "ocr": True})
+    return out
+
+
+# OCR mangles the superscript and the brackets: "(kg/m³)" comes back
+# "(kg/m?)", "(L/m³)" as "{ Lim?)" or "(Lim". These are the only two units a
+# Liberty chemical legend prints, so the repair is a lookup, not a guess.
+def _fix_unit(txt):
+    low = txt.lower()
+    if "kg" in low:
+        return "kg/m3"
+    if "l" in low and "m" in low:
+        return "L/m3"
+    return txt.strip("()[]{} ")
+
+
+def _ocr_legend_spans(spans):
+    """Rebuild one 'NAME (unit)' span per colour from OCR words.
+
+    lib1 keys the legend by COLOUR — a series' name is printed in its own
+    curve's ink — and matches a single span shaped "NAME (unit)". OCR returns
+    the words separately, so nothing matched and 00913's 88 charts came back
+    "no extractable data".
+
+    Colour is trustworthy here only because the sampler was fixed to count
+    fills CONTAINED in a word rather than merely touching it. Before that the
+    green entry's "CONC" came back red and the red entry's words came back
+    green, and joining on colour would have swapped two channel names.
+
+    ORIENTATION-FREE, and it has to be: extract_page swaps cx and cy for a
+    chart whose time runs along X, so any rule phrased as "the legend sits
+    above the ladders" reads the wrong axis on half the corpus and returned
+    nothing at all. A legend word is simply a coloured span that is NOT part
+    of a tick ladder — a ladder member has same-coloured numeric siblings
+    lined up with it, and a legend word does not, whichever way the page is
+    turned. That also recovers "475": OCR drops the J from "J475 CONC", and
+    the bare number is a legend word precisely because no ladder claims it.
+    """
+    def _ladder(s_):
+        if not re.fullmatch(r"-?[\d,]+(\.\d+)?", s_["t"]):
+            return False
+        return sum(1 for o in spans
+                   if o is not s_ and o["color"] == s_["color"]
+                   and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
+                   and (abs(o["cx"] - s_["cx"]) <= 12
+                        or abs(o["cy"] - s_["cy"]) <= 12)) >= 2
+
+    by = defaultdict(list)
+    for s_ in spans:
+        if s_["color"] == 0 or _ladder(s_):
+            continue
+        by[s_["color"]].append(s_)
+    out = []
+    for colour, items in by.items():
+        if len(items) < 2:
+            continue
+        # read along whichever axis the words actually run
+        dx = max(x["cx"] for x in items) - min(x["cx"] for x in items)
+        dy = max(x["cy"] for x in items) - min(x["cy"] for x in items)
+        items.sort(key=lambda x: x["cx"] if dx >= dy else x["cy"])
+        words = [x["t"] for x in items]
+        cut = next((i for i, w in enumerate(words)
+                    if any(ch in w for ch in "(){}[]/")), None)
+        if cut is None or cut == 0:
+            continue
+        name = " ".join(words[:cut]).strip()
+        unit = _fix_unit(" ".join(words[cut:]))
+        if len(name) < 3 or not unit:
+            continue
+        out.append({"t": f"{name} ({unit})", "cx": items[0]["cx"],
+                    "cy": items[0]["cy"], "color": colour, "ocr": True})
     return out
 
 
@@ -143,6 +223,33 @@ def _time_axis(spans, time_frame=None, time_grid=None):
     if len(times) < 3:
         return None, "", None
     import datetime as dt
+    # Drop a misread date BEFORE pairing, not after. 00913 p140 prints
+    # "2022/04/28" three times and OCR returns one as "9929/04/28"; that bad
+    # label sits nearest in y to every clock on the axis, so pairing first and
+    # validating second threw away all three points and left the chart with no
+    # date at all.
+    def _sane(dsp):
+        try:
+            y, mo, dd = _parse_date(dsp["t"])
+        except (ValueError, TypeError):
+            return False
+        return 1990 <= y <= 2100 and 1 <= mo <= 12 and 1 <= dd <= 31
+    sane = [x for x in dates if _sane(x)]
+    # When every readable label agrees on the day, a misread one is a misread
+    # of THAT day — the axis here spans forty minutes. So repair it rather
+    # than drop it: dropping left the first clock with no label within reach,
+    # two points instead of three, and the chart fell through to the undated
+    # path. 00913 p140 prints 2022/04/28 three times and OCR returns one as
+    # "9929/04/28".
+    if sane and len(sane) < len(dates):
+        days = {_parse_date(x["t"]) for x in sane}
+        if len(days) == 1:
+            good = sane[0]["t"]
+            dates = [x if _sane(x) else {**x, "t": good} for x in dates]
+        else:
+            dates = sane
+    else:
+        dates = sane
     pts = []
     date0 = None
     for ts in times:
@@ -150,7 +257,16 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         best = min(dates, key=lambda d: abs(d["cy"] - ts["cy"])) if dates else None
         if best is None or abs(best["cy"] - ts["cy"]) > 40:
             continue
-        y, mo, dd = _parse_date(best["t"])
+        try:
+            y, mo, dd = _parse_date(best["t"])
+        except (ValueError, TypeError):
+            continue
+        # OCR misreads a digit in the year and the chart lands in the year
+        # 9929: 00913 p140 prints "2022/04/28" three times and one comes back
+        # "9929/04/28", which made the fit report a duration of 250,886,258,313
+        # seconds. A date label outside living memory is a misread, not a date.
+        if not (1990 <= y <= 2100 and 1 <= mo <= 12 and 1 <= dd <= 31):
+            continue
         parts = [int(p) for p in ts["t"].split(":")]
         # absolute days (fixed epoch), NOT day-of-year — a stage crossing
         # Dec 31 -> Jan 1 must keep increasing (Carmine: day/month/year can
@@ -273,6 +389,50 @@ def _axis_column(pts):
            (max(steps) - min(steps)) <= 1e-6 * max(steps)
 
 
+# The channel names a Liberty treatment chart prints. Chemical additives
+# (XE363, J475, AQUGAR, B702) are NOT here and are never snapped: their names
+# are arbitrary product codes, so a near-match to one of these would be a
+# coincidence, not a correction.
+_CANON_NAMES = ("Treating Pressure", "Backside Pressure", "GORV Pressure",
+                "Slurry Rate", "Clean Rate", "Prop Conc", "BH Prop Conc",
+                "Btm Prop Conc", "WH Prop Conc")
+
+
+def _snap_name(name):
+    """Pull an OCR'd channel name back to the one the chart meant.
+
+    OCR returns "Treatin Foressure", "Slurry ate", "H Prop Conc",
+    "en GORV Pressure" — close enough to read by eye and useless to an alias
+    table, which has to enumerate each variant (alias_table.txt already
+    carries a hand-added "Treatin Pressure"). A column named
+    "Prop Bint Con Sn" reaches the CSV as its own channel and no downstream
+    mapping will ever claim it.
+
+    Only for names that are ALREADY close to a printed one — the cutoff is
+    high enough that an additive's product code cannot be dragged onto a
+    treatment channel, which would be a mislabel rather than a repair.
+    """
+    import difflib
+    bare = re.sub(r"[^A-Za-z ]", " ", name)
+    bare = re.sub(r"\s+", " ", bare).strip()
+    if not bare:
+        return name
+    hits = difflib.get_close_matches(bare.title(), _CANON_NAMES, n=2,
+                                     cutoff=0.78)
+    if not hits:
+        return name
+    # Two plausible answers means no answer. OCR drops a letter from
+    # "BH Prop Conc" and the remains sit exactly as close to "WH Prop Conc" —
+    # bottomhole and wellhead are different measurements, and guessing which
+    # one a curve is would be a mislabel, not a repair.
+    if len(hits) > 1:
+        r = [difflib.SequenceMatcher(None, bare.title(), h).ratio()
+             for h in hits]
+        if abs(r[0] - r[1]) < 0.08:
+            return name
+    return hits[0]
+
+
 def _clean_name(name):
     """Drop a leading wellbore/leg prefix like 'B: ' or 'B :' so the curve
     name matches Carmine's alias table (e.g. 'B: Treating Pressure')."""
@@ -323,12 +483,20 @@ def extract_page(page, sample_sec=1.0):
 
     # colored series: name span "<Name> (<unit>)" + same-color numeric ticks
     named = {}
-    for s in spans:
+    legend_spans = spans
+    if any(x.get("ocr") for x in spans) and not any(
+            re.fullmatch(r"(.+?)\s*\(([^)]+)\)", x["t"]) for x in spans
+            if x["color"] != 0):
+        legend_spans = list(spans) + _ocr_legend_spans(spans)
+    for s in legend_spans:
         if s["color"] == 0:
             continue
         m = re.fullmatch(r"(.+?)\s*\(([^)]+)\)", s["t"])
         if m and len(m.group(1)) > 3:
-            named.setdefault(s["color"], {"name": _clean_name(m.group(1).strip()),
+            _nm = _clean_name(m.group(1).strip())
+            if s.get("ocr"):
+                _nm = _snap_name(_nm)
+            named.setdefault(s["color"], {"name": _nm,
                                           "unit": m.group(2).strip()})
     # a black series (e.g. a chemical CONC drawn in black) shares ink with
     # axes/grid, so all black curves are indistinguishable — accept one only
@@ -354,6 +522,21 @@ def extract_page(page, sample_sec=1.0):
         # and Slurry Rate 4..20 instead of 0..20 — every curve on those axes
         # was then placed against the wrong range. '+ 0.0' normalises -0.0.
         if s["color"] != 0 and re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
+            # On an OCR'd page a tick has to LOOK like one: aligned with at
+            # least two same-coloured siblings. OCR drops the "J" from the
+            # legend's "J475 CONC" and the bare "475" was collected as a tick
+            # on the red axis — [475, 1.0, 0.8, 0.6, 0.4, 0.2, 0.0] — which
+            # destroys the fit and left the page with no axes at all. A
+            # printed tick always has a ladder around it; a legend word does
+            # not.
+            if s.get("ocr"):
+                kin = sum(1 for o in spans
+                          if o is not s and o["color"] == s["color"]
+                          and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
+                          and (abs(o["cx"] - s["cx"]) <= 12
+                               or abs(o["cy"] - s["cy"]) <= 12))
+                if kin < 2:
+                    continue
             ticks[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
                                       s["cx"], s["cy"]))
     # A black series with its OWN printed tick column. Black numerics are
