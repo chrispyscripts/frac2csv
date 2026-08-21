@@ -241,6 +241,23 @@ def _time_axis(spans, time_frame=None, time_grid=None):
     # two points instead of three, and the chart fell through to the undated
     # path. 00913 p140 prints 2022/04/28 three times and OCR returns one as
     # "9929/04/28".
+    # A misread DAY passes the sanity check above — 00915 p118 prints
+    # 2022/04/28 three times and OCR returns the last as 2022/04/20. Eight
+    # days across an eighty-minute chart is what "implausible duration
+    # 708316s" was. A stage runs for hours and may legitimately cross
+    # midnight, so a label within a day of the majority is kept and one
+    # further out is a misread of the majority's day.
+    if len(sane) >= 3:
+        import collections as _c
+        import datetime as _dt
+        days = [_parse_date(x["t"]) for x in sane]
+        top, n = _c.Counter(days).most_common(1)[0]
+        if n > len(days) / 2:
+            ref = _dt.date(*top)
+            good = next(x for x, dd in zip(sane, days) if dd == top)
+            sane = [x if abs((_dt.date(*_parse_date(x["t"])) - ref).days) <= 1
+                    else {**x, "t": good["t"]} for x in sane]
+            dates = [x if _sane(x) else x for x in sane]
     if sane and len(sane) < len(dates):
         days = {_parse_date(x["t"]) for x in sane}
         if len(days) == 1:
