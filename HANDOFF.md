@@ -41,8 +41,18 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
-**Paused mid-sweep, 2026-08-21.** The Liberty page-by-page analysis was
-extended from the 22 outlined filings to the whole corpus and stopped at
+**Paused mid-sweep, 2026-08-21 (second pause at 199 files).** The Liberty
+page-by-page analysis was extended from the 22 outlined filings to the whole
+corpus and stopped at **199 of 395 text-layer files**: 30,739 pages, 9,526
+chart pages, **9,488 extracted (99.6%)**, 100% clocked, 98.6% dated, 38
+failures. Resume the same way — the sweep skips what it has written.
+
+THE TEXTLESS HALLIBURTON SWEEP IS COMPLETE: 136 files, 37,083 pages, 133
+extracting, **4,013 series**, 100% clocked, 98.2% dated, 0 errors. The 3 that
+yield nothing are operator daily reports with no treatment chart in them,
+confirmed by rendering. That goal is closed.
+
+Superseded, kept for the resume instructions — the earlier stop at
 **116 of 395 text-layer files** when the machine was closed. Results so far:
 11,333 pages, 4,718 chart pages, **4,716 extracted (100.0%)**, 100% dated,
 clocked and staged. The only two failures are one page twice, and it is
