@@ -14,6 +14,7 @@ import numpy as np
 
 from frac_core import PageMeta, _resample
 import ocr_labels
+import daily_ops
 from leucrotta import _fit, _close, _spans as _text_spans
 
 # Max seconds a time label may disagree with the gridline/frame-edge fit
@@ -177,10 +178,33 @@ def _ocr_legend_spans(spans):
     for colour, items in by.items():
         if len(items) < 2:
             continue
-        # read along whichever axis the words actually run
-        dx = max(x["cx"] for x in items) - min(x["cx"] for x in items)
-        dy = max(x["cy"] for x in items) - min(x["cy"] for x in items)
-        items.sort(key=lambda x: x["cx"] if dx >= dy else x["cy"])
+        # A legend entry's words sit on ONE line. Anything else in the same
+        # ink is not part of the name, and letting it in does more than add a
+        # word: OCR turns a stroke of chart ink into "|" three hundred points
+        # below the legend row, that outlier makes the vertical spread the
+        # larger one, and the words get sorted DOWN the page instead of along
+        # it. On a row they all share a coordinate, so that sort is a tie and
+        # falls back to whatever order the spans arrived in — which is how
+        # "475 CONC" reaches the CSV as "CONC 475" on 28 pages, and as a bare
+        # "CONC" where the code word is lost with it.
+        #
+        # So find the line first and read along it. Whichever coordinate the
+        # words agree on is the one they are lined up on.
+        med = lambda k: sorted(x[k] for x in items)[len(items) // 2]
+        my, mx = med("cy"), med("cx")
+        row = [x for x in items if abs(x["cy"] - my) <= 6]
+        col = [x for x in items if abs(x["cx"] - mx) <= 6]
+        # Decided BEFORE the sort, and it has to be. `items` IS `row` here,
+        # and CPython empties a list while list.sort() runs so that mutation
+        # during the sort is caught — so a key function that asks len(row)
+        # gets 0, takes the else branch, and silently sorts by the wrong
+        # coordinate. That reads a legend row DOWN the page, where every word
+        # shares a coordinate and the sort is a tie.
+        along_x = len(row) >= len(col)
+        items = row if along_x else col
+        if len(items) < 2:
+            continue
+        items.sort(key=lambda x: x["cx"] if along_x else x["cy"])
         words = [x["t"] for x in items]
         cut = next((i for i, w in enumerate(words)
                     if any(ch in w for ch in "(){}[]/")), None)
@@ -197,8 +221,16 @@ def _ocr_legend_spans(spans):
 
 def detect(page):
     t = _page_text(page)
-    return _LIBERTY.search(t) is not None and \
-        re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is not None
+    if _LIBERTY.search(t) is None or \
+            re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is None:
+        return False
+    # The OPERATOR's daily sheet names the service company and the stage it
+    # fracced, which is both of the things above, so it came through here as a
+    # Liberty chart and then failed for having no time axis — 00915 p50 is an
+    # ARC Resources daily completion report reported as a broken chart page.
+    # A page with a time LOG on it is not a page with a time AXIS on it, and
+    # an honest "no chart here" beats a failure on a chart that never existed.
+    return not daily_ops.is_daily_report(t)
 
 
 def _parse_date(txt):
@@ -512,8 +544,21 @@ def _snap_name(name):
     bare = re.sub(r"\s+", " ", bare).strip()
     if not bare:
         return name
-    hits = difflib.get_close_matches(bare.title(), _CANON_NAMES, n=2,
-                                     cutoff=0.78)
+    # Compared in ONE case, because the vocabulary is not written in one.
+    # This titled the OCR'd name and matched it against the printed list, so
+    # "GORV Pressure" — the only entry that is not title case — could not be
+    # reached by any variant of itself: "Gorv Pressure" is not "GORV
+    # Pressure", and "en GORV Pressure" scored nothing at all. Lowering both
+    # sides also recovers the rate on pages where OCR eats more than one
+    # letter ("Slur ate", "§lurr ate" -> 0.84 against "slurry rate", where
+    # titling scored below the cutoff and left them as their own channels).
+    #
+    # It does not loosen what the cutoff protects: every additive code on
+    # this template — B702 CONC, 475 CONC, AQUGAR CONC, XE363 CONC — still
+    # matches nothing at all, measured, even at 0.70.
+    low = {c.lower(): c for c in _CANON_NAMES}
+    key = bare.lower()
+    hits = difflib.get_close_matches(key, list(low), n=2, cutoff=0.78)
     if not hits:
         return name
     # Two plausible answers means no answer. OCR drops a letter from
@@ -521,11 +566,10 @@ def _snap_name(name):
     # bottomhole and wellhead are different measurements, and guessing which
     # one a curve is would be a mislabel, not a repair.
     if len(hits) > 1:
-        r = [difflib.SequenceMatcher(None, bare.title(), h).ratio()
-             for h in hits]
+        r = [difflib.SequenceMatcher(None, key, h).ratio() for h in hits]
         if abs(r[0] - r[1]) < 0.08:
             return name
-    return hits[0]
+    return low[hits[0]]
 
 
 def _clean_name(name):

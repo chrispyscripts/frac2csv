@@ -164,3 +164,34 @@ class RecognisedByShapeNotTitle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AmpersandTitles(unittest.TestCase):
+    """"&" and "and" are the same title.
+
+    Operators print it both ways and OCR picks whichever it likes. ARC's
+    "Daily Completion and WS (board report)" missed the "Daily Completion &
+    WS" marker by one word, and missed the shape test too because the time-log
+    rows on that scanned page OCR as "| endtime | burt) | Code _]". lib1 read
+    the page as a Liberty chart and reported a broken one.
+    """
+
+    def test_and_matches_an_ampersand_marker(self):
+        self.assertTrue(daily_ops.is_daily_report(
+            "ARC RESOURCES LTD. Daily Completion and WS (board report)\n"
+            "Report # 15.0, Report Date: 5/8/2022"))
+
+    def test_the_ampersand_form_still_matches(self):
+        self.assertTrue(daily_ops.is_daily_report(
+            "Daily Completion & WS\nReport Date: 5/8/2022"))
+
+    def test_dc_and_workover_either_way(self):
+        self.assertTrue(daily_ops.is_daily_report("DC & Workover\nsomething"))
+        self.assertTrue(daily_ops.is_daily_report("DC and Workover\nsomething"))
+
+    def test_a_treatment_chart_is_still_not_a_daily_report(self):
+        # what a Liberty chart page's text looks like — no report date, no log
+        self.assertFalse(daily_ops.is_daily_report(
+            "Liberty Oilfield Services  Stage 13\n"
+            "Treating Pressure (MPa)  Slurry Rate (m3/min)\n"
+            "2022/04/29 02:32  02:52  03:12"))

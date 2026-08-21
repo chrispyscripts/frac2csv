@@ -77,7 +77,14 @@ def is_daily_report(text):
     code row naming a stage, so a page that merely looks like one contributes
     nothing — while under-matching costs a whole file its clocks.
     """
-    if any(m in text for m in MARKERS):
+    # "&" and "and" are the same title. Operators print it both ways and OCR
+    # picks whichever it likes, so ARC's "Daily Completion and WS (board
+    # report)" missed the "Daily Completion & WS" marker by one word — and
+    # then missed the shape test too, because the time-log rows on that
+    # scanned page OCR as "| endtime | burt) | Code _]". lib1 read it as a
+    # Liberty chart and reported a broken one.
+    flat = text.replace("&", "and")
+    if any(m.replace("&", "and") in flat for m in MARKERS):
         return True
     return report_date(text) is not None and len(rows(text)) >= 2
 
