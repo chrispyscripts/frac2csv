@@ -95,6 +95,15 @@
                        background:var(--panel); border-radius:5px;
                        padding:1px 6px; cursor:pointer; }
   th.derived:hover .mapbtn { display:inline-block; }
+  /* a term that DID match a column — the match can still be the wrong one */
+  th.mapped { white-space:nowrap; }
+  th.mapped .mapbtn { display:none; margin-left:6px; font:inherit;
+                      font-size:10.5px; font-weight:600; font-style:normal;
+                      border:1px solid var(--line); color:var(--mut);
+                      background:var(--panel); border-radius:5px;
+                      padding:1px 6px; cursor:pointer; }
+  th.mapped:hover .mapbtn { display:inline-block; }
+  th.mapped .mapbtn:hover { border-color:var(--carmine); color:var(--carmine); }
   .termlist { display:flex; flex-direction:column; gap:4px; margin-top:8px;
               max-height:46vh; overflow-y:auto; }
   .termopt { display:flex; justify-content:space-between; gap:12px;
@@ -273,10 +282,22 @@
      compared against the original sheet. */
   /* a stage whose clock runs backwards, and the button that fixes it */
   .badtime { color:var(--carmine); font-weight:700; margin-left:6px; cursor:help; }
+  .stclock { margin-left:8px; font-size:10px; color:var(--mut);
+             font-variant-numeric:tabular-nums; }
+  .badclock { color:var(--carmine); font-weight:600; }
+  .nodate { font-style:italic; }
+  /* On every stage now, not only the flagged ones — a clock can be wrong
+     without tripping the rule. Muted and hover-revealed so sixty-six rows do
+     not read as sixty-six alarms; carmine and always shown on the rows that
+     ARE flagged, and on one already corrected by hand. */
   .fixtime { margin-left:6px; font:inherit; font-size:10px; font-weight:600;
-             border:1px solid var(--carmine); color:var(--carmine);
+             border:1px solid var(--line); color:var(--mut);
              background:var(--panel); border-radius:5px; padding:0 5px;
-             cursor:pointer; }
+             cursor:pointer; visibility:hidden; }
+  .stagerow:hover .fixtime { visibility:visible; }
+  .stagerow:hover .fixtime:hover { border-color:var(--carmine); color:var(--carmine); }
+  .stagerow.badtime-row .fixtime, .stagerow.edited-row .fixtime {
+             visibility:visible; border-color:var(--carmine); color:var(--carmine); }
   .stagerow.badtime-row { background:rgba(163,22,49,0.06); }
   .timewarn { margin:6px 18px 0; padding:7px 10px; border-radius:7px;
               border:1px solid var(--carmine); color:var(--carmine);
@@ -1772,18 +1793,34 @@ function selectFile(entry) {
       // report appends to it ("1A HRF", "2A PW"), which distinguishes stages
       // that would otherwise read alike — and the sequence flush right.
       const bad = badTimes.has(String(it.key));
-      const fixed = it.meta && timeFixGet({ meta: it.meta });
+      const fixed = (it.meta && timeFixGet({ meta: it.meta })) || null;
+      // The stage's own clock, on the row. It was only ever visible inside
+      // the Fix-time prompt, so a wrong time could not be spotted without
+      // opening the dialog on every stage in turn — and the warning only
+      // flags a stage that starts before the PREVIOUS one ended, which is
+      // not the only way a clock can be wrong.
+      const _d = fixed ? fixed.date : ((it.meta && it.meta.date) || "");
+      const _t = fixed ? fixed.time
+                       : ((it.meta && it.meta.start_time) || "");
+      const _clock = _d || _t
+        ? `<span class="stclock${bad ? " badclock" : ""}">`
+          + `${_d || "no date"} ${(_t || "").slice(0, 8)}</span>`
+        : `<span class="stclock nodate">no clock</span>`;
       row.innerHTML = `<span class="stg">Stage ${stageDisplay(stageLabel(it))}`
         + (stageVariant(it.key)
             ? ` <span class="ch">${stageVariant(it.key)}</span>` : "")
+        + _clock
         + (bad ? `<span class="badtime" title="This stage starts before the `
                  + `one before it finished — its printed date or time is `
                  + `wrong">&#9888;</span>`
-                 + `<button type="button" class="fixtime">Fix time</button>` : "")
+                 : "")
+        + `<button type="button" class="fixtime" title="edit this stage's `
+        + `date and time">Fix time</button>`
         + (fixed ? `<span class="ch" title="time corrected by hand">edited</span>`
                  : "")
         + `</span><span class="seqno">${it.seq}</span>`;
       if (bad) row.classList.add("badtime-row");
+      if (fixed) row.classList.add("edited-row");
     }
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
@@ -2234,7 +2271,10 @@ function showTable(entry, t) {
   // field the patterns could not find asks to be told rather than vanishing.
   const head = ours
     ? cur.map.map(m => {
-        if (m.parts.length) return `<th>${E(m.label)}</th>`;
+        if (m.parts.length) return `<th class="mapped" title="reading: ` +
+               `${E(m.parts.map(p => p.from).join(", "))}">${E(m.label)}` +
+               `<button type="button" class="mapbtn" ` +
+               `data-term="${E(m.term.key)}">Edit</button></th>`;
         // Filled from the chart: a real column, but it says so, and Map Term
         // still overrides it if the table does print a label after all.
         if (m.derive) return `<th class="derived" title="not on this table — ` +
@@ -2263,9 +2303,14 @@ function showTable(entry, t) {
       const term = OUR_TERMS.find(x => x.key === key);
       $("termmap-title").textContent =
         term.unit ? `${term.label} (${term.unit})` : term.label;
+      const nowM = cur.map.find(x => x.term.key === key);
+      const nowFrom = nowM && nowM.parts.length
+        ? nowM.parts.map(p => p.from).join(", ") : "";
       $("termmap-sub").textContent =
-        `${provider} · ${t.title} — which column holds it? ` +
-        `Remembered for every ${provider} table.`;
+        `${provider} · ${t.title} — `
+        + (nowFrom ? `now reading "${nowFrom}". Pick a different column? `
+                   : `which column holds it? `)
+        + `Remembered for every ${provider} table.`;
       const list = $("termmap-list"); list.innerHTML = "";
       (t.columns || []).forEach((c, ci) => {
         const row = document.createElement("button");
@@ -3757,23 +3802,30 @@ function askTimeFix(entry, item) {
   const shownTime = cur ? cur.time : (st.meta.start_time || "00:00:00");
   const printed = st.meta._date0 !== undefined
     ? `${st.meta._date0} ${st.meta._time0}` : `${shownDate} ${shownTime}`;
-  const d = window.prompt(
-    `Stage ${item.key} starts before the stage before it finished.\n\n` +
-    `The sheet prints: ${printed}\n\n` +
-    `Corrected DATE (YYYY-MM-DD), or blank to undo the correction:`,
-    shownDate);
-  if (d === null) return;
-  if (!d.trim()) { timeFixSet(st, "", ""); reRender(entry); return; }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) {
-    alert("Date must read YYYY-MM-DD — nothing changed."); return;
+  // ONE prompt for both. It used to ask for the date, validate it, and only
+  // then ask for the time — so a stage whose DATE is right and whose TIME is
+  // wrong could not be corrected without retyping the date, and the time was
+  // never visible until you had already committed to one.
+  const bad = String(item.key) && (entry.well.badTimes || new Set())
+    .has(String(item.key));
+  const answer = window.prompt(
+    `Stage ${item.key}\n\n`
+    + (bad ? `This stage starts before the one before it finished.\n` : "")
+    + `The sheet prints: ${printed}\n\n`
+    + `Corrected DATE and TIME, or blank to undo the correction:`,
+    `${shownDate} ${shownTime}`.trim());
+  if (answer === null) return;
+  if (!answer.trim()) { timeFixSet(st, "", ""); reRender(entry); return; }
+  const m = answer.trim().match(
+    /^(\d{4}-\d{2}-\d{2})(?:[ T]+(\d{1,2}:\d{2}(?::\d{2})?))?$/);
+  if (!m) {
+    alert("Type it as YYYY-MM-DD HH:MM:SS — nothing changed.");
+    return;
   }
-  const t = window.prompt(`Corrected START TIME (HH:MM:SS):`, shownTime);
-  if (t === null) return;
-  if (!/^\d{1,2}:\d{2}(:\d{2})?$/.test(t.trim())) {
-    alert("Time must read HH:MM or HH:MM:SS — nothing changed."); return;
-  }
-  const tt = t.trim().length <= 5 ? t.trim() + ":00" : t.trim();
-  timeFixSet(st, d.trim(), tt);
+  const tt = m[2]
+    ? (m[2].length <= 5 ? m[2] + ":00" : m[2])
+    : (shownTime || "00:00:00");
+  timeFixSet(st, m[1], tt);
   reRender(entry);
 }
 
@@ -3873,34 +3925,118 @@ function fvStageStart(st) {
 // stage prints one: with a stage missing, there is nothing to sort on and the
 // original order is the best guess available, which is the case the synthetic
 // fallback already exists for.
-function fvOrdered(stages) {
-  const at = stages.map(fvStageStart);
-  if (!at.every(v => isFinite(v))) return stages;
-  return stages
-    .map((st, i) => ({ st, t: at[i], i }))
-    .sort((a, b) => (a.t - b.t) || (a.i - b.i))
-    .map(x => x.st);
+function fvOrdered(stages) { return fvLayout(stages).stages; }
+function fvStarts(stages) {
+  const L = fvLayout(stages);
+  return { starts: L.starts, synthetic: L.synthetic };
 }
 
-function fvStarts(stages) {
+// Where every stage sits on the axis, in one pass, because ordering and
+// placement are the same question: you cannot sort by a clock until you have
+// decided what the clock says for a stage that did not print one.
+//
+// The old pair took an all-or-nothing view — every stage dated and strictly
+// increasing, or the whole well went end to end on a made-up axis. That threw
+// away a real clock in the two cases that matter most:
+//
+//   * ONE undated stage in forty. Thirty-nine printed times, all of them
+//     discarded, and the well drew as an even sequence that says nothing about
+//     when anything happened.
+//   * A stage printed OUT OF TIME ORDER — which is the fault Carmine is
+//     looking for. Sending it to the synthetic axis hid the very thing that
+//     made it non-monotonic: on an end-to-end axis every stage follows the
+//     last one perfectly, so a backwards jump becomes invisible at the exact
+//     moment it is detected.
+//
+// So: keep every printed time as printed. Place only the stages that printed
+// nothing, end to end after the stage before them. Then order by the resulting
+// clock, so the axis is real elapsed time and a stage that belongs earlier
+// DRAWS earlier — out of step with its own number, which is what makes the
+// jump visible rather than merely reported.
+function fvLayout(stages) {
   const raw = stages.map(fvStageStart);
-  const ok = raw.every(v => isFinite(v)) &&
-             raw.every((v, i) => i === 0 || v > raw[i - 1]);
-  if (ok) return { starts: raw, synthetic: false };
-  const starts = [];
-  let t = isFinite(raw[0]) ? raw[0] : Date.parse("2000-01-01T00:00:00");
-  for (const st of stages) {
-    starts.push(t);
-    t += st.n * (st.sample_sec || 1) * 1000;
+  const dur = i => Math.max(60000,
+    (stages[i].n || 0) * (stages[i].sample_sec || 1) * 1000);
+  const invented = new Set();
+  // WHY a start is ours. "placed" — the stage printed no clock at all.
+  // "pushed" — it printed one, and the stage before it printed the SAME one,
+  // so it was moved clear to keep a band you can see and grab. Both must stay
+  // out of the export; only the first is a missing clock, and telling a reader
+  // its time is missing when the sheet prints one is its own small lie.
+  const why = {};
+
+  // Nothing anywhere printed a clock: the end-to-end axis, unchanged, and
+  // `synthetic` still tells FracView not to call it a wall clock.
+  if (!raw.some(v => isFinite(v))) {
+    const starts = []; let t = Date.parse("2000-01-01T00:00:00");
+    for (let i = 0; i < stages.length; i++) { starts.push(t); t += dur(i); }
+    const all = stages.map((_, i) => i);
+    return { stages, starts, synthetic: true, jumps: [],
+             invented: new Set(all), why: Object.fromEntries(
+               all.map(i => [i, "placed"])), printed: all };
   }
-  return { starts, synthetic: true };
+
+  const starts = raw.slice();
+  const first = raw.findIndex(v => isFinite(v));
+  // an undated run at the FRONT hangs back off the first real start
+  for (let i = first - 1; i >= 0; i--) {
+    starts[i] = starts[i + 1] - dur(i); invented.add(i); why[i] = "placed";
+  }
+  for (let i = first + 1; i < stages.length; i++) {
+    if (isFinite(starts[i])) continue;          // printed — kept as printed,
+    starts[i] = starts[i - 1] + dur(i - 1);     // even where it goes backwards
+    invented.add(i); why[i] = "placed";
+  }
+
+  // Backwards steps in the order the FILING prints them, named while the
+  // printed order still exists — after the sort below it is gone.
+  const jumps = [];
+  for (let i = 1; i < stages.length; i++) {
+    if (invented.has(i) || invented.has(i - 1)) continue;
+    if (starts[i] >= starts[i - 1]) continue;
+    jumps.push({ from: String(stages[i - 1].meta.stage || "?"),
+                 to: String(stages[i].meta.stage || "?"),
+                 tFrom: starts[i - 1], tTo: starts[i] });
+  }
+
+  const ord = stages.map((st, i) => i)
+    .sort((x, y) => (starts[x] - starts[y]) || (x - y));
+  const oStages = ord.map(i => stages[i]);
+  const oStarts = ord.map(i => starts[i]);
+  const oInvented = new Set(); const oWhy = {};
+  ord.forEach((i, k) => {
+    if (invented.has(i)) { oInvented.add(k); oWhy[k] = why[i]; }
+  });
+
+  // Two stages on the same printed timestamp leave a zero-width band, and a
+  // stage nobody can see or grab is worse than one drawn a little late. Push
+  // the later one clear and mark it invented — its own printed clock is still
+  // what the row and the label show.
+  for (let k = 1; k < oStarts.length; k++) {
+    if (oStarts[k] > oStarts[k - 1]) continue;
+    oStarts[k] = oStarts[k - 1] + Math.max(60000,
+      (oStages[k - 1].n || 0) * (oStages[k - 1].sample_sec || 1) * 1000);
+    oInvented.add(k); oWhy[k] = oWhy[k] || "pushed";
+  }
+
+  // A file dated to the DAY prints one timestamp for all of it, so every
+  // stage after the first gets pushed and the "real" axis is end to end with
+  // extra steps. Past half the well invented, say so plainly instead: that is
+  // the synthetic axis wearing a clock it did not earn.
+  if (oInvented.size * 2 > oStages.length)
+    return { stages: oStages, starts: oStarts, synthetic: true, jumps,
+             invented: new Set(oStages.map((_, i) => i)), why: oWhy,
+             printed: ord };
+
+  return { stages: oStages, starts: oStarts, synthetic: false,
+           jumps, invented: oInvented, why: oWhy, printed: ord };
 }
 
 function fvPayload(entry) {
   const w = entry && entry.well;
   if (!w || !w.stages.length) return { type: "fv:none" };
-  const raw = fvOrdered(w.stagesRaw || w.stages);
-  const { starts, synthetic } = fvStarts(raw);
+  const L = fvLayout(w.stagesRaw || w.stages);
+  const raw = L.stages, starts = L.starts, synthetic = L.synthetic;
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
     label: String(st.meta.stage || "?"),
@@ -3908,6 +4044,12 @@ function fvPayload(entry) {
     // carry no clock, fvStarts lays the stages on a synthetic axis, and a
     // date read back off that would be invented.
     date: String(st.meta.date || ""),
+    // this stage printed no clock — it was placed after the one before it
+    made: L.invented.has(i) ? (L.why[i] || "placed") : "",
+    // Where this stage sits in the order the FILING prints. The axis is
+    // ordered by the clock, so this is the only surviving record of the
+    // other order — and the Sequence view exists to compare the two.
+    seq: (L.printed[i] || 0) + 1,
     t0: starts[i],
     dsec: st.sample_sec || 1,
     n: st.n,
@@ -3931,7 +4073,8 @@ function fvPayload(entry) {
   // times off a timeline nobody ever measured — the one reading on that axis
   // that must never look authoritative.
   return { type: "fv:well", file: entry.name, uwi: (raw[0].meta.uwi || ""),
-           synthetic, stages, edits: fvEdits.get(entry.name) || null };
+           synthetic, jumps: L.jumps, stages,
+           edits: fvEdits.get(entry.name) || null };
 }
 
 // The whole of the edit's meaning: rebuild the stage list from the original
@@ -3940,8 +4083,9 @@ function applyFvEdits(raw, ed) {
   if (!ed || !ed.bounds || ed.bounds.length < 2) return raw;
   // the same order FracView was shown, or the edit's bounds address stages
   // this never displayed
-  raw = fvOrdered(raw);
-  const { starts, synthetic } = fvStarts(raw);
+  const L0 = fvLayout(raw);
+  raw = L0.stages;
+  const starts = L0.starts, synthetic = L0.synthetic;
   const cuts = ed.cuts || [];
   const p2 = n => String(n).padStart(2, "0");
   const out = [];
@@ -3953,7 +4097,7 @@ function applyFvEdits(raw, ed) {
       if (s0 + st.n * step <= a || s0 >= b) return;
       const j0 = Math.max(0, Math.ceil((a - s0) / step));
       const j1 = Math.min(st.n, Math.ceil((b - s0) / step));
-      if (j1 > j0) parts.push({ st, j0, j1, s0, step });
+      if (j1 > j0) parts.push({ st, si, j0, j1, s0, step });
     });
     if (!parts.length) continue;
     parts.sort((x, y) => (x.s0 + x.j0 * x.step) - (y.s0 + y.j0 * y.step));
@@ -3979,7 +4123,10 @@ function applyFvEdits(raw, ed) {
     const n = Math.max(0, ...chanList.map(c => c.values.length));
     const meta = { ...lead.meta, stage: ed.labels && ed.labels[i] != null
                                         ? String(ed.labels[i]) : lead.meta.stage };
-    if (!synthetic) {                     // only a real clock reaches the export
+    // Only a real clock reaches the export. A span built over a stage that
+    // printed no time sits where WE put it, so reading a date back off it
+    // would turn our placement into the filing's own timestamp.
+    if (!synthetic && !parts.some(p => L0.invented.has(p.si))) {
       const t0 = parts[0].s0 + parts[0].j0 * parts[0].step;
       const d = new Date(t0);
       meta.date = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;

@@ -1393,7 +1393,14 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         if lc.detect(page) or sk.detect(page):
             continue                                    # handled elsewhere
 
-        if "(IFS v" in text:
+        # An IFS filing whose labels are outlines carries no text at all, so
+        # this gate — and every gate below it — was false on all 116 chart
+        # pages of 00148. ifs._page_text OCRs only such a page; one with a
+        # text layer is read exactly as before.
+        _ifs_text = text if "(IFS v" in text else (
+            ifs._page_text(page) if len(text.strip()) < 40 else text)
+        if "(IFS v" in _ifs_text:
+            text = _ifs_text
             # "Entire Treatment" is the v4.3.1 wording; v4.6.3 titles the same
             # page "Interval 1 – Main Treatment". Requiring the older phrase
             # dropped every chart in the newer reports — 24 of 36 IFS files
@@ -1409,7 +1416,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # its ten intervals produced nothing at all, silently, through the
             # same no-note skip the comment above describes.
             titled = re.search(
-                r"Interval\s+(\d{1,3}[A-Za-z]?)\s*[-–]\s*(?:Entire|Main)\s+"
+                r"Interval\s+(\d{1,3}[A-Za-z]?)\s*[-\u2013\u2014]\s*(?:Entire|Main)\s+"
                 r"Treatment", text)
             # v4.2.0 names no interval at all — the section number carries it
             sect = None if titled else ifs.section_stage(page)

@@ -621,3 +621,124 @@ what a future session needs to KNOW rather than what shipped.
   would have prevented the client report. The same shape explains the Trican
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
+
+## Liberty on outlined pages — where it stands (branch `ifs-ocr-wip`)
+
+19 of the client's 37 failing files are Liberty filings with no text layer.
+The reader now clears every gate and returns stage, date, clock and named
+channels on 7 of 8 sampled pages. **The values are not yet trustworthy.**
+
+Measured against the render of 00919 p111:
+
+    Treating Pressure  37.875   chart peaks ~38 on 0..75    correct
+    Slurry Rate        25.0     chart peaks ~14 on 0..25    WRONG
+    Prop Conc         300.0     chart is FLAT AT ZERO       WRONG
+
+**The two wrong ones read EXACTLY a tick value** — 25.0 is the top of the blue
+ladder, 300.0 the bottom of the green. And the ladders come back short:
+
+    blue  [10, 15, 20, 25]          missing 0 and 5
+    green [300 ... 1500]            missing 0
+    red   [15, 30, 45, 60, 75]      missing 0
+    magenta [0, 15, ... 75]         complete
+
+Two leads, in order:
+
+1. **The tick labels may be being traced as curve ink.** On an outlined page
+   every label is a FILLED VECTOR PATH in its series' colour — the same kind
+   of object the curve collector takes. On a text-layer page they are text and
+   the tracer never sees them, which is why this has never bitten before. If
+   so the fix is to exclude fills that sit outside the plot frame, or that are
+   glyph-sized, before tracing.
+2. **A ladder missing its zero** still fits (four points determine the line),
+   so this is probably not the cause on its own — but check it second.
+
+Do NOT merge the branch until a rendered page agrees channel by channel.
+Wrong concentrations in a CSV are worse than the nothing they replace.
+
+### Liberty: what the curve collector actually sees (measured, 00919 p111)
+
+Two hypotheses tried and BOTH DISPROVED by measurement — recorded so they are
+not tried a third time:
+
+    type=s items=200 rect=(98,419)-(296,469)   the real curve, inside the plot
+    type=f items=37  rect=(201,122)-(208,129)  LEGEND glyphs, above the plot
+    type=f items=22  rect=(77,402)-(83,410)    TICK LABEL glyphs, left of it
+
+On an outlined page those glyphs are filled vector paths in the series colour,
+and the collector takes filled paths deliberately (2025 filings draw curves
+that way). So they LOOK like the cause. Clipping them out — on the value axis
+for the legend, on the time axis for the tick labels, both verified to be the
+right axes — changed NOTHING. The numbers are identical with and without.
+
+So the glyphs are not what produces the wrong values. What remains:
+
+    Prop Conc      300.0  = the MINIMUM of its fitted axis
+    Slurry Rate     25.0  = the MAXIMUM of its fitted axis
+    Btm Prop Conc 1500.0  = the MAXIMUM
+    GORV Pressure   75.0  = the MAXIMUM
+    Treating Press  37.87 = correct, and the only one NOT on a bound
+
+Every wrong channel sits exactly on a fitted bound, which is the signature of
+CLAMPING into a mis-fitted range rather than of tracing the wrong ink. And the
+ladders come back missing their zero: blue [10,15,20,25], green [300..1500],
+red [15..75]. Look there next — at where a traced value is clipped to
+(v_lo_ax, v_hi_ax), and at whether a ladder missing its bottom tick makes that
+range wrong.
+
+### Liberty: the measurement that should decide it (00919 p111, blue / Slurry Rate)
+
+    blue ticks   25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
+    fit          value = 36.43 - 0.07742 * cx
+    curve rects  (98,419)-(296,469)  (296,447)-(492,469)  (492,422)-(688,469)
+    so the curve's value coord is cx 419..469 -> 3.99 .. 0.12
+    clip range   np.clip(v, v_lo_ax, v_hi_ax) = clip(v, 10, 25)
+
+By that arithmetic Slurry Rate must come out **10.0** — the curve maps BELOW
+the axis minimum because OCR never found the 0 and 5 ticks, so the clip floor
+is 10. The extractor actually returns **25.0**, the maximum.
+
+So the live path is NOT the one this reconstruction describes. Something else
+is feeding `fits[blue]` or the collected points — check, in order:
+  1. whether `fits.get(color)` is falling through to `unit_fit.get(unit)`, and
+     what unit "Slurry ate (m?/min)" normalises to — a mangled unit key would
+     borrow another channel's axis wholesale.
+  2. what `x_lo/x_hi` and `y_lo/y_hi` actually are. NOTE the naming: in the
+     collector `arr[:,0]` is the VALUE coord and `arr[:,1]` is TIME, so x_lo/
+     x_hi bound VALUES and y_lo/y_hi bound TIME. Both of my clip attempts got
+     this backwards, which is why neither changed a number.
+  3. that `keep` already excludes the off-plot glyphs — it does, which is why
+     clipping them out separately was a no-op.
+
+The one channel that is CORRECT (Treating Pressure 37.87 vs ~38 printed) is
+the one whose ladder includes enough of its range. Every wrong channel's
+ladder is missing its zero.
+
+### Liberty: what is left, after four disproved theories
+
+Four things that LOOK like the cause and are not — each disproved by
+measurement, so nobody spends the hour again:
+
+  1. legend glyphs traced as curve ink — clipped them out, no change
+  2. tick-label glyphs traced as curve ink — clipped them out, no change;
+     `keep` already excludes both, they never reach the fit
+  3. the real curve being filtered out by the value bounds — it is not:
+     x_lo/x_hi come from ALL colours' ticks, and magenta's ladder has its
+     zero, so the bounds reach past the curve
+  4. a unit-keyed borrow via unit_fit — no: fits[blue] exists, so
+     `fits.get(color) or unit_fit.get(unit)` never falls through
+
+WHAT REMAINS. Computing blue's fit by hand from its own ticks:
+
+    25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
+    value = 36.43 - 0.07742 * cx
+    curve at cx 419..469  ->  3.99 .. 0.12
+    np.clip(v, 10, 25)    ->  10.0
+
+That says Slurry Rate must be 10.0. The extractor returns 25.0. So the fit the
+CODE builds is not the fit those ticks imply, and the one step between them is
+the gridline snapping just above the fit — "snap each label to its gridline"
+— which on OCR'd label centroids may be pairing labels with the wrong rules.
+Print `fits[0x0000ff]` against the hand fit above; if they differ, it is the
+snap, and it is the last thing standing between these 19 files and correct
+values.
