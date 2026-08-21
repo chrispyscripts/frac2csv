@@ -919,10 +919,29 @@ def extract_page(page, sample_sec=1.0):
         # 0..75 because magenta's own 75 sits below the page's highest tick.
         # Each series is bounded by its own ladder: the position its maximum
         # tick occupies, with a point of slack for pen width.
-        x_lo_c = x_lo
+        x_lo_c, x_hi_c = x_lo, x_hi
         if any(x.get("ocr") for x in spans) and abs(b) > 1e-9:
             x_lo_c = max(x_lo, (v_hi_ax - a) / b - 1.0)
-        keep = ((arr[:, 0] >= x_lo_c) & (arr[:, 0] <= x_hi) &
+            # ...and the same at the BOTTOM, which was missing.
+            #
+            # x_hi stops ten points below the lowest tick anyone READ, and on
+            # an outlined page the tick nobody reads is almost always the
+            # zero: 00913 p133 prints 0 on all five ladders and OCR returns
+            # none of them, so red comes back [16..80] and the greens
+            # [300..1500]. The axis is already extended down to zero — that
+            # is what the step-divides-the-lowest-label rule above does — but
+            # the INK was still cut off a step higher, so every curve lost its
+            # bottom. Treating Pressure bottomed at 13.5 on a chart that
+            # starts at 2, and both proppant concentrations read a floor of
+            # ~193 kg/m3 through the third of the stage where the sheet plainly
+            # draws them flat at zero.
+            #
+            # So bound each series at the position its own axis MINIMUM
+            # occupies, the mirror of the line above. Ink below that is still
+            # clipped to v_lo_ax, so the frame edge cannot push a curve
+            # negative.
+            x_hi_c = max(x_hi, (v_lo_ax - a) / b + 1.0)
+        keep = ((arr[:, 0] >= x_lo_c) & (arr[:, 0] <= x_hi_c) &
                 (arr[:, 1] >= y_lo) & (arr[:, 1] <= y_hi))
         arr = arr[keep]
         if len(arr) < 40:
