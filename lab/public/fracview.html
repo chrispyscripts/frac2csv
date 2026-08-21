@@ -204,7 +204,20 @@ let justDragged = false;     // so the click that ends a drag is not also acted 
 // Channels switched off from the key, by name — same idea as the Lab's legend.
 // Held by NAME rather than index because the channel list is rebuilt whenever a
 // well arrives, and an index would silently point at a different curve.
-const hiddenChans = new Set();
+//
+// And held ACROSS wells. Carmine cycles through a folder with this window
+// open; turning the same two channels off on all forty files, one file at a
+// time, is not a setting, it is a chore. Names are already the key, so the
+// choice carries over on its own once we stop wiping it — and it is written
+// down, so it survives closing the window too.
+const hiddenChans = new Set(function () {
+  try { return JSON.parse(localStorage.getItem("f2c.fvHidden") || "[]"); }
+  catch (e) { return []; }
+}());
+function saveHidden() {
+  try { localStorage.setItem("f2c.fvHidden",
+        JSON.stringify([...hiddenChans])); } catch (e) {}
+}
 let keySig = "";            // so the strip is rebuilt only when it changes
 
 function renderKey(names) {
@@ -225,6 +238,7 @@ function renderKey(names) {
     b.appendChild(document.createTextNode(nm));
     b.addEventListener("click", () => {
       if (hiddenChans.has(nm)) hiddenChans.delete(nm); else hiddenChans.add(nm);
+      saveHidden();
       keySig = "";                 // force the strip to restyle
       draw();
     });
@@ -1238,7 +1252,9 @@ window.addEventListener("message", ev => {
     edits = freshEdits(d);
   }
   undoStack = [];
-  hiddenChans.clear();
+  // hiddenChans is NOT cleared: which curves you want off is a preference
+  // about channels, not a fact about this well, and it used to reset on every
+  // file you opened.
   keySig = "";
   $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
   $("zoomctl").hidden = false;
