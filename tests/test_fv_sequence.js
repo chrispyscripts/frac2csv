@@ -65,5 +65,45 @@ is(seqBreaks([stg("2023-11-02T10:00:00"), stg("2023-11-01T09:00:00"),
               stg("2023-11-02T14:00:00"), stg("2023-11-01T08:00:00")]),
    [0, 2], "each break is reported on its own step");
 
+// ---------------------------------------------------------------------------
+// The shape the app ACTUALLY sends.
+//
+// Everything above feeds seqBreaks in filing order. The Lab does not send
+// filing order — it orders the stages by their clock before FracView ever
+// sees them, so an out-of-order stage arrives already moved into place and
+// the overlap rule finds nothing. 00495 read "the clock is consistent" on the
+// well this view was built for.
+//
+// So each point now carries `seq`, the position the FILING prints, and a step
+// DOWN in that number is a fault of its own: the clock put this stage here,
+// the sheet numbered it somewhere else.
+console.log("\n00495 again, in the order the Lab really sends it");
+const sorted = [
+  { ...stg("2023-11-02T04:51:59"), seq: 5 },   // 3B — earliest clock, 5th printed
+  { ...stg("2023-11-02T10:39:59"), seq: 1 },
+  { ...stg("2023-11-03T03:41:00"), seq: 2 },
+  { ...stg("2023-11-03T17:35:59"), seq: 3 },
+  { ...stg("2023-11-04T03:29:59"), seq: 4 },
+  { ...stg("2023-11-04T20:17:59"), seq: 6 },
+  { ...stg("2023-11-05T09:09:59"), seq: 7 },
+];
+is(seqBreaks(sorted), [0], "3B is caught where the overlap rule could not see it");
+
+console.log("\na well whose clock agrees with its numbering");
+const clean = [
+  { ...stg("2023-11-02T04:00:00"), seq: 1 },
+  { ...stg("2023-11-02T10:00:00"), seq: 2 },
+  { ...stg("2023-11-03T04:00:00"), seq: 3 },
+];
+is(seqBreaks(clean), [], "no breaks — ascending clock, ascending numbers");
+
+console.log("\nboth faults at once are still one break each");
+const both = [
+  { ...stg("2023-11-02T04:00:00", 8), seq: 3 },  // numbered late, and overlaps
+  { ...stg("2023-11-02T10:00:00"), seq: 1 },
+  { ...stg("2023-11-02T14:00:00"), seq: 2 },
+];
+is(seqBreaks(both), [0], "the pair is reported once, not twice");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

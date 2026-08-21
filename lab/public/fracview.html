@@ -374,6 +374,9 @@ function rowAt(t) {
 function printedDay(t) {
   const st = srcAt(t);
   if (st && st.date) return st.date;
+  // A stage flagged `made` printed no clock and was PLACED after the one
+  // before it. Its position is ours, so a day read off it is ours too.
+  if (st && st.made) return "";
   return well && well.synthetic ? "" : fmtDay(t);
 }
 
@@ -796,12 +799,26 @@ function draw() {
 //
 // Note it is drawn against `edits.bounds`, so a boundary you drag moves this
 // line too — it diagnoses what would be exported, not what was extracted.
+// The staircase is stage NUMBER against the clock, and the number has to come
+// from the filing — not from where the stage ended up on the axis.
+//
+// This used to plot `i + 1`, the drawn position. The Lab orders the stages by
+// their clock before sending them, so drawn position IS time order and the
+// line could only ever ascend: a stage dated out of order moved itself into
+// place and the view reported a consistent clock. 00495's 3B — the well this
+// view was built for — read clean. `seq` is now the position the FILING
+// prints, so a stage sitting where its clock says while carrying a number
+// from somewhere else draws the step backwards that says so.
 function seqPoints() {
   const out = [];
   for (let i = 0; i < nStages(); i++) {
     const m = dispMap[i];
     if (!m) continue;
-    out.push({ i, seq: i + 1, a: m.a, hi: Math.max(m.a, Math.min(m.hi, m.b)) });
+    const src = well.stages[edits.origin ? edits.origin[i] : i];
+    out.push({ i, seq: (src && src.seq) || i + 1,
+               label: String((edits.labels && edits.labels[i]) != null
+                             ? edits.labels[i] : i + 1),
+               a: m.a, hi: Math.max(m.a, Math.min(m.hi, m.b)) });
   }
   return out;
 }
@@ -812,7 +829,11 @@ function seqPoints() {
 function seqBreaks(pts) {
   const out = [];
   for (let k = 0; k + 1 < pts.length; k++)
-    if (pts[k + 1].a < pts[k].hi) out.push(k);
+    // Two ways the line can fault, and both are the same complaint. The next
+    // stage begins before this one's readings ended — they overlap in time.
+    // Or it carries a LOWER number than this one: the clock put it here and
+    // the filing numbered it somewhere else.
+    if (pts[k + 1].a < pts[k].hi || pts[k + 1].seq < pts[k].seq) out.push(k);
   return out;
 }
 
@@ -866,14 +887,57 @@ function drawSequence(ctx, w, h, plotW, plotH) {
 
   ctx.font = "600 12px ui-monospace,Menlo,Consolas,monospace";
   ctx.fillStyle = back ? "#a31631" : "#1e7a34";
+  // Which of the two is the odd one out. On a NUMBER inversion it is the
+  // earlier-drawn stage — it carries the higher number and the clock put it
+  // first. On an OVERLAP it is the later one, which began too soon.
+  const bk = back ? Math.min(...breaks) : -1;
+  const off = bk < 0 ? null
+            : (pts[bk + 1].seq < pts[bk].seq ? pts[bk] : pts[bk + 1]);
+  const when = off ? `stage ${off.label} at ${fmtDay(off.a)} ${fmtClock(off.a)}` : "";
   ctx.fillText(back
       ? (back === 1
-          ? "1 stage starts before the one before it ended — its date or time is wrong"
-          : `${back} stages start before the one before them ended — their `
-            + "dates or times are wrong")
-      : "every stage starts after the one before it — the clock is consistent",
+          ? `${when} is out of step with the clock`
+          : `${back} stages are out of step with the clock — first is ${when}`)
+      : "every stage follows the one before it — the clock is consistent",
     PAD.l + 6, PAD.t + 14);
   ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+}
+
+// Where the clock turns around.
+//
+// The axis is real elapsed time, so a stage that starts before the one printed
+// ahead of it DRAWS to the left of it — out of step with its own number. That
+// is the fault, physically: the eye lands on stage 12 sitting between 4 and 5.
+// What the picture cannot say on its own is WHEN, and "when" is the thing that
+// gets typed into the correction. So each turnaround gets a rule at the moment
+// it lands on, carrying the date and time to read off.
+function drawJumps(ctx, w, plotH) {
+  const js = (well && well.jumps) || [];
+  if (!js.length) return;
+  ctx.save();
+  ctx.font = "600 10.5px ui-monospace,Menlo,Consolas,monospace";
+  for (const j of js) {
+    const x = X(j.tTo, w);
+    if (x < PAD.l - 1 || x > w - PAD.r + 1) continue;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = "#a31631"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const tag = `\u21b0 ${j.to} \u00b7 ${fmtDay(j.tTo)} ${fmtClock(j.tTo)}`;
+    const tw = ctx.measureText(tag).width + 10;
+    // right of the rule, unless that runs off the plot
+    const left = x + 4 + tw > w - PAD.r;
+    const bx = left ? x - 4 - tw : x + 4;
+    const by = PAD.t + plotH - 19;
+    ctx.fillStyle = "#a31631";
+    ctx.fillRect(bx, by, tw, 15);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "left";
+    ctx.fillText(tag, bx + 5, by + 11);
+  }
+  ctx.restore();
 }
 
 // The time axis and the footer under it. Pulled out of draw() so the
@@ -903,6 +967,8 @@ function drawTimeAxis(ctx, w, h, plotW, plotH) {
       ctx.fillText(fmtClock(t), x, h - 18);
     }
   }
+  drawJumps(ctx, w, plotH);
+
   ctx.textAlign = "left";
   ctx.fillStyle = "#697077";
   const foot = [];
@@ -912,6 +978,28 @@ function drawTimeAxis(ctx, w, h, plotW, plotH) {
   if (day) foot.push(day);
   if (well.synthetic)
     foot.push("no printed clock — stages laid end to end, so this axis is not a wall clock");
+  else {
+    // Placed stages: the axis is a real clock everywhere EXCEPT these, and a
+    // reader who is not told cannot see which spans they are.
+    const S = (well.stages || []);
+    const placed = S.filter(st => st.made === "placed").length;
+    const pushed = S.filter(st => st.made === "pushed").length;
+    if (placed) foot.push(placed === 1
+      ? "1 stage printed no clock — placed after the stage before it"
+      : `${placed} stages printed no clock — placed after the stage before them`);
+    // Not a missing clock: a REPEATED one. Saying "no clock" here would be
+    // wrong about a sheet that prints a time, so it gets its own line.
+    if (pushed) foot.push(pushed === 1
+      ? "1 stage repeats the timestamp before it — nudged clear so it can be seen"
+      : `${pushed} stages repeat the timestamp before them — nudged clear so `
+        + "they can be seen");
+  }
+  const js = (well.jumps || []);
+  if (js.length) foot.push(js.length === 1
+    ? `clock turns back at ${fmtDay(js[0].tTo)} ${fmtClock(js[0].tTo)} — `
+      + `stage ${js[0].to} starts before stage ${js[0].from}`
+    : `${js.length} backward jumps — first at ${fmtDay(js[0].tTo)} `
+      + `${fmtClock(js[0].tTo)}, stage ${js[0].to} before stage ${js[0].from}`);
   if (spacing() === "row") foot.push("row = line in the exported CSV · gaps closed");
   if (viewMode === "sequence") foot.push("stage position against the clock");
   ctx.fillText(foot.join("   ·   "), PAD.l, h - 5);
