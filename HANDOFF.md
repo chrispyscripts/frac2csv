@@ -173,6 +173,28 @@ daily-report clocks. All of it is in the v1.5.0 tag and the EXE it builds.
 
 ## Open, top of the list
 
+- **00060 has two stage clocks that cannot both be right, and it is not
+  known whether the sheet or the reader is wrong.** CalFrac
+  `__CALFRAC/00060-100030506723W500_0486730_COMP.pdf`, 23 stages, all dated
+  and clocked. Read back:
+
+        8            2018-07-14 09:57:40
+        9            2018-07-16 23:10:36     <- after 10..20 have all run
+        10           2018-07-16 03:57:49
+        ...
+        20           2018-07-16 14:44:45
+        21 Surface   2018-07-16 15:48:06
+        21 BH        2018-07-16 15:48:06     <- identical to 21 Surface
+        21           2018-07-15 21:22:00     <- before both
+
+  Stage 9 belongs between 8 and 10 and sits nineteen hours past 10; the third
+  "21" sits eighteen hours before the other two. FracView now draws both out
+  of order and names the moment, so they are visible — but visible is not
+  diagnosed. Check the CalFrac sheet's own printed times before assuming the
+  reader misread: if the filing prints them that way, the Fix time button is
+  the whole answer and there is no bug. This is the first real well the
+  jump markers found, so it is also the check that they work.
+
 - **`gaps.py` is written, tested and WIRED INTO NOTHING.** Carmine asked for
   missing-data detection and interpolation: flag a sample whose value is
   missing while the axis position is between the floor and the ceiling, and
