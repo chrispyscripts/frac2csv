@@ -565,3 +565,31 @@ ladders come back missing their zero: blue [10,15,20,25], green [300..1500],
 red [15..75]. Look there next — at where a traced value is clipped to
 (v_lo_ax, v_hi_ax), and at whether a ladder missing its bottom tick makes that
 range wrong.
+
+### Liberty: the measurement that should decide it (00919 p111, blue / Slurry Rate)
+
+    blue ticks   25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
+    fit          value = 36.43 - 0.07742 * cx
+    curve rects  (98,419)-(296,469)  (296,447)-(492,469)  (492,422)-(688,469)
+    so the curve's value coord is cx 419..469 -> 3.99 .. 0.12
+    clip range   np.clip(v, v_lo_ax, v_hi_ax) = clip(v, 10, 25)
+
+By that arithmetic Slurry Rate must come out **10.0** — the curve maps BELOW
+the axis minimum because OCR never found the 0 and 5 ticks, so the clip floor
+is 10. The extractor actually returns **25.0**, the maximum.
+
+So the live path is NOT the one this reconstruction describes. Something else
+is feeding `fits[blue]` or the collected points — check, in order:
+  1. whether `fits.get(color)` is falling through to `unit_fit.get(unit)`, and
+     what unit "Slurry ate (m?/min)" normalises to — a mangled unit key would
+     borrow another channel's axis wholesale.
+  2. what `x_lo/x_hi` and `y_lo/y_hi` actually are. NOTE the naming: in the
+     collector `arr[:,0]` is the VALUE coord and `arr[:,1]` is TIME, so x_lo/
+     x_hi bound VALUES and y_lo/y_hi bound TIME. Both of my clip attempts got
+     this backwards, which is why neither changed a number.
+  3. that `keep` already excludes the off-plot glyphs — it does, which is why
+     clipping them out separately was a no-op.
+
+The one channel that is CORRECT (Treating Pressure 37.87 vs ~38 printed) is
+the one whose ladder includes enough of its range. Every wrong channel's
+ladder is missing its zero.
