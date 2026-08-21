@@ -107,8 +107,18 @@ def _ocr_spans(page, rotated):
     return out
 
 
+# The build stamp every IFS page carries. Matched WITHOUT case, because the
+# case changed: builds up to v4.6.3 print "(IFS v4.6.3)" and v6 prints
+# "(IFS V6.0.0)". A literal "(IFS v" test saw the second as a different
+# document entirely — 00084 carries the marker on 238 pages and detect claimed
+# none of them, so the whole v6 family came back "No extractable data"
+# (Carmine, #612: "a large number of Hal-2 type in the AER ARC folder not
+# extractable but they are all fine").
+_IFS_MARK = re.compile(r"\(IFS\s*v", re.I)
+
+
 def detect(page):
-    return "(IFS v" in _page_text(page)
+    return _IFS_MARK.search(_page_text(page)) is not None
 
 
 def is_entire_treatment(page):

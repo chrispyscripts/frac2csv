@@ -86,6 +86,13 @@ except Exception:                       # pragma: no cover
     calfrac_legacy = None
 
 
+# The build stamp every IFS page carries, matched WITHOUT case. Builds to
+# v4.6.3 print "(IFS v4.6.3)" and v6 prints "(IFS V6.0.0)"; a literal
+# lowercase test read the entire v6 family as some other document. Nothing
+# else about v6 needed changing — same gate, same reader, same numbers.
+_IFS_MARK = re.compile(r"\(IFS\s*v", re.I)
+
+
 def _md(meta):
     """PageMeta -> plain dict the consumers share."""
     return {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
@@ -1398,9 +1405,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         # this gate — and every gate below it — was false on all 116 chart
         # pages of 00148. ifs._page_text OCRs only such a page; one with a
         # text layer is read exactly as before.
-        _ifs_text = text if "(IFS v" in text else (
+        # Matched WITHOUT case. Builds to v4.6.3 print "(IFS v4.6.3)"; v6
+        # prints "(IFS V6.0.0)", and a literal lowercase test read the whole
+        # v6 family as some other document — 00084 carries the marker on 238
+        # pages and this gate saw none of them (Carmine, #612).
+        _ifs_text = text if _IFS_MARK.search(text) else (
             ifs._page_text(page) if len(text.strip()) < 40 else text)
-        if "(IFS v" in _ifs_text:
+        if _IFS_MARK.search(_ifs_text):
             text = _ifs_text
             # "Entire Treatment" is the v4.3.1 wording; v4.6.3 titles the same
             # page "Interval 1 – Main Treatment". Requiring the older phrase
