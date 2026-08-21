@@ -595,7 +595,25 @@ def extract_page(page, sample_sec=1.0):
         a, b = _fit(anchors)
         if abs(b) > 1e-9:
             vals = [v for v, _, _ in pts]
-            fits[color] = (a, b, min(vals), max(vals))
+            lo_v, hi_v = min(vals), max(vals)
+            # The clip below uses these as the axis' own range, and on an
+            # OCR'd page the ladder is missing ticks — almost always the ZERO,
+            # which is the smallest and sits hard against the frame. 00919
+            # p111 found [10,15,20,25] for the rate and [300..1500] for the
+            # concentrations, so a curve correctly traced FLAT AT ZERO was
+            # clipped UP to 300 and reported as 300 kg/m3 of proppant that the
+            # chart plainly does not show.
+            #
+            # An arithmetic ladder says where it starts: if the step divides
+            # the lowest label, zero is on this axis and the labels for it
+            # were simply not read. Extend to it rather than clip against a
+            # floor the chart does not have.
+            if any(x.get("ocr") for x in spans) and lo_v > 0:
+                steps = sorted({round(abs(vals[i] - vals[i - 1]), 6)
+                                for i in range(1, len(vals))} - {0.0})
+                if steps and abs(lo_v % steps[0]) < 1e-6:
+                    lo_v = 0.0
+            fits[color] = (a, b, lo_v, hi_v)
     if not named or not fits:
         raise ValueError("lib1: legend or tick rows not found")
     # share an axis by unit for series without their own tick row (black series).
