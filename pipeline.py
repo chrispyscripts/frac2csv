@@ -40,6 +40,7 @@ import step_vec
 import aliases
 import pipeline_export as pe
 import sk_fracr as sk
+import daily_ops
 import slb
 import slb_tables
 import trican2
@@ -1233,6 +1234,72 @@ def _normalise_tables(results, filename=None):
         r["columns"], r["rows"] = cols, rows
 
 
+def _daily_ops_fill(doc, results, notes):
+    """Last resort: date and clock a chart from the OPERATOR's daily report.
+
+    Every vendor reader dates its charts from a sheet the vendor prints, and
+    when that sheet is not in the document the reader has nothing. Measured
+    over 60 files on both drives: SLB PRC charts are dated 43% of the time and
+    CalFrac charts clocked 71%, and the failures are whole FILES rather than
+    scattered stages — 00020 and 00027 are 81 charts each, every one dated and
+    not one carrying a start time, because neither document contains a
+    Treatment Summary grid at all and their charts plot elapsed minutes.
+
+    The operator files a daily report whoever pumped the job, and its time log
+    names the stage in the row that fracced it. So this reads across vendors
+    where the vendor sheets cannot. On the three worst files it supplies 62,
+    54 and 29 stages that had none.
+
+    LAST. It never overwrites a date or a clock that something else already
+    established — the chart's own axis first, then the vendor's sheet, then
+    this. Where the chart prints a clock the two can be compared, which is how
+    the lost-PM bug surfaced (00121: 30 of 33 agree); where the chart plots
+    elapsed minutes there is nothing to check against, so the note says where
+    the value came from rather than letting it pass as the chart's own.
+    """
+    want = [r for r in results
+            if "meta" in r and (not (r["meta"].get("date") or "").strip()
+                                or (r["meta"].get("start_time")
+                                    or "00:00:00") == "00:00:00")]
+    if not want:
+        return
+    try:
+        idx = daily_ops.index(doc)
+    except Exception as e:
+        notes.append(f"daily operations report unreadable — {e}")
+        return
+    if not idx:
+        return
+    dated = clocked = 0
+    for r in want:
+        md = r["meta"]
+        try:
+            stage = int(re.sub(r"\D", "", str(md.get("stage") or "")) or 0)
+        except ValueError:
+            continue
+        # A lettered stage is a DISTINCT treatment — "4A" and "4B" are two
+        # jobs at two times — and the log is keyed by the bare number, so
+        # stamping both from one row would date one of them wrongly. 00121
+        # charts 28 b, 44 HRF, 44 A, 48 HRF and 48, and those are exactly the
+        # stages where the log and the chart clock disagree.
+        if re.search(r"[A-Za-z]", str(md.get("stage") or "")):
+            continue
+        entry = idx.get(stage)
+        if not entry:
+            continue
+        if not (md.get("date") or "").strip():
+            md["date"] = entry["date"]
+            dated += 1
+        if (md.get("start_time") or "00:00:00") == "00:00:00":
+            md["start_time"] = entry["start"]
+            clocked += 1
+    if dated or clocked:
+        notes.append(
+            f"{dated} stage(s) dated and {clocked} placed on the clock from "
+            f"the operator's daily report — the chart and the vendor summary "
+            f"gave neither. These times are the report's, not the chart's.")
+
+
 def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                      on_page=None):
     """Run every template over `doc` (a fitz.Document). -> (results, notes).
@@ -2180,5 +2247,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         notes.append(_why_nothing(doc, npages, raster))
     _pick_variant(results, notes)
     _drop_chemical_only(results, notes)
+    # AFTER the variant pick, and that placement is the whole of it. Before it
+    # a CalFrac stage is still tagged with its MView sheet — "1 Surface",
+    # "1 BH" — and the guard below, which exists to keep a re-frac's "4A" and
+    # "4B" from sharing one log row, threw away all 162 of them because the
+    # tag contains letters. Surface and BH are two VIEWS of one stage at one
+    # time, not two treatments; _pick_variant collapses them to a bare "1"
+    # and only then is the stage in the form the daily report names.
+    _daily_ops_fill(doc, results, notes)
     _normalise_tables(results, filename)
     return results, notes

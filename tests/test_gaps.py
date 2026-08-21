@@ -109,5 +109,42 @@ class Note(unittest.TestCase):
         self.assertEqual(gaps.note("Tr Press", gaps.find_gaps([1.0, 2.0], RATE)), "")
 
 
+NAN = float("nan")
+
+
+class NaNIsHowGapsActuallyLook(unittest.TestCase):
+    """The pipeline marks a missing sample with NaN, never None.
+
+    00583: 118,202 NaN across 840,449 samples and not one None. This module
+    was first written scanning for None, which found nothing on real output
+    while every test above still passed — they were written in None too.
+    """
+
+    def test_nan_counts_as_missing(self):
+        g = gaps.find_gaps([12.0, 12.5, NAN, NAN, 13.0], RATE)
+        self.assertEqual([x["kind"] for x in g], [gaps.MISSING])
+        self.assertEqual(g[0]["n"], 2)
+
+    def test_nan_lead_and_trail(self):
+        g = gaps.find_gaps([NAN, 5.0, 6.0, NAN], RATE)
+        self.assertEqual([x["kind"] for x in g], [gaps.LEAD, gaps.TRAIL])
+
+    def test_nan_at_rest_is_not_filled(self):
+        v = [0.0, NAN, NAN, 0.1]
+        out, filled = gaps.interpolate(v, gaps.find_gaps(v, RATE))
+        self.assertEqual(filled, [])
+
+    def test_nan_is_filled_when_mid_flight(self):
+        v = [10.0, NAN, NAN, 13.0]
+        out, filled = gaps.interpolate(v, gaps.find_gaps(v, RATE))
+        self.assertEqual(filled, [1, 2])
+        self.assertAlmostEqual(out[1], 11.0)
+
+    def test_mixed_none_and_nan(self):
+        g = gaps.find_gaps([10.0, None, NAN, 13.0], RATE)
+        self.assertEqual(len(g), 1)
+        self.assertEqual(g[0]["n"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

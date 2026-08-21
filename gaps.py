@@ -41,9 +41,26 @@ MISSING = "missing"           # mid-flight both sides: something was lost
 UNKNOWN = "unclassified"      # no axis to measure "off the floor" against
 
 
+def is_missing(x):
+    """Is this sample absent?
+
+    It is NaN, not None. The tracer's resample hands back a dense array and
+    marks the places it had nothing with float('nan') — 118,202 of 00583's
+    840,449 samples, and not one None in the whole file. A gap finder that
+    looks for None finds nothing on real output while every unit test written
+    in None still passes, which is how this module was first written.
+    """
+    if x is None:
+        return True
+    try:
+        return x != x                      # NaN is the only value unequal to itself
+    except Exception:
+        return False
+
+
 def _frac(value, axis):
     """value -> its position in the axis, 0..1, or None if unknowable."""
-    if value is None or axis is None:
+    if is_missing(value) or axis is None:
         return None
     lo, hi = min(axis), max(axis)
     if hi - lo <= 0:
@@ -63,14 +80,15 @@ def find_gaps(values, axis=None, floor=FLOOR, ceil=CEIL):
     out = []
     n = len(values)
     i = 0
-    first = next((k for k, v in enumerate(values) if v is not None), None)
-    last = next((k for k in range(n - 1, -1, -1) if values[k] is not None), None)
+    first = next((k for k, v in enumerate(values) if not is_missing(v)), None)
+    last = next((k for k in range(n - 1, -1, -1)
+                 if not is_missing(values[k])), None)
     while i < n:
-        if values[i] is not None:
+        if not is_missing(values[i]):
             i += 1
             continue
         j = i
-        while j + 1 < n and values[j + 1] is None:
+        while j + 1 < n and is_missing(values[j + 1]):
             j += 1
         before = values[i - 1] if i > 0 else None
         after = values[j + 1] if j + 1 < n else None
@@ -111,7 +129,7 @@ def interpolate(values, gaps, kinds=(MISSING,)):
         if g["kind"] not in kinds:
             continue
         a, b = g["before"], g["after"]
-        if a is None or b is None:
+        if is_missing(a) or is_missing(b):
             continue                       # nothing to interpolate between
         span = g["n"] + 1
         for k in range(g["n"]):
