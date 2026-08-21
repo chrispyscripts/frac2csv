@@ -26,3 +26,21 @@ jobs:
 
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+      # The Lab is JavaScript, and the rules that decide whether a stage is
+      # dated, where it sits on the FracView axis and whether its clock runs
+      # backwards all live in it. Those tests lift the functions straight out
+      # of the HTML, so they need node and nothing else — and until now
+      # nothing ran them but a human.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run Lab tests
+        run: |
+          fail=0
+          for f in tests/*.js; do
+            echo "--- $f"
+            node "$f" || fail=1
+          done
+          exit $fail
