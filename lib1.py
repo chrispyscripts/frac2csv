@@ -13,7 +13,8 @@ import fitz
 import numpy as np
 
 from frac_core import PageMeta, _resample
-from leucrotta import _fit, _close, _spans
+import ocr_labels
+from leucrotta import _fit, _close, _spans as _text_spans
 
 # Max seconds a time label may disagree with the gridline/frame-edge fit
 # before that fit is rejected. Labels are minute-rounded and their gridline
@@ -42,8 +43,80 @@ _STAGE = r"(?i:Stage|STG)"
 _LIBERTY = re.compile(r"Liberty\s+(?:Energy|Oilfield)", re.I)
 
 
-def detect(page):
+# Below this many characters the page is drawing its labels rather than
+# writing them, and every gate in this module has to be asked of the render.
+_OCR_TEXT_MIN = 40
+
+
+def _page_text(page):
+    """The page's text, OCR'd when it has none of its own.
+
+    00913 is 198 pages of Liberty charts — "ARCRES HZ DOE 16-15-080-15 Stage
+    10", four chemical concentrations, the time axis printed 2022/04/28 01:36
+    to 02:16 — and 195 of those pages carry NOT ONE readable character. detect
+    fired on 0 of 198 while the chart sat there in saturated vector art, so
+    the whole file reported "no extractable data".
+    """
     t = page.get_text()
+    if len(t.strip()) > _OCR_TEXT_MIN or not ocr_labels.available():
+        return t
+    try:
+        return ocr_labels.page_text(page) or t
+    except Exception:
+        return t
+
+
+def _outline_colour(page):
+    """[(rect, int_rgb)] for the filled paths that DRAW the glyphs.
+
+    A Liberty legend is keyed by colour exactly as an IFS one is — the series
+    name is printed in its own curve's ink — and OCR returns words with no
+    colour. An outlined glyph is a filled path that still carries the colour
+    the text had, so the word's colour is the dominant fill inside its box.
+    """
+    out = []
+    for d in page.get_drawings():
+        c = d.get("fill") or d.get("color")
+        if c is None:
+            continue
+        try:
+            rgb = (int(round(c[0] * 255)) << 16 | int(round(c[1] * 255)) << 8
+                   | int(round(c[2] * 255)))
+        except Exception:
+            continue
+        out.append((fitz.Rect(d["rect"]), rgb))
+    return out
+
+
+def _spans(page):
+    """Text spans, from the page or — when it has none — from OCR."""
+    out = _text_spans(page)
+    if out or not ocr_labels.available():
+        return out
+    try:
+        words = ocr_labels.words(page)
+    except Exception:
+        return out
+    fills = _outline_colour(page)
+    for w in words:
+        t = (w.get("text") or "").strip()
+        if not t:
+            continue
+        r = fitz.Rect(w["rect"])
+        tally = defaultdict(int)
+        for rect, rgb in fills:
+            if rect.width < r.width * 3 and rect.height < r.height * 3 \
+                    and r.intersects(rect):
+                tally[rgb] += 1
+        out.append({"t": t, "cx": (r.x0 + r.x1) / 2, "cy": (r.y0 + r.y1) / 2,
+                    "color": (max(tally.items(), key=lambda kv: kv[1])[0]
+                              if tally else 0),
+                    "ocr": True})
+    return out
+
+
+def detect(page):
+    t = _page_text(page)
     return _LIBERTY.search(t) is not None and \
         re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is not None
 
@@ -209,7 +282,7 @@ def _clean_name(name):
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
-    text = page.get_text()
+    text = _page_text(page)
     # landscape charts run time along X; swap axes so the (rotated) logic below
     # — which expects time along Y — applies unchanged
     horizontal = _horizontal(spans)
