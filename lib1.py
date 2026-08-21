@@ -219,7 +219,53 @@ def _ocr_legend_spans(spans):
     return out
 
 
+# A first read at a resolution good enough to rule a page OUT, and no better.
+# 60 dpi loses the word "Liberty" off a page that has it; 100 keeps it.
+_SCOUT_DPI = 100
+
+
+def _worth_ocr(page):
+    """Could this page be a Liberty chart at all?
+
+    detect OCRs every page that has no text of its own, at 200 dpi, and that
+    is the single largest cost in reading a textless filing — 3 seconds a
+    page, on documents that run to 800 pages. It is paid on EVERY textless
+    page of EVERY textless document, including the 136 Halliburton filings
+    that contain no Liberty chart at all, because the only way to know is to
+    read the page.
+
+    But it does not have to be read well to be ruled out. A cheap read finds
+    the two things detect needs — the vendor and a stage token — on any page
+    that has them, and a page missing either cannot be a Liberty chart at any
+    resolution. So this only ever says NO; anything it is unsure of goes on to
+    pay full price exactly as before, and that full-price read is cached and
+    reused by extract_page, so nothing is read twice.
+
+    Measured against every chart page the corpus is known to contain: at 100
+    dpi, 0 of 1,254 would have been skipped. An OCR failure returns True —
+    a page is never skipped because the scout broke.
+
+    NOT a substitute for the real read. It was tried the other way first: a
+    count of coloured vector ink looked like a clean separator on eight files
+    (chart pages 3,267 and up, everything else 3,095 and down) and fell apart
+    on twenty-two — two chart pages carry no saturated ink at all and other
+    pages reach 3,710. Nothing here decides what a page IS.
+    """
+    try:
+        txt = " ".join(w.get("text", "")
+                       for w in ocr_labels.words(page, dpi=_SCOUT_DPI))
+    except Exception:
+        return True
+    return _LIBERTY.search(txt) is not None and re.search(
+        rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", txt, re.I) is not None
+
+
 def detect(page):
+    # Only a page that would otherwise be OCR'd is scouted; one with a text
+    # layer of its own costs nothing to read and takes the path it always did.
+    if len(page.get_text().strip()) <= _OCR_TEXT_MIN \
+            and ocr_labels.available() and not _worth_ocr(page):
+        return False
     t = _page_text(page)
     if _LIBERTY.search(t) is None or \
             re.search(rf"{_STAGE}\s+(?:[A-Z]{{2,4}}\s+)?\d", t, re.I) is None:
