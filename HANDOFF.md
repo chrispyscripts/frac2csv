@@ -682,6 +682,26 @@ one sampled page blank; half the sampled pages is the right cut. A Liberty
 MARKER is not a Liberty CHART: 129 of the 403 also name another vendor, so
 the file list has to come from detect firing, not from the name.
 
+**Result over all 22 outlined files, measured before and after:**
+
+                          before     after
+    chart pages             1,261     1,258      -3, daily reports no longer
+                                                 mistaken for charts
+    extracted               1,227     1,254     +27
+    FAILED                     34         4     -30
+    dated                   1,202     1,229     +27
+    clocked                 1,227     1,254     +27
+    channels                4,568     4,803    +235
+
+    extraction rate          97.3%     99.7%
+
+The 4 that still fail: 3 "legend or tick rows not found", 1 "day is out of
+range for month". The whole implausible-duration class is gone.
+
+And the corpus as a whole, from the detect pass: **395 of 403 marker files
+hold Liberty charts, 23,243 chart pages.** The 22 outlined files above are
+3,774 of those pages; the rest have a text layer and were already read.
+
 Baseline over the 22 outlined files, before the fixes below:
 
     3,774 pages   1,261 chart pages   1,227 extracted (97.3%)
