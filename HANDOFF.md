@@ -501,3 +501,37 @@ what a future session needs to KNOW rather than what shipped.
   would have prevented the client report. The same shape explains the Trican
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
+
+## Liberty on outlined pages — where it stands (branch `ifs-ocr-wip`)
+
+19 of the client's 37 failing files are Liberty filings with no text layer.
+The reader now clears every gate and returns stage, date, clock and named
+channels on 7 of 8 sampled pages. **The values are not yet trustworthy.**
+
+Measured against the render of 00919 p111:
+
+    Treating Pressure  37.875   chart peaks ~38 on 0..75    correct
+    Slurry Rate        25.0     chart peaks ~14 on 0..25    WRONG
+    Prop Conc         300.0     chart is FLAT AT ZERO       WRONG
+
+**The two wrong ones read EXACTLY a tick value** — 25.0 is the top of the blue
+ladder, 300.0 the bottom of the green. And the ladders come back short:
+
+    blue  [10, 15, 20, 25]          missing 0 and 5
+    green [300 ... 1500]            missing 0
+    red   [15, 30, 45, 60, 75]      missing 0
+    magenta [0, 15, ... 75]         complete
+
+Two leads, in order:
+
+1. **The tick labels may be being traced as curve ink.** On an outlined page
+   every label is a FILLED VECTOR PATH in its series' colour — the same kind
+   of object the curve collector takes. On a text-layer page they are text and
+   the tracer never sees them, which is why this has never bitten before. If
+   so the fix is to exclude fills that sit outside the plot frame, or that are
+   glyph-sized, before tracing.
+2. **A ladder missing its zero** still fits (four points determine the line),
+   so this is probably not the cause on its own — but check it second.
+
+Do NOT merge the branch until a rendered page agrees channel by channel.
+Wrong concentrations in a CSV are worse than the nothing they replace.
