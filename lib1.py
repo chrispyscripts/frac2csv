@@ -220,7 +220,14 @@ def _time_axis(spans, time_frame=None, time_grid=None):
              re.fullmatch(r"\d{2,4}/\d{2}/\d{2,4}", s["t"])]
     times = [s for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
-    if len(times) < 3:
+    # Three clock labels, or TWO on a page whose labels came from OCR. Two
+    # points determine the line; the third is a consistency check, and on an
+    # outlined page the choice is two points or nothing at all — 00914, 01074,
+    # 01075 and 01077 print three and OCR returns two, so all four files came
+    # back "time labels not found". The implausible-duration check downstream
+    # still refuses a fit built on a misread label.
+    _need = 2 if any(x.get("ocr") for x in spans) else 3
+    if len(times) < _need:
         return None, "", None
     import datetime as dt
     # Drop a misread date BEFORE pairing, not after. 00913 p140 prints
@@ -293,7 +300,7 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         pts.append((secs, ts["cy"]))
         if date0 is None:
             date0 = f"{y:04d}-{mo:02d}-{dd:02d}"
-    if len(pts) < 3 and len(times) >= 3:
+    if len(pts) < _need and len(times) >= _need:
         # No usable date labels. Liberty's 2021 vintage prints a bare "Time"
         # axis — 00928/00929/00930 carry twelve clock labels a page and no
         # date anywhere on the sheet, in any format — and every one of those
@@ -336,7 +343,7 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         # date stays unknown: it is not printed on these sheets, and the file
         # name carries the REPORT date, which is not the stage's.
         date0 = ""
-    if len(pts) < 3:
+    if len(pts) < _need:
         return None, "", None
     # Liberty prints the first/last time labels AT the plot frame edges, but
     # the label TEXT sits several points inside the frame — a label-only fit
@@ -376,7 +383,12 @@ def _horizontal(spans):
     rather than Y (the rotated pages this template was first built for)."""
     tl = [s for s in spans if s["color"] == 0 and
           re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
-    if len(tl) < 3:
+    # TWO labels are enough to say which way they spread, and on an OCR'd page
+    # two is often all there are. Requiring three sent 00914, 01074, 01075 and
+    # 01077 down the rotated path on a landscape chart: their clocks pair on a
+    # CONSTANT coordinate, the fit degenerates, and the page died with
+    # "implausible duration 487965257s" — fifteen years across eighty minutes.
+    if len(tl) < 2:
         return False
     cxs = [s["cx"] for s in tl]
     cys = [s["cy"] for s in tl]
