@@ -667,6 +667,48 @@ what a future session needs to KNOW rather than what shipped.
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
 
+## From Carmine's reports, 2026-08-21
+
+**#601 / #606 — every Liberty timestamp was a second short.** He diagnosed it
+himself: "we are off by 1 second on the x axis thus we trigger a date
+change... the actual chart display shows 2023/01/17 00:00". t_lo is a fit
+through label centroids and lands a hair below the second it means; the
+formatter truncated. Harmless until a chart starts at MIDNIGHT, where
+00:00:00 became 23:59:59 on the day before, meta.date followed it back, and a
+perfect clock tripped the backwards-clock warning on the stage beside it —
+which is why the flag appeared on the wrong stage. Rounded, both halves off
+one instant, in `_stamp()`. Measured over 273 pages: 0 channel values moved,
+150 times +1s, nothing else. 108 of those were a TEXT-LAYER file, so every
+Liberty CSV ever exported carries this.
+
+**#612 — Halliburton IFS v6 was unread because the marker's V is capital.**
+Builds to v4.6.3 stamp "(IFS v4.6.3)"; v6 stamps "(IFS V6.0.0)". Both the
+module's detect and — the one that mattered — the pipeline's own gate tested
+a lowercase literal. Fixing the module alone does nothing; the pipeline never
+calls it. All five files he named, from zero:
+
+    00084  388pp   45 series    00085  388pp   45 series
+    00086  442pp   61 series    00087  472pp   60 series
+    00088  284pp   29 series
+
+    240 series, 239 dated, 240 clocked.
+
+A corpus scan says the capital-V class is EXACTLY those five files (1,326 IFS
+pages). It is closed, not a sample.
+
+**How I got #612 wrong first, so nobody repeats it.** I picked "the chart
+pages" by drawing count, ran extract_page on them directly, watched every one
+fail with "time axis labels not found", and concluded v6 was a layout variant
+needing its own reader — and committed a note saying so. Those were not the
+chart pages. The titled pages I had dismissed as tables ARE the charts, and
+the pipeline's gate selects them correctly. **Do not test a template by
+choosing pages yourself when a gate already chooses them.** The note carrying
+the wrong theory has been removed.
+
+**Triaged, not acted on.** #602 is retracted by his own #604. #611 confirms
+the date-check flag is working. #585 and #588 are v1.4.0-era and predate
+several fixes — re-test before treating either as live.
+
 ## The "no text at all" class — 191 files, and it is mostly Halliburton
 
 Carmine: every file on the textless list is unreadable. Measured, the list is
