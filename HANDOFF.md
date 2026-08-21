@@ -667,6 +667,75 @@ what a future session needs to KNOW rather than what shipped.
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
 
+## The "no text at all" class — 191 files, and it is mostly Halliburton
+
+Carmine: every file on the textless list is unreadable. Measured, the list is
+191 files and 49,250 pages, and it is not one problem:
+
+    136 files  37,083 pages   a Halliburton marker
+     22 files   3,772 pages   Liberty (dealt with below)
+      6 files                 STEP
+      1 file                  SLB
+     25 files                 no vendor name found at all
+
+**Why they were unreadable: no detector fired on any of them.** hal1.detect
+read the raw text layer for "TREATMENT PLOT" and these pages have no text
+layer — while OCR shows exactly that string printed on the page. The chart was
+never the problem: it is a raster image and extract_image already OCRs its own
+axes. Only detect and page_meta read text, and both strings are on the image.
+
+Two changes, in `547630e`:
+
+1. The same _page_text OCR fallback lib1/slb/IFS already use. The big-image
+   test runs FIRST — it is nearly free, OCR is not, and detect is called on
+   every page of every document.
+2. **These plots are rendered SIDEWAYS.** Found by rendering the page, not by
+   reasoning about it: "Pump Time" runs down the page, so the tick ladders,
+   the time calibration and the series masks are all reading the wrong axis.
+   The orientation is not guessed — normal is tried first, and only a page
+   that fails to find a time axis is turned clockwise and read again, so a
+   page that reads today never reaches the new path.
+
+Result on the first 12 (the smallest, 84-181 pages):
+
+    9 files now extract    122 series, all "Halliburton treatment plot (raster)"
+    3 files still return nothing — and that is the RIGHT answer for them
+
+Those three (00150, 00151, 00356) are operator daily-report documents that
+merely NAME Halliburton, in a "Company: Halliburton" row of a Stimulation
+Summary. Rendered, their most-coloured page is a Peloton daily-completion
+table — coloured cells, no curve. The pipeline's own note already says so.
+Do not chase them. And do not use longest-path to decide this: that threshold
+is recorded further down as retracted, and it was checked here by rendering.
+
+Regression, on two filings hal1 reads TODAY, found by CONTENT — picking them
+by 5-digit index tested files hal1 never read at all, because the two drives
+number different wells the same:
+
+    00478 + 00479, 57 chart pages, 228 channels
+    0 moved, 0 pages gained or lost, 0 metadata changed
+
+### Open on this class
+
+- **Speed, and it will read as a hang.** lib1.detect costs 3.0s on a textless
+  page, because it OCRs every page looking for the word "Liberty" before any
+  other reader gets a turn. 84 pages is ~4 minutes before the first chart
+  appears and this class runs to 800 pages. The hal1 change does not add to
+  it — its image test rejects a non-chart page in 0.000s — but it does not
+  remove it. Whether a cheap guard is safe for lib1 is NOT known; the
+  measurement that would answer it timed out.
+- **Every stage also prints a CHEMISTRY PLOT page** of additive
+  concentrations (OPTIKLEEN-WF, FIGHTR EC-1, MC B-8510...). hal1 reads these
+  on no filing at all, textless or not, because detect requires "TREATMENT
+  PLOT". Pre-existing gap, not caused by this class.
+- **One page of 00392 still fails and may be right to.** Its labels run 28
+  07:09, 28 16:53, 28 17:26, 28 17:59, 29 22:33 — a stage broken by long
+  shut-ins, so the axis is linear in PUMP time while the labels are wall
+  clock. A straight-line fit would invent timestamps. Not confirmed by
+  measuring the label positions, so do that before changing anything.
+- The other 33 textless files (STEP, SLB, and the 25 with no vendor found)
+  have not been looked at.
+
 ## Liberty, read page by page — what a one-page sample was hiding
 
 Every Liberty number on record before this was measured on ONE page per file,
