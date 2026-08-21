@@ -4229,9 +4229,14 @@ window.addEventListener("message", ev => {
 function fvEditsMoved(entry, d) {
   const raw = entry.well && (entry.well.stagesRaw || entry.well.stages);
   if (!raw) return true;
-  const { starts } = fvStarts(raw);
+  // The LAST stage on the axis, which is not raw's last element: the layout
+  // orders by the clock, so on a filing that prints its charts out of order
+  // the trailing bound was being computed from a different stage's duration
+  // than the one it closes, and an untouched FracView could report an edit.
+  const L = fvLayout(raw);
+  const starts = L.starts, last = L.stages[L.stages.length - 1];
   const base = starts.concat([starts[starts.length - 1] +
-    raw[raw.length - 1].n * (raw[raw.length - 1].sample_sec || 1) * 1000]);
+    last.n * (last.sample_sec || 1) * 1000]);
   return d.bounds.some((v, i) => Math.abs(v - base[i]) > 500);
 }
 
