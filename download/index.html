@@ -38,6 +38,58 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.5.0</h2>
+    <ul>
+      <li><b>Liberty reports with no text layer now extract.</b> Nineteen
+        filings &mdash; roughly 950 chart pages &mdash; had every label
+        converted to vector outlines, so nothing in the report was text and no
+        reader could find a chart on them. The labels are now read off the
+        page itself: the legend, the axis ladders and the clock. All 19 files
+        extract, and reports that already had a text layer come back
+        bit-for-bit identical to v1.4.0</li>
+      <li><b>Halliburton IFS charts drawn the same way now read too</b>
+        &mdash; 8 files, 85 charts, every one of them dated and clocked</li>
+      <li><b>Charts are dated from the operator's daily report</b> where the
+        service company's own sheet is missing from the document. 00020 and
+        00027 are 81 charts each, every one previously without a start time
+        because neither report contains a Treatment Summary grid at all.
+        Date and time coverage across both drives goes from 91.4% to
+        95.3%</li>
+      <li><b>An interval charted as a bitmap says so</b> instead of vanishing
+        from the results with no explanation</li>
+      <li><b>A stage drawn as two plots is one stage</b>, not two half-stages
+        with a clock warning between them</li>
+      <li><b>An OCR'd clock keeps its PM.</b> A time read off the page was
+        losing its meridiem and coming back twelve hours early</li>
+      <li><b>A chart that fails no longer hands its identity to the next
+        one.</b> The caption was being tagged before the failing variant was
+        dropped, so the survivor inherited the wrong interval number</li>
+      <li><b>FracView draws the real clock, and shows a jump backwards.</b>
+        It used to need every stage dated and strictly increasing &mdash; one
+        undated stage in forty and the whole well went onto an even
+        sequence that says nothing about when anything happened. Worse, a
+        stage dated OUT of order was exactly what sent it there, so the fault
+        disappeared at the moment it was found. Printed times are now kept as
+        printed and only the stages that print nothing are placed; a
+        turnaround gets a marked rule carrying the date and time it lands
+        on</li>
+      <li><b>The Sequence view now catches a stage numbered out of step with
+        its clock</b> &mdash; it was comparing stages in the order they are
+        drawn, which is clock order, so the line could only ever ascend and
+        00495's stage 3B read as consistent</li>
+      <li><b>Fix time edits the time.</b> It asked for a date, then a time, so
+        a stage whose date was right could not be corrected without retyping
+        it. One box, both values, filled in with what the sheet prints. Every
+        stage row now shows its own clock and carries the button &mdash; the
+        warning only fires when a stage starts before the previous one ended,
+        which is not the only way a clock can be wrong</li>
+      <li><b>A column mapped to the wrong field can be changed.</b> Empty
+        columns offered &ldquo;Map Term&rdquo;; a filled one offered nothing,
+        so a wrong match could only be lived with. Filled columns now carry
+        &ldquo;Edit&rdquo;, and both the header and the dialog name the column
+        being read</li>
+    </ul>
+
     <h2>v1.4.0</h2>
     <ul>
       <li><b>A Trican stage was going missing entirely.</b> Its elapsed-time
