@@ -38,6 +38,53 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.6.0</h2>
+    <ul>
+      <li><b>Halliburton reports with no text layer now extract</b> &mdash;
+        126 filings on the two drives, 37,000 pages, that returned
+        &ldquo;No extractable data&rdquo; because every character on the page
+        is drawn as an outline. Two things were in the way: the reader looked
+        for the words &ldquo;TREATMENT PLOT&rdquo; in a text layer that does
+        not exist, and these plots are printed SIDEWAYS, so every axis was
+        being read at ninety degrees to the chart. 100 of the first 103 files
+        now read, 2,816 charts. The three that still return nothing are
+        operator daily reports that contain no treatment chart at all</li>
+      <li><b>Halliburton IFS v6 reports were unread because of one
+        letter.</b> Older builds stamp each page &ldquo;(IFS v4.6.3)&rdquo;;
+        v6 stamps it &ldquo;(IFS V6.0.0)&rdquo;, and the check was looking for
+        the small v. Five reports, 240 charts, every one of them dated and
+        clocked &mdash; from nothing. Thank you Carmine, you were right that
+        the files were fine</li>
+      <li><b>Every Liberty time was one second early</b>, and at midnight that
+        made it a day early too: a chart starting 00:00 was recorded as
+        23:59:59 the night before, which moved its date back and put the
+        clock warning on the following stage. Carmine found this one and
+        diagnosed it. <b>Re-export any Liberty well</b> &mdash; every CSV
+        exported before this build carries it</li>
+      <li><b>Liberty charts: 97.3% to 99.7% of chart pages now read.</b>
+        Measured page by page over all 22 outlined filings rather than one
+        page each: 34 failures down to 4, and 235 channels recovered that
+        were being dropped in silence. A whole channel could go missing
+        because its axis printed three tick labels instead of four; a second
+        could vanish because a word was misread and it collided with the name
+        of the first</li>
+      <li><b>Trican&rsquo;s current report format now produces tables.</b> The
+        2024/25 &ldquo;Post-Fracturing Report&rdquo; is a different book from
+        the older one and yielded no table at all &mdash; 66 to 88 stages a
+        file, printed and unread. Checked against each report&rsquo;s own
+        printed stage count</li>
+      <li><b>Trican stage tables carry eight more columns.</b> The whole
+        CHEMICAL section &mdash; every additive, populated on every stage page
+        &mdash; had never reached the output on any file. Proppant is now
+        split per product instead of summed into one number, so a stage that
+        pumped 0.17 t of one mesh beside 48 t of another shows both</li>
+      <li><b>Textless files open several times faster.</b> Reading a page well
+        enough to identify it took three seconds; ruling it out takes under
+        one, and nothing that reads today reads differently</li>
+      <li>Operator daily reports are no longer mistaken for Liberty charts and
+        reported as broken ones</li>
+    </ul>
+
     <h2>v1.5.1</h2>
     <ul>
       <li><b>FracView keeps the channels you turned off.</b> Cycling to the
