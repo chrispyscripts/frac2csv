@@ -212,6 +212,59 @@ def _parse_date(txt):
     return 2000 + c, a, b
 
 
+def _day_repair(rows):
+    """Make the DAYS agree with the clock they are printed beside.
+
+    A chart is a contiguous recording, so between two labels the day advances
+    exactly when the clock wraps past midnight and not otherwise. The repair
+    that was here needed three readable date labels and a strict majority
+    among them; OCR routinely leaves two, because the third is mangled into a
+    year like 9929 and thrown out before this — so on the pages that needed it
+    most it never ran. 00915 p123 prints 2022/04/29 three times, reads the
+    last as 2022/04/28, and the clock beside them runs 20:40, 21:10, 21:40 —
+    no wrap anywhere, so no day may change. It died with "implausible duration
+    161320s". p107 is the same fault with a real wrap in it: 23:17, 00:22,
+    01:27 against days 23, 24, 20.
+
+    Direction is NOT inferred from a wrap count. Counting rollovers picks the
+    wrong order — read backwards, 01:27, 00:22, 23:17 never steps backwards
+    and so scores zero against the correct order's one. That mistake is
+    already written up in _walk below; making it here turned p106, a page that
+    worked, into an implausible-duration failure.
+
+    So no direction is chosen at all. Both walks are built, the labels as READ
+    are kept as a third candidate, and the one that spans the least time wins.
+    A frac chart is minutes to hours long; every wrong day assignment adds a
+    whole day to the span, so the shortest consistent reading is the chart's.
+    Where the labels are already right, they span the least and are returned
+    untouched.
+    """
+    if len(rows) < 2:
+        return rows
+    import datetime as _dt
+
+    def _span(days):
+        secs = [(d - _dt.date(2000, 1, 1)).days * 86400 + r[4]
+                for d, r in zip(days, rows)]
+        return max(secs) - min(secs)
+
+    def _walk_days(seq):
+        """Anchor on seq's first label and let the clock place the rest."""
+        out, cur = {}, _dt.date(seq[0][1], seq[0][2], seq[0][3])
+        out[id(seq[0][0])] = cur
+        for prev, row in zip(seq, seq[1:]):
+            if row[4] < prev[4]:                  # the clock wrapped
+                cur = cur + _dt.timedelta(days=1)
+            out[id(row[0])] = cur
+        return [out[id(r[0])] for r in rows]
+
+    fwd = sorted(rows, key=lambda r: r[0]["cy"])
+    cands = [[_dt.date(r[1], r[2], r[3]) for r in rows],   # exactly as read
+             _walk_days(fwd), _walk_days(list(reversed(fwd)))]
+    best = min(cands, key=_span)
+    return [(r[0], d.year, d.month, d.day, r[4]) for d, r in zip(best, rows)]
+
+
 def _time_axis(spans, time_frame=None, time_grid=None):
     """date + 'HH:MM' span pairs -> abs seconds = a + b*cy. Label anchors
     snap to the time gridlines when the page provides them — edge labels
@@ -276,6 +329,8 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         dates = sane
     pts = []
     date0 = None
+    _first = (float("inf"), "")
+    _rows = []              # (ts, y, mo, dd, tod_secs) before the day repair
     for ts in times:
         # nearest date label
         best = min(dates, key=lambda d: abs(d["cy"] - ts["cy"])) if dates else None
@@ -292,14 +347,25 @@ def _time_axis(spans, time_frame=None, time_grid=None):
         if not (1990 <= y <= 2100 and 1 <= mo <= 12 and 1 <= dd <= 31):
             continue
         parts = [int(p) for p in ts["t"].split(":")]
+        tod = parts[0] * 3600 + parts[1] * 60 + \
+            (parts[2] if len(parts) > 2 else 0)
+        _rows.append((ts, y, mo, dd, tod))
+    _rows = _day_repair(_rows) if any(x.get("ocr") for x in spans) else _rows
+    for ts, y, mo, dd, tod in _rows:
         # absolute days (fixed epoch), NOT day-of-year — a stage crossing
         # Dec 31 -> Jan 1 must keep increasing (Carmine: day/month/year can
         # all change inside one chart)
-        secs = (dt.date(y, mo, dd) - dt.date(2000, 1, 1)).days * 86400 + \
-            parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) > 2 else 0)
+        secs = (dt.date(y, mo, dd) - dt.date(2000, 1, 1)).days * 86400 + tod
         pts.append((secs, ts["cy"]))
-        if date0 is None:
-            date0 = f"{y:04d}-{mo:02d}-{dd:02d}"
+        # The chart's date is the date it STARTS on, which is the earliest
+        # label's — not whichever label happened to come first out of the span
+        # list. On a chart that crosses midnight those are different days, and
+        # taking the wrong one dates the whole stage a day late: 00915 p107
+        # runs 23:17 -> 01:27 and came back 2022-04-24, putting stage 2 after
+        # stage 3 on a well whose stages are in order.
+        if date0 is None or secs < _first[0]:
+            _first = (secs, f"{y:04d}-{mo:02d}-{dd:02d}")
+            date0 = _first[1]
     if len(pts) < _need and len(times) >= _need:
         # No usable date labels. Liberty's 2021 vintage prints a bare "Time"
         # axis — 00928/00929/00930 carry twelve clock labels a page and no
@@ -468,6 +534,37 @@ def _clean_name(name):
     return re.sub(r"^[A-Za-z]\s*:\s*", "", name).strip()
 
 
+def _arith_ladder(pts):
+    """Is a THREE-label tick row a real ladder, or three OCR misreads?
+
+    Four labels is the safe minimum on a page whose text was guessed at, and
+    it costs whole channels. 00915 p108 reads the rate ladder as [12, 16, 20]
+    — evenly stepped, evenly spaced, unmistakably an axis — gets no fit, and
+    Slurry Rate is dropped from the page entirely. Twenty-two of that file's
+    twenty-four treatment charts lose it the same way, and nothing in the
+    output says a channel went missing.
+
+    Two points already determine a line; the fourth label was never about the
+    arithmetic, it was about not trusting OCR. So ask for the evidence
+    directly instead: three labels whose VALUES step evenly and whose
+    POSITIONS step evenly, in the same direction, are an axis. Three bad reads
+    do not land on both grids at once.
+    """
+    if len(pts) != 3:
+        return False
+    q = sorted(pts, key=lambda p: p[1])          # by position along the axis
+    v = [p[0] for p in q]
+    x = [p[1] for p in q]
+    dv1, dv2 = v[1] - v[0], v[2] - v[1]
+    dx1, dx2 = x[1] - x[0], x[2] - x[1]
+    if abs(dv1) < 1e-9 or abs(dx1) < 1e-9 or abs(dx2) < 1e-9:
+        return False
+    if (dv1 > 0) != (dv2 > 0):                   # values must not turn around
+        return False
+    return (abs(dv2 - dv1) <= 0.05 * abs(dv1)          # even in value
+            and abs(dx2 - dx1) <= 0.05 * abs(dx1))     # and even in position
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -602,8 +699,12 @@ def extract_page(page, sample_sec=1.0):
                    default=0) * 0.45
 
     fits = {}
+    # OCR pages only. A text-layer page reads every label it prints, so it
+    # never needs this — and the v1.5.0 release was gated on those files
+    # coming back bit-identical.
+    _ocr_page = any(x.get("ocr") for x in spans)
     for color, pts in ticks.items():
-        if len(pts) < 4:
+        if len(pts) < 4 and not (_ocr_page and _arith_ladder(pts)):
             continue
         cys = sorted(p[2] for p in pts)
         split = (cys[0] + cys[-1]) / 2
@@ -788,8 +889,25 @@ def extract_page(page, sample_sec=1.0):
         # the CSV (Carmine's 0422 sample never goes below the axis)
         v = np.clip(a + b * arr[:, 0], v_lo_ax, v_hi_ax)
         order = np.argsort(t, kind="stable")
-        series[info["name"]] = (t[order], v[order])
-        units[info["name"]] = info["unit"]
+        # Two colours can arrive under ONE name when OCR drops a word: 00915
+        # p108 reads both greens as "Prop Conc" because the second one's "Btm"
+        # was never read, and this dict silently kept one of them. A whole
+        # traced channel disappeared with nothing to say it had.
+        #
+        # The missing word is not recoverable — it is not on the page in any
+        # form we read — and this module refuses to guess a name it cannot
+        # see ("H Prop Conc" stays ambiguous rather than being called BH).
+        # So keep the data and number the clash: a channel Carmine can see and
+        # rename beats one he never learns existed. OCR pages only, so a
+        # text-layer file cannot change.
+        _name = info["name"]
+        if _name in series and _ocr_page:
+            _k = 2
+            while f"{_name} #{_k}" in series:
+                _k += 1
+            _name = f"{_name} #{_k}"
+        series[_name] = (t[order], v[order])
+        units[_name] = info["unit"]
         # This channel is one the black-axis fix changed. Say so ON the chart,
         # because the correction reaches data the client already has: builds
         # before 1.0.0 read a black series off a coloured axis of the same
@@ -798,8 +916,8 @@ def extract_page(page, sample_sec=1.0):
         # The chart's OWN axis range for this curve, straight off its printed
         # tick labels. The Lab plots against this instead of guessing a top
         # from the data, so our y axis reads the same as the source report.
-        axes[info["name"]] = (float(v_lo_ax), float(v_hi_ax))
-        axis_fit[info["name"]] = (float(a), float(b))
+        axes[_name] = (float(v_lo_ax), float(v_hi_ax))
+        axis_fit[_name] = (float(a), float(b))
     if not series:
         raise ValueError("lib1: no curves matched")
 
@@ -818,6 +936,20 @@ def extract_page(page, sample_sec=1.0):
     if not (60 < n < 100000):
         raise ValueError(f"lib1: implausible duration {n}s")
     meta.duration_min = n / 60.0
+    # The date and the clock now come from the SAME instant.
+    #
+    # start_time has always been read off t_lo, the window's own start, while
+    # the date came from whichever label the axis fit happened to anchor on.
+    # On a chart that crosses midnight those are different days: 00915 p107
+    # runs 23:17 -> 01:27, its 23:17 label has no date beside it, and the page
+    # came back "2022-04-24 23:16" — a day after the chart it belongs to, and
+    # after the stage that follows it. t_lo is absolute seconds on the same
+    # epoch the labels were converted into, so the day is simply read back
+    # out of it and the two can no longer disagree.
+    if date:
+        import datetime as _dt0
+        _d0 = _dt0.date(2000, 1, 1) + _dt0.timedelta(days=int(t_lo // 86400))
+        meta.date = f"{_d0.year:04d}-{_d0.month:02d}-{_d0.day:02d}"
     day_sec = t_lo % 86400
     meta.start_time = (f"{int(day_sec // 3600):02d}:{int(day_sec % 3600 // 60):02d}"
                        f":{int(day_sec % 60):02d}")
