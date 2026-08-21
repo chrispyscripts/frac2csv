@@ -20,19 +20,47 @@ import numpy as np
 
 import auto_raster as ar
 import curve_trace as ct
+import ocr_labels
 from step1 import _frame_bbox, _page_geom, impossible_axis
+
+# Below this many characters a page is treated as having no text of its own.
+_OCR_TEXT_MIN = 40
+
+
+def _page_text(page):
+    """The page's text, OCR'd when it has none of its own.
+
+    A whole class of Halliburton filings prints every character as vector
+    outlines — 126 of them on the two drives, 37,000 pages — so get_text()
+    returns nothing and this template could not find a single chart on any of
+    them. The chart itself was never the problem: the curve is a raster image
+    and extract_image already OCRs its own axes. Only the two text lookups
+    here stood in the way, and both strings are printed ON the image anyway
+    ("TREATMENT PLOT : Treatment Interval 3", and the UWI above it).
+
+    ocr_labels caches per document, so the second read of a page is free.
+    """
+    t = page.get_text()
+    if len(t.strip()) > _OCR_TEXT_MIN or not ocr_labels.available():
+        return t
+    try:
+        return ocr_labels.page_text(page) or t
+    except Exception:
+        return t
 
 
 def detect(page):
-    t = page.get_text()
-    if "TREATMENT PLOT" not in t.upper():
+    # The image test FIRST, because it is nearly free and OCR is not: this is
+    # called on every page of every document, and a page with no big raster on
+    # it cannot be a treatment plot whatever its text says.
+    if not any(im[2] >= 500 and im[3] >= 400
+               for im in page.get_images(full=True)):
         return False
-    return any(im[2] >= 500 and im[3] >= 400
-               for im in page.get_images(full=True))
+    return "TREATMENT PLOT" in _page_text(page).upper()
 
 
 def page_meta(page):
-    text = page.get_text()
+    text = _page_text(page)
     meta = {"stage": None, "uwi": ""}
     m = re.search(r"Treatment\s+Interval\s+(\d+)", text, re.I)
     if m:
@@ -353,18 +381,42 @@ def extract_page(page, sample_sec=1.0):
         pix = fitz.Pixmap(fitz.csRGB, pix)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
         pix.height, pix.width, 3)
-    samples, channels, info = extract_image(img, sample_sec)
+    # A whole class of these filings renders the plot SIDEWAYS: the same
+    # matplotlib chart turned 90 degrees, so "Pump Time" runs down the page
+    # and the value axes run across it. Everything below the frame — the tick
+    # ladders, the time calibration, the series masks — is written for time
+    # along x, and on a turned page the time axis simply is not where it
+    # looks.
+    #
+    # The orientation is not guessed at. A page that is the right way up
+    # reads on the first try and never reaches the rotation, so nothing that
+    # works today can change; a turned one fails to find a time axis, which
+    # is the evidence, and is then turned clockwise and read again.
+    rotated = False
+    try:
+        samples, channels, info = extract_image(img, sample_sec)
+    except ValueError as e:
+        if "time axis" not in str(e):
+            raise
+        samples, channels, info = extract_image(np.rot90(img, -1), sample_sec)
+        rotated = True
     # Chart geometry in PAGE units, so the Lab can lay the source page behind
     # the curves. Everything above works in IMAGE pixels; the page embeds that
     # image at a known rect, which makes the conversion a plain scale +
     # offset — exactly step1's raster case, so it uses step1's converter and
     # inherits its convention (ta relative to the STAGE start, v0/v1 the
     # frame's top and bottom in mupdf y-down page units).
-    try:
-        r = page.get_image_rects(im[0])[0]
-        if r.width > 1 and r.height > 1:
-            info["geom"] = _page_geom(info, pix.width / r.width,
-                                      pix.height / r.height, r.x0, r.y0)
-    except Exception:
-        pass
+    # Only for a page read the way it was drawn. geom is a plain scale and
+    # offset from image pixels to page units, and that is not what it is any
+    # more once the image has been turned — the Lab would lay the source page
+    # behind the curves at ninety degrees to them. No geom means no underlay,
+    # which is a feature missing rather than a feature lying.
+    if not rotated:
+        try:
+            r = page.get_image_rects(im[0])[0]
+            if r.width > 1 and r.height > 1:
+                info["geom"] = _page_geom(info, pix.width / r.width,
+                                          pix.height / r.height, r.x0, r.y0)
+        except Exception:
+            pass
     return page_meta(page), samples, channels, info
