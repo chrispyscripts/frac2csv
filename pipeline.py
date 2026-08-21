@@ -44,6 +44,7 @@ import daily_ops
 import slb
 import slb_tables
 import trican2
+import trican_b
 
 try:
     import auto_raster as ar
@@ -2017,6 +2018,42 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             "rows": [[r.get(c, "") for c in cols] for r in trows],
             "source": "Trican stage report (stages numbered by document order)"})
         notes.append(f"{len(trows)} stage row(s) parsed from Trican stage reports.")
+
+    # --- Trican 'Post-Fracturing Report' — the 2024/25 book (layout B) ---
+    #
+    # A different report entirely: a cover, a consolidated Stage Summary, a
+    # Chemical Summary and one label/value page per stage. trican2.detect
+    # needs "STAGE INFORMATION" and never fires on it, so these files yielded
+    # no table at all — 66 to 88 stages each, printed and unread.
+    #
+    # The reader for it was written and never wired in. Verified here against
+    # the report's OWN printed stage count on four files: 66/66, 85/85, 88/88,
+    # 88/88, 327 rows.
+    #
+    # It runs whatever layout A found. The two layouts do not co-occur — one
+    # is the 2015-16 deliverable and the other the 2024/25 one — so a file
+    # producing rows from both is a signal worth seeing rather than a conflict
+    # to suppress.
+    try:
+        bh, brows = trican_b.parse_document(doc)
+    except Exception as e:
+        bh, brows = {}, []
+        notes.append(f"Trican post-frac report unreadable — {e}")
+    if len(brows) >= 2:
+        bcols = [c for c in trican_b.COLUMNS if any(c in r for r in brows)]
+        results.append({
+            "type": "table",
+            "title": (bh.get("well") or "well") + " — per-stage engineering data (Trican)",
+            "well": bh.get("well", ""), "uwi": bh.get("uwi", ""),
+            # this book prints the formation on its cover, and the reader
+            # already returns it — layout A has nowhere to read one from,
+            # which is why the field above is empty rather than this one
+            "formation": bh.get("formation", ""), "columns": bcols,
+            "rows": [[r.get(c, "") for c in bcols]
+                     for r in sorted(brows, key=lambda r: r.get("stage") or 0)],
+            "source": "Trican post-frac report"})
+        notes.append(f"{len(brows)} stage row(s) parsed from the Trican "
+                     f"post-fracturing report.")
 
     # --- Schlumberger Zone / Interval Summary sheets ---
     #
