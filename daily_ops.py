@@ -32,11 +32,18 @@ to check against, so a caller taking a time from here should say so.
 """
 import re
 
-# The wordings seen so far. Matched on the page's own text, not guessed at.
+# The wordings seen so far — and the list is NOT the test, because it kept
+# being wrong. 00121 says "Regulatory_Daily Completion and Workover", 00020
+# "Daily Completion Operations", 00588 "Daily Completion & WS (board report)",
+# 00445 "DC & Workover - WellOps Regulatory Report". Every new file found a
+# fifth spelling, and 00588's 15 charts went undated for no better reason than
+# a title this list had not met yet.
 MARKERS = (
     "Regulatory_Daily Completion and Workover",
     "Daily Completion Operations",
     "Daily Completion and Workover",
+    "Daily Completion & WS",
+    "DC & Workover",
 )
 
 _REPORT_DATE = re.compile(
@@ -46,17 +53,33 @@ _CLOCK_LINE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 # The stage number, read ONLY from inside a row. A comment that ends "ready to
 # Frac Stage #" is followed by the next cell — a clock — and a regex allowed to
 # run past the row boundary reads "16:30" as stage 16.
-_STAGE = re.compile(r"(?i)stage\s*#?\s*(\d{1,3})(?!\s*:)")
+# Plural too — "Frac stages # 1" is a stage mention and pretending it is not
+# would leave the row looking unambiguous when it is not. See stage_times.
+_STAGE = re.compile(r"(?i)stages?\s*#?\s*(\d{1,3})(?!\s*:)")
 # The activity CODE, not the word. Every row's code sits on its own line with
 # its hours — "1.25 FRAC", "11.50 FRAC", "0.50 ACID" — and the word "frac"
 # turns up in the COMMENTS of rows that are not frac rows at all: the acid row
 # on 00121 p30 ends "ready to Frac Stage #", and matching the bare word made
 # that row answer for stage 10 at 16:00 when pumping began at 17:15.
+# How many lines after its start clock a row's own comment can run. Comments
+# are wordy but bounded; the page furniture that follows a time log is not.
+_MAX_ROW_LINES = 12
+
 _FRAC_CODE = re.compile(r"(?im)^\s*[\d.]+\s+FRAC\s*$")
 
 
 def is_daily_report(text):
-    return any(m in text for m in MARKERS)
+    """Is this page a daily operations sheet?
+
+    Recognised by SHAPE first and title second: a page that prints a report
+    date and a run of time-log rows IS a daily report whatever its heading
+    says. Over-matching is cheap here — stage_times() then requires a FRAC
+    code row naming a stage, so a page that merely looks like one contributes
+    nothing — while under-matching costs a whole file its clocks.
+    """
+    if any(m in text for m in MARKERS):
+        return True
+    return report_date(text) is not None and len(rows(text)) >= 2
 
 
 def report_date(text):
@@ -88,6 +111,13 @@ def rows(text):
     out = []
     for n, (i, hhmm) in enumerate(starts):
         end = starts[n + 1][0] if n + 1 < len(starts) else len(lines)
+        # The LAST row would otherwise run to the end of the page and swallow
+        # whatever follows the time log. On 00588 what follows is a period
+        # summary — "Frac stages # 1, Pump Down stage # 2" — and absorbing it
+        # put the PUMP-DOWN stage's number on the FRAC row's clock. A row's
+        # own comment is a handful of lines; anything further down the page
+        # belongs to something else.
+        end = min(end, i + _MAX_ROW_LINES)
         out.append((hhmm, "\n".join(lines[i:end])))
     return out
 
@@ -103,10 +133,15 @@ def stage_times(text):
     for hhmm, body in rows(text):
         if not _FRAC_CODE.search(body):
             continue
-        m = _STAGE.search(body)
-        if not m:
+        found = {int(x) for x in _STAGE.findall(body)}
+        # A row that names TWO stages names neither. 00588's frac row sits
+        # beside "Frac stages # 1,   Pump Down stage # 2" — two stages for two
+        # different operations — and taking either one puts a clock on the
+        # wrong stage. This is the whole reason the row is read rather than
+        # the page: when even the row is ambiguous, it has to say nothing.
+        if len(found) != 1:
             continue
-        stage = int(m.group(1))
+        stage = found.pop()
         if stage not in got or hhmm < got[stage]:
             got[stage] = hhmm
     return got

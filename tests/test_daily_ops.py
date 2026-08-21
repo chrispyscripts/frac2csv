@@ -118,5 +118,49 @@ class Index(unittest.TestCase):
         self.assertEqual(daily_ops.index(self._Doc(["Zone 3 Summary\n08:00\n09:00\nFRAC Stage # 2"])), {})
 
 
+PAGE_C = """Daily Completion & WS (board report)
+Report Date:   1/13/2021
+Time Log
+00:00
+16:30
+16.50 INACTIV
+INACTIVE
+Concurrent Op's
+16:30
+17:30
+1.00 FRAC
+Frac. Job
+SICP = 0 kPa. Opened master valve and pressured up casing.
+Frac stages # 1,   Pump Down stage # 2
+"""
+
+
+class RecognisedByShapeNotTitle(unittest.TestCase):
+    """Every new file produced another spelling of the heading.
+
+    00121 "Regulatory_Daily Completion and Workover", 00020 "Daily Completion
+    Operations", 00588 "Daily Completion & WS (board report)", 00445 "DC &
+    Workover - WellOps Regulatory Report". A page that prints a report date
+    and a run of time-log rows IS one, whatever it calls itself.
+    """
+
+    def test_an_unknown_heading_is_still_a_daily_report(self):
+        text = PAGE_C.replace("Daily Completion & WS (board report)",
+                              "Some Heading Nobody Has Seen")
+        self.assertTrue(daily_ops.is_daily_report(text))
+
+    def test_a_page_with_no_report_date_is_not(self):
+        self.assertFalse(daily_ops.is_daily_report(
+            "Zone 3 Summary\n08:00\n09:00\n1.00 FRAC\nStage # 2"))
+
+    def test_00588_shape_yields_NO_stage_and_that_is_correct(self):
+        # The frac row does not name its stage. The only mention on the page
+        # is a period summary — "Frac stages # 1, Pump Down stage # 2" — which
+        # names TWO stages for two different operations and is attached to no
+        # row. Reading a stage from it would put the pump-down's number on the
+        # frac's clock, so this page must yield nothing.
+        self.assertTrue(daily_ops.is_daily_report(PAGE_C))
+        self.assertEqual(daily_ops.stage_times(PAGE_C), {})
+
 if __name__ == "__main__":
     unittest.main()
