@@ -1,8 +1,10 @@
 # Frac2CSV — session handoff
 
-Rewritten 2026-08-13, updated 2026-08-20. Repo: `frac-pdf-extract/frac2csv`
-(the git repo is that directory, **not** the parent). Shipped: **v1.4.0**,
+Rewritten 2026-08-13, updated 2026-08-21. Repo: `frac-pdf-extract/frac2csv`
+(the git repo is that directory, **not** the parent). Shipped: **v1.5.0**,
 tagged and building as a Windows EXE, notes live on the download page.
+`ifs-ocr-wip` is merged and no longer the place unproven work lives — cut a
+new branch for that.
 
 ## Read this first
 
@@ -39,13 +41,21 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
-Nothing is running. Both jobs the last handoff listed have finished:
-`providers.tsv` and `curvelen.tsv` each carry all 184 rows with no errors.
-What they say is under "The pure-vector class" below, and curvelen's answer
-is not the one it was built to give.
+Nothing is running. `providers.tsv` and `curvelen.tsv` each carry all 184
+rows with no errors; what they say is under "The pure-vector class" below,
+and curvelen's answer is not the one it was built to give.
 
-Three local app instances are still running and ALL of them predate the
-2026-08-20 parser work. Cycle them before testing anything.
+**Unfinished measurement, deliberately abandoned:** a 24-file sweep
+(`scratchpad/sweep_fv.py`) meant to count how many wells recover a real
+FracView clock under `fvLayout` got through 3 files in ~40 minutes and was
+killed to free CPU for the release check. It is informational, not a gate —
+the layout rule is covered by 26 unit tests and was checked against the real
+00495 (66 stages, 1 jump named at 2023-11-02 04:51). Re-run it when the
+machine is idle if the number is wanted.
+
+Eight local app instances were running at the end of this session — past the
+3-4 the tooling is comfortable with, and one was pinned at 96% CPU for over
+an hour. Cycle them before testing anything.
 
 ## Two drives, and they drop
 
@@ -109,10 +119,10 @@ IFS and Hal-1 clusters.
 early test issues, and several open ones (#100, #102, #110) are Carmine saying
 something *works*. Read the body before treating a number as a defect.
 
-## Landed 2026-08-20, after v1.4.0 — NOT in any build yet
+## Landed after v1.4.0 — ALL SHIPPED in v1.5.0
 
-Four fixes, all pushed, none tagged. The client runs the EXE and the EXE is
-still v1.4.0, so NONE of this has reached him.
+Four fixes from 2026-08-20, plus the Liberty/IFS outlined-page work and the
+daily-report clocks. All of it is in the v1.5.0 tag and the EXE it builds.
 
 - **A legend OCR'd a word at a time is read as whole labels (#582/#569,
   `bb30490`). 00121 went from 64 chart pages detected and ZERO extracted to
@@ -162,6 +172,19 @@ still v1.4.0, so NONE of this has reached him.
   `0a27a33`).** See below — unchanged from this morning.
 
 ## Open, top of the list
+
+- **`gaps.py` is written, tested and WIRED INTO NOTHING.** Carmine asked for
+  missing-data detection and interpolation: flag a sample whose value is
+  missing while the axis position is between the floor and the ceiling, and
+  fill the link. The module does that — `LEAD`/`TRAIL`/`AT_FLOOR`/`AT_CEIL`/
+  `MISSING`/`UNKNOWN`, `FLOOR = 0.02`, `CEIL = 0.98`, `interpolate()` returns
+  the filled values AND the indices it filled — with 19 tests. No caller
+  anywhere. Deciding WHERE it goes is the open question: the export, the Lab's
+  own graph, or a per-stage note. Nothing has been decided.
+  - Read the tests before the module. The first version scanned for `None`
+    while the pipeline carries `NaN`, so it could not have worked on a single
+    real file, and all 14 tests passed because they were written in `None`
+    too. `is_missing()` now handles both.
 
 - **DATE/TIME COVERAGE IS MEASURED. `validation-tools/datetime_sweep.py`,
   60 files sampled across BOTH drives, run through the SHIPPED code.** It
@@ -622,123 +645,59 @@ what a future session needs to KNOW rather than what shipped.
   conc blanks above, which is why it was worth checking whether the ink existed
   before concluding the pen was up.
 
-## Liberty on outlined pages — where it stands (branch `ifs-ocr-wip`)
+## Liberty on outlined pages — SHIPPED in v1.5.0
 
 19 of the client's 37 failing files are Liberty filings with no text layer.
-The reader now clears every gate and returns stage, date, clock and named
-channels on 7 of 8 sampled pages. **The values are not yet trustworthy.**
+All 19 extract, each on its busiest chart page, every one with a date, a
+clock and values inside their printed axes:
 
-Measured against the render of 00919 p111:
+    00913 s13 04-29  00914 s19 04-29  00915 s8  04-28  00916 s38 05-05
+    00917 s18 05-08  00918 s41 05-06  00919 s2  04-23  00920 s43 05-06
+    01004     12-11  01007 s24 05-09  01072 s6  01-28  01073 s2  01-26
+    01074     01-27  01075 s4  01-29  01076 s10 01-29  01077 s5  01-27
+    01078     01-27  01079 s3  01-26  01080 s1  01-25
 
-    Treating Pressure  37.875   chart peaks ~38 on 0..75    correct
-    Slurry Rate        25.0     chart peaks ~14 on 0..25    WRONG
-    Prop Conc         300.0     chart is FLAT AT ZERO       WRONG
+00919 p111 was checked channel by channel against its render and all five
+agree. Files that DO carry a text layer come back bit-identical: 252 channels,
+0 moved.
 
-**The two wrong ones read EXACTLY a tick value** — 25.0 is the top of the blue
-ladder, 300.0 the bottom of the green. And the ladders come back short:
+**The bug was the axis fit, not the tracing.** Every wrong value sat exactly
+on a fitted bound — 25.0, 300.0, 1500.0 — which is the signature of clipping
+into a mis-fitted range. Four fixes, in the order they landed:
 
-    blue  [10, 15, 20, 25]          missing 0 and 5
-    green [300 ... 1500]            missing 0
-    red   [15, 30, 45, 60, 75]      missing 0
-    magenta [0, 15, ... 75]         complete
+- `734609f` a ladder whose zero OCR never found was lifting flat curves off
+  the floor. Where the tick step divides the lowest tick, the axis starts at
+  0 whether or not the 0 was read.
+- `0a8c8cb` ink above the top tick is not data.
+- `8fc864a` `x_lo` was the global top tick across EVERY colour, so ink above a
+  given series' own maximum still reached its fit. Each series is now bounded
+  by its own ladder.
+- `1580565` a misread DAY is repaired like a misread year: a label within one
+  day of the majority is kept, anything further out is a misread.
+- `3ab6456` `_time_axis` accepted two clock labels on an OCR'd page and
+  `_horizontal` still demanded three, so four landscape charts went down the
+  ROTATED path and died with "implausible duration 487965257s".
 
-Two leads, in order:
+### Four theories that are NOT the cause — do not spend the hour again
 
-1. **The tick labels may be being traced as curve ink.** On an outlined page
-   every label is a FILLED VECTOR PATH in its series' colour — the same kind
-   of object the curve collector takes. On a text-layer page they are text and
-   the tracer never sees them, which is why this has never bitten before. If
-   so the fix is to exclude fills that sit outside the plot frame, or that are
-   glyph-sized, before tracing.
-2. **A ladder missing its zero** still fits (four points determine the line),
-   so this is probably not the cause on its own — but check it second.
-
-Do NOT merge the branch until a rendered page agrees channel by channel.
-Wrong concentrations in a CSV are worse than the nothing they replace.
-
-### Liberty: what the curve collector actually sees (measured, 00919 p111)
-
-Two hypotheses tried and BOTH DISPROVED by measurement — recorded so they are
-not tried a third time:
-
-    type=s items=200 rect=(98,419)-(296,469)   the real curve, inside the plot
-    type=f items=37  rect=(201,122)-(208,129)  LEGEND glyphs, above the plot
-    type=f items=22  rect=(77,402)-(83,410)    TICK LABEL glyphs, left of it
-
-On an outlined page those glyphs are filled vector paths in the series colour,
-and the collector takes filled paths deliberately (2025 filings draw curves
-that way). So they LOOK like the cause. Clipping them out — on the value axis
-for the legend, on the time axis for the tick labels, both verified to be the
-right axes — changed NOTHING. The numbers are identical with and without.
-
-So the glyphs are not what produces the wrong values. What remains:
-
-    Prop Conc      300.0  = the MINIMUM of its fitted axis
-    Slurry Rate     25.0  = the MAXIMUM of its fitted axis
-    Btm Prop Conc 1500.0  = the MAXIMUM
-    GORV Pressure   75.0  = the MAXIMUM
-    Treating Press  37.87 = correct, and the only one NOT on a bound
-
-Every wrong channel sits exactly on a fitted bound, which is the signature of
-CLAMPING into a mis-fitted range rather than of tracing the wrong ink. And the
-ladders come back missing their zero: blue [10,15,20,25], green [300..1500],
-red [15..75]. Look there next — at where a traced value is clipped to
-(v_lo_ax, v_hi_ax), and at whether a ladder missing its bottom tick makes that
-range wrong.
-
-### Liberty: the measurement that should decide it (00919 p111, blue / Slurry Rate)
-
-    blue ticks   25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
-    fit          value = 36.43 - 0.07742 * cx
-    curve rects  (98,419)-(296,469)  (296,447)-(492,469)  (492,422)-(688,469)
-    so the curve's value coord is cx 419..469 -> 3.99 .. 0.12
-    clip range   np.clip(v, v_lo_ax, v_hi_ax) = clip(v, 10, 25)
-
-By that arithmetic Slurry Rate must come out **10.0** — the curve maps BELOW
-the axis minimum because OCR never found the 0 and 5 ticks, so the clip floor
-is 10. The extractor actually returns **25.0**, the maximum.
-
-So the live path is NOT the one this reconstruction describes. Something else
-is feeding `fits[blue]` or the collected points — check, in order:
-  1. whether `fits.get(color)` is falling through to `unit_fit.get(unit)`, and
-     what unit "Slurry ate (m?/min)" normalises to — a mangled unit key would
-     borrow another channel's axis wholesale.
-  2. what `x_lo/x_hi` and `y_lo/y_hi` actually are. NOTE the naming: in the
-     collector `arr[:,0]` is the VALUE coord and `arr[:,1]` is TIME, so x_lo/
-     x_hi bound VALUES and y_lo/y_hi bound TIME. Both of my clip attempts got
-     this backwards, which is why neither changed a number.
-  3. that `keep` already excludes the off-plot glyphs — it does, which is why
-     clipping them out separately was a no-op.
-
-The one channel that is CORRECT (Treating Pressure 37.87 vs ~38 printed) is
-the one whose ladder includes enough of its range. Every wrong channel's
-ladder is missing its zero.
-
-### Liberty: what is left, after four disproved theories
-
-Four things that LOOK like the cause and are not — each disproved by
-measurement, so nobody spends the hour again:
+Each was tried and disproved by measurement:
 
   1. legend glyphs traced as curve ink — clipped them out, no change
   2. tick-label glyphs traced as curve ink — clipped them out, no change;
      `keep` already excludes both, they never reach the fit
-  3. the real curve being filtered out by the value bounds — it is not:
-     x_lo/x_hi come from ALL colours' ticks, and magenta's ladder has its
-     zero, so the bounds reach past the curve
-  4. a unit-keyed borrow via unit_fit — no: fits[blue] exists, so
+  3. the real curve filtered out by the value bounds — it is not
+  4. a unit-keyed borrow via `unit_fit` — no: `fits[blue]` exists, so
      `fits.get(color) or unit_fit.get(unit)` never falls through
 
-WHAT REMAINS. Computing blue's fit by hand from its own ticks:
+And the naming trap that cost two of those attempts: in the collector
+`arr[:,0]` is the VALUE coord and `arr[:,1]` is TIME, so `x_lo/x_hi` bound
+VALUES and `y_lo/y_hi` bound TIME — the opposite of what the names suggest.
+Both clip attempts were no-ops because they had this backwards.
 
-    25 -> cx 147.4   20 -> 212.4   15 -> 277.2   10 -> 341.1
-    value = 36.43 - 0.07742 * cx
-    curve at cx 419..469  ->  3.99 .. 0.12
-    np.clip(v, 10, 25)    ->  10.0
+### Still open on this template (cosmetic, not value errors)
 
-That says Slurry Rate must be 10.0. The extractor returns 25.0. So the fit the
-CODE builds is not the fit those ticks imply, and the one step between them is
-the gridline snapping just above the fit — "snap each label to its gridline"
-— which on OCR'd label centroids may be pairing labels with the wrong rules.
-Print `fits[0x0000ff]` against the hand fit above; if they differ, it is the
-snap, and it is the last thing standing between these 19 files and correct
-values.
+- Four channel names survive OCR mangled past the snapper: "H Prop Conc"
+  (ambiguous BH/WH — refused deliberately rather than guessed), "BH Con",
+  "Prop Bint Con Sn", "—— BN Con".
+- 01004, 01074 and 01078 report no stage number.
+- 01004 has one channel that comes back all-NaN.
