@@ -343,6 +343,63 @@ def _day_repair(rows):
     return [(r[0], d.year, d.month, d.day, r[4]) for d, r in zip(best, rows)]
 
 
+# "Time (min)" — the caption that says the axis is elapsed minutes, not a
+# clock. Required: a bare numeric ladder is otherwise indistinguishable from a
+# value axis, and guessing wrong would put a chart on an invented timeline.
+_MIN_CAPTION = re.compile(r"\bTime\s*\(\s*min", re.I)
+
+
+def _minute_ticks(spans):
+    """The elapsed-minute ladder as [(minutes, cy)], sorted, or [].
+
+    Clustered on the ladder's OWN column rather than a window around the
+    caption. A value axis can start close enough to the caption to be swept in
+    — 00628 p101's concentration axis puts its "0.0" 17 points from the minute
+    ladder — and one stray tick breaks the even-step test that tells a time
+    ladder from a value one, which is how the chemical plot of every stage
+    stayed unread while the treatment plot beside it was fixed.
+    """
+    cap = next((s for s in spans if _MIN_CAPTION.search(s["t"])), None)
+    if cap is None:
+        return []
+    near = [s for s in spans
+            if s["color"] == 0 and re.fullmatch(r"-?\d+(\.\d+)?", s["t"])
+            and abs(s["cx"] - cap["cx"]) <= 40]
+    if not near:
+        return []
+    # the column the most of them share, to within a couple of points
+    cols = {}
+    for s in near:
+        cols.setdefault(round(s["cx"] / 3.0), []).append(s)
+    best = max(cols.values(), key=len)
+    return sorted((float(s["t"]), s["cy"]) for s in best)
+
+
+def _minute_axis(spans):
+    """Fit an ELAPSED-MINUTES time axis -> ((a, b), "", None) in seconds.
+
+    Same contract as _time_axis: seconds = a + b*cy, and the empty string
+    because these sheets print no date at all. Only fires when the page
+    captions the axis "Time (min)" AND a black numeric ladder sits beside
+    that caption — the caption alone is not enough, and a ladder alone could
+    be any value axis.
+    """
+    ticks = _minute_ticks(spans)
+    if len(ticks) < 3:
+        return None, "", None
+    # minutes must ascend as the ladder is read, and evenly: the caption sits
+    # beside ONE ladder and a page has several, so this is what tells them
+    # apart from a pressure or rate axis that happens to be near it
+    step = ticks[1][0] - ticks[0][0]
+    if step <= 0 or any(abs((b[0] - a[0]) - step) > 0.05 * step
+                        for a, b in zip(ticks, ticks[1:])):
+        return None, "", None
+    a, b = _fit([(v * 60.0, cy) for v, cy in ticks])
+    if abs(b) < 1e-12:
+        return None, "", None
+    return (a, b), "", None
+
+
 def _time_axis(spans, time_frame=None, time_grid=None):
     """date + 'HH:MM' span pairs -> abs seconds = a + b*cy. Label anchors
     snap to the time gridlines when the page provides them — edge labels
@@ -359,7 +416,18 @@ def _time_axis(spans, time_frame=None, time_grid=None):
     # still refuses a fit built on a misread label.
     _need = 2 if any(x.get("ocr") for x in spans) else 3
     if len(times) < _need:
-        return None, "", None
+        # Not every Liberty chart carries a wall clock. One variant plots
+        # ELAPSED MINUTES and captions the axis "Time (min)": 00628 p100 runs
+        # 0.00, 11.00, 22.00, 33.00, 44.00, 55.00 down a single column with no
+        # clock and no date anywhere on the sheet. There is nothing wrong with
+        # those pages — every curve and every value axis reads — and the whole
+        # page was being thrown away for want of a clock it never had. 27 of
+        # the 36 "time labels not found" failures in a 199-file sweep are this.
+        #
+        # The chart is returned on its own elapsed axis with NO date, which is
+        # the truth about it; pipeline's daily-report fill can date it
+        # afterwards from the operator's sheet, which is what that exists for.
+        return _minute_axis(spans)
     import datetime as dt
     # Drop a misread date BEFORE pairing, not after. 00913 p140 prints
     # "2022/04/28" three times and OCR returns one as "9929/04/28"; that bad
@@ -920,6 +988,13 @@ def extract_page(page, sample_sec=1.0):
         x_lo = min(tick_x)
     tl_cy = [s["cy"] for s in spans if s["color"] == 0 and
              re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
+    if not tl_cy:
+        # An elapsed-minutes chart has no clock labels, so the ladder that
+        # marks the time axis is the minute ladder instead. Everything below
+        # uses these positions to bound the ink and to size the window; with
+        # an empty list they raise "min() arg is an empty sequence", which is
+        # how a page that now HAS a time axis still came back a failure.
+        tl_cy = [cy for _v, cy in _minute_ticks(spans)]
     # Clip curve ink to the plot FRAME, not to the time-LABEL span. The last
     # label sits inside the frame, so a label-span clip threw away every point
     # after it while the export window (taken from the frame) still ran to the
