@@ -185,7 +185,15 @@
   .lgrip:hover::after, .lgrip.drag::after { background:var(--carmine); }
   body.colresize { cursor:col-resize; user-select:none; }
   .mid { width:210px; flex-shrink:0; border-right:1px solid var(--line);
-         display:flex; flex-direction:column; min-height:0; }
+         display:flex; flex-direction:column; min-height:0;
+         position:relative; }
+  /* ...and the same grip the file list has, because a long stage name plus a
+     clock plus a button does not fit 210px on every screen */
+  .mgrip { position:absolute; top:0; right:-3px; width:7px; height:100%;
+           cursor:col-resize; z-index:5; }
+  .mgrip::after { content:""; position:absolute; left:3px; top:0;
+                  width:1px; height:100%; background:transparent; }
+  .mgrip:hover::after, .mgrip.drag::after { background:var(--carmine); }
   .stages { flex:1; overflow:auto; }
   .lefthead { padding:9px 14px; font-size:10px; text-transform:uppercase;
               letter-spacing:.06em; color:var(--mut); font-weight:700;
@@ -258,7 +266,25 @@
   /* the stage name can carry an appended tag, so let it have the room and
      keep the sequence pinned right */
   .stagerow .stg { flex:1; min-width:0; overflow:hidden;
-                   text-overflow:ellipsis; white-space:nowrap; }
+                   text-overflow:ellipsis; white-space:nowrap;
+                   display:flex; align-items:center; }
+  /* The stage NAME is what may be truncated. The Fix time button is an
+     action, not part of the label, and it was inside this clipped span — so
+     on a narrow pane the name ate the width and the button disappeared
+     entirely rather than the text ellipsing (Carmine, #619, on Windows). */
+  .stagerow .stg .nmtxt { overflow:hidden; text-overflow:ellipsis;
+                          white-space:nowrap;
+                          /* a flex item will not shrink below its content
+                             without this, so the name kept its full width and
+                             pushed the button out of the pane instead */
+                          min-width:0; flex:0 1 auto; }
+  /* What survives a narrow pane, in order. The button and the warning are
+     fixed — they are why the row is useful. The clock gives way after the
+     name, because a truncated timestamp still tells you roughly when and a
+     missing button tells you nothing. */
+  .stagerow .stg .fixtime, .stagerow .stg .badtime { flex-shrink:0; }
+  .stagerow .stg .stclock { min-width:0; flex:0 1 auto; overflow:hidden;
+                            text-overflow:ellipsis; white-space:nowrap; }
   .stagerow .seqno { font-family:var(--mono); font-size:10.5px; color:var(--mut);
                      flex-shrink:0; margin-left:10px; }
   /* preview */
@@ -546,7 +572,8 @@
       </div>
     </div>
 
-    <div class="mid">
+    <div class="mid" id="midcol"><div class="mgrip" id="mgrip"
+        title="Drag to resize"></div>
       <div class="lefthead midhead">
         <div class="seg mini" id="viewtoggle" hidden>
           <button type="button" data-v="seconds" class="on">Charts</button>
@@ -717,6 +744,37 @@ function setLeftWidth(px, save) {
     document.addEventListener("mouseup", up);
     e.preventDefault();
   });
+  // The stage column drags too. Same grip, same storage, same reason: a
+  // stage name with a tag on it, a clock and a Fix time button do not fit
+  // 210px, and on a narrow pane the button was the part that vanished.
+  const MID_MIN = 150, MID_MAX = 620;
+  const setMid = (px, save) => {
+    const w = Math.round(Math.min(MID_MAX, Math.max(MID_MIN, px)));
+    $("midcol").style.width = w + "px";
+    if (save) localStorage.setItem("frac2csv-midw", String(w));
+  };
+  const midStored = parseInt(localStorage.getItem("frac2csv-midw") || "", 10);
+  if (isFinite(midStored)) setMid(midStored, false);
+  const mgrip = $("mgrip");
+  let mx = 0, mw = 0;
+  const mmove = e => setMid(mw + (e.clientX - mx), false);
+  const mup = () => {
+    document.removeEventListener("mousemove", mmove);
+    document.removeEventListener("mouseup", mup);
+    mgrip.classList.remove("drag");
+    document.body.classList.remove("colresize");
+    setMid(parseInt($("midcol").style.width, 10) || MID_MIN, true);
+  };
+  mgrip.addEventListener("mousedown", e => {
+    mx = e.clientX;
+    mw = $("midcol").getBoundingClientRect().width;
+    mgrip.classList.add("drag");
+    document.body.classList.add("colresize");
+    document.addEventListener("mousemove", mmove);
+    document.addEventListener("mouseup", mup);
+    e.preventDefault();
+  });
+
   // double-click: widen just enough for the longest name currently listed
   grip.addEventListener("dblclick", () => {
     let widest = 0;
@@ -1806,9 +1864,11 @@ function selectFile(entry) {
         ? `<span class="stclock${bad ? " badclock" : ""}">`
           + `${_d || "no date"} ${(_t || "").slice(0, 8)}</span>`
         : `<span class="stclock nodate">no clock</span>`;
-      row.innerHTML = `<span class="stg">Stage ${stageDisplay(stageLabel(it))}`
+      row.innerHTML = `<span class="stg">`
+        + `<span class="nmtxt">Stage ${stageDisplay(stageLabel(it))}`
         + (stageVariant(it.key)
             ? ` <span class="ch">${stageVariant(it.key)}</span>` : "")
+        + `</span>`
         + _clock
         + (bad ? `<span class="badtime" title="This stage starts before the `
                  + `one before it finished — its printed date or time is `
