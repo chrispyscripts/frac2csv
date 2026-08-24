@@ -462,6 +462,11 @@
           </div>
         </div>
         <div class="setrow">
+          <div class="setlabel">Column mappings
+            <span class="sethint" id="mapscount">none yet</span></div>
+          <button type="button" class="btn" id="mapsopen">Review…</button>
+        </div>
+        <div class="setrow">
           <div class="setlabel">Readout size
             <span class="sethint">The box that follows the cursor on a chart</span></div>
           <div class="sliderow">
@@ -502,6 +507,28 @@
        screen and lets any of them be dropped. A default is remembered per
        PROVIDER, so unchecking a column once on a Liberty file applies to every
        Liberty file after it. -->
+  <div class="modalback" id="mapsback" hidden>
+    <div class="modal" role="dialog" aria-label="Column mappings">
+      <div class="modalhead">
+        <span>Column mappings</span>
+        <button type="button" class="x" id="mapsclose" title="Close">×</button>
+      </div>
+      <div class="modalbody">
+        <div class="sethint">Every column you have pointed at one of Our
+          Terms, remembered for that provider. These live in this browser
+          profile only — export them to keep a copy or move them to another
+          machine.</div>
+        <div class="termlist" id="mapslist"></div>
+      </div>
+      <div class="modalfoot">
+        <button type="button" class="btn" id="mapsexport">Export…</button>
+        <button type="button" class="btn" id="mapsimport">Import…</button>
+        <input type="file" id="mapsfile" accept=".json,application/json" hidden>
+        <button type="button" class="btn primary" id="mapsdone">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modalback" id="colback" hidden>
     <div class="modal">
       <div class="modalhead"><b>Columns to export</b>
@@ -2263,12 +2290,125 @@ let tableTerms = localStorage.getItem("f2c.tableTerms") || "ours";
 // A term can also be marked NOT PRESENT, which is a real answer and not the
 // same as unanswered: it stops the column asking again on every table of that
 // provider while still exporting empty.
+// ---- the mappings screen ----
+//
+// termMap has always been a private blob in localStorage: nothing read it
+// back but the table renderer, nothing showed what was in it, and clearing
+// site data or moving machine lost the lot in silence. It is the one place
+// the client's own knowledge accumulates — "on THIS provider that heading is
+// Interval Top" — so it needs to be visible, portable and reviewable.
+function renderMaps() {
+  const rows = termMapList();
+  const host = $("mapslist");
+  host.innerHTML = "";
+  const count = $("mapscount");
+  if (count) count.textContent = rows.length
+    ? `${rows.length} mapping${rows.length === 1 ? "" : "s"}` : "none yet";
+  if (!rows.length) {
+    host.innerHTML = `<div class="notes">Nothing mapped yet. Use “Map Term” `
+      + `on an empty column, or “Edit” on a filled one, in any table.</div>`;
+    return;
+  }
+  let seen = "";
+  for (const m of rows) {
+    if (m.provider !== seen) {
+      seen = m.provider;
+      const h = document.createElement("div");
+      h.className = "grouphdr";
+      h.textContent = m.provider;
+      host.appendChild(h);
+    }
+    const row = document.createElement("div");
+    row.className = "termopt";
+    row.innerHTML = `<span>${escHtml(m.label)} <i>&larr; ${escHtml(m.column)}</i></span>`;
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "btn"; del.textContent = "Clear";
+    del.title = "Forget this mapping — the reader goes back to matching it itself";
+    del.addEventListener("click", () => {
+      termMapSet(m.provider, m.key, "");
+      renderMaps();
+      if (typeof reRenderTable === "function") reRenderTable();
+    });
+    row.appendChild(del);
+    host.appendChild(row);
+  }
+}
+function escHtml(v) {
+  return String(v === null || v === undefined ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+(() => {
+  const back = $("mapsback");
+  if (!back) return;
+  const open = () => { renderMaps(); back.hidden = false; };
+  const shut = () => { back.hidden = true; };
+  const btn = $("mapsopen");
+  if (btn) btn.addEventListener("click", open);
+  $("mapsclose").addEventListener("click", shut);
+  $("mapsdone").addEventListener("click", shut);
+  back.addEventListener("click", e => { if (e.target === back) shut(); });
+
+  $("mapsexport").addEventListener("click", () => {
+    // the stored shape, not the rendered one — this file has to import back
+    saveBlob("frac2csv-column-mappings.json",
+             new Blob([JSON.stringify(termMap, null, 1)],
+                      { type: "application/json" }), null);
+  });
+  $("mapsimport").addEventListener("click", () => $("mapsfile").click());
+  $("mapsfile").addEventListener("change", ev => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      let incoming;
+      try { incoming = JSON.parse(rd.result); }
+      catch (e) { alert("That is not a mappings file — nothing changed."); return; }
+      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
+        alert("That is not a mappings file — nothing changed."); return;
+      }
+      // MERGED, not replaced, and the file wins on a clash. Replacing would
+      // throw away mappings made since the export, which is not what
+      // "import" reads as and is not recoverable.
+      const before = Object.keys(termMap).length;
+      let added = 0, changed = 0;
+      for (const [k, v] of Object.entries(incoming)) {
+        if (typeof v !== "string") continue;
+        if (!(k in termMap)) added++;
+        else if (termMap[k] !== v) changed++;
+        termMap[k] = v;
+      }
+      try { localStorage.setItem("f2c.termMap", JSON.stringify(termMap)); }
+      catch (e) {}
+      renderMaps();
+      if (typeof reRenderTable === "function") reRenderTable();
+      alert(`Imported: ${added} new, ${changed} changed, `
+            + `${before} already here.`);
+    };
+    rd.readAsText(f);
+  });
+})();
+
 const TERM_ABSENT = "\u0000absent";
 let termMap = (() => {
   try { return JSON.parse(localStorage.getItem("f2c.termMap") || "{}"); }
   catch (e) { return {}; }
 })();
 const termKey = (provider, term) => `${provider || "?"}::${term}`;
+// Every mapping this profile holds, as rows anyone can render or ship.
+// termMap itself is a flat "provider::term" -> column object; nothing outside
+// this file should have to know that shape.
+function termMapList() {
+  return Object.entries(termMap).map(([k, column]) => {
+    const i = k.indexOf("::");
+    const provider = i < 0 ? "?" : k.slice(0, i);
+    const key = i < 0 ? k : k.slice(i + 2);
+    const t = OUR_TERMS.find(x => x.key === key);
+    return { provider, key, label: (t && t.label) || key,
+             column: column === TERM_ABSENT ? "(not present)" : column };
+  }).sort((a, b) => a.provider.localeCompare(b.provider)
+                 || a.label.localeCompare(b.label));
+}
 function termMapGet(provider, term) { return termMap[termKey(provider, term)] || ""; }
 function termMapSet(provider, term, col) {
   if (col) termMap[termKey(provider, term)] = col;
@@ -4952,6 +5092,14 @@ function flagDiagnostics() {
     labelMode: settings.chartLabels,
     userAgent: navigator.userAgent, platform: navigator.platform,
   };
+  // The column mappings this profile has taught the Lab. A table report is
+  // not diagnosable without them: "Interval Top is wrong" means one thing if
+  // the reader matched that column and another if the user pointed it there,
+  // and until now the report could not tell the two apart. Only the mappings
+  // for THIS provider — the whole set is noise on someone else's file.
+  d.termMaps = termMapList()
+    .filter(m => !it || !it.source || m.provider === providerOf(it.source))
+    .map(m => ({ term: m.label, column: m.column }));
   d.channels = gState.channels.map(c => {
     const r = axisRange(c);
     return { key: c.key, unit: c.unit || "",
