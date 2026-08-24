@@ -462,7 +462,7 @@
           </div>
         </div>
         <div class="setrow">
-          <div class="setlabel">Column mappings
+          <div class="setlabel">Your corrections
             <span class="sethint" id="mapscount">none yet</span></div>
           <button type="button" class="btn" id="mapsopen">Review…</button>
         </div>
@@ -510,14 +510,15 @@
   <div class="modalback" id="mapsback" hidden>
     <div class="modal" role="dialog" aria-label="Column mappings">
       <div class="modalhead">
-        <span>Column mappings</span>
+        <span>Your corrections</span>
         <button type="button" class="x" id="mapsclose" title="Close">×</button>
       </div>
       <div class="modalbody">
-        <div class="sethint">Every column you have pointed at one of Our
-          Terms, remembered for that provider. These live in this browser
-          profile only — export them to keep a copy or move them to another
-          machine.</div>
+        <div class="sethint">Everything you have taught this copy of the Lab:
+          column mappings, clock corrections and FracView stage edits. All of
+          it lives in this browser profile only — export it to keep a copy or
+          move it to another machine.</div>
+        <div class="sethint" id="mapstally"></div>
         <div class="termlist" id="mapslist"></div>
       </div>
       <div class="modalfoot">
@@ -2301,9 +2302,17 @@ function renderMaps() {
   const rows = termMapList();
   const host = $("mapslist");
   host.innerHTML = "";
+  const nTime = Object.keys(timeFix).length, nFv = fvEdits.size;
+  const total = rows.length + nTime + nFv;
   const count = $("mapscount");
-  if (count) count.textContent = rows.length
-    ? `${rows.length} mapping${rows.length === 1 ? "" : "s"}` : "none yet";
+  if (count) count.textContent = total
+    ? `${total} item${total === 1 ? "" : "s"}` : "none yet";
+  const tally = $("mapstally");
+  if (tally) tally.textContent = total
+    ? `${rows.length} column mapping${rows.length === 1 ? "" : "s"} · `
+      + `${nTime} clock correction${nTime === 1 ? "" : "s"} · `
+      + `${nFv} FracView edit${nFv === 1 ? "" : "s"}`
+    : "";
   if (!rows.length) {
     host.innerHTML = `<div class="notes">Nothing mapped yet. Use “Map Term” `
       + `on an empty column, or “Edit” on a filled one, in any table.</div>`;
@@ -2349,9 +2358,18 @@ function escHtml(v) {
   back.addEventListener("click", e => { if (e.target === back) shut(); });
 
   $("mapsexport").addEventListener("click", () => {
-    // the stored shape, not the rendered one — this file has to import back
-    saveBlob("frac2csv-column-mappings.json",
-             new Blob([JSON.stringify(termMap, null, 1)],
+    // All three stores, in the shape they are kept in, so the file imports
+    // back. Versioned because the day one of these changes shape, an old
+    // backup must fail loudly rather than load half of itself.
+    const bundle = {
+      kind: "frac2csv-corrections", version: 1,
+      exported: new Date().toISOString().slice(0, 19).replace("T", " "),
+      termMap: termMap,
+      timeFix: timeFix,
+      fvEdits: Object.fromEntries(fvEdits),
+    };
+    saveBlob("frac2csv-corrections.json",
+             new Blob([JSON.stringify(bundle, null, 1)],
                       { type: "application/json" }), null);
   });
   $("mapsimport").addEventListener("click", () => $("mapsfile").click());
@@ -2361,29 +2379,51 @@ function escHtml(v) {
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
-      let incoming;
-      try { incoming = JSON.parse(rd.result); }
-      catch (e) { alert("That is not a mappings file — nothing changed."); return; }
-      if (!incoming || typeof incoming !== "object" || Array.isArray(incoming)) {
-        alert("That is not a mappings file — nothing changed."); return;
+      let inc;
+      try { inc = JSON.parse(rd.result); }
+      catch (e) { alert("That is not a corrections file — nothing changed."); return; }
+      if (!inc || typeof inc !== "object" || Array.isArray(inc)) {
+        alert("That is not a corrections file — nothing changed."); return;
+      }
+      // An older export was the bare termMap object with no wrapper. Read it
+      // rather than reject it: someone who exported yesterday should not lose
+      // the file to a format change made today.
+      const bundle = inc.kind === "frac2csv-corrections"
+        ? inc : { termMap: inc, timeFix: {}, fvEdits: {} };
+      if (bundle.version && bundle.version > 1) {
+        alert("That file was written by a newer version of the Lab — "
+              + "nothing changed."); return;
       }
       // MERGED, not replaced, and the file wins on a clash. Replacing would
-      // throw away mappings made since the export, which is not what
-      // "import" reads as and is not recoverable.
-      const before = Object.keys(termMap).length;
-      let added = 0, changed = 0;
-      for (const [k, v] of Object.entries(incoming)) {
-        if (typeof v !== "string") continue;
-        if (!(k in termMap)) added++;
-        else if (termMap[k] !== v) changed++;
-        termMap[k] = v;
-      }
-      try { localStorage.setItem("f2c.termMap", JSON.stringify(termMap)); }
-      catch (e) {}
+      // throw away work done since the export, which is not what "import"
+      // reads as and is not recoverable.
+      const tally = [];
+      const merge = (into, from, label) => {
+        let add = 0, chg = 0;
+        for (const [k, v] of Object.entries(from || {})) {
+          if (v === null || v === undefined) continue;
+          if (!(k in into)) add++;
+          else if (JSON.stringify(into[k]) !== JSON.stringify(v)) chg++;
+          into[k] = v;
+        }
+        if (add || chg) tally.push(`${label}: ${add} new, ${chg} changed`);
+        return add + chg;
+      };
+      merge(termMap, bundle.termMap, "mappings");
+      merge(timeFix, bundle.timeFix, "clock corrections");
+      const fvObj = Object.fromEntries(fvEdits);
+      merge(fvObj, bundle.fvEdits, "FracView edits");
+      fvEdits.clear();
+      for (const [k, v] of Object.entries(fvObj)) fvEdits.set(k, v);
+      try {
+        localStorage.setItem("f2c.termMap", JSON.stringify(termMap));
+        localStorage.setItem("f2c.timeFix", JSON.stringify(timeFix));
+      } catch (e) {}
+      fvEditsSave();
       renderMaps();
       if (typeof reRenderTable === "function") reRenderTable();
-      alert(`Imported: ${added} new, ${changed} changed, `
-            + `${before} already here.`);
+      alert(tally.length ? "Imported — " + tally.join("; ")
+                         : "Nothing new in that file.");
     };
     rd.readAsText(f);
   });
@@ -4054,7 +4094,23 @@ function reRender(entry) {
 // The edit is a set of absolute cut points over the ORIGINAL samples, never a
 // mutated copy of them. That is what makes Reset exact and what lets the same
 // edit be applied to the graph and to the export by one function.
-const fvEdits = new Map();          // file name -> {bounds, labels, cuts}
+// file name -> {bounds, labels, cuts}
+//
+// Persisted, which it never was. This was a bare Map: a boundary moved, a
+// stage split, a span trimmed — all of it gone on a reload, never mind a new
+// machine. It is the most expensive thing in the app to recreate, because
+// unlike a column mapping it is per FILE and done by eye against the chart.
+const fvEdits = new Map(function () {
+  try { return Object.entries(JSON.parse(
+    localStorage.getItem("f2c.fvEdits") || "{}")); }
+  catch (e) { return []; }
+}());
+function fvEditsSave() {
+  try {
+    localStorage.setItem("f2c.fvEdits",
+                         JSON.stringify(Object.fromEntries(fvEdits)));
+  } catch (e) { /* private mode: the edit still applies for this session */ }
+}
 let fvWin = null;
 let fvFile = "";
 
@@ -4345,6 +4401,7 @@ function fvApplyToEntry(entry, ed) {
   if (!w) return;
   if (!w.stagesRaw) w.stagesRaw = w.stages;
   ed ? fvEdits.set(entry.name, ed) : fvEdits.delete(entry.name);
+  fvEditsSave();
   w.stages = ed ? applyFvEdits(w.stagesRaw, ed) : w.stagesRaw;
   entry.secItems = stageItems(w.stages);
   if (entry.viewMode !== "summary") entry.items = entry.secItems;
