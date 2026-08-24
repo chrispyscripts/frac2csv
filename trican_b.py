@@ -421,7 +421,17 @@ def parse_chem_summary(doc):
         page = doc[pno]
         if not detect_chem_summary(page):
             continue
-        (cols, heads), body = _table_rows(page)
+        # The chemical summary is a SECOND table, and a page that detects as
+        # one without laying out like one returns nothing from _table_rows —
+        # which unpacked as "not enough values to unpack" and took the whole
+        # DOCUMENT down with it. 00569 prints 102 stages, parses all 102 stage
+        # pages, and emitted no table at all because of this; so do 00724 and
+        # 00737 at 51 stages each. The chemicals are worth having and are not
+        # worth the stage table.
+        try:
+            (cols, heads), body = _table_rows(page)
+        except (ValueError, TypeError, IndexError):
+            continue
         if not body:
             continue
         names = _head_names(cols, heads)
