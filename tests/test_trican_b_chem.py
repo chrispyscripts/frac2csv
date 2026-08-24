@@ -71,3 +71,47 @@ class ChemSummaryIsNotWorthTheStageTable(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummaryFillsGapsInTheStagePages(unittest.TestCase):
+    """A stage the summary lists but no detail page covers must still appear.
+
+    The consolidated Stage Summary was only ever used when there were NO
+    per-stage pages at all. A file that ships both, and prints fewer detail
+    pages than its own summary lists, silently lost the difference: 00720
+    prints 48 stages in the summary and 46 per-stage pages, so stages 31 and
+    39 vanished from a CSV whose report says 48.
+    """
+
+    def test_a_stage_only_the_summary_lists_is_kept(self):
+        rows = [{"stage": 1, "depth_m": 1.5}, {"stage": 3}]
+        printed = [{"stage": 1}, {"stage": 2}, {"stage": 3}]
+        got = trican_b._merge_summary(rows, printed)
+        self.assertEqual(sorted(r["stage"] for r in got), [1, 2, 3])
+
+    def test_the_detail_page_wins_where_there_is_one(self):
+        # the per-stage page carries a decimal more than the summary
+        rows = [{"stage": 1, "depth_m": 1.55}]
+        printed = [{"stage": 1, "depth_m": 2}]
+        got = trican_b._merge_summary(rows, printed)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["depth_m"], 1.55)
+
+    def test_nothing_missing_means_nothing_added(self):
+        rows = [{"stage": 1}, {"stage": 2}]
+        got = trican_b._merge_summary(rows, [{"stage": 1}, {"stage": 2}])
+        self.assertEqual(len(got), 2)
+
+    def test_an_empty_summary_changes_nothing(self):
+        rows = [{"stage": 1}]
+        self.assertEqual(trican_b._merge_summary(rows, []), rows)
+
+    def test_the_00720_shape(self):
+        # 46 detail pages, 48 printed, the two gaps at 31 and 39
+        printed = [{"stage": n} for n in list(range(1, 32)) + list(range(39, 56))]
+        rows = [{"stage": n} for n in [x["stage"] for x in printed
+                                       if x["stage"] not in (31, 39)]]
+        got = trican_b._merge_summary(rows, printed)
+        self.assertEqual(len(got), len(printed))
+        self.assertEqual(sorted(r["stage"] for r in got),
+                         sorted(x["stage"] for x in printed))

@@ -492,6 +492,24 @@ def detect(doc):
     return False
 
 
+def _merge_summary(rows, printed):
+    """Per-stage rows, plus any stage only the consolidated summary lists.
+
+    The summary used to be an all-or-nothing fallback — consulted only when
+    there were NO per-stage pages — so a file that ships both, and prints
+    fewer detail pages than its own summary lists, silently lost the
+    difference. 00720 prints 48 stages in the Stage Summary and 46 per-stage
+    pages: stages 31 and 39 have no page of their own and vanished from a CSV
+    whose report says 48.
+
+    The detail page always wins where there is one: it carries a decimal more
+    than the summary does. The summary's row is coarser, not absent, and a
+    coarser row beats no row for a stage the report says was pumped.
+    """
+    have = {r.get("stage") for r in rows}
+    return list(rows) + [r for r in printed if r.get("stage") not in have]
+
+
 def parse_document(path_or_doc):
     doc = path_or_doc if isinstance(path_or_doc, fitz.Document) \
         else fitz.open(path_or_doc)
@@ -514,6 +532,8 @@ def parse_document(path_or_doc):
     # carries the same fields one decimal coarser.
     if not rows:
         rows = printed
+    else:
+        rows = _merge_summary(rows, printed)
     chem = parse_chem_summary(doc)
     for r in rows:
         r.update(chem.get(int(r.get("stage", 0)), {}))
