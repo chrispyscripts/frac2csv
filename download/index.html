@@ -38,6 +38,42 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.7.0</h2>
+    <ul>
+      <li><b>Your FracView edits were never being saved.</b> Every boundary
+        you moved, every stage you split, every span you trimmed was gone the
+        moment the page reloaded &mdash; and nothing said so. They are kept
+        now. This is the one to know about: it is the most expensive work in
+        the app to redo, because unlike a column mapping it is per file and
+        done by eye against the chart</li>
+      <li><b>Everything you have taught the Lab can now be backed up.</b>
+        Settings &rarr; Your corrections lists your column mappings, clock
+        corrections and FracView edits, and exports them to a file you can
+        keep or move to another machine. Import merges rather than replaces,
+        so nothing you have done since an export is lost by loading it</li>
+      <li><b>Two Trican table faults, both losing whole wells.</b> A single
+        unreadable Chemical Summary page was taking the entire file down with
+        it &mdash; eleven reports printing 50 to 102 stages each produced no
+        table at all, with every stage page parsing perfectly. And a stage
+        listed in the summary but with no page of its own was dropped in
+        silence: one report printed 48 stages and exported 46. Both fixed.
+        Across all 419 of these filings, every one now matches the stage
+        count its own report prints &mdash; 18,088 stage rows</li>
+      <li><b>Interval Top and Interval Base now find themselves on
+        Halliburton IFS tables.</b> Those sheets print &ldquo;Top of
+        treatment&rdquo; and &ldquo;Bottom of treatment&rdquo;, which nothing
+        was matching, so you were pointing at those two columns by hand on
+        every IFS file</li>
+      <li><b>Liberty charts that plot elapsed minutes instead of a clock now
+        read.</b> A whole chart type was being refused for want of a wall
+        clock it never had &mdash; every curve on those pages was fine</li>
+      <li><b>The Fix time button no longer disappears.</b> On a narrow stage
+        pane a long stage name pushed it out of sight entirely; now the name
+        gives way first, and the pane drags wider like the file list</li>
+      <li>A table report now carries your column mappings, so a wrong column
+        can be told apart from a wrong match</li>
+    </ul>
+
     <h2>v1.6.0</h2>
     <ul>
       <li><b>Halliburton reports with no text layer now extract</b> &mdash;
