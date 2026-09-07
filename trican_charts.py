@@ -147,11 +147,27 @@ def series_masks(img):
         d_dh = (r - 154) ** 2 + (g - 205) ** 2 + (b - 50) ** 2
         _wh = _wh | (_spare & (d_wh <= d_dh))
         _dh = _dh | (_spare & (d_dh < d_wh))
+    # The SIXTH curve. The legend prints six series and this returned five:
+    # "Annulus Pressure (kPa)" is drawn in orange and had no rule of its own.
+    #
+    # It was not merely unread. Orange satisfies the maroon test — (156,72,0)
+    # has r < 190, r-g = 84 and r-b = 156 — so the annulus trace was being
+    # collected as BOTTOM-HOLE pressure. Measured on 00233 p48: 409 of the
+    # 6,709 pixels claimed as bh, 6.1%, were orange, and 60 more of
+    # (255,69,0) were landing in surface. Wherever the annulus ran, the
+    # exported BH Pressure was reading the wrong curve.
+    #
+    # Maroon and bright red both sit on the red axis with g and b together;
+    # orange does not. g - b is the whole separation, and it is wide: 0 for
+    # (116,0,0) and (255,0,0), 116 for (191,116,0).
+    _orange = (g - b >= 30) & (r > g) & (g > b)
     return {
         # (255,0,0) bright red, blends stay at r=255
-        "surface": (r >= 200) & (r - g >= 90) & (r - b >= 90),
+        "surface": (r >= 200) & (r - g >= 90) & (r - b >= 90) & ~_orange,
         # (116,0,0) maroon; never reaches the bright-red band
-        "bh": (r < 190) & (r >= 55) & (r - g >= 33) & (r - b >= 33),
+        "bh": (r < 190) & (r >= 55) & (r - g >= 33) & (r - b >= 33) & ~_orange,
+        # (191,116,0) orange — the annulus trace, previously read as bh
+        "annulus": _orange & (r >= 90) & (r - b >= 60),
         # (0,116,191) medium blue
         "rate": (b - r >= 40) & (b - g >= 12),
         # (34,139,34) forest green
@@ -167,6 +183,7 @@ def series_masks(img):
 SERIES = [
     ("bh", "BH Pressure", "MPa", "press", 1.0),
     ("surface", "Surface Pressure", "MPa", "press", 1.0),
+    ("annulus", "Annulus Pressure", "MPa", "press", 1.0),
     ("rate", "WH Rate", "m3/min", "rate", 1.0),
     ("wh_conc", "WH Prop Conc", "kg/m3", "rate", 100.0),
     ("dh_conc", "DH Prop Conc", "kg/m3", "rate", 100.0),
