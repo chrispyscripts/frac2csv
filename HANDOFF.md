@@ -41,6 +41,27 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### The Calfrac summary GRID is still invisible on a textless filing
+
+Four readers in `calfrac_progress` consulted the raw text layer and so did
+nothing at all on a filing that has none. Three are fixed (`is_chart_page`,
+`job_date`, `zone_range`) plus `pipeline._mview_variant`. The fourth is a
+FAMILY and was deliberately left: `_is_multizone`, `_is_zone_grid` and
+`sheet_job_date`, the gates on the Multiple-Zone / Treatment Summary grid.
+
+**Do not simply point them at ocr_labels.** `zone_times` reads that grid
+POSITIONALLY, from `_rows(page)` — real PDF spans. An OCR'd gate would admit
+pages to a reader that has no spans to read, which is worse than the present
+silence: instead of no zone times you would get a page that looks handled and
+yields nothing, or worse, partial rows. The gate and the reader have to move
+together, and `ocr_labels.words()` boxes would have to be shaped into the same
+row/column form `_rows` produces.
+
+It costs the eight rotated MView filings nothing today: their sheets are
+single-zone ("Zone: 1/85"), so no splitting is needed, and their dates now
+come off `job_date`. It would matter for a textless filing that prints a
+"Zones 5 - 24" caption and needs its zone start times to split the page.
+
 ### Every table gate re-reads the whole document — measured, not fixed
 
 `_tables_from`'s gates each scan up to 400 pages of `page.get_text()`, and

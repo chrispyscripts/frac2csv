@@ -167,8 +167,16 @@ def zone_range(page):
     "780-779-3782" as a descending pair that a tidy-up swap turned into a
     plausible-looking two-zone range. Those pages are raster and never reach
     the splitter, but nothing about the regex itself stopped them.
+
+    Read through ocr_labels, like is_chart_page, detect and job_date. On a
+    filing with no text layer this read an empty string and so never reported
+    a multi-zone page at all — the fourth reader in this module found doing
+    that today. It changes nothing on the eight rotated MView files, whose
+    sheets caption a single "Zone: 1/85" rather than a range, and the bounds
+    above are what make it safe to widen: a misread that produced "Zones 1 -
+    85" is refused for spanning more than MAX_ZONES.
     """
-    text = page.get_text()
+    text = ocr_labels.page_text(page)
     for m in ZONES_CAPTION.finditer(text):
         lo, hi = int(m.group(1)), int(m.group(2))
         if lo < 1 or hi <= lo or hi - lo + 1 > MAX_ZONES or hi > MAX_ZONE_NO:
@@ -182,6 +190,19 @@ def zone_range(page):
 
 
 _FOOTER_DATE = re.compile(r"^MView\b.*?-\s*(\d{1,2})/(\d{1,2})/(20\d\d)\s*$", re.M)
+# The same footer when OCR has eaten its first word. The leading "M" of MView
+# goes missing often enough to matter — page 74 of 00340 reads "View - Annular
+# Ignition ... - 3/1/2022" and page 73 reads "- Annular Ianition ... -
+# 3/1/2022" — and on the BOTTOM HOLE sheet this footer is the ONLY date on the
+# page, so the anchor failing costs that sheet its date outright.
+#
+# Identified by the shape of the line instead: it ENDS with "- M/D/YYYY". The
+# LAST such line is taken, because the footer is at the foot. Measured against
+# the anchored form over all 366 pages of 00037: they agree on all 248 pages
+# the anchored form matches, disagree on none, and this finds nothing extra —
+# so on a page with a readable text layer it changes no answer.
+_FOOTER_DATE_LOOSE = re.compile(
+    r"^.*?-\s*(\d{1,2})/(\d{1,2})/(20\d\d)\s*$", re.M)
 
 
 def job_date(page):
@@ -190,14 +211,29 @@ def job_date(page):
     frac_core reads dates written as "Mar. 10, 2015"; these pages sign off with
     "MView - CWS-600 N2 Casing Clancy - 3/10/2015" instead, so without this
     every split zone exports against the 2000-01-01 placeholder.
+
+    Read through ocr_labels, like is_chart_page and detect above. Reading the
+    raw text layer meant this contributed NOTHING on a filing that has none,
+    which is every one of the eight rotated MView files: their Surface sheets
+    were dated only because frac_core.detect_text_meta reads its own "March 1,
+    2022" line through OCR, and their Bottom Hole sheets — which print no such
+    line — came out with no date at all. 17 of 41 charts dated on 00339.
+    Cheap: the page has already been OCR'd by is_chart_page and ocr_labels
+    caches per page, and a page with a text layer never renders at all.
     """
     try:
-        m = _FOOTER_DATE.search(page.get_text())
+        text = ocr_labels.page_text(page)
     except Exception:
         return None
-    if not m:
-        return None
-    mon, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = _FOOTER_DATE.search(text or "")
+    if m:
+        got = m.groups()
+    else:
+        loose = _FOOTER_DATE_LOOSE.findall(text or "")
+        if not loose:
+            return None
+        got = loose[-1]                # the footer is at the foot
+    mon, day, year = int(got[0]), int(got[1]), int(got[2])
     if not (1 <= mon <= 12 and 1 <= day <= 31):
         return None
     return f"{year:04d}-{mon:02d}-{day:02d}"

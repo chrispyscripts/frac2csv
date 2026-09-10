@@ -88,3 +88,64 @@ class ChartPage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FooterDate(unittest.TestCase):
+    """The MView footer is the ONLY date on a Bottom Hole sheet.
+
+    The Surface sheet prints "March 1, 2022" as its own line and frac_core
+    reads that; the Bottom Hole sheet prints no such line, so the footer is
+    all it has. OCR eats the leading "M" of "MView" often enough to matter —
+    p74 of 00340 reads "View - Annular Ignition ... - 3/1/2022" and p73 reads
+    "- Annular Ianition ... - 3/1/2022" — and an anchored ^MView then cost
+    that sheet its date outright.
+
+    Measured before relaxing: over all 366 pages of 00037 the loose form
+    agrees with the anchored one on all 248 pages the anchored one matches,
+    disagrees on none, and finds nothing extra.
+    """
+
+    def setUp(self):
+        self._real = cp.ocr_labels.page_text
+
+    def tearDown(self):
+        cp.ocr_labels.page_text = self._real
+
+    def _date(self, text):
+        cp.ocr_labels.page_text = lambda page: text
+        return cp.job_date(_Page())
+
+    def test_the_anchored_footer(self):
+        self.assertEqual(
+            self._date("MView - CWS-600 N2 Casing Clancy - 3/10/2015"),
+            "2015-03-10")
+
+    def test_the_leading_M_eaten_by_ocr(self):
+        self.assertEqual(
+            self._date("View - Annular Ignition x.x Master Raw Template "
+                       "-A 100 04-10 - 3/1/2022"), "2022-03-01")
+
+    def test_the_whole_word_eaten_by_ocr(self):
+        self.assertEqual(
+            self._date("- Annular Ianition x.x Master Raw Template "
+                       "-A 100 04-10 - 3/1/2022"), "2022-03-01")
+
+    def test_the_footer_is_the_LAST_such_line(self):
+        self.assertEqual(
+            self._date("Some header - 1/2/2020\n"
+                       "MView - Template - 3/4/2022\n"), "2022-03-04")
+
+    def test_a_page_with_no_footer_date(self):
+        self.assertIsNone(self._date("Zone: 1/85\nMarch 1, 2022\n"))
+
+    def test_an_impossible_month_is_refused(self):
+        self.assertIsNone(self._date("MView - Template - 13/40/2022"))
+
+    def test_read_through_ocr_so_a_textless_page_works(self):
+        # the whole reason 17 of 41 charts were dated on 00339: this read the
+        # raw text layer, and these filings have none
+        seen = []
+        cp.ocr_labels.page_text = lambda page: seen.append(page) or \
+            "View - Template - 3/1/2022"
+        self.assertEqual(cp.job_date(_Page()), "2022-03-01")
+        self.assertEqual(len(seen), 1)
