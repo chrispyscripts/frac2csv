@@ -41,6 +41,24 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### Every table gate re-reads the whole document — measured, not fixed
+
+`_tables_from`'s gates each scan up to 400 pages of `page.get_text()`, and
+PyMuPDF does not cache it, so each gate pays the full cost again. Measured on
+00037 (366 pages): `liberty_summary.detect_document` **2,305 ms**,
+`interval_sheet.detect_document` **2,443 ms**, and a second call to the same
+gate costs the same as the first. With several such gates that is ten-odd
+seconds of identical text extraction per document, every document, whether or
+not anything matches.
+
+The fix is a per-document page-text cache — one pass, stored on the doc the
+way `ocr_labels._cache` already does for OCR — with the gates reading from it.
+Not done here: it touches several modules for a purely non-functional gain,
+and it was found while two verification sweeps were in flight. It is worth
+doing, and it is worth doing as its own change with a before/after timing on a
+few documents, because the risk is a gate silently reading a stale or empty
+cache and a whole provider's tables going quiet.
+
 ### Outlined Peloton daily reports — do NOT try to OCR the time log
 
 00440, 00441, 00442, 00443 and 00461 are ~60 pages each of Peloton "Daily
