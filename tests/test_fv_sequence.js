@@ -21,6 +21,7 @@ function lift(name) {
   }
 }
 eval(lift("seqBreaks"));
+eval(lift("seqFault"));
 
 let pass = 0, fail = 0;
 const is = (got, want, what) => {
@@ -104,6 +105,37 @@ const both = [
   { ...stg("2023-11-02T14:00:00"), seq: 2 },
 ];
 is(seqBreaks(both), [0], "the pair is reported once, not twice");
+
+
+
+// ---- which stage a break is about (#616) -------------------------------
+//
+// Carmine on 00082: "flags stage 23 correctly but is off for stage 40
+// flagging stage 41". Both are breaks; they are not the same KIND of break.
+// A number inversion has one culprit and it is knowable. An overlap does
+// not: stage 40 running long and stage 41 starting early leave identical
+// timestamps, so naming one of them guesses, and it guessed 41.
+const pt = (label, seq, a, hi) => ({ label, seq, a, hi });
+
+is(seqFault([pt("23", 23, 100, 200), pt("24", 22, 210, 300)], 0),
+   { kind: "inversion", labels: ["23"], at: 100 },
+   "a number inversion names the stage that carries the higher number");
+
+is(seqFault([pt("40", 40, 100, 250), pt("41", 41, 200, 300)], 0),
+   { kind: "overlap", labels: ["40", "41"], at: 200 },
+   "an overlap names BOTH stages — which one is wrong is not in the clocks");
+
+is(seqFault([pt("40", 40, 100, 250), pt("41", 41, 200, 300)], 0).at, 200,
+   "an overlap is timed from where the second stage begins");
+
+is(seqFault([pt("3B", 4, 500, 600), pt("4", 3, 100, 200)], 0).labels, ["3B"],
+   "00495's 3B: the inversion names 3B, not the stage after it");
+
+// the two kinds must never be confused: an inversion that ALSO overlaps is
+// still an inversion, because there the culprit is knowable
+is(seqFault([pt("12", 12, 500, 900), pt("5", 5, 600, 700)], 0),
+   { kind: "inversion", labels: ["12"], at: 500 },
+   "an inversion that also overlaps is reported as the inversion");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

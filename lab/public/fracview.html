@@ -851,6 +851,25 @@ function seqBreaks(pts) {
   return out;
 }
 
+// Which stage a break is ABOUT, and what kind of break it is.
+//
+// The two faults do not have the same culprit. A NUMBER inversion is
+// unambiguous: the earlier-drawn stage carries the higher number, the clock
+// put it first, and that stage is the odd one out. An OVERLAP is not — stage
+// 40's readings running past stage 41's start looks identical to stage 41
+// beginning before stage 40 finished, and nothing in the two timestamps says
+// which of them is wrong. Naming one is a guess, and it guessed wrong on
+// 00082: Carmine read the flag as pointing at 41 when the stage he wanted was
+// 40 (#616), having just seen it name stage 23 correctly on an inversion.
+//
+// So an overlap names BOTH. That is the whole of what is known from the two
+// timestamps, and it cannot be off by one.
+function seqFault(pts, k) {
+  const a = pts[k], b = pts[k + 1];
+  if (b.seq < a.seq) return { kind: "inversion", labels: [a.label], at: a.a };
+  return { kind: "overlap", labels: [a.label, b.label], at: b.a };
+}
+
 function drawSequence(ctx, w, h, plotW, plotH) {
   const pts = seqPoints();
   if (!pts.length) return;
@@ -901,17 +920,17 @@ function drawSequence(ctx, w, h, plotW, plotH) {
 
   ctx.font = "600 12px ui-monospace,Menlo,Consolas,monospace";
   ctx.fillStyle = back ? "#a31631" : "#1e7a34";
-  // Which of the two is the odd one out. On a NUMBER inversion it is the
-  // earlier-drawn stage — it carries the higher number and the clock put it
-  // first. On an OVERLAP it is the later one, which began too soon.
   const bk = back ? Math.min(...breaks) : -1;
-  const off = bk < 0 ? null
-            : (pts[bk + 1].seq < pts[bk].seq ? pts[bk] : pts[bk + 1]);
-  const when = off ? `stage ${off.label} at ${fmtDay(off.a)} ${fmtClock(off.a)}` : "";
+  const f = bk < 0 ? null : seqFault(pts, bk);
+  const at = f ? `${fmtDay(f.at)} ${fmtClock(f.at)}` : "";
+  // see seqFault: an overlap names both stages, because which of the two is
+  // wrong is not in the timestamps
+  const desc = !f ? ""
+      : f.kind === "inversion"
+        ? `stage ${f.labels[0]} is out of step with the clock, at ${at}`
+        : `stages ${f.labels[0]} and ${f.labels[1]} overlap, at ${at}`;
   ctx.fillText(back
-      ? (back === 1
-          ? `${when} is out of step with the clock`
-          : `${back} stages are out of step with the clock — first is ${when}`)
+      ? (back === 1 ? desc : `${back} breaks in the line — the first is ${desc}`)
       : "every stage follows the one before it — the clock is consistent",
     PAD.l + 6, PAD.t + 14);
   ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
