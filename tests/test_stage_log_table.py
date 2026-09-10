@@ -113,3 +113,41 @@ class SummaryIsNotData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DateFormats(unittest.TestCase):
+    """A date column reaches the export as a DATETIME or not at all.
+
+    The Frac Detail grid on a Resource Energy Solutions daily completion
+    writes m-d-y with HYPHENS, and the WellView table built from it carried
+    "10-19-25" through unformatted — the list held the slash form and not the
+    hyphen one.
+
+    Month first is not an assumption: page 57 of 01340 prints "Oct 31, 2025"
+    in its own header beside a row reading "10-31-25", and 31 is not a month.
+    That is also what makes it safe — a dd-mm-yy cell fails to parse rather
+    than moving the stage to another month.
+    """
+
+    def test_the_hyphenated_form(self):
+        self.assertEqual(pipeline._fmt_dt("10-19-25"), "2025-10-19 00:00:00")
+        self.assertEqual(pipeline._fmt_dt("11-02-25"), "2025-11-02 00:00:00")
+
+    def test_the_case_that_proves_month_first(self):
+        self.assertEqual(pipeline._fmt_dt("10-31-25"), "2025-10-31 00:00:00")
+
+    def test_a_day_first_cell_is_left_alone_not_reinterpreted(self):
+        # 19 is not a month, so nothing parses it and it passes through
+        self.assertEqual(pipeline._fmt_dt("19-10-25"), "19-10-25")
+
+    def test_the_formats_already_supported_are_unchanged(self):
+        for v, want in (("2025-10-19", "2025-10-19 00:00:00"),
+                        ("10/19/2025", "2025-10-19 00:00:00"),
+                        ("25-Nov-2021", "2021-11-25 00:00:00"),
+                        ("Nov 25, 2021", "2021-11-25 00:00:00")):
+            self.assertEqual(pipeline._fmt_dt(v), want, v)
+
+    def test_something_that_is_not_a_date_survives_untouched(self):
+        # these cells sometimes hold spillover text from the row above
+        self.assertEqual(pipeline._fmt_dt("Pumpdown Volume"),
+                         "Pumpdown Volume")

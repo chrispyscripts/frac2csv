@@ -41,6 +41,31 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### #615 is answered and needs no code — 01340's charts are not in the file
+
+Carmine: "you are getting the rotation on this test well but it is not getting
+all the stage PDF shows they are there". Measured: 01340 is 290 pages of which
+**26 are vector chart pages covering 13 zones**. It carries no image over 200k
+pixels, so there are no bitmap charts either, and the rotated-title fix from
+2026-09-10 adds ZERO pages on it. The charts for the other 15 stages are not
+in this PDF. Reading charts harder cannot find them.
+
+All 28 stages ARE already extracted, twice over:
+
+  * `well — per-stage engineering data (WellView)` — 28 rows, from
+    `peloton_frac.parse_frac_detail`, which reads the daily completion's
+    "Frac Detail" grid
+  * `Treatment Summary` — 28 rows, 60-odd CalFrac columns
+
+**Do not write a parser for the "Frac Detail" grid.** One was written on
+2026-09-10 and reverted the same hour: peloton_frac already reads it, and the
+docstring says so. Grep the tree for a table's marker before building.
+
+What the reply to Carmine is: 13 of his 28 stages have charts in this filing
+and the rest do not, and their numbers are in the two tables. Worth
+considering whether the app should SAY that — "13 of 28 stages have charts in
+this file" is a one-line note and it is the thing he actually wanted to know.
+
 ### The Calfrac summary GRID is still invisible on a textless filing
 
 Four readers in `calfrac_progress` consulted the raw text layer and so did

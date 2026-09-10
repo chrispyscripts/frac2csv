@@ -1061,7 +1061,19 @@ _DT_FORMATS = ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%y %H:%M",
                # hyphens: "2025-08-30 03-16-07"
                "%Y-%m-%d %H-%M-%S", "%Y-%m-%d %H-%M",
                "%m/%d/%Y", "%Y-%m-%d", "%Y/%m/%d", "%m/%d/%y", "%d-%b-%Y",
-               "%b %d, %Y", "%d %b %Y")
+               "%b %d, %Y", "%d %b %Y",
+               # The Frac Detail grid on a Resource Energy Solutions daily
+               # completion writes the same m/d/y with HYPHENS, and the
+               # WellView table built from it therefore carried "10-19-25"
+               # through to the export unformatted. Month first is not an
+               # assumption here: page 57 of 01340 prints "Oct 31, 2025" in
+               # its own header beside a row reading "10-31-25", and 31 is
+               # not a month.
+               #
+               # LAST in the list on purpose. _fmt_dt returns the first
+               # format that parses, so this can only reach a cell that
+               # nothing above it matched.
+               "%m-%d-%y")
 
 
 def canon_uwi(raw):
