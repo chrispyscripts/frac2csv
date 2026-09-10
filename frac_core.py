@@ -705,6 +705,36 @@ def detect_meta(page, frame, orient=None):
     else:
         meta.warnings.append("time axis labels not found")
 
+    # Last resort on a page whose text had to be OCR'd: read the tick ladder
+    # again with the strip STOOD UP.
+    #
+    # These sheets print the time axis sideways — "0 5 10 15 20 25" running
+    # bottom-to-top beside the plot — and the full-page pass reads those
+    # digits unevenly: 6 of 8 on page 61 of 00339, 2 of 6 on page 238. Two
+    # ticks do not fit a line, so page 238's stage was thrown away with
+    # "stage duration unknown", and 97 of that file's chart pages went the
+    # same way — more than three times every other cause together, and the
+    # whole of why 8 filings yielded 295 charts against 563 printed zones.
+    #
+    # It does not retry rotated on its own because of _UPRIGHT_ENOUGH: the
+    # page reads plenty of OTHER numbers upright, so ocr_labels never tries.
+    #
+    # Only reached when the fit above produced nothing, and it agrees with
+    # that fit wherever both work — 40 on p61 and 120 on p86, the same
+    # answers the page pass gets right.
+    if meta.duration_min <= 0 and orient == "y" and ocr_labels.garbled(page):
+        strip = fitz.Rect(frame.x1 - 4, frame.y0 - 10,
+                          min(frame.x1 + 30, page.rect.x1), frame.y1 + 10)
+        pts = ocr_labels.rotated_tick_column(page, strip)
+        if len(pts) >= 3:
+            got = _fit_time_axis(pts, frame.y0)
+            if got and got > 0:
+                meta.duration_min = got
+                meta.warnings = [w for w in meta.warnings
+                                 if "time axis" not in w]
+                meta.warnings.append(
+                    "duration read from the rotated tick strip")
+
     # Per-axis full scales, one entry per tick-label column in legend order.
     # extract_page binds them to curves through the legend; the flat maxima
     # below stay populated for the manual-override path and as the fallback

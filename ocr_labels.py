@@ -399,6 +399,66 @@ def page_text(page):
     return "\n".join(text for _r, text in lines)
 
 
+# A tick ladder printed SIDEWAYS, read by standing the strip up.
+#
+# The MView portrait sheets print their time axis rotated: "0 5 10 15 20 25"
+# runs bottom-to-top up the right-hand side of the plot. The full-page pass
+# reads those digits unreliably — on 00339 it got 6 of them on page 61 and 2
+# on page 238 — and the reason it does not simply retry rotated is
+# _UPRIGHT_ENOUGH: these pages read plenty of OTHER numbers upright, so the
+# rotated retry never fires.
+#
+# Two ticks is not an axis. Page 238's stage came out with no duration at all
+# and was thrown away, and 97 of 00339's chart pages failed the same way —
+# more than three times every other cause put together.
+#
+# Cropping the strip and rotating it so the digits stand up reads the ladder
+# whole: 5 ticks on p238 where the page pass found 2, 8 on p61 where it found
+# 6, and the durations it fits agree exactly with the ones the page pass gets
+# right (40 on p61, 120 on p86).
+_TICK_STRIP_DPI = 260
+_TICK_STRIP_PAD = 40           # _clip_image's own white matting
+_TICK_NUM = re.compile(r"-?\d{1,4}")
+
+
+def rotated_tick_column(page, clip, dpi=_TICK_STRIP_DPI, turn=3):
+    """[(page-axis position, value)] for a tick ladder printed sideways.
+
+    `clip` is the strip the ticks sit in. `turn` is the np.rot90 count that
+    stands the digits up — 3 for a ladder reading bottom-to-top, which is
+    what these sheets print.
+
+    Positions come back in PAGE units along the clip's long axis, so the
+    caller fits them exactly as it fits the ones read from the page itself.
+    """
+    if not available():
+        return []
+    try:
+        img = np.asarray(_clip_image(page, clip, dpi), dtype=np.uint8)
+    except Exception:
+        return []
+    if turn % 2 == 0:
+        return []                       # a half turn leaves them sideways
+    height = img.shape[0]
+    try:
+        boxes = ar.ocr_boxes(np.rot90(img, turn).astype(int), psm=6,
+                             whitelist="0123456789")
+    except Exception:
+        return []
+    scale = 72.0 / dpi
+    out = []
+    for b in boxes:
+        text = b["text"].strip()
+        if not _TICK_NUM.fullmatch(text) or b["conf"] < NUMBER_CONF:
+            continue
+        # rot90(.., 3) sends original row r to rotated column height-1-r
+        mid = (b["x0"] + b["x1"]) / 2.0
+        row = height - 1 - mid if turn == 3 else mid
+        out.append((clip.y0 + (row - _TICK_STRIP_PAD) * scale, float(text)))
+    out.sort()
+    return out
+
+
 # ------------------------------------------------------------ axis guards
 
 # How far off its own straight line a tick label may sit and still be
