@@ -134,10 +134,9 @@ def _mview_variant(page):
     bare stage key with no way to tell them apart — precisely the collision
     above, in the files that had just been recovered.
 
-    A later line has to look like a TITLE — the sheet kind at the end of it
-    and the well it names — for the same reason is_chart_page requires it:
-    the bare word "Chemicals" is also a column heading on the Treatment
-    Summary grid.
+    A later line has to look like a TITLE — see cprog.is_title_line — for the
+    same reason is_chart_page requires it: the bare word "Chemicals" is also a
+    column heading on the Treatment Summary grid.
     """
     try:
         lines = [l.strip() for l in ocr_labels.page_text(page).splitlines()
@@ -148,7 +147,7 @@ def _mview_variant(page):
     if tag:
         return tag
     for line in lines[1:]:
-        if cprog._CHART_KIND.search(line) and cprog._TITLE_WELL.search(line):
+        if cprog.is_title_line(line):
             tag = _variant_of(line)
             if tag:
                 return tag

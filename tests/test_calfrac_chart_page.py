@@ -68,6 +68,14 @@ class ChartPage(unittest.TestCase):
         self.assertFalse(self._is_chart(
             "Treatment Summary\nZone\nStart\nChemicals\n"))
 
+    def test_a_title_whose_UWI_did_not_survive_OCR(self):
+        # p78 of 00339. Requiring a well id here rejected a real Surface
+        # sheet, which cost its zone a Surface chart, left its Bottom Hole
+        # sheet to inherit the PREVIOUS zone's number through the fill-down,
+        # and mislabelled zone 6's data as "4 BH".
+        self.assertTrue(self._is_chart(
+            "1400\n1000\nArc Hz Anten (Surf: 02-02) Surface\n"))
+
     def test_a_heading_on_the_FIRST_line_is_still_admitted(self):
         # unchanged behaviour: the head-line test is proven over 254 pages
         # and this change is strictly additive to it
@@ -149,3 +157,32 @@ class FooterDate(unittest.TestCase):
             "View - Template - 3/1/2022"
         self.assertEqual(cp.job_date(_Page()), "2022-03-01")
         self.assertEqual(len(seen), 1)
+
+
+class TitleLine(unittest.TestCase):
+    """A title NAMES something; a column heading does not.
+
+    Measured on 00037, the file this gate was built for: over its 366 pages
+    this admits exactly the 186 the head-line test already took, adds none,
+    and still refuses all 14 bare "Chemicals" headings.
+    """
+
+    def test_titles(self):
+        for line in (
+                "Arc Hz Anten (Surf: 02-02) 100/04-10-066-25W5M Surface",
+                "Arc Hz Anten (Surf: 02-02) Surface",       # UWI lost to OCR
+                "Progress a-082-I/094-G-01 Surface",
+                "Saguaro HZ Laprise 200/d-047-H/094-G-08/00 Bottom Hole",
+                "Saguaro HZ 100/04-10-066-25W5M Chemicals",
+                "Arc Hz Anten 100/04-10-066-25W5M Net Pressure 2"):
+            self.assertTrue(cp.is_title_line(line), line)
+
+    def test_headings(self):
+        for line in ("Chemicals", "Surface", "Bottom Hole", "Net Pressure",
+                     "Zone Chemicals", "Total Surface"):
+            self.assertFalse(cp.is_title_line(line), line)
+
+    def test_a_line_with_no_kind_at_the_end(self):
+        self.assertFalse(cp.is_title_line(
+            "Arc Hz Anten Surface Pressure (MPa)"))
+        self.assertFalse(cp.is_title_line("Treatment Summary"))

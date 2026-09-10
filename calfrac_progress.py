@@ -73,14 +73,37 @@ _TIME_ROW = re.compile(r"^\s*(Start|Stop|End)\s*Time", re.I)
 _CHART_KIND = re.compile(r"(Surface|Bottom\s*Hole|Net\s*Pressure|Chemicals)"
                          r"\s*\d*\s*$", re.I)
 
-# The well the title names, in the two forms this corpus prints:
-#   DLS  "100/04-10-066-25W5M", "102/05-18-066-05W6/00"
-#   NTS  "a-082-I/094-G-01",    "200/d-047-H/094-G-08/00"
-# This is what separates a chart TITLE from the bare word "Chemicals", which
-# is also a column heading on the Treatment Summary grid — see is_chart_page.
-_TITLE_WELL = re.compile(
-    r"\d{2,3}/\d{2}-\d{2}-\d{3}-\d{2}W\d"
-    r"|[a-dA-D]-\d{2,3}-[A-La-l]\s*/\s*\d{2,3}-[A-Pa-p]-\d{1,2}")
+# How much has to sit in FRONT of the sheet kind before a line counts as a
+# chart TITLE rather than a column heading. The Treatment Summary grid heads a
+# column with the bare word "Chemicals", and on 00037 an any-line rule took 14
+# of those as charts.
+_TITLE_LEAD_MIN = 6
+
+
+def is_title_line(line):
+    """Does this line read like an MView chart title?
+
+    The kind at the END of it — that is _CHART_KIND — with the well's NAME in
+    front: "Arc Hz Anten (Surf: 02-02) 100/04-10-066-25W5M Surface",
+    "Progress a-082-I/094-G-01 Surface".
+
+    Asking for a WELL ID here was the obvious test and it was too strict: OCR
+    does not always keep the UWI. Page 78 of 00339 titles itself "Arc Hz Anten
+    (Surf: 02-02) Surface" with the id simply gone, and requiring one rejected
+    a real Surface sheet — which cost its zone a Surface chart, left its
+    Bottom Hole sheet to inherit the PREVIOUS zone's number through the
+    fill-down, and so mislabelled zone 6's data as "4 BH". That is how a gate
+    being slightly too strict turns into a wrong answer wearing a label.
+
+    What actually separates a title from a heading is that a title names
+    something. Measured on 00037, the file this gate was built for: over its
+    366 pages this admits exactly the 186 the head-line test already took,
+    adds none, and still refuses all 14 bare "Chemicals" headings.
+    """
+    if not _CHART_KIND.search(line):
+        return False
+    lead = _CHART_KIND.sub("", line).strip(" -\u2013\u2014:")
+    return len(lead) >= _TITLE_LEAD_MIN and any(c.isalpha() for c in lead)
 
 
 def is_chart_page(page):
@@ -119,12 +142,12 @@ def is_chart_page(page):
     # measured on 00037, the file this gate was built for, an any-line rule
     # admits 14 extra pages whose matching line is the bare word "Chemicals"
     # — a COLUMN HEADING on the Treatment Summary grid, 167 drawings and no
-    # curve on it. What separates a title from a heading is the well it names,
-    # so a later line has to carry both. On 00037 that adds nothing (186 head
+    # curve on it. What separates a title from a heading is that a title
+    # NAMES something — see is_title_line, which also explains why asking for
+    # a well id there was too strict. On 00037 this adds nothing (186 head
     # pages, 0 added, all 14 headings rejected); on 00340 it admits the
     # Surface / Bottom Hole / Chemicals sheet of every stage.
-    return any(_CHART_KIND.search(l) and _TITLE_WELL.search(l)
-               for l in lines[1:])
+    return any(is_title_line(l) for l in lines[1:])
 
 
 def detect(page):
