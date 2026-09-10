@@ -42,6 +42,7 @@ import pipeline_export as pe
 import sk_fracr as sk
 import daily_ops
 import interval_sheet
+import frac_detail
 import slb
 import slb_tables
 import trican2
@@ -2337,6 +2338,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     notes.append(f"{title} parse failed — {e}")
         except Exception as e:                  # pragma: no cover - defensive
             notes.append(f"{name} tables failed — {e}")
+
+    # The "Frac Detail" grid on a Resource Energy Solutions daily completion:
+    # one row per stage pumped that day. On 01340 the charts cover 13 zones and
+    # this covers all 28 — which is the whole of Carmine's #615, "it is not
+    # getting all the stage PDF shows they are there".
+    _tables_from(frac_detail, "Frac Detail",
+                 [("Frac Detail (daily completion)",
+                   lambda: frac_detail.parse_document(doc))],
+                 gate=lambda: frac_detail.detect_document(doc))
 
     # Per-interval sheets: one page per stage, the roll-up as text above an
     # embedded RASTER chart. 00900-00905 reported "no page in it draws a
