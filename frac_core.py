@@ -461,10 +461,19 @@ def detect_text_meta(page, meta=None):
     # a 100-chart filing came through with the stage unknown on all of it and
     # every chart merged under one "?" key (#579).
     #
-    # A separator is still REQUIRED: a hash, or space, or both. "Zone1" does
+    # A separator is still REQUIRED: a hash, a colon, or space. "Zone1" does
     # not match and neither does a bare "Zone12" appearing inside some longer
     # token, which is what the original \s+ was protecting against.
-    m = re.search(r"(?:Zone|Stage)(?:\s*#\s*|\s+)(\d+)", text)
+    #
+    # The colon is the CalFrac MView portrait sheet, which captions itself
+    # "Zone: 1/85" — the zone and the job's own zone count. Its 2,798 pages
+    # across eight filings came out with the stage unknown on every chart and
+    # so merged under one "?" key, the same failure #579 describes. It admits
+    # nothing new elsewhere: measured over 5,223 pages of 18 files spanning
+    # all eight chart sources in the corpus, not one page reads differently.
+    # It also does not reopen the phone-number hole the docstring above
+    # guards — "Zone / 403-999-6540" separates with a slash, not a colon.
+    m = re.search(r"(?:Zone|Stage)(?:\s*[#:]\s*|\s+)(\d+)", text)
     if m:
         meta.stage = m.group(1)
     elif ocr_labels.garbled(page):
