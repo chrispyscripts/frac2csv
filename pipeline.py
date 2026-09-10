@@ -41,6 +41,7 @@ import aliases
 import pipeline_export as pe
 import sk_fracr as sk
 import daily_ops
+import interval_sheet
 import slb
 import slb_tables
 import trican2
@@ -2263,6 +2264,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     notes.append(f"{title} parse failed — {e}")
         except Exception as e:                  # pragma: no cover - defensive
             notes.append(f"{name} tables failed — {e}")
+
+    # Per-interval sheets: one page per stage, the roll-up as text above an
+    # embedded RASTER chart. 00900-00905 reported "no page in it draws a
+    # plotted curve", which was true of the charts and said nothing about the
+    # 323 stages of text sitting above them.
+    _tables_from(interval_sheet, "Interval summary sheets",
+                 [("Interval summary (per-stage sheets)",
+                   lambda: interval_sheet.parse_document(doc))],
+                 gate=lambda: interval_sheet.detect_document(doc))
 
     _tables_from(step_summary, "STEP stage summary",
                  [("Daily Stage Summary",
