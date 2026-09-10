@@ -304,6 +304,65 @@ IFS and Hal-1 clusters.
 early test issues, and several open ones (#100, #102, #110) are Carmine saying
 something *works*. Read the body before treating a number as a defect.
 
+## Landed 2026-09-10 — NOT SHIPPED YET (v1.7.0 is the last tag)
+
+Nine functional commits. Tests 293 -> 362. Regression: one file per chart
+source in the corpus, **0 of 7 differing** from recorded baselines, plus the
+CalFrac control 00037 identical before AND after the variant work (62 series,
+62 stages, 62 dated).
+
+### File classes recovered from producing nothing
+
+| class | scale | result |
+|---|---|---|
+| CalFrac rotated MView | 8 files, 2,798 pages | extracting; sweep in flight for final counts |
+| Per-interval sheets (NEW template, `interval_sheet.py`) | 6 files | **323 stages**, ladders with no gap or duplicate |
+| Daily-report-only filings | 00654, 00677 | **41 + 47** dated stage starts |
+| 00664 Daily Initial Completion | 1 file | **5 -> 46** stages |
+| BJ spreadsheet false positive | 5 files | the only output was an error; now honest |
+
+### One root fault, four readers
+
+A reader consulting the RAW TEXT LAYER on filings that have none. Found four
+times in one day, each one silently costing a whole file class:
+
+  * `calfrac_progress.is_chart_page` — the pages were invisible (rotated
+    sheet leads with its y-axis ladder, not its title)
+  * `pipeline._mview_variant` — same first-line-only fault, so every zone's
+    Surface and Bottom Hole sheet came back untagged, shared one key and
+    fused Treating Pressure (#341, reintroduced into the files just
+    recovered). "52 series" on 00339 was 26 zones counted twice.
+  * `calfrac_progress.job_date` — read `page.get_text()`, so contributed
+    nothing on a textless filing; and its `^MView` anchor breaks because OCR
+    eats the leading M ("View - Annular Ignition ... - 3/1/2022"). The
+    Bottom Hole sheet's ONLY date is that footer.
+  * `calfrac_progress.zone_range` — same, guarded by MAX_ZONES
+
+**When touching a template that OCRs, grep the module for `get_text()` first.**
+Three of these four were found only by reading what the output CONTAINED, not
+by checking whether there was output.
+
+### Client reports closed
+
+  * **#617** — 00886. Not a misread: the file prints zones 1..31 with none
+    missing and 35 Surface sheets, so zones 1, 13, 17 and 30 each ran TWICE.
+    Its BH sheets carry no zone number and inherit the page before them.
+    Pairing by sheet kind in a dict married a Surface from one treatment to a
+    BH from the other and stranded the rest. Now paired by PAGE ORDER, later
+    runs labelled "13 (2)" so they cannot merge. End to end: 35 series, 35
+    dated, 35 clocked, no label carrying a sheet name, no label used twice.
+  * **#621** — all 7 files accounted for: 5 were the BJ false positive, 00647
+    is genuinely a Downhole Schematic (honest skip), 00664 now yields 46.
+  * **#613** — already fixed by the #612 capital-V marker in v1.6.0; all 5
+    files extract, 240 charts (45/45/61/60/29). Reported on v1.5.1.
+  * **#619** — already fixed in v1.7.0 (the stage pane got a drag grip).
+
+### Also
+
+`OMP_THREAD_LIMIT=1` on tesseract: bit-identical reading, 9.9s -> 9.0s over
+six pages, and it is what stopped the validation sweeps driving the load
+average to 276 on ten cores.
+
 ## Landed after v1.4.0 — ALL SHIPPED in v1.5.0
 
 Four fixes from 2026-08-20, plus the Liberty/IFS outlined-page work and the
