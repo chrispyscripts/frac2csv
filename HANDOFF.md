@@ -41,6 +41,45 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### Outlined Peloton daily reports — do NOT try to OCR the time log
+
+00440, 00441, 00442, 00443 and 00461 are ~60 pages each of Peloton "Daily
+Completion and WS (board report)" with NO text layer — the whole sheet is
+outlined vector, 3,837 fill paths and 71,840 black items on page 1. They now
+produce an honest "no charts here" note instead of a bogus BJ failure, and
+that is the right place for them to stop.
+
+OCR reads the HEADER fine: `is_daily_report` fires, and `report_date` comes
+back correct (2022-12-01, 2022-12-08). It is the TIME LOG that does not
+survive, and the reason is not resolution:
+
+    'Daily Time Log' / 'Start Time' / 'Code 1' / 'Code 2' / 'Com'
+    '7:00'                         <- row 1's END time; its 00:00 is GONE
+    '7.00'
+    'Waited on operations to commence'
+    'inactive'
+    '0.50 | SMTG'                  <- row 2, and its start clock 07:00
+    'Safety Meeting'                  appears AFTER the whole comment
+    <ten wrapped lines of comment>
+    '07:00'
+    '07:30' / '10:00' / ...        <- row 3: clocks adjacent, this one works
+
+`daily_ops.rows()` needs a bare clock alone on a line followed by another, and
+on this page it finds 2 of about 8 — only the rows where the two clocks
+happened to land next to each other. Cells come out in scrambled x order
+because the Com column wraps ten lines deep while the clock cells are single
+lines at the top of the row, and some clocks are dropped outright.
+
+Fixing it means rebuilding the table grid from `ocr_labels.words()` boxes
+rather than from flattened text. That is a real piece of work for FIVE files,
+and the thing it would get wrong is precisely what daily_ops is most careful
+about — `index()` drops a stage claimed by two days rather than resolve it,
+because "a chart stamped off the wrong day is a wrong answer wearing a date".
+A mispaired clock here would put a confident, wrong time on a stage.
+
+Leave it. The text-layer path (00654, 00677) already gets the 41 and 47
+stages out of the filings that have one.
+
 ### BJ on textless pages — DIAGNOSED, the hard question answered, NOT built
 
 Five filings — **00956, 00959, 01120, 01250, 01252** — produce nothing, and
