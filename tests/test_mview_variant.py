@@ -131,3 +131,31 @@ class Collapse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DuplicateSheets(unittest.TestCase):
+    """Two sheets of ONE kind under one zone: say so, do not pick by order."""
+
+    def test_a_second_sheet_of_the_same_kind_is_reported_not_resolved(self):
+        res = [_chart("4 Surface", pipeline._CANON4, date="2022-03-01"),
+               _chart("4 BH", pipeline._CANON4),
+               _chart("4 BH", pipeline._CANON4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        # nothing collapsed, nothing left wearing a half-resolved tag
+        self.assertEqual(len(res), 3)
+        self.assertTrue(any("more than one sheet of the same kind" in n
+                            for n in notes), notes)
+        self.assertTrue(any("4 (1 Surface, 2 BH)" in n for n in notes), notes)
+
+    def test_a_clean_pair_beside_an_odd_zone_still_collapses(self):
+        res = [_chart("1 Surface", pipeline._CANON4, date="2022-03-01"),
+               _chart("1 BH", ("Tr Press",)),
+               _chart("4 Surface", pipeline._CANON4),
+               _chart("4 BH", pipeline._CANON4),
+               _chart("4 BH", pipeline._CANON4)]
+        notes = []
+        pipeline._pick_variant(res, notes)
+        stages = sorted(str(r["meta"]["stage"]) for r in res)
+        self.assertEqual(stages, ["1", "4 BH", "4 BH", "4 Surface"])
+

@@ -1208,13 +1208,25 @@ def _pick_variant(results, notes):
             continue
         m = _VARIANT_STAGE.match(str((r.get("meta") or {}).get("stage") or ""))
         if m:
-            groups.setdefault(m.group(1), {})[m.group(2)] = r
+            groups.setdefault(m.group(1), {}).setdefault(m.group(2), []).append(r)
 
-    dropped = []
+    dropped, odd = [], []
     for base, g in sorted(groups.items()):
-        surf, bh = g.get("Surface"), g.get("BH")
-        if not surf or not bh:
+        surfs, bhs = g.get("Surface") or [], g.get("BH") or []
+        if not surfs or not bhs:
             continue
+        # Exactly one of each, or leave the zone alone and SAY so. Keyed by
+        # kind alone this kept whichever sheet came last and dropped only
+        # that one, so a second sheet of the same kind survived still wearing
+        # its "4 BH" tag — a chart in the export labelled with a sheet name,
+        # under a zone that had already been collapsed. Two sheets of one kind
+        # is either a re-treat, which is real data, or a zone number misread
+        # off the render; neither is something to resolve by taking the last
+        # one in file order.
+        if len(surfs) != 1 or len(bhs) != 1:
+            odd.append(f"{base} ({len(surfs)} Surface, {len(bhs)} BH)")
+            continue
+        surf, bh = surfs[0], bhs[0]
         n_surf = len(_CANON4 & set(surf.get("data") or ()))
         keep, drop = (surf, bh) if n_surf == len(_CANON4) else (bh, surf)
         keep["meta"]["stage"] = base
@@ -1241,6 +1253,11 @@ def _pick_variant(results, notes):
         notes.append(f"Calfrac prints each zone twice; kept one sheet per "
                      f"zone — Surface when it carries all four channels, "
                      f"Bottom Hole otherwise: {bits}")
+    if odd:
+        notes.append(f"zone(s) {', '.join(odd)} print more than one sheet of "
+                     f"the same kind, so both were kept rather than one "
+                     f"picked — a re-treatment, or a zone number misread off "
+                     f"the page. Worth a look at those charts.")
     return results
 
 
