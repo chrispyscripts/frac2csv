@@ -41,6 +41,74 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### BJ on textless pages — DIAGNOSED, the hard question answered, NOT built
+
+Five filings — **00956, 00959, 01120, 01250, 01252** — produce nothing, and
+01121 looks like a sixth. Between them the "skipped as schematics" note names
+**235 chart pages**. They are ordinary BJ-1 charts with **no text layer at
+all** (raw_chars=0), so `bj1.detect` reads an empty string and never fires,
+and `calfrac_progress.is_chart_page` then logs the page as a schematic. This
+is the same fault as Liberty outlined, Halliburton textless and CalFrac
+MView: a text-based detector on a page that carries no text. Fourth vendor.
+
+OCR reads them well. The title comes back exactly —
+`202/d-037-H-093-P-09 - Well | - Stage 01`,
+`100/12-32-078-17W6 - Well D6 - Stage 01` — and so do the legend channels
+(`WH 2 Press (MPa)`, `CMB SLR Rate (m3/min)`, `WH Density (kg/m3)`,
+`Density at Perfs (kg/m3)`).
+
+**The one hard part is solved and measured.** The x-axis labels are SLANTED,
+which is why a plain OCR pass returns junk (`wey`, `wer`, `we`, `gu`, `ax`)
+and `extract_page` raises "bj1: time labels not found" — the same message
+cluster B reported. The slant is **30 degrees, not 45**:
+
+| de-slant angle | time labels read |
+|---|---|
+| 0 | 0 |
+| 25 | 7, and unevenly spaced |
+| **30** | **9, all correct** |
+| 35 | 8, two misread digits |
+| 40, 45, 50, -45 | 0 |
+
+Render the axis strip, `PIL.rotate(-30, expand=True)`, OCR, then map each box
+back through the inverse rotation about the image centre and scale by
+`72/dpi`. **That mapping is verified**: the recovered labels are 15 minutes
+apart by construction and come back at x deltas 26.31, 26.14, 26.59, 26.31,
+26.14, 26.31, 26.43 — even to 0.45pt. Any constant offset is absorbed by
+`_fit`, which is linear, so the axis fit does not care where in the slanted
+label the box edge lands. Probe kept at
+`validation-tools/bj-textless/deslant_probe.py`.
+
+Pick the angle by counting `TIME_RE` matches AND checking the spacing is
+even; at 25 and 35 both degrade together, so the selector is self-validating
+and a page it cannot read changes nothing.
+
+**What is left to build, and why it was not started here.** Three OCR passes
+at three angles are needed per page, each with its own coordinate mapping:
+
+1. de-slanted, for the time axis (solved above)
+2. upright, for the y-axis tick ladders. Partially good already — bj1's
+   `nums` filter takes only pure numbers, so OCR's `£15` and `6 10` are
+   dropped rather than believed, but several ticks are lost with them and a
+   column needs three.
+3. **90-degree rotated, for the axis NAMES** — and this one is not free.
+   `axis_names` in `extract_page` wants spans taller than wide, and
+   `ocr_labels._render_and_read` only tries a 90 pass when the upright pass
+   reads fewer than `_UPRIGHT_ENOUGH` words. These pages read plenty
+   upright, so the vertical axis titles are never attempted, and without
+   them a channel cannot be tied to the axis it is plotted against.
+
+`_spans` is called from exactly ONE place (`extract_page`), so all of this
+lands in one function. `bj1._WELL_ID` also needs to stop requiring an
+uppercase NTS quadrant: the real filings print `202/d-037-...` lowercase,
+which is the NTS convention, and 00853 prints `200/c-089-C/094-B-16/00`.
+
+Three files in the same census are NOT this and need nothing: **00634,
+00647, 00853** carry full text (2.4k, 4.5k, 21.4k characters) and their
+skipped pages are `Downhole Schematic` / `Schematic - Current` sheets. The
+gate is doing its job on those — honest skips, not defects.
+
+
 **Paused mid-sweep, 2026-08-21 (second pause at 199 files).** The Liberty
 page-by-page analysis was extended from the 22 outlined filings to the whole
 corpus and stopped at **199 of 395 text-layer files**: 30,739 pages, 9,526
