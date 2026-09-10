@@ -112,22 +112,46 @@ def _md(meta):
             "warnings": list(getattr(meta, "warnings", []))}
 
 
+def _variant_of(line):
+    return (" BH" if re.search(r"\bbottom\s*hole\b", line, re.I)
+            else " Surface" if re.search(r"\bsurface\b", line, re.I)
+            else "")
+
+
 def _mview_variant(page):
     """-> " Surface" / " BH" / "" from an MView page's own title line.
 
     Read through ocr_labels, so a Type3 filing gets the tag too. Without it
     the Surface and Bottom Hole pages of a zone share one key and merge, and
     both carry Treating Pressure — which is the collision this tag exists to
-    prevent.
+    prevent (#341).
+
+    The title is not always the FIRST line, and reading only the first line
+    was the same fault calfrac_progress.is_chart_page had: a portrait MView
+    sheet rotates the plot and OCR reads the y-axis tick ladder before the
+    caption, so page 73 of 00340 leads with "1400". Both sheets of every zone
+    in the eight rotated filings came back untagged, which put them under one
+    bare stage key with no way to tell them apart — precisely the collision
+    above, in the files that had just been recovered.
+
+    A later line has to look like a TITLE — the sheet kind at the end of it
+    and the well it names — for the same reason is_chart_page requires it:
+    the bare word "Chemicals" is also a column heading on the Treatment
+    Summary grid.
     """
     try:
-        head = (ocr_labels.page_text(page).strip().splitlines() or [""])[0]
+        lines = [l.strip() for l in ocr_labels.page_text(page).splitlines()
+                 if l.strip()]
     except Exception:
         return ""
-    if re.search(r"\bbottom\s*hole\b", head, re.I):
-        return " BH"
-    if re.search(r"\bsurface\b", head, re.I):
-        return " Surface"
+    tag = _variant_of(lines[0] if lines else "")
+    if tag:
+        return tag
+    for line in lines[1:]:
+        if cprog._CHART_KIND.search(line) and cprog._TITLE_WELL.search(line):
+            tag = _variant_of(line)
+            if tag:
+                return tag
     return ""
 
 
@@ -1194,6 +1218,18 @@ def _pick_variant(results, notes):
         n_surf = len(_CANON4 & set(surf.get("data") or ()))
         keep, drop = (surf, bh) if n_surf == len(_CANON4) else (bh, surf)
         keep["meta"]["stage"] = base
+        # The two sheets are one zone at one time, so a date or clock printed
+        # on either belongs to both — and only ONE of them prints it. The
+        # Bottom Hole sheet of an MView zone carries no "March 1, 2022" line,
+        # so whenever it won this choice the stage lost its date on the way
+        # out: 17 of 52 charts dated on 00339, 22 of 52 on 00342. Filled only
+        # where the kept sheet has nothing, so the sheet we chose still speaks
+        # for itself wherever it can.
+        for field in ("date", "start_time"):
+            if not str(keep["meta"].get(field) or "").strip():
+                borrowed = str((drop.get("meta") or {}).get(field) or "").strip()
+                if borrowed:
+                    keep["meta"][field] = borrowed
         dropped.append((base, "Surface" if drop is surf else "BH",
                         "Surface" if keep is surf else "BH", n_surf))
         # by identity — see _drop_chemical_only: == on these dicts can reach
