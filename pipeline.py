@@ -1242,6 +1242,45 @@ def _normalise_tables(results, filename=None):
         r["columns"], r["rows"] = cols, rows
 
 
+def _stage_log_table(doc, results, notes):
+    """The operator's daily time log as a stage table — last resort only.
+
+    daily_ops.index() has always been read for one thing: a clock to date a
+    chart the vendor's own sheet failed to date. On a filing that carries NO
+    vendor charts there is nothing to date, so the stage times were parsed
+    and then dropped on the floor. 00654 and 00677 are 115 and 128 pages of
+    Peloton daily reports holding 41 and 47 dated stage starts, and both
+    exported nothing whatsoever.
+
+    Reached only when the document produced no series and no table, so it can
+    never compete with a vendor's own stage summary — where one exists this
+    is the poorer reading of the same stages and should not be offered.
+
+    One combined column rather than a date and a clock: _normalise_tables
+    formats date-ish columns to the seconds DATETIME the exporter expects,
+    and a bare 'HH:MM:SS' with no day in it parses as 1900-01-01.
+    """
+    try:
+        idx = daily_ops.index(doc)
+    except Exception as e:
+        notes.append(f"Daily report time log unreadable — {e}")
+        return
+    if not idx:
+        return
+    title = "Stage time log (operator daily report)"
+    results.append({
+        "type": "table", "title": title, "well": "", "uwi": "",
+        "formation": "",
+        "columns": ["Stage", "Start"],
+        "rows": [[str(s), f"{idx[s]['date']} {idx[s]['start']}"]
+                 for s in sorted(idx)],
+        "source": title})
+    notes.append(
+        f"{len(idx)} stage start time(s) read from the operator's daily "
+        f"reports. This filing carries no vendor treatment charts, so the "
+        f"daily time log is the only stage record in it.")
+
+
 def _daily_ops_fill(doc, results, notes):
     """Last resort: date and clock a chart from the OPERATOR's daily report.
 
@@ -2301,7 +2340,16 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     except Exception as e:
         notes.append(f"BJ Fracturing-Acidizing tables failed — {e}")
 
-    if not results:
+    # Asked of the results a client can actually USE, not of the list.
+    # A "summary" result is a page-viewing aid — find_summary_pages found
+    # pages worth showing — and it carries no rows and no samples: nothing
+    # exports from it and nothing draws. One of them was enough to make this
+    # list non-empty and silence the explanation below, so 00654, 00677,
+    # 00698 and 00700 each came back with no data AND no note saying why,
+    # which is the one outcome _why_nothing exists to prevent.
+    if not any(r.get("type") in ("series", "table") for r in results):
+        _stage_log_table(doc, results, notes)
+    if not any(r.get("type") in ("series", "table") for r in results):
         notes.append(_why_nothing(doc, npages, raster))
     _pick_variant(results, notes)
     _drop_chemical_only(results, notes)
