@@ -41,6 +41,26 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### The "no extractable data" batch reports — where they stand
+
+Every file named across #608, #609, #610, #613, #614 and #621 — 53 unique
+files — measured 2026-09-10:
+
+| outcome | files | |
+|---|---|---|
+| **now yield data** | **45** | 85% |
+| honest empty, with a note saying why | 6 | |
+| genuinely unsolved | 2 | |
+
+The six honest empties are 00647, whose skipped pages really are Downhole
+Schematics, and 00440/00441/00442/00443/00461 — outlined Peloton daily
+reports. Those five stop where they stop on purpose; see the section on why
+not to OCR their time log.
+
+The two unsolved are **00150 and 00151**: "this file draws no curves and
+carries no text layer at all: every page is a picture". That is the pure-raster
+class and nothing in the tree reads it.
+
 ### #615 is answered and needs no code — 01340's charts are not in the file
 
 Carmine: "you are getting the rotation on this test well but it is not getting
