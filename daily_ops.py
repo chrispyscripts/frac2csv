@@ -66,6 +66,16 @@ _STAGE = re.compile(r"(?i)stages?\s*#?\s*(\d{1,3})(?!\s*:)")
 _MAX_ROW_LINES = 12
 
 _FRAC_CODE = re.compile(r"(?im)^\s*[\d.]+\s+FRAC\s*$")
+# A row whose comment OPENS with its own time range and its own stage:
+#   "10:19 - 12:38 - Frac, stage #1 - 6624.0 - 6664.8 mKB."
+# Strathcona's "Daily Initial Completion Report" writes every frac row that
+# way and then goes on to mention the NEXT stage it prepared for, so 47 of
+# 00664's 53 frac rows name two stages and the guard below refused all of
+# them — the file yielded 5 stages out of 49. The time range is what makes
+# this specific rather than "take the first number": it is the row saying
+# when IT pumped, and the stage immediately after it is the one that pumped.
+_OWN_STAGE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*-\s*"
+                        r"[^\n]*?\bstage\s*#?\s*(\d{1,3})\b", re.I)
 
 
 def is_daily_report(text):
@@ -146,9 +156,18 @@ def stage_times(text):
         # different operations — and taking either one puts a clock on the
         # wrong stage. This is the whole reason the row is read rather than
         # the page: when even the row is ambiguous, it has to say nothing.
-        if len(found) != 1:
-            continue
-        stage = found.pop()
+        if len(found) == 1:
+            stage = found.pop()
+        else:
+            # ...unless the row says outright which stage is ITS OWN, by
+            # opening with the window it pumped in. Tried only where the test
+            # above has already given up, so no row that resolves today
+            # resolves differently. Still refuses when there are two such
+            # openers in one row.
+            own = _OWN_STAGE.findall(body)
+            if len(own) != 1:
+                continue
+            stage = int(own[0])
         if stage not in got or hhmm < got[stage]:
             got[stage] = hhmm
     return got

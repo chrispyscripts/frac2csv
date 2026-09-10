@@ -195,3 +195,72 @@ class AmpersandTitles(unittest.TestCase):
             "Liberty Oilfield Services  Stage 13\n"
             "Treating Pressure (MPa)  Slurry Rate (m3/min)\n"
             "2022/04/29 02:32  02:52  03:12"))
+
+
+# 00664's layout: Strathcona's "Daily Initial Completion Report". Every frac
+# row opens its comment with the window IT pumped in and its own stage, then
+# goes on to name the NEXT stage it prepared for — so 47 of the file's 53 frac
+# rows name two stages and the ambiguity guard refused all of them. It yielded
+# 5 stages out of 49.
+PAGE_OWN = """Daily Initial Completion Report
+Report #  12.0,  Report Date:   8/28/2024
+Job Time Log
+10:30
+12:30
+2.00 FRAC
+Frac. Job
+10:19 - 12:38 - Frac, stage #1 - 6624.0 - 6664.8 mKB. Formation break at 70.9MPa.
+Rigged down and moved to stage #2.
+19:00
+19:45
+0.75 FRAC
+Frac. Job
+16:06 - 19:17 - Frac, stage #2 - 6580.0 - 6613.0 mKB. Formation break at 71.5MPa.
+Ready to frac stage #3.
+"""
+
+# 00588's row, which is why the guard exists at all: two stages for two
+# different OPERATIONS, and no time range claiming either.
+PAGE_TWO_OPS = """Daily Completion and Workover
+Report #  4.0,  Report Date:   1/30/2019
+Time Log
+08:00
+09:00
+1.00 FRAC
+Frac
+Frac stages # 1,   Pump Down stage # 2
+09:00
+10:00
+1.00 inactive
+inactive
+Waited on adjacent operations
+"""
+
+
+class OwnStageWindow(unittest.TestCase):
+    """A row that says outright which stage is its own."""
+
+    def test_the_stage_in_its_own_pumping_window_is_read(self):
+        got = daily_ops.stage_times(PAGE_OWN)
+        self.assertEqual(got, {1: "10:30", 2: "19:00"})
+
+    def test_two_operations_in_one_row_still_say_nothing(self):
+        # no time range claims either stage, so the guard still refuses
+        self.assertEqual(daily_ops.stage_times(PAGE_TWO_OPS), {})
+
+    def test_a_row_naming_one_stage_is_unaffected(self):
+        # PAGE_A's FRAC row for stage 10 starts at 17:15 — the 16:00 row above
+        # it is an ACID wash, which carries no FRAC code
+        self.assertEqual(
+            daily_ops.stage_times(PAGE_A).get(10), "17:15")
+
+    def test_two_windows_in_one_row_are_refused(self):
+        body = """Daily Initial Completion Report
+Report #  1.0,  Report Date:   8/28/2024
+10:30
+12:30
+2.00 FRAC
+Frac. Job
+10:19 - 12:38 - Frac, stage #1 - 6624.0 mKB. 13:00 - 14:00 - Frac, stage #2 - 6580.0 mKB.
+"""
+        self.assertEqual(daily_ops.stage_times(body), {})
