@@ -133,29 +133,75 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class DuplicateSheets(unittest.TestCase):
-    """Two sheets of ONE kind under one zone: say so, do not pick by order."""
+class Retreatment(unittest.TestCase):
+    """A zone treated twice is two treatments, paired by PAGE ORDER.
 
-    def test_a_second_sheet_of_the_same_kind_is_reported_not_resolved(self):
-        res = [_chart("4 Surface", pipeline._CANON4, date="2022-03-01"),
-               _chart("4 BH", pipeline._CANON4),
-               _chart("4 BH", pipeline._CANON4)]
+    00886 prints zones 1..31 with none missing and 35 Surface sheets: zones
+    1, 13, 17 and 30 each ran twice. Its Bottom Hole sheets carry no zone
+    number of their own and inherit the page before them, so the sheets arrive
+    Surface(13), BH(13), Chemicals(13), ... Surface(13), BH(13).
+
+    Keyed on kind alone, a dict kept whichever Surface and whichever BH came
+    last, paired sheets from DIFFERENT treatments and stranded the rest —
+    Carmine got zone 13 as "13", "13 Surface" and "13 BH" at once (#617).
+    """
+
+    def _run(self, *pairs):
+        res, page = [], 0
+        for stage, data in pairs:
+            page += 1
+            c = _chart(stage, data)
+            c["page"] = page
+            res.append(c)
         notes = []
         pipeline._pick_variant(res, notes)
-        # nothing collapsed, nothing left wearing a half-resolved tag
-        self.assertEqual(len(res), 3)
-        self.assertTrue(any("more than one sheet of the same kind" in n
-                            for n in notes), notes)
-        self.assertTrue(any("4 (1 Surface, 2 BH)" in n for n in notes), notes)
+        return res, notes
 
-    def test_a_clean_pair_beside_an_odd_zone_still_collapses(self):
-        res = [_chart("1 Surface", pipeline._CANON4, date="2022-03-01"),
-               _chart("1 BH", ("Tr Press",)),
-               _chart("4 Surface", pipeline._CANON4),
-               _chart("4 BH", pipeline._CANON4),
-               _chart("4 BH", pipeline._CANON4)]
-        notes = []
-        pipeline._pick_variant(res, notes)
-        stages = sorted(str(r["meta"]["stage"]) for r in res)
-        self.assertEqual(stages, ["1", "4 BH", "4 BH", "4 Surface"])
+    def test_two_treatments_of_one_zone_both_collapse(self):
+        res, notes = self._run(
+            ("13 Surface", pipeline._CANON4), ("13 BH", ("Tr Press",)),
+            ("13 Surface", pipeline._CANON4), ("13 BH", ("Tr Press",)))
+        self.assertEqual(len(res), 2)
+        # the second run keeps its own key so it cannot merge into the first
+        self.assertEqual(sorted(str(r["meta"]["stage"]) for r in res),
+                         ["13", "13 (2)"])
+        self.assertTrue(any("treated more than once" in n for n in notes), notes)
 
+    def test_each_surface_pairs_with_the_BH_that_FOLLOWS_it(self):
+        # the first Surface is short, the second carries all four; pairing
+        # across treatments would keep the wrong sheet for both
+        res, _ = self._run(
+            ("7 Surface", ("Tr Press",)), ("7 BH", pipeline._CANON4),
+            ("7 Surface", pipeline._CANON4), ("7 BH", ("Tr Press",)))
+        self.assertEqual(len(res), 2)
+        for r in res:
+            self.assertEqual(len(r["data"]), 4, r["meta"]["stage"])
+
+    def test_a_lone_extra_sheet_is_left_alone(self):
+        # Surface, its BH, then a second BH with no Surface of its own
+        res, _ = self._run(
+            ("4 Surface", pipeline._CANON4), ("4 BH", ("Tr Press",)),
+            ("4 BH", ("Tr Press",)))
+        self.assertEqual(sorted(str(r["meta"]["stage"]) for r in res),
+                         ["4", "4 BH"])
+
+    def test_a_bottom_hole_arriving_first_is_not_paired_backwards(self):
+        # Every sheet pair in the corpus runs Surface then Bottom Hole. A BH
+        # that arrives with no Surface open is therefore an ordering nothing
+        # here has seen, and both sheets are left alone and stay visible
+        # rather than paired on an assumption. Asserted because the first
+        # version of this test assumed the pairing instead of the layout.
+        res, _ = self._run(
+            ("9 BH", ("Tr Press",)), ("9 Surface", pipeline._CANON4))
+        self.assertEqual(sorted(str(r["meta"]["stage"]) for r in res),
+                         ["9 BH", "9 Surface"])
+
+    def test_a_zone_treated_once_gets_no_suffix(self):
+        res, notes = self._run(
+            ("2 Surface", pipeline._CANON4), ("2 BH", ("Tr Press",)))
+        self.assertEqual(str(res[0]["meta"]["stage"]), "2")
+        self.assertFalse(any("treated more than once" in n for n in notes))
+
+
+if __name__ == "__main__":
+    unittest.main()

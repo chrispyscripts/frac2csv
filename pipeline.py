@@ -1202,62 +1202,83 @@ def _pick_variant(results, notes):
     and the sheet not chosen is named in the notes rather than dropped
     silently.
     """
+    # Grouped by zone and then split by PAGE ORDER, because a zone can be
+    # treated twice and the report prints it twice. 00886 prints zones 1..31
+    # with none missing and 35 Surface sheets: zones 1, 13, 17 and 30 each
+    # ran twice. Its Bottom Hole sheets print no zone number of their own at
+    # all and inherit the page before them, so the sheets arrive
+    # Surface(13), BH(13), Chemicals(13), ... Surface(13), BH(13).
+    #
+    # Keyed on kind alone, a dict kept whichever Surface and whichever BH came
+    # last and dropped only those, pairing sheets from DIFFERENT treatments
+    # and stranding the rest: Carmine got zone 13 as "13", "13 Surface" and
+    # "13 BH" together and reported it (#617). Walking page order pairs each
+    # Surface with the Bottom Hole that follows IT, which is the only pairing
+    # the layout actually supports.
     groups = {}
-    for r in results:
+    for r in sorted(results, key=lambda x: (x.get("page") is None,
+                                            x.get("page") or 0)):
         if r.get("type") != "series" or r.get("source") != "CalFrac chart":
             continue
         m = _VARIANT_STAGE.match(str((r.get("meta") or {}).get("stage") or ""))
-        if m:
-            groups.setdefault(m.group(1), {}).setdefault(m.group(2), []).append(r)
+        if not m:
+            continue
+        base, kind = m.group(1), m.group(2)
+        runs = groups.setdefault(base, [])
+        # A Surface sheet opens a treatment. A Bottom Hole sheet joins the one
+        # open, and opens its own only if it arrived first.
+        if kind == "Surface" or not runs or "BH" in runs[-1]:
+            runs.append({})
+        runs[-1][kind] = r
 
-    dropped, odd = [], []
-    for base, g in sorted(groups.items()):
-        surfs, bhs = g.get("Surface") or [], g.get("BH") or []
-        if not surfs or not bhs:
-            continue
-        # Exactly one of each, or leave the zone alone and SAY so. Keyed by
-        # kind alone this kept whichever sheet came last and dropped only
-        # that one, so a second sheet of the same kind survived still wearing
-        # its "4 BH" tag — a chart in the export labelled with a sheet name,
-        # under a zone that had already been collapsed. Two sheets of one kind
-        # is either a re-treat, which is real data, or a zone number misread
-        # off the render; neither is something to resolve by taking the last
-        # one in file order.
-        if len(surfs) != 1 or len(bhs) != 1:
-            odd.append(f"{base} ({len(surfs)} Surface, {len(bhs)} BH)")
-            continue
-        surf, bh = surfs[0], bhs[0]
-        n_surf = len(_CANON4 & set(surf.get("data") or ()))
-        keep, drop = (surf, bh) if n_surf == len(_CANON4) else (bh, surf)
-        keep["meta"]["stage"] = base
-        # The two sheets are one zone at one time, so a date or clock printed
-        # on either belongs to both — and only ONE of them prints it. The
-        # Bottom Hole sheet of an MView zone carries no "March 1, 2022" line,
-        # so whenever it won this choice the stage lost its date on the way
-        # out: 17 of 52 charts dated on 00339, 22 of 52 on 00342. Filled only
-        # where the kept sheet has nothing, so the sheet we chose still speaks
-        # for itself wherever it can.
-        for field in ("date", "start_time"):
-            if not str(keep["meta"].get(field) or "").strip():
-                borrowed = str((drop.get("meta") or {}).get(field) or "").strip()
-                if borrowed:
-                    keep["meta"][field] = borrowed
-        dropped.append((base, "Surface" if drop is surf else "BH",
-                        "Surface" if keep is surf else "BH", n_surf))
-        # by identity — see _drop_chemical_only: == on these dicts can reach
-        # a numpy `samples` array and raise
-        _d = id(drop)
-        results[:] = [r for r in results if id(r) != _d]
+    dropped = []
+    for base, runs in sorted(groups.items()):
+        for n, g in enumerate(runs):
+            surf, bh = g.get("Surface"), g.get("BH")
+            if not surf or not bh:
+                continue
+            # A second treatment of one zone must not be labelled the same as
+            # the first: every consumer merges same-stage charts by sample
+            # index (pipeline_export.build_well, the Lab's stageItems), so two
+            # treatments under one key fuse into a chart belonging to neither
+            # — the failure bj1's own comment describes for a re-pumped stage.
+            # CalFrac prints no suffix of its own, unlike BJ's "10.1" and
+            # STEP's "1.2", so one is added; stage_num reads the leading
+            # integer, so it still sorts beside its zone.
+            label = base if n == 0 else f"{base} ({n + 1})"
+            n_surf = len(_CANON4 & set(surf.get("data") or ()))
+            keep, drop = (surf, bh) if n_surf == len(_CANON4) else (bh, surf)
+            keep["meta"]["stage"] = label
+            # The two sheets are one zone at one time, so a date or clock
+            # printed on either belongs to both — and only ONE of them prints
+            # it. The Bottom Hole sheet of an MView zone carries no "March 1,
+            # 2022" line, so whenever it won this choice the stage lost its
+            # date on the way out: 17 of 41 charts dated on 00339, 22 of 39 on
+            # 00342. Filled only where the kept sheet has nothing, so the
+            # sheet we chose still speaks for itself wherever it can.
+            for field in ("date", "start_time"):
+                if not str(keep["meta"].get(field) or "").strip():
+                    borrowed = str((drop.get("meta") or {}).get(field)
+                                   or "").strip()
+                    if borrowed:
+                        keep["meta"][field] = borrowed
+            dropped.append((label, "Surface" if drop is surf else "BH",
+                            "Surface" if keep is surf else "BH", n_surf))
+            # by identity — see _drop_chemical_only: == on these dicts can
+            # reach a numpy `samples` array and raise
+            _d = id(drop)
+            results[:] = [r for r in results if id(r) != _d]
     if dropped:
         bits = ", ".join(f"{b} (kept {k})" for b, _d, k, _n in dropped)
         notes.append(f"Calfrac prints each zone twice; kept one sheet per "
-                     f"zone — Surface when it carries all four channels, "
+                     f"treatment — Surface when it carries all four channels, "
                      f"Bottom Hole otherwise: {bits}")
-    if odd:
-        notes.append(f"zone(s) {', '.join(odd)} print more than one sheet of "
-                     f"the same kind, so both were kept rather than one "
-                     f"picked — a re-treatment, or a zone number misread off "
-                     f"the page. Worth a look at those charts.")
+    retreats = sorted(b for b in groups if len(groups[b]) > 1)
+    if retreats:
+        notes.append(f"zone(s) {', '.join(retreats)} were treated more than "
+                     f"once and the report prints each run separately; the "
+                     f"later runs are labelled \"N (2)\" so they stay their "
+                     f"own charts instead of merging into the first.")
     return results
 
 
