@@ -60,6 +60,21 @@ def _tess_env(binpath):
     d = os.path.join(os.path.dirname(binpath), "tessdata")
     if os.path.isdir(d):
         env["TESSDATA_PREFIX"] = d
+    # Tesseract links OpenMP and takes one thread per core unless told not to.
+    # On ONE page that is a loss, not a win: the app OCRs a page at a time
+    # (the GUI runs extraction in a single worker thread), so the threads
+    # contend for one page's work and the setup costs more than it saves.
+    # Measured on this corpus: 9.9s to 9.0s over six pages from three vendors,
+    # with the reading BIT-IDENTICAL — same words, same boxes, same SHA1.
+    #
+    # It matters much more when several pages are read at once, which is what
+    # the validation sweeps do: N workers each spawning a ten-thread tesseract
+    # on a ten-core machine drove the load average to 276 and everything
+    # crawled. Whole documents now go through OCR — Halliburton textless,
+    # Liberty outlined, IFS v6, CalFrac MView — so this is on the hot path.
+    #
+    # setdefault, so anyone who has deliberately set it keeps their value.
+    env.setdefault("OMP_THREAD_LIMIT", "1")
     return env
 
 
