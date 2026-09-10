@@ -73,6 +73,15 @@ _TIME_ROW = re.compile(r"^\s*(Start|Stop|End)\s*Time", re.I)
 _CHART_KIND = re.compile(r"(Surface|Bottom\s*Hole|Net\s*Pressure|Chemicals)"
                          r"\s*\d*\s*$", re.I)
 
+# The well the title names, in the two forms this corpus prints:
+#   DLS  "100/04-10-066-25W5M", "102/05-18-066-05W6/00"
+#   NTS  "a-082-I/094-G-01",    "200/d-047-H/094-G-08/00"
+# This is what separates a chart TITLE from the bare word "Chemicals", which
+# is also a column heading on the Treatment Summary grid — see is_chart_page.
+_TITLE_WELL = re.compile(
+    r"\d{2,3}/\d{2}-\d{2}-\d{3}-\d{2}W\d"
+    r"|[a-dA-D]-\d{2,3}-[A-La-l]\s*/\s*\d{2,3}-[A-Pa-p]-\d{1,2}")
+
 
 def is_chart_page(page):
     """True when this MView page really is a chart.
@@ -96,8 +105,26 @@ def is_chart_page(page):
         text = ocr_labels.page_text(page)
     except Exception:
         return True          # can't tell — don't drop it
-    head = next((l.strip() for l in text.splitlines() if l.strip()), "")
-    return bool(_CHART_KIND.search(head))
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    head = lines[0] if lines else ""
+    if _CHART_KIND.search(head):
+        return True
+    # ...and the title is not always the first line. A PORTRAIT MView sheet
+    # rotates the plot, and OCR then reads the y-axis tick ladder before the
+    # caption: page 73 of 00340 leads with "1400". The head-line test admitted
+    # 0 of that file's 412 pages, so eight CalFrac filings — roughly 2,800
+    # pages — reported no extractable data at all.
+    #
+    # NOT loosened to "any line", which was the obvious move and is wrong:
+    # measured on 00037, the file this gate was built for, an any-line rule
+    # admits 14 extra pages whose matching line is the bare word "Chemicals"
+    # — a COLUMN HEADING on the Treatment Summary grid, 167 drawings and no
+    # curve on it. What separates a title from a heading is the well it names,
+    # so a later line has to carry both. On 00037 that adds nothing (186 head
+    # pages, 0 added, all 14 headings rejected); on 00340 it admits the
+    # Surface / Bottom Hole / Chemicals sheet of every stage.
+    return any(_CHART_KIND.search(l) and _TITLE_WELL.search(l)
+               for l in lines[1:])
 
 
 def detect(page):
