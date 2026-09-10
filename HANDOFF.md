@@ -929,6 +929,42 @@ what a future session needs to KNOW rather than what shipped.
 
 ## Measured and settled — do not re-litigate
 
+### The CalFrac clock gap is largely CLOSED, and the last 25% must stay open
+
+00020 Paramount was the named case: 81 charts, fully dated, ZERO start times,
+because it has no Treatment Summary grid in 493 pages and its charts plot
+elapsed minutes. Measured 2026-09-10 through the current code:
+
+    series=81  dated=81 (100%)  clocked=61 (75%)
+
+and the note says where the clocks came from — "0 stage(s) dated and 62 placed
+on the clock from the operator's daily report ... These times are the
+report's, not the chart's" — which is the labelling the asymmetric-verification
+warning below asks for.
+
+**The remaining 25% is 18 stages `daily_ops.index` drops on purpose, and two
+ways of rescuing them were tried and refuted:**
+
+  * *Resolve by neighbouring stages' days.* Stages pump in order, so a stage
+    claimed by two days might be pinned by the days of the stages either side.
+    **0 of 18 resolvable.** Every ambiguous stage sits exactly on a day
+    boundary — stage 3 claims the 18th and 19th with stage 2 on the 18th and
+    stage 4 on the 19th — so both candidate days are order-consistent and the
+    constraint carries no information.
+  * *Resolve as a midnight straddle.* A stage that began late on one day and
+    ended early the next would show a late clock on the first report and an
+    early one on the second, and its start would be the first. **0 of 18 match
+    that shape.** All 18 print the SAME clock on both days: stage 3 is 04:45
+    on the 18th and 04:45 on the 19th, stage 5 is 04:15 on both, and so on for
+    all of them.
+
+The report simply prints the same time-log row under two report dates, and
+nothing in the document says which day owns it. So the guard stands: an
+undated chart is a visible gap, a chart stamped off the wrong day is a wrong
+answer wearing a date. **75% clocked with 25% honestly blank is the right
+answer here; do not trade it for 97% with 18 possible wrong days.**
+
+
 - **Trican layout B's gridline colour cannot be found by colour.** This
   template tints each axis's rules to MATCH that axis's own curve, so the
   obvious fix — pick the rule colour by what dominates across all the rule
