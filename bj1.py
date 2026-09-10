@@ -37,9 +37,29 @@ _WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{3}-\d{2}W\d"
 
 
 def detect(page):
+    """Is this a BJ-1 chart page?
+
+    The well id and the word Stage have to share ONE LINE, because that line
+    is the chart's own title: "100-12-27-079-16W6 - Well D - Stage 01". The
+    time label stays a whole-page test — it is down the axis, not in the
+    title. Asked of the page as a whole all three marks are evidence of
+    nothing: a spreadsheet printed to PDF carries hundreds of rows and dozens
+    of columns, and somewhere among them is a well id, the word Stage and a
+    Mon-DD HH:MM. That is the whole of what
+    fired on the last page of 00440, 00441, 00442, 00443 and 00461: the final
+    sheet of each is an Excel dump 1,545 lines long, it was read as a chart,
+    it failed with "time labels not found", and the failure was the only
+    thing those five files ever produced.
+
+    Measured before changing: over the 11 files in the corpus that actually
+    yield BJ charts, all 878 detected pages carry the combined title line and
+    none is lost. All five spreadsheet pages lose it.
+    """
     t = page.get_text()
-    return ("Stage" in t and TIME_RE.search(t) is not None
-            and _WELL_ID.search(t) is not None)
+    if TIME_RE.search(t) is None:
+        return False                   # no time axis anywhere on the page
+    return any("Stage" in line and _WELL_ID.search(line) is not None
+               for line in t.splitlines())
 
 
 def _spans(page):
