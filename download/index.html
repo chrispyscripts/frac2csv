@@ -36,8 +36,38 @@
   <div class="ver" id="ver">&nbsp;</div>
 
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
+  <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>Well map &mdash; 13 September</h2>
+    <ul>
+      <li><b>The well map is back at a working address.</b> 166,070 wells you
+        can screen the way a buyer does: 39,554 in British Columbia from the
+        BC Energy Regulator, and 126,516 Alberta horizontals from the
+        AER&rsquo;s ST37. Colour them by vintage, lateral length or completion
+        intensity, filter down to what you want to look at, star the ones
+        worth a second pass, and open a well&rsquo;s charts from its popup.
+        The old link had been serving nothing at all &mdash; the site it was
+        published to no longer existed</li>
+      <li><b>The map underneath the wells draws again.</b> Every tile had
+        started coming back stamped &ldquo;API key required&rdquo;, because
+        the service drawing the land, the water and the town names began
+        charging for what it used to give away. The map is drawn from a
+        source that doesn&rsquo;t ask, and it is the same dark ground the
+        wells were always read against</li>
+      <li><b>A map that said &ldquo;No well data available&rdquo; now shows
+        the wells.</b> It only ever looked for them in one exact place, so
+        opening the page any other way found nothing &mdash; and it said
+        nothing about why, which left you with an empty province list and no
+        reason for it. It now looks beside itself for the well files, and if
+        they genuinely aren&rsquo;t there it tells you what it tried</li>
+      <li><b>The map fills the window.</b> It measured the window once, as the
+        page was still opening, and then never looked again &mdash; so it
+        drew into one corner and sat zoomed out far enough that the wells
+        scattered to specks. It now follows the window, and opens framed on
+        the basin</li>
+    </ul>
+
     <h2>v1.8.0</h2>
     <ul>
       <li><b>The rotated CalFrac reports now extract, and nearly all of
