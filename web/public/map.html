@@ -146,8 +146,8 @@
 <script>
 "use strict";
 const PROVINCES = [
-  { code: "bc", name: "British Columbia", file: "/data/bc-wells.json" },
-  { code: "ab", name: "Alberta",         file: "/data/ab-wells.json" },
+  { code: "bc", name: "British Columbia", file: "data/bc-wells.json" },
+  { code: "ab", name: "Alberta",         file: "data/ab-wells.json" },
 ];
 
 const COLOR_MODES = {
@@ -188,16 +188,25 @@ function renderLegend(mode) {
 const map = new maplibregl.Map({
   container: "map",
   style: { version: 8,
-    sources: { carto: { type: "raster",
-      tiles: ["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-              "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"],
-      tileSize: 256,
-      attribution: "© OpenStreetMap © CARTO · Wells: provincial energy regulators" } },
-    layers: [{ id: "bg", type: "raster", source: "carto" }] },
+    sources: {
+      base: { type: "raster",
+        tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256, maxzoom: 16,
+        attribution: "Esri · HERE · Garmin · © OpenStreetMap contributors · Wells: provincial energy regulators" },
+      labels: { type: "raster",
+        tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256, maxzoom: 16 }
+    },
+    layers: [{ id: "bg", type: "raster", source: "base" },
+             { id: "bg-labels", type: "raster", source: "labels" }] },
   center: [-118, 55.5], zoom: 5
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+
+// The map can be built before its container has settled at full size (panes,
+// split views, late layout). Without this it keeps painting at the stale size.
+new ResizeObserver(() => map.resize()).observe(map.getContainer());
 
 const loaded = [];
 
@@ -430,14 +439,18 @@ function wireWellLayer(code) {
 async function initWells() {
   const provDiv = document.getElementById("prov");
   const srcNames = [];
+  const failures = [];
   const bounds = new maplibregl.LngLatBounds();
   for (const P of PROVINCES) {
     let data;
     try {
       const r = await fetch(P.file);
-      if (!r.ok) continue;
+      if (!r.ok) { failures.push(`${P.name}: ${P.file} returned HTTP ${r.status}`); continue; }
       data = await r.json();
-    } catch { continue; }
+    } catch (e) {
+      failures.push(`${P.name}: ${P.file} — ${e.message}`);
+      continue;
+    }
     const wells = data.wells.map(w => (w._p = P.code, w));
     loaded.push({ code: P.code, name: P.name, wells });
     if (data.source) srcNames.push(data.source);
@@ -466,7 +479,12 @@ async function initWells() {
 
   document.getElementById("loading").style.display = "none";
   if (!loaded.length) {
-    document.getElementById("count").textContent = "No well data available.";
+    const hint = location.protocol === "file:"
+      ? "Open this page over http:// — a file:// page cannot fetch the well JSON. From web/public run: python3 -m http.server 8899"
+      : "Check that data/ab-wells.json and data/bc-wells.json sit next to map.html in the served directory.";
+    document.getElementById("count").innerHTML =
+      `No well data available.<br><span style="color:var(--mut)">${failures.join("<br>") || "no fetch attempted"}<br>${hint}</span>`;
+    console.error("[well map] data load failed:", failures);
     return;
   }
   document.getElementById("sources").textContent = "Sources: " + [...new Set(srcNames)].join(" · ");
