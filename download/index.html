@@ -38,6 +38,50 @@
   <div class="ver"><a href="/data.html">Report data coverage by service provider</a></div>
 
   <div class="notes">
+    <h2>v1.8.0</h2>
+    <ul>
+      <li><b>The rotated CalFrac reports now extract, and nearly all of
+        them.</b> Eight filings, 2,800 pages, that returned &ldquo;No
+        extractable data&rdquo; on every one. The charts were being found and
+        then thrown away: these sheets print their time axis sideways, the
+        tick numbers were only half read, and a chart with no readable
+        duration was dropped. On the file we measured hardest that is 61
+        charts against the 62 zones the report itself prints &mdash; it used
+        to be none</li>
+      <li><b>Reports that print a summary sheet per stage instead of a chart
+        now give you the stages.</b> Six filings said &ldquo;no page in it
+        draws a plotted curve&rdquo;, which was true &mdash; the chart on
+        those pages is a picture. The numbers above it are not, and there are
+        323 stages of them: start and end, pump time, clean fluid, sand by
+        mesh, average and maximum pressure and rate, proppant concentration.
+        Every ladder comes out with no stage missing and none doubled</li>
+      <li><b>Filings that are nothing but the operator&rsquo;s daily reports
+        now give you a stage time log.</b> Three of them held 41, 47 and 46
+        dated stage starts and exported nothing at all, because the reader
+        only ever looked at those pages to put a clock on somebody
+        else&rsquo;s chart</li>
+      <li><b>The rotated CalFrac wells no longer show charts labelled
+        &ldquo;13 BH&rdquo;.</b> Where a zone was treated twice, one run&rsquo;s
+        Surface sheet was being paired with the other run&rsquo;s Bottom Hole
+        sheet and the leftovers came through wearing a sheet name. Each run is
+        now its own chart, and a second run of zone 13 is labelled
+        &ldquo;13 (2)&rdquo; so it cannot merge into the first (your #617)</li>
+      <li><b>The sequence view names both stages when two overlap.</b> It used
+        to pick the later one and say it began too soon, which is a guess
+        &mdash; stage 40 running long and stage 41 starting early leave
+        exactly the same two timestamps. A stage numbered out of order still
+        names the one stage, because there it is knowable (your #616)</li>
+      <li><b>Five files whose only output was an error now say what they
+        are.</b> The last page of each is a spreadsheet printed to PDF, and it
+        was being read as a chart</li>
+      <li>Stage times read from a daily report are now marked as the
+        report&rsquo;s rather than the chart&rsquo;s, so you can tell which is
+        which. Dates written 10-19-25 reach the CSV formatted like the rest.
+        OCR is a little quicker</li>
+      <li>Still to come on the rotated CalFrac wells: each zone also has a
+        Coiled Tubing sheet, and those are not read yet</li>
+    </ul>
+
     <h2>v1.7.0</h2>
     <ul>
       <li><b>Everything you have taught the Lab can now be backed up.</b>
