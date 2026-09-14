@@ -260,5 +260,19 @@
    "channel.sparse"
   ],
   "expect": false
+ },
+ {
+  "issue": "#645s",
+  "file": "00180",
+  "said": "STEP: same minutes drawn twice, half a minute apart (repaired: lag search in _hand_over_tails)",
+  "stages": [
+   "6"
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.overlap",
+   "clock.backwards"
+  ],
+  "expect": false
  }
 ]

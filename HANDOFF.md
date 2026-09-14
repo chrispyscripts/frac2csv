@@ -158,6 +158,42 @@ What the pass does NOT do: BH under the frame line at zero is read by the
 frame-row rule already; nothing here walks a pressure along a riser (the
 three-pen rule) or invents ink where no cover is.
 
+### The lag between two copies of the same minutes (00180, the STEP follow-up to #645)
+
+"Same issue with Step-1 charts", with a FracView shot of 00180 stage 6:
+two Slurry Rate traces dropping half a minute apart, two Tr Press traces
+where there is one well. The hand-over pass had refused the pair, rightly,
+because at lag zero the two charts disagree — and a STEP vector book is
+placed on the clock from the Daily Stage Summary, which files each start
+to the MINUTE and files the stage's start, not the instant the plot window
+opens. So the same minutes sat on the well twice, half a minute apart.
+
+`_hand_over_tails` now searches for the lag that makes the two charts the
+same — fifteen minutes either way for a start filed to the minute, one
+minute for a chart that printed its own clock — vectorised over a sliding
+window of the earlier chart (`_lag_scores`: 0.25 s for 27 charts) and
+centred on the lag the previous pair settled on, because the drift is
+smooth. The later chart is moved by the lag found and the cut is made
+there. The move is said on the stage with both clocks.
+
+What 00180 turned out to be: the charts' own "Time (min)" axes sit 40-41
+min apart where the summary files 39, and the alignment agrees with the
+axes to the second (stage 5's tail and stage 6's head match at +32 s on
+all ten channels, 0-1%). Over a day that is a drift of a few percent
+between the report's two clocks, so by the seventh stage of a run the
+window opens twenty minutes past its filed start. Anchored on the first
+chart of each run at its filed start and said in the note; which of the
+two clocks is the wall is not knowable from the book, and both are kept
+on the stage. 19 of 27 moved, by 32 s to 1179 s; 19 tails cut, 103 min;
+`clock.overlap` 21 → 3; 270 of 270 kept channels identical. Two pairs
+still disagree at every lag — 11→12 and 18→19, the first pair of a day
+each time, five of ten channels different — and are left as printed.
+Stages 9 and 10 are not in the summary, sit at midnight, and FracView's
+"clock turns back" line is them.
+
+00026, 00015 and 00041 through the same pass: nothing moved, every
+channel identical — the search only runs where lag zero fails.
+
 **Still open after this pass:**
 
 - **The pad and the flush — BUILT and measured (`4d2a978`).** The walk
@@ -182,6 +218,9 @@ three-pen rule) or invents ink where no cover is.
   title and legend are outlines, `bj1.detect` wants the title line in
   text, and `bj1` has no OCR path at all. The easy half of the BJ-textless
   class (no slant). Sized, not built.
+- 00180 pairs 11→12 and 18→19 disagree at every lag (five of ten
+  channels); stages 9 and 10 are not in the Daily Stage Summary and sit at
+  midnight. Look at the pages.
 - 01433's WH Prop Conc sits at 69% against BH's 100% after both Trican
   fixes; its loss is neither the rules nor DH's cover. Probe p212-p216
   the same way (mask / strip / trace) before guessing.

@@ -1013,6 +1013,53 @@ def _trican_continuous(results, notes):
 
 HANDOVER_MIN_S = 30.0      # shorter than this is clock rounding, not a tail
 HANDOVER_TOL = 0.05        # of the channel's own range over the stage
+HANDOVER_SEARCH_S = 900.0  # how far a start filed to the minute may sit from the window
+HANDOVER_SELF_S = 60.0     # and one the chart printed itself: the label's own precision
+HANDOVER_K = 900           # samples of B's head compared when searching for the lag
+
+
+def _lag_scores(a, b, offs, K):
+    """A[off:off+K] against B[:K] for every off in `offs` -> (channels
+    compared, channels agreeing, mean gap as a fraction of range), one
+    entry per off.
+
+    One vectorised pass per channel over a sliding window of A, so a
+    fifteen-minute search at one-second lags costs milliseconds and not
+    the twenty seconds a loop of scores did. A channel says nothing at an
+    off where fewer than ten samples are finite on both sides, and nothing
+    at all when it is flat over the stage.
+    """
+    import numpy as np
+    from numpy.lib.stride_tricks import sliding_window_view
+    offs = np.asarray(list(offs), int)
+    L = len(offs)
+    compared = np.zeros(L, int)
+    agreed = np.zeros(L, int)
+    gapsum = np.zeros(L, float)
+    for label, va in a["data"].items():
+        vb = b["data"].get(label)
+        if vb is None:
+            continue
+        xa = np.asarray(va, float)
+        xb = np.asarray(vb, float)[:K]
+        if len(xa) < K or len(xb) < K:
+            continue
+        fin = xa[np.isfinite(xa)]
+        scale = float(fin.max() - fin.min()) if fin.size else 0.0
+        if scale <= 0:
+            continue
+        valid = (offs >= 0) & (offs <= len(xa) - K)
+        if not valid.any():
+            continue
+        W = sliding_window_view(xa, K)[offs[valid]]
+        D = np.abs(W - xb[None, :])
+        cnt = np.isfinite(D).sum(axis=1)
+        g = np.nansum(D, axis=1) / np.maximum(cnt, 1) / scale
+        ok = cnt >= 10
+        compared[valid] += ok
+        agreed[valid] += ok & (g <= HANDOVER_TOL)
+        gapsum[valid] += np.where(ok, g, 0.0)
+    return compared, agreed, gapsum / np.maximum(compared, 1)
 
 
 def _hand_over_tails(results, notes):
@@ -1030,6 +1077,17 @@ def _hand_over_tails(results, notes):
     overlap (mean gap under 5% of the channel's range, on two thirds of the
     channels both plot). Where they disagree the overlap is real or a clock
     is wrong; that stays as printed and is said on the stage.
+
+    A clock a little wrong is the common case, and it is knowable. 00180's
+    STEP charts are placed from the Daily Stage Summary, which files each
+    start to the MINUTE and files the stage's start, not the instant the
+    plot window opens: stage 6's head was the same minutes as stage 5's
+    tail drawn half a minute later, so at lag zero they disagreed and both
+    were drawn. Where lag zero fails, the lag that makes the two charts the
+    same is searched for — five minutes either way for a start filed to the
+    minute, one minute for a chart that printed its own clock — and the
+    later chart is moved by it. The overlap is the only place the page says
+    to the second where a chart sits; the filed minute is kept as the bound.
     """
     import numpy as np
     per = {}
@@ -1041,57 +1099,102 @@ def _hand_over_tails(results, notes):
         if t0 is None or smp is None or len(smp) == 0:
             continue
         per.setdefault(str(r.get("source") or ""), []).append((t0, r))
-    trimmed, differ = [], []
+    trimmed, differ, moved = [], [], []
     for src, items in per.items():
         items.sort(key=lambda x: x[0])
-        for (ta, a), (tb, b) in zip(items, items[1:]):
+        prev = None
+        centre = 0                        # the last lag found: the drift is smooth
+        for tb, b in items:
+            if prev is None:
+                prev = (tb, b)
+                continue
+            ta, a = prev
+            prev = (tb, b)
             sec = _sample_sec(a)
-            n_a = len(a["samples"])
+            n_a, n_b = len(a["samples"]), len(b["samples"])
             end_a = ta + timedelta(seconds=n_a * sec)
             ov = (end_a - tb).total_seconds()
             if ov < HANDOVER_MIN_S:
                 continue
-            off = int(round((tb - ta).total_seconds() / sec))
-            if off * sec < 60.0:
-                continue                         # nothing of A would be left
-            k = min(n_a - off, len(b["samples"]))
-            if k < 10:
-                continue
-            compared, agreed = 0, 0
-            for label, va in a["data"].items():
-                vb = b["data"].get(label)
-                if vb is None:
-                    continue
-                xa = np.asarray(va, float)
-                xb = np.asarray(vb, float)
-                seg_a, seg_b = xa[off:off + k], xb[:k]
-                ok = np.isfinite(seg_a) & np.isfinite(seg_b)
-                if ok.sum() < 10:
-                    continue
-                fin = xa[np.isfinite(xa)]
-                scale = float(fin.max() - fin.min()) if fin.size else 0.0
-                if scale <= 0:
-                    continue
-                compared += 1
-                if float(np.mean(np.abs(seg_a[ok] - seg_b[ok]))) <= HANDOVER_TOL * scale:
-                    agreed += 1
+
             sb = b["meta"].get("stage") or "?"
-            if compared and agreed * 3 >= compared * 2:
-                a["samples"] = a["samples"][:off]
-                a["data"] = {l: v[:off] for l, v in a["data"].items()}
-                a["meta"]["duration_min"] = off * sec / 60.0
-                a["meta"].setdefault("warnings", []).append(
-                    f"last {ov / 60:.1f} min not exported here: the chart runs "
-                    f"on into stage {sb}, whose own chart re-plots those "
-                    f"minutes (same values), so the export hands over where "
-                    f"the next chart begins")
-                trimmed.append((a["meta"].get("stage") or "?", ov))
-            elif compared:
+            off0 = int(round((tb - ta).total_seconds() / sec))
+            keep = int(60.0 / sec)                       # a minute of A must remain
+            lag, best = 0, None
+            k0 = min(n_a - off0, n_b)
+            if off0 >= keep and k0 >= 10:
+                c, g, gp = _lag_scores(a, b, [off0], k0)
+                if c[0]:
+                    best = (g[0] * 3 >= c[0] * 2, g[0] / c[0], -gp[0], off0, k0, c[0])
+            if best is None or not best[0]:
+                # Searched around the lag the previous pair settled on, not
+                # around zero: on 00180 the windows sit 2-4 min further from
+                # each filed start than the one before (the charts' own clock
+                # and the filed minutes disagree by a few percent), so by the
+                # fourth stage of a run the lag is past a search centred on
+                # the filed time, and the run broke into two chains anchored
+                # 17 minutes apart. Following the drift keeps one chain.
+                reach = HANDOVER_SELF_S if b["meta"].get("clock_chart") else HANDOVER_SEARCH_S
+                reach = int(reach / sec)
+                mid = off0 + (0 if b["meta"].get("clock_chart") else int(round(centre / sec)))
+                back = min(reach, mid - keep)
+                fwd = min(reach, n_a - mid - keep)
+                K = min(n_b, n_a - (mid + fwd), HANDOVER_K)
+                if back >= 0 and fwd >= 0 and K >= 10:
+                    offs = np.arange(mid - back, mid + fwd + 1)
+                    c, g, gp = _lag_scores(a, b, offs, K)
+                    ok = (c > 0) & (g * 3 >= c * 2)
+                    ok[offs == off0] = False
+                    if ok.any():
+                        frac = np.where(c > 0, g / np.maximum(c, 1), 0.0)
+                        order = np.lexsort((-np.abs(offs - off0), -gp, frac))   # last key major
+                        i = next(j for j in order[::-1] if ok[j])
+                        lag = int((offs[i] - off0) * sec)
+                        best = (True, frac[i], -gp[i], int(offs[i]), min(n_a - int(offs[i]), n_b), int(c[i]))
+            if best is None:
+                centre = 0
+                continue
+            ok_, _frac, _gap, off, k, compared = best
+            centre = lag if ok_ else 0
+            if not ok_:
                 a["meta"].setdefault("warnings", []).append(
                     f"overlaps stage {sb} by {ov / 60:.1f} min and the two "
                     f"charts disagree there — one clock is wrong, or the "
                     f"stages overlap for real; both kept as printed")
                 differ.append((a["meta"].get("stage") or "?", sb, ov))
+                continue
+            if lag:
+                was = b["meta"].get("start_time")
+                tb = tb + timedelta(seconds=lag)
+                b["meta"]["start_time"] = tb.strftime("%H:%M:%S")
+                b["meta"]["date"] = tb.date().isoformat()
+                b["meta"].setdefault("warnings", []).append(
+                    f"start moved {lag:+d} s ({was[:8]} → {tb:%H:%M:%S}) to line "
+                    f"up with stage {a['meta'].get('stage') or '?'}'s chart, "
+                    f"which re-plots the same minutes; the filed start is to "
+                    f"the minute and this is where the window opens")
+                moved.append((sb, lag))
+                prev = (tb, b)
+                ov = (end_a - tb).total_seconds()
+            a["samples"] = a["samples"][:off]
+            a["data"] = {l: v[:off] for l, v in a["data"].items()}
+            a["meta"]["duration_min"] = off * sec / 60.0
+            a["meta"].setdefault("warnings", []).append(
+                f"last {ov / 60:.1f} min not exported here: the chart runs "
+                f"on into stage {sb}, whose own chart re-plots those "
+                f"minutes (same values), so the export hands over where "
+                f"the next chart begins")
+            trimmed.append((a["meta"].get("stage") or "?", ov))
+    if moved:
+        big = max(abs(l) for _s, l in moved)
+        notes.append(f"{len(moved)} chart start(s) moved by up to {big} s to line "
+                     f"up with the chart before, which re-plots the same minutes "
+                     f"— the filed start is to the minute, and the overlap says "
+                     f"to the second where the window opens"
+                     + (". A move that large is a run of charts whose own clock "
+                        "and the filed starts drift apart by a few percent; the "
+                        "charts' own spacing is kept, anchored on the first "
+                        "chart of the run at its filed start" if big > 600 else ""))
     if trimmed:
         total = sum(o for _s, o in trimmed) / 60.0
         notes.append(f"{len(trimmed)} chart(s) ran on into the next stage and "

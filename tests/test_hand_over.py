@@ -133,6 +133,90 @@ class HandOver(unittest.TestCase):
         self.assertEqual(notes, [])
 
 
+class FiledToTheMinute(unittest.TestCase):
+    """00180: the Daily Stage Summary files starts to the minute, and stage
+    6's window opened half a minute before its filed 08:23."""
+
+    def setUp(self):
+        # white noise: aperiodic, so exactly one lag lines the two charts up
+        # (a sine would match again every period); 90 minutes so a stage 5
+        # of 70 min leaves fifteen minutes of reach either way
+        self.job = 40.0 + 10.0 * np.random.default_rng(7).normal(size=400 * 60)
+        self.a = series(5, "2016-11-11", "07:17:00", 70, self.job[0:70 * 60])
+
+    def b_opening_at(self, offset_s, filed="08:23:00", minutes=60, **meta):
+        # B's data really begins 66 min + offset after A's; filed at 08:23
+        start = 66 * 60 + offset_s
+        return series(6, "2016-11-11", filed, minutes,
+                      self.job[start:start + minutes * 60], **meta)
+
+    def test_half_a_minute_early_is_found_moved_and_cut(self):
+        b = self.b_opening_at(-30)
+        notes = []
+        pipeline._hand_over_tails([self.a, b], notes)
+        self.assertEqual(b["meta"]["start_time"], "08:22:30")
+        self.assertEqual(b["meta"]["date"], "2016-11-11")
+        self.assertEqual(len(self.a["samples"]), 66 * 60 - 30)
+        self.assertTrue(any("start moved -30 s (08:23:00 → 08:22:30)" in w
+                            for w in b["meta"]["warnings"]))
+        self.assertTrue(any("moved by up to 30 s" in n for n in notes))
+        self.assertTrue(any("cut where the next chart begins" in n for n in notes))
+
+    def test_late_is_found_too(self):
+        b = self.b_opening_at(+45)
+        pipeline._hand_over_tails([self.a, b], [])
+        self.assertEqual(b["meta"]["start_time"], "08:23:45")
+        self.assertEqual(len(self.a["samples"]), 66 * 60 + 45)
+
+    def test_a_move_across_midnight_carries_the_day(self):
+        a = series(5, "2016-11-11", "23:00:00", 70, self.job[0:70 * 60])
+        b = series(6, "2016-11-11", "23:59:50", 60, self.job[60 * 60 + 20:])   # opens 00:00:20
+        pipeline._hand_over_tails([a, b], [])
+        self.assertEqual((b["meta"]["date"], b["meta"]["start_time"]), ("2016-11-12", "00:00:20"))
+
+    def test_beyond_reach_is_left_and_said(self):
+        b = self.b_opening_at(-1000)                         # more than fifteen minutes
+        notes = []
+        pipeline._hand_over_tails([self.a, b], notes)
+        self.assertEqual(b["meta"]["start_time"], "08:23:00")
+        self.assertEqual(len(self.a["samples"]), 70 * 60)
+        self.assertTrue(any("disagree" in n for n in notes))
+
+    def test_a_chart_that_printed_its_own_clock_moves_a_minute_at_most(self):
+        b = self.b_opening_at(-90, clock_chart=True)
+        pipeline._hand_over_tails([self.a, b], [])
+        self.assertEqual(b["meta"]["start_time"], "08:23:00")
+        self.assertEqual(len(self.a["samples"]), 70 * 60)
+        c = self.b_opening_at(-40, clock_chart=True)
+        pipeline._hand_over_tails([self.a, c], [])
+        self.assertEqual(c["meta"]["start_time"], "08:22:20")
+
+    def test_the_next_pair_starts_from_the_moved_chart(self):
+        b = self.b_opening_at(-30)
+        c = series(7, "2016-11-11", "09:20:00", 60,
+                   self.job[(66 * 60 - 30) + 57 * 60:])       # opens 57 min after B's true start
+        pipeline._hand_over_tails([self.a, b, c], [])
+        self.assertEqual(b["meta"]["start_time"], "08:22:30")
+        self.assertEqual(c["meta"]["start_time"], "09:19:30")
+        self.assertEqual(len(b["samples"]), 57 * 60)
+
+
+    def test_the_search_follows_the_drift(self):
+        # b sits 800 s past its filed start, c 1500 s past its own: beyond
+        # reach from zero, within reach of the lag b settled on
+        # windows long enough that each chart still reaches the next one's
+        # true opening: a runs 90 min, b 75
+        a = series(5, "2016-11-11", "07:17:00", 90, self.job[0:90 * 60])
+        b = self.b_opening_at(+800, minutes=75)
+        c = series(7, "2016-11-11", "09:20:00", 60,
+                   self.job[(66 * 60 + 800) + 57 * 60 + 700:])   # 57 min after b, filed 08:23+57
+        notes = []
+        pipeline._hand_over_tails([a, b, c], notes)
+        self.assertEqual(b["meta"]["start_time"], "08:36:20")
+        self.assertEqual(c["meta"]["start_time"], "09:45:00")   # 09:20 + 1500 s
+        self.assertTrue(any("drift apart" in n for n in notes))
+
+
 class Continuous(unittest.TestCase):
 
     def setUp(self):
