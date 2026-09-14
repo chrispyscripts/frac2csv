@@ -1799,9 +1799,17 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                           if c.get("axis_frame")}
                 if data:
                     stage = md.get("stage")
+                    # The page prints "Interval Date 02/26/25(m/d/y)" and
+                    # "Start Time 05:01(hh:mm)" in plain text beside the
+                    # chart, and this read neither — every stage of every
+                    # layout-B filing came out "no date 00:00:00" while the
+                    # answer sat two inches away on the same page (Carmine,
+                    # 2026-09-13). Still blank when the page does not say,
+                    # rather than invented.
                     meta = {"title": f"Stage {stage or '?'}",
                             "uwi": md.get("uwi", ""), "stage": str(stage or ""),
-                            "date": "", "start_time": "00:00:00",
+                            "date": md.get("date") or "",
+                            "start_time": md.get("start_time") or "00:00:00",
                             "duration_min": len(samples) / 60.0,
                             "warnings": []}
                     results.append(_series(

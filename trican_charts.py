@@ -944,21 +944,123 @@ CONC_PER_RATE = 100.0
 CONC_CHECK_TOL = 0.08
 
 
+# How far either side of a reported gridline to look for its ink.
+#
+# ONE. Every offset measured is one pixel, and the erase is already r-1..r+1
+# around whatever row matches, so a band of 1 reaches three rows either side
+# of the reported line. Two looked harmless and was not: on page 226 of 01350
+# it took 45% of wh_rate's samples with it, because that stage pumps a flat
+# ~14 m3/min whose curve lies within the widened band. The rule being removed
+# is one pixel out of place; reaching further only finds curves.
+# How far either side of a reported gridline to look for its ink.
+#
+# b_box reports where the gridline is; the ink is not always on that row. On
+# 00981 the same rule is reported at 60, 61, 62 and 63 across four pages while
+# the ink sits at 61 every time, so p120 is off by two and a narrower search
+# exported its gridline as 698.3 kg/m3 against a printed 352.5 (#634).
+#
+# Reaching further is only safe because _is_rule_row got strict: at the old
+# definition a search of 2 cost Mainline Pressure five points of samples across
+# 142 pages, since its dotted trace answered to "dozens of short runs" as
+# readily as a rule did.
+_RULE_SEARCH = 3
+
+# What fraction of a dotted line's dashes must fall on its own regular beat.
+#
+# Measured over 40 candidate rows on 00981 pp120/149/153: every real gridline
+# scores 0.85 to 1.00, every dotted CURVE scores 0.09 to 0.29. Three times the
+# margin either side of 0.6, and the test never asks what the period IS, only
+# that there is one — so a 2-on-2-off rule elsewhere still passes.
+_RULE_REGULARITY = 0.6
+
+
 def _is_rule_row(mask, r, x0, x1):
     """Does this row of the mask hold a dotted RULE rather than a curve?
+
+    Two questions, and the second one matters more than it looks.
 
     A dotted rule is dozens of one-pixel dashes spread across the plot; a
     curve crossing or lying along the row is a handful of long runs. On
     00583 p33 the rule rows carry ~360 runs of median length 1 and the curve
-    row carries 8 of median 22, so the two are not close.
+    row carries 8 of median 22, so on THAT page the two are not close.
+
+    They are close on others, and the run test alone cannot separate them:
+    this template draws Mainline Pressure dotted too. On 00981 p120 seven
+    consecutive rows of the mainline trace each pass the run test — 60 to 230
+    short runs apiece — and blanking them cost the channel samples across the
+    corpus. The rule is not merely dashed, it is REGULAR: its dashes repeat on
+    a fixed beat all the way across, and a dotted curve's do not, because the
+    curve is only near the row where it happens to be near it.
+
+    So measure the beat. Of 40 candidate rows on pp120/149/153, every gridline
+    puts 0.85 to 1.00 of its dashes on the modal interval and every dotted
+    curve manages 0.09 to 0.29.
     """
     v = np.asarray(mask[r, x0 + 5:x1 - 5], bool)
     idx = np.flatnonzero(v)
     if len(idx) < 20:
         return False
     cuts = np.flatnonzero(np.diff(idx) > 1) + 1
-    runs = [len(g) for g in np.split(idx, cuts)]
-    return len(runs) >= 20 and float(np.median(runs)) <= 3.0
+    groups = np.split(idx, cuts)
+    if len(groups) < 20 or float(np.median([len(g) for g in groups])) > 3.0:
+        return False
+    step = np.diff(np.array([g[0] for g in groups]))
+    if not len(step):
+        return False
+    _v, counts = np.unique(step, return_counts=True)
+    return counts.max() / len(step) >= _RULE_REGULARITY
+
+
+def _strip_rules(masks, rows, x0, y0, x1, y1):
+    """Blank the dotted gridlines out of the series masks they collide with.
+
+    The rules are drawn in (92,97,5) — the SAME colour as the WH Prop Conc
+    trace — so that series' mask arrives with eight full-width rules in it and
+    the trace reads 499 kg/m3 (a gridline) instead of 162. A curve loses 3px
+    where it crosses a rule, which curve_positions bridges.
+
+    Three things have been wrong here, and all three were the same mistake:
+    asking one sample to describe a row that holds two different things.
+
+    First the rule colour was read from the middle row alone and applied to
+    every row — but this template tints each axis's rules to match that axis's
+    curve, so the top rule is Prop Conc olive while the rest are Slurry Rate
+    blue, and one sample cannot describe both.
+
+    Then every row in `rows` was blanked across the FULL WIDTH whether it held
+    a rule or not. On 00583 p33 rows 132 and 136 are adjacent and only 132 is
+    a rule: 136 is the rate curve. Blanking it took the curve out for its whole
+    horizontal extent, and WH Slurry Rate went from 96.6% of columns carrying
+    ink to 59.9%. That is the "interpolation" everyone was looking at — the
+    interpolator was fine, what it was handed was not.
+
+    Last, the row's DOMINANT dark colour decided which series a rule belonged
+    to. A row holding a rule of one colour and a curve of another has no
+    dominant colour worth the name: on 00981 p153 row 61 carries the olive
+    conc rule as 117 one-pixel dashes and a blue curve besides, the blue wins
+    the count, the distance to the olive is 236 against a radius of 42, and
+    nothing is stripped. It reached the export as 698.3 kg/m3 against a report
+    printing 456.2 (Carmine, #634). The gate never added anything either —
+    _is_rule_row is asked per series against that series' OWN mask, so it
+    already knows whose rule it is. So ask every series, and let the mask
+    answer.
+
+    A rule and a curve do not look alike along a row. Measured on 00583 p33: a
+    rule is ~360 runs of ONE pixel, a 1-on-1-off dotted line; the curve at row
+    136 is 8 runs with a median of 22 and a longest of 46.
+
+    Each gridline is looked for in a small BAND, not on the exact row, because
+    b_box reports where the gridline is and the ink is not always on that row.
+    On 00981 the same rule is reported at 60, 61, 62 and 63 across four pages
+    while the ink sits at 61 every time.
+    """
+    for r0 in rows:
+        for r in range(max(y0, r0 - _RULE_SEARCH), min(y1, r0 + _RULE_SEARCH) + 1):
+            for key, _col, _l, _u, _a in B_SERIES:
+                m = masks.get(key)
+                if m is None or not _is_rule_row(m, r, x0, x1):
+                    continue          # no rule of this colour on this row
+                m[max(0, r - 1):r + 2, :] = False
 
 
 def extract_image_b(img, sample_sec=1.0):
@@ -1006,44 +1108,8 @@ def extract_image_b(img, sample_sec=1.0):
         info_conc_derived = False
 
     masks = b_masks(img)
-    # The dotted gridlines are drawn in (92,97,5) — the SAME colour as the WH
-    # Prop Conc trace — so that series' mask arrives with eight full-width
-    # rules in it and the trace reads 499 kg/m3 (a gridline) instead of 162.
-    # Blank the gridline rows out of any mask whose colour collides; a curve
-    # loses 3px where it crosses a rule, which curve_positions bridges.
-    # The rule colour is read PER ROW, and a row is only blanked when it
-    # actually holds a rule.
-    #
-    # Two things were wrong. The colour was taken from the middle row alone
-    # and applied to all of them — but this template tints each axis's rules
-    # to match that axis's curve, so the top rule is Prop Conc olive while the
-    # rest are Slurry Rate blue, and one sample cannot describe both.
-    #
-    # Worse, every row in `rows` was blanked across the FULL WIDTH whether it
-    # held a rule or not. On 00583 p33 rows 132 and 136 are adjacent and only
-    # 132 is a rule: 136 is the rate curve. Blanking it took the curve out for
-    # its whole horizontal extent, and WH Slurry Rate went from 96.6% of
-    # columns carrying ink to 59.9%, leaving 40.8% of the trace as NaN for
-    # resample to bridge or blank. That is the "interpolation" everyone was
-    # looking at — the interpolator was fine, what it was handed was not.
-    #
-    # A rule and a curve do not look alike along the row. Measured on that
-    # page: a rule is ~360 runs of ONE pixel, a 1-on-1-off dotted line; the
-    # curve at row 136 is 8 runs with a median of 22 and a longest of 46. So
-    # ask the row.
-    for r in rows:
-        seg = img[r, x0 + 5:x1 - 5]
-        band = seg[seg.sum(axis=1) < 720]
-        if not len(band):
-            continue
-        vals, counts = np.unique(band, axis=0, return_counts=True)
-        gcol = vals[counts.argmax()]
-        for key, col, _l, _u, _a in B_SERIES:
-            if ((np.array(col) - gcol) ** 2).sum() > B_RADIUS ** 2:
-                continue
-            if not _is_rule_row(masks[key], r, x0, x1):
-                continue                  # the curve happens to run here
-            masks[key][max(0, r - 1):r + 2, :] = False
+    _strip_rules(masks, rows, x0, y0, x1, y1)
+
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
     for key, _c, label, unit, axis in B_SERIES:
@@ -1119,11 +1185,36 @@ def detect_b(page):
     return bool(_b_images(page))
 
 
+# The stage's clock, which layout B prints as ordinary text beside the chart:
+#
+#     Interval Date   02/26/25(m/d/y)
+#     Start Time      05:01(hh:mm)
+#
+# The order marker is REQUIRED, not decoration. The report states its own
+# convention and a filing that ever printed d/m/y would be read a month wrong
+# in silence; refusing an unmarked date costs a clock, believing the wrong one
+# costs the stage. Measured over 487 chart pages in 14 filings: every one
+# carries both fields, every date says (m/d/y), every time says (hh:mm).
+_B_DATE = re.compile(r"Interval Date\s*(\d{1,2})/(\d{1,2})/(\d{2})\s*\(m/d/y\)")
+_B_START = re.compile(r"Start Time\s*(\d{1,2}):(\d{2})\s*\(hh:mm\)")
+
+
 def page_meta_b(page):
-    """Stage id and the report's own printed maxima, which are on the page."""
+    """Stage id, the stage's clock, and the report's own printed maxima —
+    all of it printed as text on the page beside the chart."""
     text = page.get_text()
     meta = {"stage": None, "uwi": "", "depth_m": None, "continuous": False,
-            "printed": {}}
+            "date": "", "start_time": "", "printed": {}}
+    m = _B_DATE.search(text)
+    if m:
+        mo, dy, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= mo <= 12 and 1 <= dy <= 31:
+            meta["date"] = f"20{yr:02d}-{mo:02d}-{dy:02d}"
+    m = _B_START.search(text)
+    if m:
+        hh, mi = int(m.group(1)), int(m.group(2))
+        if hh < 24 and mi < 60:
+            meta["start_time"] = f"{hh:02d}:{mi:02d}:00"
     m = B_STAGE.search(text)
     if m:
         meta["stage"] = int(m.group(1))
