@@ -30,7 +30,7 @@ def main(out, flags_path):
         if warn:
             verdict = "FOUND" if expect else "STILL"
             detail = "; ".join(f"{x['kind']}[{x['stage'] or 'file'}] {x['evidence'][:70]}" for x in warn[:2])
-        elif hits:
+        elif hits and expect:
             verdict = "found(i)"
             detail = f"{hits[0]['kind']} info: {hits[0]['evidence'][:80]}"
         else:

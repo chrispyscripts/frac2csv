@@ -41,6 +41,86 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### Six defect classes repaired against the audit (2026-09-14)
+
+Each one: the audit named it, the page was read to find the mechanism,
+the fix was measured through the real pipeline before and after — a
+worktree at the old commit for "before", never a reimplementation — and
+the audit re-scored the flag. Commits in order: f56e9b2, 8808c89,
+eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
+
+| class | mechanism, as measured | fix | measured |
+|---|---|---|---|
+| **#639** Trican 2015 sheets, no dates or times | the stage table (already parsed) prints a bare `05:32`; `_parse_start` wanted `Feb 10, 10:09 AM` | bare 12-hour starts resolved by stage order, the first half-day from the day sheet's `Start Time: 3:01 pm`, dated from `Start Date: July 06, 2015`; every one labelled the table's, and a tie labelled a GUESS | 00015: 0 → 11 of 11 clocked; `clock.none` gone |
+| **#625/#640** "implausible stage duration" | this font's 9 reads as 3 (`19:00`→`13:00`, `09:45`→`03:45`), the midnight unwrap fires on the misread, the fit lands on the wrapped cluster; and p155 is a 13.5-h window round a 1-h stage | ladder fitted as read, unwrapped, and with 3↔9 swapped, ranked on raw inliers, misread hours put back on the line, the printed Start Time breaking ties; windows trimmed to `Start Time + Elapsed Time` when that lies inside the axis | 7 dead pages back as stages; s60 141→35 min, s62 151→37; #640's overlaps gone; 160 of 194 stages byte-identical |
+| **#638/#635/#641** Trican WH Prop Conc holds | `_strip_rules` blanked a rule row whole; the holds at 100, 200, 300 sit ON the rules in the rule's own olive — 214 of 637 inked columns lost there on p187, 2 at the tracer | dashes (≤4 px) go, long runs stay | WH 52→72% (01350), 48→61% (01421); BH, Slurry byte-identical |
+| — its remainder | no olive at all in 553 columns of p227 where DH's ink is at the floor: WH under DH through pad/flush and on every hold DH catches up on | `curve_trace.fill_under` WH ← DH: a curve with no ink inside its span is under the cover's stroke where its trace continues | WH 72→87% (01350), `gap.hold` 31→0, `channel.sparse` 14→0; 01433 only 66→69% — **open**, another shape |
+| **#636** Tr Press hole, 01433 s24 | a steep 43→30 drop anti-aliases to pink, `(253,114,115)` is 140 from red, outside the 42 sphere; 25 s of hole where the page has a line | masks classify by distance to the series' blend line toward white, stopped 80 short of the page | hole gone; Tr Press 90→93% over 88 stages; Monitor LOST 6 points, correctly — its old sphere had 237 pale-olive pixels (G > R) from WH's fringe |
+| **#629** Canyon plunges to zero | black is the curve and the axis; the 2.4-pt tick marks passed the 5-pt filter and put a baseline point in every black series at every time label, all panels alike | any exactly-vertical black segment is the axis's; `#7 - continued` is `7 (2)` | spikes 56→0, `spike.aligned` 20→1, BHP plunges 10→1 per stage; red channels identical to the sample |
+| **#627** STEP Btm Prop Conc under Prop Conc | orange painted first, green over; 80% of s45's drawn span gone (#112's class) | `fill_under` orange ← green, from the cover's TRACED row (raw ink chained off a kept glyph and doubled peaks on 11 stages of 00324), stepping over ≤3 dropout columns | 01316: BH 24→84% over 45 stages, s45 15→70%, peak = WH's; sample 00324 31→66%, 00322 33→70%; BH above WH's peak 1→1, 7→7, 8→8 — none new; 479/479 other channel-stages byte-identical; 0 deductions on chemical charts |
+
+**Rules these earned, so they are not re-learned:**
+
+- A hole in the export has THREE places to be lost — the mask, the strip,
+  the trace — and one probe says which: ink-columns before strip, after
+  strip, traced. p187's 214 went at the strip; p227's 553 never made the
+  mask. Run that before theorising.
+- A curve sampled in time is never exactly vertical. Of 12,000 coloured
+  segments on a Canyon page, none was. Vertical = axis.
+- A stroke's fringe is its colour blended with the page. A radius round
+  the pure colour loses the fringe on every steep stroke and, for a pale
+  series, admits other series' fringes. Classify to the blend line, and
+  stop short of white by DISTANCE, not fraction.
+- Occlusion is a deduction, not a fill: a curve with no ink inside its own
+  drawn span is under something, and the only thing it can be under is
+  another curve's stroke in that column. Continuity from the previous
+  column, a stroke not a riser, counted and noted. The old guard ("donor
+  matches at both edges") could never fire; this one fires only where the
+  cover is exactly where the hidden curve was heading.
+- **And it consults TRACES, despeckled, on the surface chart only.** Three
+  ways the same walk went wrong before it was right, each caught by the
+  peak guard (BH above WH by 5%) on a file the flagged one could not
+  stand in for: raw cover ink chains along the FracPro logo; a fresh
+  curve_positions trace still carries 1-3-column islands (legend flecks,
+  a printed mark's fringe) that seed a chain at 650 kg/m3 with WH at
+  320 — `_no_islands` on both sides before the walk; on the chemical
+  chart green and orange are two additives, not one curve, so the walk
+  runs only where the left axis is pressure; and the hidden trace's
+  islands are BLANKED, not merely ignored — a fleck the export's
+  despeckle had always deleted (00324 p130 col 248, 643 kg/m3) stopped
+  being an island once the floor was filled either side of it, and the
+  export drew a triangle to 643 with WH at 26. **One flagged file is not
+  a validation set.** 01316 showed none of the four.
+- A 12-hour table's AM/PM comes from the sequence, its first half-day
+  from a printed am/pm anchor, and a tie is a guess that must say so. A
+  dated 00:00:00 is midnight, not the default.
+
+**Still open after this pass:**
+
+- **The pad and the flush, under the cover.** `fill_under` is confined to
+  the hidden curve's VISIBLE span by design. 01350 stages 3, 6, 7 keep
+  WH at 68-74% against BH's 100%, and 01316 stage 45 keeps BH at 70%
+  against WH's 95%, and in every case the missing seconds are before the
+  first ink or after the last, where the cover sits on the axis floor
+  with the hidden curve's zero under it. The rule that closes it: walk
+  beyond the span only while the cover's trace is AT THE FLOOR — zero is
+  what the pen would draw there, and nowhere else is anything forced.
+  Not written; measure it on those four stages first.
+- 01433's WH Prop Conc sits at 69% against BH's 100% after both Trican
+  fixes; its loss is neither the rules nor DH's cover. Probe p212-p216
+  the same way (mask / strip / trace) before guessing.
+- 00015 is layout A (grey gridlines, a different tracer) and keeps 5
+  `gap.hold`s; the strip fix is layout B only.
+- 00229 stage 8 at 34:12: Blender Clean, Blender Slurry and Slurry Rate
+  spike together. Not a tick — look at the page.
+- 01350 p186 prints `Start Time 02:41` under a chart whose clock axis
+  runs 12:50-13:58; 00015's stage 4 sheet says 12:00 where its chart's
+  axis reads 18:30. Both are left standing on the export as the report
+  printed them.
+- 01433 stage 16 has no page. Honest; it stays on the ladder as missing.
+- Monitor Pressure on 01350 s1: a 7-minute gap at 60:25 where the curve
+  goes 0.2 → 44. Not one of the six; unexamined.
+
 ### The audit finds what Carmine flags, before he flags it (2026-09-14)
 
 `audit.py` runs over the Lab's own payload and emits findings — the kinds

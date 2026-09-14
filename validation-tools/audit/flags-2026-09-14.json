@@ -2,7 +2,7 @@
  {
   "issue": "#638",
   "file": "01350",
-  "said": "WH Prop Con missing in a number of stages",
+  "said": "WH Prop Con missing in a number of stages (repaired 58cd951 + WH\u2190DH deduction)",
   "stages": [
    "1",
    "2",
@@ -14,7 +14,7 @@
    "gap.hold",
    "pair.coverage"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#634",
@@ -34,7 +34,7 @@
  {
   "issue": "#627",
   "file": "01316",
-  "said": "missing data on a number of graphs",
+  "said": "missing data on a number of graphs (repaired curve_trace.fill_under)",
   "stages": [
    "45"
   ],
@@ -46,12 +46,12 @@
    "channel.absent",
    "channel.empty"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#635",
   "file": "01421",
-  "said": "gaps in wh prop con",
+  "said": "gaps in wh prop con (repaired 58cd951 + WH\u2190DH deduction)",
   "stages": [
    "14"
   ],
@@ -61,12 +61,12 @@
    "gap.hold",
    "gap.missing"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#636",
   "file": "01433",
-  "said": "Gaps in TR Press",
+  "said": "Gaps in TR Press (repaired blend-line masks)",
   "stages": [
    "24"
   ],
@@ -76,7 +76,7 @@
    "gap.hold",
    "gap.missing"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#636b",
@@ -94,21 +94,20 @@
  {
   "issue": "#625",
   "file": "01433",
-  "said": "5 stages missing",
+  "said": "5 stages missing (repaired eb5b4cf)",
   "stages": [
    ""
   ],
   "channel": null,
   "kinds": [
-   "stage.missing",
    "stage.failed"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#629",
   "file": "00229",
-  "said": "large downward spikes",
+  "said": "large downward spikes (repaired 8808c89)",
   "stages": [
    "7"
   ],
@@ -117,12 +116,12 @@
    "spike",
    "spike.aligned"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#639",
   "file": "00015",
-  "said": "no dates or times",
+  "said": "no dates or times (repaired f56e9b2)",
   "stages": [
    ""
   ],
@@ -130,12 +129,12 @@
   "kinds": [
    "clock.none"
   ],
-  "expect": true
+  "expect": false
  },
  {
   "issue": "#639b",
   "file": "00015",
-  "said": "no dates or times (stage 4)",
+  "said": "no dates or times (stage 4) (repaired f56e9b2)",
   "stages": [
    "4"
   ],
@@ -144,6 +143,48 @@
    "clock.in-table",
    "clock.absent"
   ],
+  "expect": false
+ },
+ {
+  "issue": "#640",
+  "file": "01433",
+  "said": "5 stages missing, 2 overlapping (repaired eb5b4cf)",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.failed",
+   "clock.overlap"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#640b",
+  "file": "01433",
+  "said": "stage 16 has no page at all \u2014 honest",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.missing"
+  ],
   "expect": true
+ },
+ {
+  "issue": "#641",
+  "file": "01350",
+  "said": "wh prop conc still missing (repaired 58cd951 + WH\u2190DH)",
+  "stages": [
+   "1"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "pair.coverage"
+  ],
+  "expect": false
  }
 ]
