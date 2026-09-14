@@ -316,6 +316,14 @@
      without tripping the rule. Muted and hover-revealed so sixty-six rows do
      not read as sixty-six alarms; carmine and always shown on the rows that
      ARE flagged, and on one already corrected by hand. */
+  .editlbl { margin-right:5px; font:inherit; font-size:10px; line-height:1;
+             border:1px solid var(--line); color:var(--mut);
+             background:var(--panel); border-radius:5px; padding:2px 4px;
+             cursor:pointer; flex-shrink:0; visibility:hidden; }
+  .stagerow:hover .editlbl { visibility:visible; }
+  .stagerow:hover .editlbl:hover { border-color:var(--carmine); color:var(--carmine); }
+  .stagerow.renamed-row .editlbl { visibility:visible;
+             border-color:var(--carmine); color:var(--carmine); }
   .fixtime { margin-left:6px; font:inherit; font-size:10px; font-weight:600;
              border:1px solid var(--line); color:var(--mut);
              background:var(--panel); border-radius:5px; padding:0 5px;
@@ -1432,11 +1440,11 @@ async function saveExports(entry, dir) {
   let n = 0;
   if (entry.well) {
     const base = secondsBase(entry.well);
-    if (settings.format !== "xlsx") { await put(base + ".csv", wellCSV(entry.well.stages)); n++; }
-    if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs)); n++; }
+    if (settings.format !== "xlsx") { await put(base + ".csv", wellCSV(entry.well.stages, entry.name)); n++; }
+    if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs, entry.name)); n++; }
   }
   for (const t of (entry._tables || [])) {
-    await put(entry.name.replace(/\.pdf$/i, "") + "-stages-table.csv", tableCSV(t));
+    await put(entry.name.replace(/\.pdf$/i, "") + "-stages-table.csv", tableCSV(t, entry));
     n++;
   }
   return n;
@@ -1450,7 +1458,7 @@ const CANON = ["Tr Press", "Slurry Rate", "WH Prop Conc", "BH Prop Conc"];
 // surface + chemical plot) are merged side-by-side by sample index. Cells are
 // typed — strings for UWI/STAGE/DATETIME/LABEL, numbers (or null) elsewhere —
 // so the CSV and the Excel workbook render from one source.
-function wellModel(stages) {
+function wellModel(stages, file) {
   // Carmine's spec (his 0422 seconds example): ALWAYS exactly the four
   // canonical channels with his unit strings — vendor extras never export
   const cols = CANON.slice();
@@ -1489,8 +1497,12 @@ function wellModel(stages) {
     // back". It arrived with #550 in v1.2.1, which is when these keys started
     // carrying the suffix. Every VIEW already strips it through stageDisplay;
     // the export was the one place still shipping it.
-    const label = (String(key) === "?" || String(key) === "")
-      ? seqNo : stageDisplay(String(key));
+    // A name typed by hand wins over the printed one. It is the same override
+    // the list and the graph show, and a CSV that disagreed with the screen
+    // would be worse than no rename at all.
+    const label = stageNameGet(key, file)
+      || ((String(key) === "?" || String(key) === "")
+            ? seqNo : stageDisplay(String(key)));
     const grp = groups.get(key);
     const M = grp[0].meta;
     const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));
@@ -1556,8 +1568,8 @@ function csvCell(v) {
   return typeof v === "number" ? v.toFixed(5) : v;
 }
 
-function wellCSV(stages) {
-  const m = wellModel(stages);
+function wellCSV(stages, file) {
+  const m = wellModel(stages, file);
   const lines = [m.head.join(","), m.unitRow.join(",")];
   for (const b of m.blocks)
     for (const r of b.rows) lines.push(r.map(csvCell).join(","));
@@ -1630,8 +1642,8 @@ function buildXlsx(sheets) {          // sheets = [{name, rows}]
   return fflate.zipSync(files, { level: 6 });
 }
 // tabs=true → MAIN + one sheet per stage; tabs=false → single MAIN sheet only
-function wellXLSX(stages, tabs) {
-  const m = wellModel(stages);
+function wellXLSX(stages, tabs, file) {
+  const m = wellModel(stages, file);
   const used = new Set();
   const sheets = [{ name: sheetName("MAIN", used),
                     rows: [m.head, m.unitRow, ...m.blocks.flatMap(b => b.rows)] }];
@@ -1646,8 +1658,28 @@ function csvCell(v) {
   const s = v == null ? "" : String(v);
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;   // RFC-4180 quoting
 }
-function tableCSV(t) {
+function tableCSV(t, entry) {
   const prov = providerOf(t.source);
+  // Our Terms, when that is what the screen is showing.
+  //
+  // This dumped the RAW table and nothing else, so the one column the table
+  // view DERIVES — Stage Label, joined from the charts by stage number for the
+  // many sheets that print a number and no name — existed on screen and in no
+  // file (Carmine, 2026-09-13). An export that disagrees with the view is
+  // worse than one that is merely sparse: the column is right there, so its
+  // absence reads as the extractor having missed it.
+  //
+  // Same condition the view uses, including the fall-back: a chemicals or QA
+  // sheet curates down to two identity columns and no readings, and shipping
+  // THAT would be a real loss, so those export whole.
+  if (tableTerms === "ours" && entry) {
+    const cur = curateTable(t, prov, chartStageLabels(entry.secItems, entry.name));
+    if (cur.columns.length > 0 && !cur.thin)
+      return [["well", t.well, "uwi", t.uwi, "formation", t.formation]
+                .map(csvCell).join(","),
+              cur.columns.map(csvCell).join(","),
+              ...cur.rows.map(r => r.map(csvCell).join(","))].join("\n");
+  }
   const keep = (t.columns || []).map(c => keepColumn(prov, c));
   const pick = arr => keep.some(k => !k)
     ? arr.filter((_v, i) => keep[i]) : arr;
@@ -1709,8 +1741,8 @@ function stageItems(stages) {
 // The chart's own printed name. The sequential position rides alongside it in
 // the stage list rather than replacing it — the export carries both columns,
 // so there is nothing for a setting to choose between.
-function stageLabel(item) {
-  return item.key;
+function stageLabel(item, file) {
+  return stageNameGet(item.key, file) || item.key;
 }
 
 // Carmine, #546: "the stage label should not be getting the chart type added
@@ -1795,8 +1827,11 @@ function render(entry, fname, stages, tables, notes, summary) {
     .map(x => x[0]);
   for (const t of ranked) {
     const name = tableCsvName(base, t.title, tnames.size, tnames);
+    // Only the NAME and the count are ever read off this list, and building
+    // the CSV here meant building it before the file's own stage items exist —
+    // so it could never be the curated one anyway. Built on demand instead.
     if (!tableFiles.some(x => x.name === name))
-      tableFiles.push({ name, text: tableCSV(t), provider: providerOf(t.source) });
+      tableFiles.push({ name, provider: providerOf(t.source) });
     sumItems.push({ type: "table", key: "table", table: t });
   }
   for (const g of summary)
@@ -1828,6 +1863,7 @@ function render(entry, fname, stages, tables, notes, summary) {
 
 // populate the middle column for one file, auto-select its first item
 function selectFile(entry) {
+  scopeFile = (entry && entry.name) || "";   // before any correction is read
   if (fvAlive() && entry && entry.name !== fvFile) setTimeout(fvPush, 0);
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
   entry.head.classList.add("sel");
@@ -1892,7 +1928,12 @@ function selectFile(entry) {
         ? `<span class="stclock${bad ? " badclock" : ""}">`
           + `${_d || "no date"} ${(_t || "").slice(0, 8)}</span>`
         : `<span class="stclock nodate">no clock</span>`;
+      const renamed = stageNameGet(it.key);
       row.innerHTML = `<span class="stg">`
+        + `<button type="button" class="editlbl" title="Rename this stage. `
+        + `The reports are not always right about their own numbering; the `
+        + `name you give it follows into the charts and the CSV.`
+        + `">&#9998;</button>`
         + `<span class="nmtxt">Stage ${stageDisplay(stageLabel(it))}`
         + (stageVariant(it.key)
             ? ` <span class="ch">${stageVariant(it.key)}</span>` : "")
@@ -1906,9 +1947,13 @@ function selectFile(entry) {
         + `date and time">Fix time</button>`
         + (fixed ? `<span class="ch" title="time corrected by hand">edited</span>`
                  : "")
+        + (renamed ? `<span class="ch" title="renamed by hand — the sheet `
+                     + `prints &quot;${escAttr(stageDisplay(it.key))}&quot;">renamed</span>`
+                   : "")
         + `</span><span class="seqno">${it.seq}</span>`;
       if (bad) row.classList.add("badtime-row");
       if (fixed) row.classList.add("edited-row");
+      if (renamed) row.classList.add("renamed-row");
     }
     else if (it.type === "summary")
       row.innerHTML = `<span>${it.group.title}</span>`
@@ -1917,6 +1962,7 @@ function selectFile(entry) {
       row.innerHTML = `<span>${(it.table.title.split(" — ")[0])}</span>`
         + `<span class="ch">${it.table.rows.length} rows</span>`;
     row.addEventListener("click", ev => {
+      if (ev.target.closest(".editlbl")) { ev.stopPropagation(); askStageName(entry, it); return; }
       if (ev.target.closest(".fixtime")) { ev.stopPropagation(); askTimeFix(entry, it); return; }
       selectItem(entry, entry.well, it, row);
     });
@@ -1940,6 +1986,7 @@ $("viewtoggle").addEventListener("click", e => {
 function selectItem(entry, well, item, rowEl) {
   document.querySelectorAll(".stagerow.sel").forEach(r => r.classList.remove("sel"));
   if (rowEl) rowEl.classList.add("sel");
+  scopeFile = (entry && entry.name) || "";
   current = { entry, well, item };
   $("empty").hidden = true;
   $("previewpane").hidden = false;
@@ -2175,11 +2222,11 @@ function scaleCell(v, f) {
 //
 // The Calfrac Surface/BH suffix is dropped first: #546 settled that the
 // variant is a chart TYPE, not part of the stage's name.
-function chartStageLabels(items) {
+function chartStageLabels(items, file) {
   const byNum = new Map();
   for (const it of items || []) {
     if (!it || it.type !== "stage") continue;
-    const shown = stageDisplay(stageLabel(it));
+    const shown = stageDisplay(stageLabel(it, file));
     const n = stageNum(shown);
     if (n === 1e9) continue;                       // no number to join on
     if (byNum.has(n)) { byNum.set(n, null); continue; }   // ambiguous — poisoned
@@ -2342,6 +2389,11 @@ function renderMaps() {
     host.appendChild(row);
   }
 }
+// escHtml leaves quotes alone, which is fine between tags and not fine inside
+// an attribute. A stage name is user-typed, so it gets the stricter one.
+function escAttr(v) {
+  return escHtml(v).replace(/"/g, "&quot;");
+}
 function escHtml(v) {
   return String(v === null || v === undefined ? "" : v)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -2462,7 +2514,7 @@ function showTable(entry, t) {
   const E = v => String(v === null || v === undefined ? "" : v)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const provider = providerOf(t.source);
-  const cur = curateTable(t, provider, chartStageLabels(entry.secItems));
+  const cur = curateTable(t, provider, chartStageLabels(entry.secItems, entry.name));
   // A chemicals or proppant-inventory sheet carries none of Carmine's fields.
   // Showing it as an empty grid would look like a parse failure, so those fall
   // back to the full table and say why.
@@ -4030,9 +4082,53 @@ let timeFix = (() => {
   try { return JSON.parse(localStorage.getItem("f2c.timeFix") || "{}"); }
   catch (e) { return {}; }
 })();
+
+// A stage NAME the user typed, per file + stage, held the same way.
+//
+// The reports are not always right about their own stage numbering — a sheet
+// mislabels a stage, or two stages print the same number — and until now the
+// printed name was the only name there was (Carmine, 2026-09-13). This does
+// not touch the KEY: the key is what groups a stage's charts together, joins
+// a table row to a chart and matches FracView's selection, and renaming a
+// thing must not move it. Only what is SHOWN and what is EXPORTED changes,
+// which is the same line stageDisplay already draws.
+let stageName = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.stageName") || "{}"); }
+  catch (e) { return {}; }
+})();
+// `file` is explicit wherever the caller is walking files rather than showing
+// one: an export loop runs over every entry while the SELECTED file is still
+// whatever the user last clicked, and reading the scope there would put one
+// file's renames on another's rows — which is the bug the scope itself was
+// introduced to fix. Defaults to the scope for the on-screen callers.
+const stageNameKey = (key, file) => `${file || fileScope()}::${key}`;
+function stageNameGet(key, file) {
+  const v = stageName[stageNameKey(key, file)];
+  return (v == null || v === "") ? null : String(v);
+}
+function stageNameSet(key, label) {
+  const k = stageNameKey(key);
+  if (label && String(label).trim()) stageName[k] = String(label).trim();
+  else delete stageName[k];
+  try { localStorage.setItem("f2c.stageName", JSON.stringify(stageName)); }
+  catch (e) { /* private mode — the rename just will not outlive the tab */ }
+}
+// Which file the corrections on screen belong to.
+//
+// This was read off `current`, and `current` is only assigned at the END of
+// selectFile — by selectItem, after every row has already been built. So the
+// whole of selectFile ran against the PREVIOUS file's name: opening the first
+// file of a session looked corrections up under "?" and found none, and
+// switching from a file where stage 3 had been fixed to another one applied
+// that fix to the SECOND file's stage 3 and labelled the row "edited". The
+// same stage answered to two different keys depending on which call site
+// asked. Set on the way in, before anything reads it.
+let scopeFile = "";
+const fileScope = () => scopeFile ||
+  (current && current.entry && current.entry.name) || "?";
+
 function timeFixKey(st) {
-  const f = (current && current.entry && current.entry.name) || "?";
-  return `${f}::${st.meta.stage || "?"}`;
+  return `${fileScope()}::${st.meta.stage || "?"}`;
 }
 function timeFixGet(st) { return timeFix[timeFixKey(st)] || null; }
 function timeFixSet(st, date, time) {
@@ -4103,6 +4199,25 @@ function askTimeFix(entry, item) {
     ? (m[2].length <= 5 ? m[2] + ":00" : m[2])
     : (shownTime || "00:00:00");
   timeFixSet(st, m[1], tt);
+  reRender(entry);
+}
+
+// The rename prompt. A prompt for the same reason the time fix is one: it is
+// one short string the user already knows, and what matters is that the name
+// EXISTS and reaches the export, not that it has chrome.
+function askStageName(entry, item) {
+  const printed = stageDisplay(String(item.key));
+  const cur = stageNameGet(item.key);
+  const answer = window.prompt(
+    `Stage ${printed}\n\n`
+    + `The sheet prints: ${printed}\n\n`
+    + `Name for this stage, or blank to go back to what the sheet says:`,
+    cur || printed);
+  if (answer === null) return;                 // cancelled, not cleared
+  // Typing the printed name back is the same as clearing it: a stage that
+  // agrees with its sheet should not be flagged as renamed.
+  const next = answer.trim();
+  stageNameSet(item.key, (next === printed) ? "" : next);
   reRender(entry);
 }
 
@@ -5844,7 +5959,7 @@ const secondsBase = well => well.base + "-seconds";
 async function emitSeconds(entry, well) {
   const out = [];
   if (settings.format !== "xlsx")
-    out.push(await emit(entry, secondsBase(well) + ".csv", wellCSV(well.stages), false));
+    out.push(await emit(entry, secondsBase(well) + ".csv", wellCSV(well.stages, entry.name), false));
   if (settings.format !== "csv")
     out.push(await emit(entry, secondsBase(well) + ".xlsx",
                         wellXLSX(well.stages, settings.xlsxTabs), true));
@@ -5859,7 +5974,7 @@ async function emitSummary(entry) {
     // every table used to be written as "<base>-summary.csv"; in a zip keyed
     // by filename that means the last one wins and the rest never leave
     const nm = tableCsvName(base, t.title, used.size, used);
-    out.push(await emit(entry, nm, tableCSV(t), false));
+    out.push(await emit(entry, nm, tableCSV(t, entry), false));
   }
   return out;
 }
@@ -5901,9 +6016,9 @@ async function exportSecondsAll() {
     const pairs = [];
     for (const e of list) {
       if (settings.format !== "xlsx")
-        pairs.push({ name: secondsBase(e.well) + ".csv", text: wellCSV(e.well.stages) });
+        pairs.push({ name: secondsBase(e.well) + ".csv", text: wellCSV(e.well.stages, e.name) });
       if (settings.format !== "csv")
-        pairs.push({ name: secondsBase(e.well) + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs) });
+        pairs.push({ name: secondsBase(e.well) + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs, e.name) });
     }
     await emitZip(pairs, "carmines-seconds.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
@@ -5922,7 +6037,7 @@ async function exportSummaryAll() {
     const pairs = [];
     for (const e of list)
       for (const t of e._tables)
-        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + "-summary.csv", text: tableCSV(t) });
+        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + "-summary.csv", text: tableCSV(t, e) });
     await emitZip(pairs, "carmines-summary.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
 }
