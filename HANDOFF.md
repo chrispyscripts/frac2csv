@@ -41,6 +41,46 @@ agent read** before repeating what it concluded.
 
 ## In flight right now
 
+### The audit finds what Carmine flags, before he flags it (2026-09-14)
+
+`audit.py` runs over the Lab's own payload and emits findings — the kinds
+are listed in its docstring. Run it on every file a Flag Error names,
+BEFORE opening the Lab:
+
+    .venv-mac/bin/python audit.py /path/to/report.pdf --matrix
+
+Scored against his week (#625, #627, #629, #634, #635, #636, #638): six
+FOUND, two REPAIRED (the audit quiet where 7b70f0c fixed it), none missed.
+The harness — sweep, scorecard, before/after — is `validation-tools/audit/`.
+
+What it found that the reports did not say, each a class to work:
+
+- **Trican WH Prop Conc loses its HOLDS** (#638, #635). 364 of 01350's 384
+  mid-flight gaps begin and end at the same level, at the proppant
+  schedule's own steps (100 ×36, 200 ×33, 300 ×32 …). The curve is drawn in
+  the gridlines' olive; a flat olive run at a level the curve just reached
+  is the curve, and the tracer drops it as a rule. `gap.hold` names it.
+  Measured before/after 7b70f0c: 36 of 42 stages byte-identical, so the
+  #634 repair did NOT cause this — it predates it. A hold witnessed at both
+  edges, with BH holding across the same span, is fillable AT THAT LEVEL
+  and marked; that is not the #112 occlusion class.
+- **STEP BH Prop Conc under WH** (#627): 01316 stage 45 carries 15% against
+  WH's 95%, 80% of its drawn span gone — the #112 class, now counted.
+- **Canyon plunges are one defect per stage, not one per channel** (#629):
+  BHP, Slurry Rate and Proppant Blender plunge at the SAME seconds on every
+  stage of 00229. `spike.aligned`. The chart spans two pages.
+- **Trican "implausible stage duration" pages ARE the missing stages**
+  (#625): 01433's stages 1, 3, 35, 45 are p155/157/188/198 by position;
+  stage 16 has no page at all.
+
+Rules the first run taught it, so nobody re-learns them: the pad and flush
+are not drawn, so a channel's loss is measured against its DRAWN span;
+Trican's axis lives in `frameTop/frameBot`, not `axisMax`; STEP's surface
+and chemical charts share a label and a clock and are not doubles; without
+a printed axis a spike only warns as a plunge losing half the peak; a
+six-minute proppant step is not a rule.
+
+
 ### The "no extractable data" batch reports — where they stand
 
 Every file named across #608, #609, #610, #613, #614 and #621 — 53 unique

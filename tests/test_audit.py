@@ -126,8 +126,10 @@ class Planted(unittest.TestCase):
 
     def test_one_mid_flight_gap_is_listed_with_its_edges(self):
         res = audit.audit_stages([stage("2", 11, hole=(1200, 1260))], [])
-        g = of(res, "gap.missing")
-        self.assertEqual(len(g), 1)
+        w = of(res, "gap.missing")                    # one warning for the channel …
+        self.assertEqual(len(w), 1)
+        self.assertEqual(w[0]["count"], 1)
+        g = [x for x in of(res, "gap.missing", "info") if "span" in x]   # … the gap beneath it
         self.assertEqual(g[0]["span"], [1200, 1260])
         self.assertEqual(g[0]["seconds"], 60.0)
 
@@ -178,9 +180,75 @@ class Holds(unittest.TestCase):
         self.assertEqual([x["channel"] for x in f], ["WH Prop Conc"])
 
     def test_gaps_roll_up(self):
-        listed = of(self.res, "gap.missing")
+        # under the channel's own warning the gaps are evidence: info-level
+        listed = of(self.res, "gap.missing", "info")
         self.assertLessEqual(len([g for g in listed if "span" in g]), audit.GAP_LIST_MAX)
         self.assertTrue(any("7 mid-flight gap(s)" in g["evidence"] for g in listed))
+
+
+class FromTheAcceptanceRun(unittest.TestCase):
+    """What the first run over Carmine's week taught the detectors."""
+
+    def test_two_templates_one_stage_is_the_layout(self):
+        # STEP: a surface chart and a chemical chart per stage, same label,
+        # same clock — 01316 gave 46 stage.doubled and 46 clock findings
+        stages = []
+        for k in (1, 2, 3):
+            a = stage(str(k), 10 + k, start=f"{7 + k:02d}:00:00")
+            b = stage(str(k), 10 + k, start=f"{7 + k:02d}:00:00")
+            b["source"] = "Test chemical chart (raster)"
+            stages += [a, b]
+        res = audit.audit_stages(stages, [])
+        self.assertEqual(of(res, "stage.doubled"), [])
+        self.assertEqual(kinds(res) & {"clock.overlap", "clock.backwards"}, set())
+
+    def test_a_missing_stage_is_named_by_its_failed_page(self):
+        stages = [stage("1", 10), stage("2", 11), stage("4", 13), stage("5", 14), stage("7", 16)]
+        notes = ["p12: Test chart failed — trican-B: implausible stage duration 48466s"]
+        res = audit.audit_stages(stages, notes)
+        failed = of(res, "stage.failed")[0]
+        self.assertEqual(failed["stage_linked"], 3)
+        miss = of(res, "stage.missing")[0]
+        self.assertEqual(miss["stages"], [3, 6])
+        self.assertEqual(miss["linked"], {3: 12})
+        self.assertIn("6 has no page at all", miss["evidence"])
+
+    def test_no_axis_spike_is_information_unless_it_plunges(self):
+        press, _, _ = curves()
+        small = list(press)
+        for k in (500, 900, 1500):
+            small[k:k + 3] = [press[k] + 4.0] * 3      # +4 on a 30..50 curve
+        st = stage("1", 10)
+        st["channels"] = [{"key": "Tr Press", "unit": "", "axisMin": 0.0, "axisMax": None,
+                           "values": small}]
+        res = audit.audit_stages([st], [])
+        self.assertEqual(of(res, "spike"), [])
+        self.assertTrue(of(res, "spike", "info"))
+        plunge = list(press)
+        for k in (500, 900, 1500):
+            plunge[k:k + 3] = [0.0] * 3                # #629: down to nothing and back
+        st["channels"][0]["values"] = plunge
+        res = audit.audit_stages([st], [])
+        self.assertEqual(len(of(res, "spike")), 1)
+
+    def test_spikes_at_one_second_on_three_channels_are_one_defect(self):
+        # sample 1500 sits on the 200 kg/m3 step, so proppant has somewhere
+        # to plunge from; at 800 it is still 0 and a spike to 0 is no spike
+        st = stage("7", 37, spikes=(1500,))
+        for c in st["channels"]:
+            if c["key"] in ("Slurry Rate", "BH Prop Conc"):
+                c["values"][1500:1503] = [0.0] * 3
+        res = audit.audit_stages([st], [])
+        f = of(res, "spike.aligned")
+        self.assertEqual(len(f), 1)
+        self.assertEqual(f[0]["moments"], [1500])
+
+    def test_gap_lines_are_evidence_under_a_channel_warning(self):
+        holes = [(600 + k * 225 + 20, 600 + k * 225 + 200) for k in range(1, 8)]
+        res = audit.audit_stages([stage("1", 186, wh_holes=holes, frame=True)], [])
+        self.assertTrue(of(res, "channel.sparse"))
+        self.assertEqual(of(res, "gap.missing"), [])          # no gap WARNs …
+        self.assertTrue(of(res, "gap.missing", "info"))       # … they are info
 
 
 if __name__ == "__main__":

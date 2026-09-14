@@ -32,6 +32,8 @@ Kinds, and the client report each answers:
                        read as data (698.29 on 01350 p226)      (#634)
     spike              excursions that leave and return within seconds:
                        a glyph or gridline read as curve    (#629, #634)
+    spike.aligned      the same second spikes on 3+ channels: a page seam,
+                       a rule or a text column read through every mask (#629)
     peak.off-axis      a value above the printed axis: something not on
                        the curve was read                 (the IFS/Hal-1 tell)
     peak.pinned        ≥30 s sitting at full scale: off-chart, not data
@@ -83,6 +85,9 @@ SPIKE_MAX_RUN = 8          # wider than this is a feature, not a spike
 SPIKE_FRAC = 0.04          # of axis span: the smallest excursion that counts
 SPIKE_WARN_N = 3
 SPIKE_WARN_FRAC = 0.15     # one excursion this big is a warn on its own
+SPIKE_PLUNGE_FRAC = 0.5    # no axis: a downward spike losing this much of the peak still warns
+ALIGN_WIN_S = 2            # spikes within this many seconds count as the same moment
+ALIGN_MIN_CH = 3           # channels that must share the moment
 PIN_TOL = 0.005            # of axis span: "at full scale"
 PIN_MIN_S = 30.0
 PAIR_TOL = 0.15            # WH vs BH Prop Conc peak disagreement
@@ -91,6 +96,9 @@ PRESENT_FRAC = 0.5         # a channel on this share of a template's stages is e
 OVERLAP_MIN_S = 120.0      # a stage starting this far inside the previous one
 
 PAIRS = [("WH Prop Conc", "BH Prop Conc")]
+# findings that speak for a whole channel on a stage; its gaps sit under them
+CHANNEL_LEVEL = {"channel.sparse", "gap.hold", "pair.coverage", "pair.disagree",
+                 "channel.empty"}
 
 _FAILED = re.compile(r"^p(\d+): (.+?) failed — (.+)$")
 
@@ -220,17 +228,35 @@ def gap_findings(st, ch, sample_sec):
                       "flat segments are being dropped — a rule read where the curve holds a level; "
                       "each hold is witnessed at both edges and could be filled at that level, marked",
                       flat=len(flat), total=len(big)))
+    # Once the channel itself has warned — sparse, or the hold shape — the
+    # gaps are its evidence, not forty more warnings. A channel with a few
+    # isolated gaps and no channel-level finding keeps them as warnings.
+    # One warning per channel per stage. A channel with no channel-level
+    # finding but real holes gets ONE gap.missing warning naming its longest;
+    # every individual gap is listed beneath it as information, with its
+    # span, so a fill can find it. 01433 was carrying 255 of these.
+    channel_warned = any(f["kind"] in ("channel.sparse", "gap.hold") for f in out)
+    if big and not channel_warned:
+        tops = sorted(big, key=lambda g: -g["n"])[:3]
+        where = ", ".join(f"{_mmss(g['n'] * sample_sec)} at {_mmss(g['start'] * sample_sec)} "
+                          f"({g['before']:.3g}→{g['after']:.3g})" for g in tops)
+        out.append(_f("gap.missing", WARN, st, ch,
+                      f"{len(big)} mid-flight gap(s) ≥ {MIN_GAP_S:.0f} s, "
+                      f"{_mmss(sum(g['n'] for g in big) * sample_sec)} in all — longest {where}"
+                      + (f"; plus {small} under {MIN_GAP_S:.0f} s" if small else ""),
+                      "mid-range both sides: candidates for a marked interpolation",
+                      count=len(big), seconds=round(sum(g["n"] for g in big) * sample_sec, 1)))
     for g in sorted(big, key=lambda g: -g["n"])[:GAP_LIST_MAX]:
         secs = g["n"] * sample_sec
-        out.append(_f("gap.missing", WARN, st, ch,
+        out.append(_f("gap.missing", INFO, st, ch,
                       f"{_mmss(secs)} blank from {_mmss(g['start'] * sample_sec)} to "
                       f"{_mmss((g['end'] + 1) * sample_sec)}, curve at {g['before']:.4g} "
                       f"before and {g['after']:.4g} after",
-                      "mid-range both sides: a candidate for a marked interpolation",
+                      "one gap, with its span",
                       span=[g["start"], g["end"] + 1], seconds=round(secs, 1)))
     if len(big) > GAP_LIST_MAX or (small and not big):
         rest = len(big) - min(len(big), GAP_LIST_MAX)
-        out.append(_f("gap.missing", INFO if not big else WARN, st, ch,
+        out.append(_f("gap.missing", INFO, st, ch,
                       f"{len(big)} mid-flight gap(s) ≥ {MIN_GAP_S:.0f} s in all, "
                       f"{_mmss(sum(g['n'] for g in big) * sample_sec)}"
                       + (f"; {rest} not listed above" if rest > 0 else "")
@@ -309,17 +335,54 @@ def spikes(st, ch, sample_sec):
     biggest = max(mags, key=abs)
     down = sum(1 for m in mags if m < 0)
     floor = axis and any(v[r].min() <= axis[0] + PIN_TOL * span for r in runs)
-    sev = WARN if (len(runs) >= SPIKE_WARN_N or abs(biggest) >= SPIKE_WARN_FRAC * span) else INFO
+    if axis:
+        sev = WARN if (len(runs) >= SPIKE_WARN_N or abs(biggest) >= SPIKE_WARN_FRAC * span) else INFO
+        scale = f"{abs(biggest) / span * 100:.0f}% of the axis"
+    else:
+        # Without a printed axis "% of span" is a fraction of the channel's
+        # own range, and a flat channel's range is its noise: Canyon's
+        # Monitor gave 122 "excursions" of 0.05 MPa. What still counts with
+        # no axis is a PLUNGE — the curve losing half of its own peak and
+        # coming straight back — which is #629 exactly.
+        peak = float(np.nanmax(np.abs(v))) or 1.0
+        plunge = any(m < 0 and abs(m) >= SPIKE_PLUNGE_FRAC * peak for m in mags)
+        sev = WARN if plunge else INFO
+        scale = f"{abs(biggest) / peak * 100:.0f}% of the channel's peak, no axis known"
     tops = sorted(zip(mags, runs), key=lambda t: -abs(t[0]))[:3]
     where = ", ".join(f"{_mmss(fin[r[0]] * sample_sec)} ({m:+.3g})" for m, r in tops)
     out = [_f("spike", sev, st, ch,
               f"{len(runs)} excursion(s) of ≤{SPIKE_MAX_RUN} samples beyond {thr:.3g} "
               f"from the local median; {down} downward; largest {biggest:+.3g} "
-              f"({abs(biggest) / span * 100:.0f}% of span)"
+              f"({scale})"
               + ("; reaches the axis floor" if floor else "") + f" — at {where}",
               "a label, tick or gridline caught by the mask — check the ink at those seconds",
-              count=len(runs), largest=biggest)]
+              count=len(runs), largest=biggest,
+              at=[round(float(fin[r[0]] * sample_sec), 1) for r in runs])]
     return out
+
+
+def aligned_spikes(st, spike_findings, sample_sec):
+    """Spikes that land at the same second on several channels.
+
+    Per channel a spike is a label or a gridline caught by one colour mask.
+    The same second on three channels is something every mask read — a
+    vertical rule, a page seam (Canyon charts span two pages), a column of
+    text — and that is one defect, not three (#629).
+    """
+    at = {}
+    for f in spike_findings:
+        for t in f.get("at", ()):
+            at.setdefault(int(t // ALIGN_WIN_S), set()).add(f["channel"])
+    hits = [(b * ALIGN_WIN_S, chans) for b, chans in sorted(at.items()) if len(chans) >= ALIGN_MIN_CH]
+    if not hits:
+        return []
+    where = "; ".join(f"{_mmss(t)} ({', '.join(sorted(c))})" for t, c in hits[:4])
+    return [_f("spike.aligned", WARN, st, None,
+               f"{len(hits)} moment(s) where {ALIGN_MIN_CH}+ channels spike together — {where}"
+               + (" …" if len(hits) > 4 else ""),
+               "a vertical feature read through every mask — a page seam, a rule or a "
+               "text column; one defect, not one per channel",
+               moments=[t for t, _ in hits])]
 
 
 def peak_checks(st, ch, sample_sec):
@@ -425,23 +488,50 @@ def ladder(stages, notes):
                           + (" …" if len(missing) > 20 else ""),
                           "a page the reader skipped or failed — see stage.failed",
                           stages=missing))
+    # STEP prints a surface chart AND a chemical chart for every stage; two
+    # series with one label from two templates is the layout, not a double.
     seen = {}
     for st, l in zip(stages, labels):
-        seen.setdefault(l, []).append(st.get("page"))
-    for l, pages in seen.items():
+        seen.setdefault((st.get("source", ""), l), []).append(st.get("page"))
+    for (src, l), pages in seen.items():
         if len(pages) > 1:
             out.append(_f("stage.doubled", WARN, None, None,
-                          f"stage {l!r} produced {len(pages)} times, pages {pages}",
+                          f"stage {l!r} produced {len(pages)} times by {src}, pages {pages}",
                           "two sheets of one run merged, or one run read twice"))
     failed = []
     for n in notes or []:
         m = _FAILED.match(str(n))
         if m:
             failed.append((int(m.group(1)), m.group(2), m.group(3)))
+    # A failed page sitting between the pages of stages k-1 and k+1 IS stage
+    # k. 01433: stages 1, 3, 35 and 45 are p155, p157, p188, p198 — the four
+    # "implausible duration" pages — and stage 16 has no page at all, which
+    # is a different question.
+    by_page = sorted((int(st.get("page") or 0), stage_num(l)) for st, l in zip(stages, labels)
+                     if st.get("page") and stage_num(l) < 10 ** 9)
+    linked = {}
     for page, what, why in failed:
+        before = [k for pg, k in by_page if pg < page]
+        after = [k for pg, k in by_page if pg > page]
+        if before and after and after[0] - before[-1] == 2:
+            linked[before[-1] + 1] = page
+    for page, what, why in failed:
+        k = next((k for k, pg in linked.items() if pg == page), None)
         out.append(_f("stage.failed", WARN, None, None,
-                      f"p{page}: {what} — {why}", "a chart page produced nothing; "
-                      "the ladder gap above is probably this", page=page))
+                      f"p{page}: {what} — {why}"
+                      + (f" — this is stage {k}, by position" if k else ""),
+                      "a chart page produced nothing; the ladder gap above is probably this",
+                      page=page, stage_linked=k))
+    for f in out:
+        if f["kind"] == "stage.missing":
+            named = [k for k in f["stages"] if k in linked]
+            bare = [k for k in f["stages"] if k not in linked]
+            f["evidence"] += (f" — {', '.join(str(k) for k in named)} "
+                              f"{'is' if len(named) == 1 else 'are'} the failed page(s) "
+                              f"{', '.join('p' + str(linked[k]) for k in named)}" if named else "")
+            f["evidence"] += (f"; {', '.join(map(str, bare))} "
+                              f"{'has' if len(bare) == 1 else 'have'} no page at all" if bare and named else "")
+            f["linked"] = linked
     return out, {"stages": len(stages), "numbered": len(nums),
                  "max": max(nums) if nums else 0, "failed": len(failed)}
 
@@ -463,6 +553,19 @@ def _start(st):
 
 def clocks(stages):
     out = []
+    by_src = {}
+    for st in stages:
+        by_src.setdefault(st.get("source", ""), []).append(st)
+    for group in by_src.values():
+        out += _clocks_one_source(group)
+    return out
+
+
+def _clocks_one_source(stages):
+    """One template's stages in ladder order. STEP's surface and chemical
+    charts of one stage share a clock by design, so a stage is never
+    compared with another chart of the same number."""
+    out = []
     order = sorted(stages, key=lambda st: (stage_num(_stage_label(st)), st.get("page") or 0))
     prev = None
     for st in order:
@@ -472,7 +575,7 @@ def clocks(stages):
                           f"date {_meta(st, 'date')!r}, start {_meta(st, 'start_time')!r}",
                           "no clock on this chart; the CSV will date it from the default"))
             continue
-        if prev:
+        if prev and stage_num(prev[2]) != stage_num(_stage_label(st)):
             pt, pdur, plabel = prev
             if t < pt:
                 out.append(_f("clock.backwards", WARN, st, None,
@@ -508,15 +611,27 @@ def audit_stages(stages, notes=None):
     findings, coverage = [], {}
     for st in stages:
         sec = float(st.get("sample_sec") or 1.0)
+        spk = []
         for ch in st.get("channels", []):
             f, cov = gap_findings(st, ch, sec)
             findings += f
             coverage[f"{_stage_label(st)}|{ch['key']}"] = cov
             findings += flat_rule(st, ch)
-            findings += spikes(st, ch, sec)
+            spk += spikes(st, ch, sec)
             findings += peak_checks(st, ch, sec)
+        findings += spk
+        findings += aligned_spikes(st, spk, sec)
         findings += pair_disagree(st)
     findings += presence(stages)
+    # One warning per problem. A channel that has already warned at its own
+    # level — sparse, the hold shape, the pair — has its gaps as evidence,
+    # not as more warnings. gap_findings handles the first two; the pair
+    # findings are only known now.
+    warned = {(f["stage"], f["channel"]) for f in findings
+              if f["severity"] == WARN and f["kind"] in CHANNEL_LEVEL}
+    for f in findings:
+        if f["kind"] == "gap.missing" and f["severity"] == WARN and (f["stage"], f["channel"]) in warned:
+            f["severity"] = INFO
     lad, ladder_info = ladder(stages, notes)
     findings += lad
     findings += clocks(stages)
