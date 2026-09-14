@@ -68,6 +68,39 @@
         the basin</li>
     </ul>
 
+    <h2>v1.8.2</h2>
+    <ul>
+      <li><b>Trican charts no longer spike to numbers the report never
+        reached.</b> The dotted gridlines behind these charts are drawn in the
+        same colours as the traces themselves, so the reader kept picking them
+        up as readings. On one well the proppant concentration came out at 698
+        kg/m&sup3; across whole stages where the page beside the chart prints a
+        maximum of 352. Those five stages now read 351, 451, 455, 465 and 454
+        against printed maximums of 353, 452, 458, 474 and 456 &mdash; inside
+        two percent, checked against each page&rsquo;s own printed figure.
+        Every other trace on the page gained data in the process: the mainline
+        pressure went from 38 pages missing samples down to 5</li>
+      <li><b>Trican stages now carry the time they actually ran.</b> Every
+        stage in these filings came out starting at midnight with no date, so
+        they all stacked on the same hour of the same non-existent day and
+        nothing could be lined up against anything. The page prints the date
+        and start time in plain text two inches from the chart, and it is now
+        read from there. Where a page doesn&rsquo;t say, it stays blank rather
+        than being guessed at</li>
+      <li><b>The timing check has stopped crying wolf.</b> It was flagging
+        most of a well&rsquo;s stages as overlapping each other, which was
+        never in the documents &mdash; it was comparing each stage against its
+        own estimate of how long the one before it ran, then reporting the
+        disagreement as if the report had said it. It now only flags an
+        overlap big enough to be real</li>
+      <li><b>FracView follows the main page, and the stage list takes the
+        wheel.</b> Changing the stage in either window left the other one
+        showing something else, so the two panels disagreed about what you
+        were looking at; they now move together in both directions. And the
+        stage dropdown scrolls under the mouse instead of needing the list
+        opened and dragged</li>
+    </ul>
+
     <h2>v1.8.1</h2>
     <ul>
       <li><b>The stacked view fits more on screen.</b> Each chart was tall
