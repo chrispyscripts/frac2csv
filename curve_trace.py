@@ -238,7 +238,43 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, islands=True):
             py_o[c] = float(cover[c])
             filled.add(c)
             last, missed = py_o[c], 0
+
+    # The pad and the flush. Everything above is confined to the hidden
+    # curve's VISIBLE span, and it was leaving one shape on every file the
+    # deduction touched: 01350 stages 3, 6, 7 at 68-74% against DH's 100%,
+    # 01316 stage 45 at 70% against WH's 95%, 00025 stage 1 at 54% (#641,
+    # #627, #643) — and in each the missing seconds are before the first
+    # ink or after the last, where the cover sits ON THE AXIS FLOOR with
+    # the hidden curve's zero under it. Zero is what the pen draws there.
+    # So the walk goes past the span in either direction, but ONLY while
+    # the cover's stroke is at the floor and only from an edge that is
+    # itself at the floor: a curve whose first visible reading is mid-air
+    # came from nowhere the floor can vouch for, and is left alone.
+    H = sub_o.shape[0]
+    floor_px = max(3.0, FLOOR_FRAC * H)
+    at_floor = lambda row: np.isfinite(row) and row >= H - 1 - floor_px
+    for edge, order in ((lo, range(lo - 1, -1, -1)), (hi, range(hi + 1, n))):
+        if not at_floor(seed[edge]):
+            continue
+        last, missed = seed[edge], 0
+        for c in order:
+            if np.isfinite(py_o[c]):
+                break                               # the hidden curve is drawn again
+            r = cover_run(c)
+            if r is None or len(r) > riser or not at_floor(cover[c]):
+                missed += 1
+                if missed > COVER_SKIP_MAX:
+                    break
+                continue
+            py_o[c] = float(cover[c])
+            filled.add(c)
+            last, missed = py_o[c], 0
     return sorted(filled)
+
+
+# how near the bottom row of the plot "at the floor" is — the same 2% of the
+# axis gaps.py uses to call a curve at rest, never under three pixels
+FLOOR_FRAC = 0.02
 
 
 def _no_islands(py, island=3, join=2):

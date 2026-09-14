@@ -154,6 +154,49 @@ class Islands(unittest.TestCase):
         self.assertTrue(all(np.isnan(py_o[122:125])))                         # the cover's fleck columns: no cover, dropouts
 
 
+class PadAndFlush(unittest.TestCase):
+    """00025 stage 1 (#643), 01350 s3/6/7 (#641), 01316 s45 (#627): the hidden
+    curve's zero sits under the cover's zero line before its first ink and
+    after its last. Extend past the span only along the floor."""
+
+    FLOOR = H - 2                                             # the pen at zero, on the frame row
+
+    def scene(self, first_row=None, cover_pad_row=None, cover_flush_row=None):
+        import curve_trace as ct
+        o = np.zeros((H, W), bool); d = np.zeros((H, W), bool)
+        py_w = np.full(W, np.nan)
+        ramp = np.linspace(self.FLOOR, 120, 100)
+        if first_row is not None: ramp[0] = first_row
+        stroke(o, range(150, 250), ramp); py_w[150:250] = ramp           # WH ramps up from 150 …
+        stroke(o, range(250, 320), np.full(70, 120.0)); py_w[250:320] = 120.0
+        stroke(o, range(320, 340), np.linspace(120, self.FLOOR, 20)); py_w[320:340] = np.linspace(120, self.FLOOR, 20)
+        pad = self.FLOOR if cover_pad_row is None else cover_pad_row
+        flush = self.FLOOR if cover_flush_row is None else cover_flush_row
+        rows_d = np.concatenate([np.full(150, float(pad)), ramp, np.full(70, 120.0),
+                                 np.linspace(120, self.FLOOR, 20), np.full(W - 340, float(flush))])
+        stroke(d, range(0, W), rows_d)
+        return o, py_w, d, rows_d, ct
+
+    def test_the_pad_and_flush_are_read_along_the_floor(self):
+        o, py_w, d, py_d, ct = self.scene()
+        cols = ct.fill_under(o, py_w, d, py_d, islands=False)
+        self.assertTrue(set(range(0, 150)) <= set(cols))              # the pad, back to the start
+        self.assertTrue(set(range(340, W)) <= set(cols))              # the flush, to the end
+        self.assertTrue(np.all(py_w[:150] == self.FLOOR)); self.assertTrue(np.all(py_w[340:] == self.FLOOR))
+
+    def test_a_first_reading_mid_air_is_not_extended(self):
+        o, py_w, d, py_d, ct = self.scene(first_row=100.0)           # WH appears at 100, not at zero
+        cols = ct.fill_under(o, py_w, d, py_d, islands=False)
+        self.assertFalse(set(range(0, 150)) & set(cols))
+        self.assertTrue(set(range(340, W)) <= set(cols))              # the flush edge IS at the floor
+
+    def test_a_cover_off_the_floor_in_the_pad_forces_nothing(self):
+        o, py_w, d, py_d, ct = self.scene(cover_pad_row=150)          # DH holding 150 through the pad
+        cols = ct.fill_under(o, py_w, d, py_d, islands=False)
+        self.assertFalse(set(range(0, 150)) & set(cols))
+        self.assertTrue(all(np.isnan(py_w[:150])))
+
+
 class IslandsOff(unittest.TestCase):
     """Trican: a short run is a reading and seeds the walk."""
 
@@ -182,10 +225,13 @@ class WhUnderDh(unittest.TestCase):
         stroke(d, range(0, 400), np.full(W, 297.0))                           # DH on the floor all along
         py_d = np.full(W, 297.0)                                              # DH traced on the floor throughout
         cols = ct.fill_under(o, py_w, d, py_d)
-        self.assertEqual(cols, [])                                            # nothing: WH's span ends at 80
+        # WH reached the floor at column 79 and DH lies on the floor from there
+        # on: that is the flush, read along the floor to the end of the chart
+        self.assertEqual(cols, list(range(80, 400)))
+        py_w[80:] = np.nan
         stroke(o, range(380, 400), np.full(20, 297.0)); py_w[380:] = 297.0    # … and comes back at the end
         cols = ct.fill_under(o, py_w, d, py_d)
-        self.assertEqual(cols, list(range(80, 380)))
+        self.assertEqual(cols, list(range(80, 380)))                          # inside the span; nothing past 399
         self.assertTrue(np.all(py_w[80:380] == 297.0))
 
 
