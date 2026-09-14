@@ -90,7 +90,13 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
   despeckle had always deleted (00324 p130 col 248, 643 kg/m3) stopped
   being an island once the floor was filled either side of it, and the
   export drew a triangle to 643 with WH at 26. **One flagged file is not
-  a validation set.** 01316 showed none of the four.
+  a validation set.** 01316 showed none of the four. And the island rule
+  is a per-template switch, not a law: STEP's export despeckles, so an
+  island there is a fleck by the export's own definition; Trican keeps
+  every column it reads, and on 01350 p186 WH's short runs ARE the curve,
+  read intermittently — the seeds the walk needs where DH lags too far to
+  follow. Blanking them took stage 1 from 88% to 50%. `islands=False` for
+  Trican; measured back to 43 of 43 stages byte-identical.
 - A 12-hour table's AM/PM comes from the sequence, its first half-day
   from a printed am/pm anchor, and a tie is a guess that must say so. A
   dated 00:00:00 is midnight, not the default.

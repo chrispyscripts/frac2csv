@@ -1284,7 +1284,9 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
     # all, and WH came back blank there. See curve_trace.fill_under.
     if "wh_conc" in traced and "dh_conc" in traced:
         w, d = traced["wh_conc"], traced["dh_conc"]
-        w["filled"] = len(ct.fill_under(w["sub"], w["py"], d["sub"], d["py"]))
+        # islands=False: this tracer keeps every column it reads, and WH's
+        # short runs are readings, not flecks — see curve_trace.fill_under
+        w["filled"] = len(ct.fill_under(w["sub"], w["py"], d["sub"], d["py"], islands=False))
         if w["filled"]:
             notes.append("WH Prop Conc: read from under DH Prop Conc where the "
                          "page paints the DH curve over it and the two coincide "

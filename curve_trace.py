@@ -118,7 +118,7 @@ def resample(samples, t_cols, vals, gap_factor=6.0, min_gap_s=20.0):
     return out
 
 
-def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
+def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, islands=True):
     """A curve under another: the columns where the hidden one can only be
     where the covering one is. -> the columns filled; py_o is filled in place.
 
@@ -176,8 +176,18 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
     # the floor filled either side of it the despeckle kept it, and the
     # export drew a triangle to 643 with WH at 26. The fill must not lend
     # a fleck a neighbour.
-    py_o[:] = _no_islands(py_o)
-    seed, cover = py_o, _no_islands(py_g)
+    #
+    # `islands` says whether that applies. It is the STEP rule: STEP's
+    # export despeckles anyway, so a 1-3-column island there is a fleck by
+    # the export's own definition. Trican's export keeps every column, and
+    # on 01350 p186 WH Prop Conc's trace IS short runs — a thin olive curve
+    # read intermittently — which the walk needs as seeds where DH lags too
+    # far behind to follow: blanking them took stage 1 from 88% to 50%.
+    if islands:
+        py_o[:] = _no_islands(py_o)
+        seed, cover = py_o, _no_islands(py_g)
+    else:
+        seed, cover = py_o, py_g
     span = np.flatnonzero(np.isfinite(seed))
     if len(span) < 2:
         return []

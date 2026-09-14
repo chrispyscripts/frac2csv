@@ -154,6 +154,22 @@ class Islands(unittest.TestCase):
         self.assertTrue(all(np.isnan(py_o[122:125])))                         # the cover's fleck columns: no cover, dropouts
 
 
+class IslandsOff(unittest.TestCase):
+    """Trican: a short run is a reading and seeds the walk."""
+
+    def test_short_runs_seed_when_islands_are_off(self):
+        import curve_trace as ct
+        o = np.zeros((H, W), bool); d = np.zeros((H, W), bool)
+        py_w = np.full(W, np.nan)
+        for c in range(100, 300, 10):                        # WH read every tenth column only
+            py_w[c] = 200.0; o[199:202, c] = True
+        stroke(d, range(0, 400), np.full(W, 200.0)); py_d = np.full(W, 200.0)
+        on = ct.fill_under(o, np.array(py_w), d, py_d, islands=True)
+        off = ct.fill_under(o, np.array(py_w), d, py_d, islands=False)
+        self.assertEqual(on, [])                              # every seed is an island: nothing to walk from
+        self.assertEqual(len(off), 191 - 20)                  # span 100..290 is 191 columns; the 20 seeds stay, the walk fills between them
+
+
 class WhUnderDh(unittest.TestCase):
     """Trican layout B, 01350 p227: WH at the floor under DH's zero line."""
 
