@@ -2781,6 +2781,37 @@ function chanName(c) {
   return settings.chartLabels === "raw" ? (c.label || c.key) : c.key;
 }
 
+// ---- a curve switched off stays off, across charts and files ----
+//
+// The hidden set was per draw and keyed by position, so a curve switched
+// off came straight back on the next chart or the next file (Carmine,
+// 2026-09-14). It is now keyed by the channel's name and kept in
+// localStorage: switched off once, a channel stays off on every chart of
+// every file until it is switched on again. Keyed by `key` — the canonical
+// name, or the raw name where nothing maps — so the "Our terms / As
+// extracted" toggle does not change what is hidden.
+const HIDDEN_KEY = "f2c.hiddenChannels";
+function hiddenLoad() {
+  try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]")); }
+  catch (e) { return new Set(); }
+}
+function hiddenSave(keys) {
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...keys])); } catch (e) {}
+}
+let hiddenKeys = hiddenLoad();
+function hiddenIdentity(c) { return c.key; }
+// the per-draw index set the graph reads, derived from the persistent names
+function applyHidden(channels, keys) {
+  const s = new Set();
+  (channels || []).forEach((c, i) => { if (keys.has(hiddenIdentity(c))) s.add(i); });
+  return s;
+}
+function toggleHidden(c, keys) {
+  const k = hiddenIdentity(c);
+  if (keys.has(k)) keys.delete(k); else keys.add(k);
+  return keys;
+}
+
 function setGraph(channels, n, sampleSec, meta) {
   gState.clock0 = null;
   if (meta && meta.date) {
@@ -2790,7 +2821,7 @@ function setGraph(channels, n, sampleSec, meta) {
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
   gState.tMax = Math.max(1, (n - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
-  gState.hidden = new Set(); gState.hover = null;
+  gState.hidden = applyHidden(channels, hiddenKeys); gState.hover = null;
   // Two curves must never share a colour. PALETTE's first five entries ARE
   // the five SERIES_COLORS values, so indexing it by channel position handed
   // e.g. WH Slurry Rate the same green as WH Prop Conc — the rate curve and
@@ -3501,8 +3532,8 @@ function buildLegend() {
     if (off) el.classList.add("off");
     el.title = (off ? "Show this curve" : "Hide this curve") + gapTitle(c);
     el.addEventListener("click", () => {
-      if (gState.hidden.has(ci)) gState.hidden.delete(ci);
-      else gState.hidden.add(ci);
+      toggleHidden(c, hiddenKeys); hiddenSave(hiddenKeys);
+      gState.hidden = applyHidden(gState.channels, hiddenKeys);
       gState.hover = null;
       redrawGraph(); buildLegend();
       pushStacked();       // the stacked window dims the same curve
