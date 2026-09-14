@@ -143,10 +143,19 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
       - the column lies inside orange's drawn span, between its first ink
         and its last;
       - orange's trace continues from the previous column (real or already
-        deduced) to a green stroke in this column within `tol_px` — two of
-        the orange pen's own widths — of where it was;
-      - that green run is a stroke, not a riser: no taller than three pens.
-        On a riser orange could be anywhere along it and nothing is forced.
+        deduced) to where the cover's OWN TRACE is in this column — `py_g`,
+        the row curve_positions settled on, glyphs and contaminants already
+        rejected — within `tol_px`, two of the orange pen's widths;
+      - the cover's run there is a stroke, not a riser: no taller than
+        three pens. On a riser orange could be anywhere along it and
+        nothing is forced.
+
+    The cover's traced row, not its raw ink: the first version consulted
+    every run in the green mask, and on 00324 it chained from an orange
+    glyph the tracer had kept (a 654 kg/m3 "peak" with WH at 26) along the
+    FracPro logo's green ink for three columns, doubling BH's peak on
+    eleven stages. The curve's own position at the floor finds no such
+    thing near the top, and the chain never starts.
 
     Walked left to right and then right to left, so a stretch bracketed on
     one side only is still reached from the side it has. Every filled column
@@ -167,11 +176,17 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
     riser = 3.0 * pen
     filled = set()
 
-    def runs(c):
+    def cover_run(c):
+        """The cover's run holding its traced row in this column, or None."""
+        if not np.isfinite(py_g[c]):
+            return None
         ys = np.flatnonzero(sub_g[:, c])
         if not len(ys):
-            return []
-        return [r for r in np.split(ys, np.flatnonzero(np.diff(ys) > gap) + 1)]
+            return None
+        for r in np.split(ys, np.flatnonzero(np.diff(ys) > gap) + 1):
+            if r[0] - 0.5 <= py_g[c] <= r[-1] + 0.5:
+                return r
+        return None
 
     for order in (range(lo, hi + 1), range(hi, lo - 1, -1)):
         last = np.nan
@@ -181,18 +196,11 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
                 continue
             if not np.isfinite(last):
                 continue
-            best = None
-            for r in runs(c):
-                if len(r) > riser:
-                    continue
-                row = float(np.median(r))
-                d = abs(row - last)
-                if d <= tol and (best is None or d < best[0]):
-                    best = (d, row)
-            if best is None:
+            r = cover_run(c)
+            if r is None or len(r) > riser or abs(float(py_g[c]) - last) > tol:
                 last = np.nan                       # the trace is lost here
                 continue
-            py_o[c] = best[1]
+            py_o[c] = float(py_g[c])
             filled.add(c)
-            last = best[1]
+            last = py_o[c]
     return sorted(filled)

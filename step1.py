@@ -636,6 +636,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels = []
     seen = set()
+    traced = {}
     for fam, mask in masks.items():
         base = fam.rstrip("2")
         conv = NEW_SURFACE.get(base)
@@ -652,15 +653,29 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         cal = fits.get(axis)
         if cal is None:
             continue
-        a, b, ntick = cal
         sub = mask[y0:y1, x0:x1]
         cov = float(sub.any(axis=0).mean())
         if cov < 0.1:
             continue
-        n_cols = sub.shape[1]
         # glyphs=True: these reports print the FracPro logo inside the frame,
         # in the series' own inks. See auto_raster.drop_glyph_islands.
         py = ar.curve_positions(sub, glyphs=True, edge_blank=True)
+        seen.add(name)
+        traced[base] = {"fam": fam, "name": name, "unit": unit, "cal": cal,
+                        "sub": sub, "cov": cov, "py": py, "filled": 0}
+    # Btm Prop Conc is painted UNDER Prop Conc. Where the two coincide the
+    # page shows green and no orange at all, and the orange trace came back
+    # blank there — 37.9% of a stage on 00349 (#112), 80% of one on 01316
+    # (#627). Deduce it: see _fill_under.
+    if "orange" in traced and "green" in traced:
+        o, g = traced["orange"], traced["green"]
+        cols = _fill_under(o["sub"], o["py"], g["sub"], g["py"])
+        o["filled"] = len(cols)
+    seen = set()
+    for base, tr in traced.items():
+        fam, name, unit, sub, cov, py = (tr["fam"], tr["name"], tr["unit"],
+                                         tr["sub"], tr["cov"], tr["py"])
+        a, b, ntick = tr["cal"]
         cx, py = _keep_excursions(sub, py)
         py = py + y0
         # same round-bound snap as the tiled path (see auto_raster.snap_axis):
@@ -681,13 +696,26 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                          "color": ar.HUE_HEX.get(base, "#555577"),
                          "values": v, "ticks": ntick, "coverage": cov,
                          # axis read at the frame edges — see auto_raster
-                         "axis_frame": (float(a + b * y0), float(a + b * y1))})
+                         "axis_frame": (float(a + b * y0), float(a + b * y1)),
+                         "filled_cols": tr["filled"]})
         seen.add(name)
     if not channels:
         raise ValueError("step1: no channel calibrated")
     info = {"plot": box, "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": []}
+    for c in channels:
+        if c.get("filled_cols"):
+            secs = c["filled_cols"] * tb
+            info["notes"].append(
+                f"{c['label']}: {secs / 60:.1f} min read from under Prop Conc, "
+                f"where the page paints the green curve over the orange one "
+                f"and the two coincide — deduced, not traced")
     return samples, channels, info
+
+
+def _fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
+    """Btm Prop Conc under Prop Conc — see curve_trace.fill_under."""
+    return ct.fill_under(sub_o, py_o, sub_g, py_g, tol_px=tol_px, gap=gap)
 
 
 def _chosen_run(sub, py, gap=2):
