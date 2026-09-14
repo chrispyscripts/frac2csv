@@ -1661,6 +1661,61 @@ def _crop_to_printed_window(meta, samples, channels, info, slack_s=60.0):
     return out, chans, info, meta
 
 
+CLOCK_B_HEAD_S = 600.0     # a window may open this long BEFORE the printed start and be the stage's
+
+
+def _clock_from_axis(meta, info):
+    """The chart's own clock axis names sample 0; the printed Start Time
+    names the STAGE. Where they differ and the page's own numbers allow it,
+    the export takes the axis. -> (meta, info)
+
+    00910 p90 (#648): Start Time 12:16, Elapsed Time 1:14:27, Pumping Time
+    0:33:20 — and a clock axis running 12:57:39 to 13:32. The plot is the
+    last 34 minutes of a 74-minute stage; the first 41 were not pumped and
+    are not plotted. Stamped 12:16, the window sat 41 minutes early on the
+    well and the pump-up of stage 22 that the page shows at 13:31 landed at
+    12:50, forty minutes before stage 22 — the "wrap around". The same rule
+    layout A settled on: the axis is the chart's clock, the sheet is the
+    stage's, and the stage says both.
+
+    Allowed only inside the envelope the sheet itself prints — a window
+    opening up to ten minutes before the Start Time, or any time up to
+    Start + Elapsed — so 01350 p186 (Start Time 02:41 under an axis reading
+    12:50) is still left as printed and noted.
+    """
+    st = meta.get("start_time") or ""
+    t0 = info.get("t0_seconds")
+    if not st or t0 is None:
+        return meta, info
+    printed = int(st[:2]) * 3600 + int(st[3:5]) * 60
+    el = float(meta.get("elapsed_s") or 0.0)
+    d = (float(t0) - printed + 43200.0) % 86400.0 - 43200.0
+    if abs(d) <= 60.0:
+        return meta, info                        # the same minute: as printed
+    w = int(round(float(t0))) % 86400
+    axis = f"{w // 3600:02d}:{w % 3600 // 60:02d}:{w % 60:02d}"
+    notes = list(info.get("notes") or [])
+    if -CLOCK_B_HEAD_S <= d <= (el + 60.0 if el else CLOCK_B_HEAD_S):
+        mins = abs(d) / 60.0
+        if d > 0 and el:
+            why = (f"the stage's first {mins:.0f} min of its {el / 60:.0f} "
+                   f"elapsed are not plotted")
+        else:
+            why = "the window opens ahead of the stage"
+        notes.append(f"clock: the plot window opens at {axis}, {mins:.0f} min "
+                     f"{'after' if d > 0 else 'before'} the Start Time {st[:5]} "
+                     f"the page prints — {why}; sample 0 is on the chart's own "
+                     f"clock axis")
+        return (dict(meta, start_time=axis, clock_chart=True,
+                     printed_start=st[:5]),
+                dict(info, notes=notes))
+    if not any("outside the chart's own" in n for n in notes):
+        notes.append(f"the page prints a Start Time {st[:5]} that its own clock "
+                     f"axis ({axis}) cannot hold; the printed time stays on "
+                     f"the export")
+    return meta, dict(info, notes=notes)
+
+
 def extract_page_b(page, sample_sec=1.0):
     """-> (meta, samples, channels, info)"""
     im = _b_main_image(page)
@@ -1671,6 +1726,7 @@ def extract_page_b(page, sample_sec=1.0):
     samples, channels, info = extract_image_b(img, sample_sec, start_hint=hint)
     samples, channels, info, meta = _crop_to_printed_window(
         meta, samples, channels, info)
+    meta, info = _clock_from_axis(meta, info)
     # Layout B has no whole-job page — detect_b requires a "Stage # N"
     # caption — so every page here is a single stage and the cap applies,
     # to the stage the page prints rather than to the window around it.

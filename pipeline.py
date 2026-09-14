@@ -874,6 +874,19 @@ def _trican_clock(doc, results, notes):
                         f"the table's, not the chart's" if resolved else ""))
 
 
+def _route_b_notes(notes):
+    """A layout-B reader's notes -> (the axis drops, the stage's own notes).
+
+    "<label>: <axis> axis unreadable" is the one shape that means a channel
+    was left out; everything else the reader says is about a channel it
+    exported and is shown on that stage, not summed across the file.
+    """
+    drops, mine = [], []
+    for n in notes:
+        (drops if "axis unreadable" in str(n) else mine).append(str(n))
+    return drops, mine
+
+
 def _secs(hms):
     """'HH:MM:SS' -> seconds since midnight."""
     h, m, s = (str(hms).split(":") + ["0", "0"])[:3]
@@ -2273,7 +2286,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             try:
                 md, samples, chans, info = tcharts.extract_page_b(page,
                                                                   sample_sec)
-                for _n in (info.get("notes") or ()):
+                # Only an unreadable axis is a DROP. The reader's other
+                # notes — a curve drawn over part of the width, the
+                # concentration axis checked against the printed maximum,
+                # a window trimmed to the printed start — were all being
+                # filed here too and came out on the file as "channel
+                # dropped … the axis could not be read", forty lines of it
+                # on 00910 (#648). They belong to the stage.
+                _drops, _stage_notes = _route_b_notes(info.get("notes") or ())
+                for _n in _drops:
                     _trican_drops.setdefault(str(_n), []).append(pno + 1)
                 data = {c["label"]: c["values"] for c in chans}
                 units = {c["label"]: c["unit"] for c in chans}
@@ -2293,7 +2314,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             "date": md.get("date") or "",
                             "start_time": md.get("start_time") or "00:00:00",
                             "duration_min": len(samples) / 60.0,
-                            "warnings": []}
+                            "warnings": list(_stage_notes)}
+                    if md.get("clock_chart"):
+                        # sample 0 is on the chart's own clock axis; the
+                        # printed Start Time is the stage's and is kept
+                        # beside it — see trican_charts._clock_from_axis
+                        meta["clock_chart"] = True
+                        meta["printed_start"] = md.get("printed_start", "")
                     results.append(_series(
                         meta, samples, data, "Trican treatment chart (raster)",
                         pno + 1, units, geom=info.get("geom"), frames=frames))

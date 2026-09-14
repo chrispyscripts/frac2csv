@@ -263,6 +263,32 @@ text (`SPIKE_EDGE_S`). 00026 spike warnings 11 → 5; the five left are
 mid-stage and real. The three fringes stay open — the tracer picks the
 fringe run for a few samples where red crosses brown — and are small.
 
+### Layout B clocks itself too, inside the sheet's envelope (00910 s21, #648)
+
+"Some type of wrap around", with a shot of 00910 stage 21. The page prints
+Start Time 12:16, Elapsed Time 1:14:27, Pumping Time 0:33:20 — and a clock
+axis running 12:57:39 to 13:32. The plot is the last 34 minutes of a
+74-minute stage; the first 41 were not pumped and are not on the chart.
+Stamped with the printed 12:16, the window sat 41 minutes early on the
+well, and the pump-up of stage 22 that the page shows at 13:31 landed at
+12:50, forty minutes before stage 22's own chart: the wrap.
+
+`trican_charts._clock_from_axis`, after the crop: where the axis's
+opening clock differs from the printed Start Time by more than a minute
+AND sits inside the envelope the sheet itself prints — up to ten minutes
+before the Start Time, or anywhere up to Start + Elapsed — sample 0 takes
+the axis, `clock_chart` is set, and the stage says both clocks and how
+many of the stage's minutes are not plotted. Outside that envelope (01350
+p186: Start Time 02:41 under an axis reading 12:50) the printed time
+stays and is said, as before. The same rule as layout A: the axis is the
+chart's clock, the sheet is the stage's.
+
+Also in this pass: the layout-B reader's notes were ALL being filed as
+"channel dropped … the axis could not be read" — forty lines of it on
+00910's file note, one per distinct wording, for curves that were
+exported. `_route_b_notes`: only "axis unreadable" is a drop; the rest go
+on the stage.
+
 **Still open after this pass:**
 
 - **The pad and the flush — BUILT for Trican (`4d2a978`) and now for STEP

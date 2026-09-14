@@ -292,5 +292,19 @@
    "clock.none"
   ],
   "expect": false
+ },
+ {
+  "issue": "#648",
+  "file": "00910",
+  "said": "wrap around on stage 21 (repaired: layout B clocked from its own axis inside the sheet's envelope)",
+  "stages": [
+   "21"
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.overlap",
+   "clock.backwards"
+  ],
+  "expect": false
  }
 ]
