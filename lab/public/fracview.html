@@ -1250,6 +1250,16 @@ window.addEventListener("message", ev => {
             : edits.labels.findIndex(l => String(l) === String(d.label));
     selIdx = i;
     $("jump").value = i >= 0 ? String(i) : "";
+    // Bring it into VIEW, the same way picking it from the dropdown does.
+    //
+    // This used to only set selIdx and redraw, so changing chart in the Lab
+    // highlighted the stage here without moving to it — and on a forty-stage
+    // well shown whole, that highlight is a sliver a few pixels wide. It read
+    // as the two windows not being linked at all (Carmine, 2026-09-14).
+    //
+    // Through zoomStages, so it obeys the Span selector he set: on "All" the
+    // view already shows everything and nothing jumps, which is right.
+    if (i >= 0) zoomStages(i, $("span").value || "1");
     draw();
     return;
   }
@@ -1472,6 +1482,27 @@ bind("jump", "change", e => {
   zoomStages(i, $("span").value || "1");
   selectStage(i);
 });
+// The wheel steps through the stage list while the pointer is over it.
+//
+// A native select only scrolls its list while it is OPEN; hovering a closed
+// one and turning the wheel scrolls the page behind it. On a well of eighty
+// stages, picking a neighbour meant opening the list and hunting, when the
+// wheel is already the gesture being used to move along the plot.
+//
+// passive:false because the page scroll has to be suppressed — without it
+// the Lab window scrolls underneath while the stage changes.
+$("jump").addEventListener("wheel", e => {
+  const sel = $("jump");
+  const n = sel.options.length;
+  if (!n) return;
+  e.preventDefault();
+  const at = sel.selectedIndex < 0 ? 0 : sel.selectedIndex;
+  const next = Math.max(0, Math.min(n - 1, at + (e.deltaY > 0 ? 1 : -1)));
+  if (next === sel.selectedIndex) return;      // already at an end
+  sel.selectedIndex = next;
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+}, { passive: false });
+
 bind("span", "change", e => {
   const sel = $("jump").value;
   const i = sel === "" ? Math.max(0, stageAtX((view.a + view.b) / 2)) : Number(sel);
