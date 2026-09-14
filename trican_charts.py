@@ -889,8 +889,11 @@ def b_tick_points(img, x0, x1, y0, y1):
     return {k: v[1] for k, v in out.items()}
 
 
-def b_time_axis(img, x0, x1, y1):
-    """Clock-time labels under the plot -> (seconds at x0, sec/px)."""
+def b_time_axis(img, x0, x1, y1, start_hint=None):
+    """Clock-time labels under the plot -> (seconds at x0, sec/px).
+
+    `start_hint` is the Start Time the page prints in text, in seconds,
+    when it has one — see _b_clock_fit for what it settles."""
     from PIL import Image
     H, W = img.shape[:2]
     strip = _b_darken(img[min(y1 + 2, H - 1):min(y1 + 46, H), :])
@@ -917,16 +920,106 @@ def b_time_axis(img, x0, x1, y1):
     if len(pts) < 3:
         return None
     pts.sort(key=lambda p: p[1])
-    vals = [p[0] for p in pts]
-    for i in range(1, len(vals)):                  # unwrap midnight
-        if vals[i] < vals[i - 1] - 3600:
-            for j in range(i, len(vals)):
-                vals[j] += 86400
-    pts = [(v, p[1]) for v, p in zip(vals, pts)]
-    fit = _ransac(pts, x0, x1, tol_frac=0.02)
-    if fit is None or fit[1] <= 0:
-        return None
-    return fit[0], fit[1]
+    return _b_clock_fit(pts, x0, x1, start_hint)
+
+
+def _swap_hours(seq, delta):
+    """The 3<->9 misread as a whole-ladder hypothesis: +6 h on every label
+    whose hour reads 3 or 13, or -6 h on every 9 or 19."""
+    out = []
+    for v, c in seq:
+        h = (int(v) // 3600) % 24
+        if (delta > 0 and h in (3, 13)) or (delta < 0 and h in (9, 19)):
+            v = v + delta
+        out.append((v, c))
+    return out
+
+
+def _b_clock_fit(pts, x0, x1, start_hint=None):
+    """[(seconds, x)] as OCR'd -> (seconds at x=0, sec/px), misreads and all.
+
+    Two things go wrong with a label ladder, and together they were killing
+    whole stages on "implausible stage duration" (#625, #640 — seven pages
+    across 01433, 01421 and 01350):
+
+      * This font's 9 reads as 3. 19:00 comes back 13:00 and 09:45 as 03:45,
+        on the same page as neighbours read correctly, and the MINUTES are
+        always right. A label six hours off the line but on the right minute
+        is a misread hour, not a different time; it is put back on the line
+        and counted.
+      * The midnight unwrap — a label more than an hour EARLIER than the one
+        before is taken as the next day — fired on exactly those misreads,
+        added 86 400 s to every label after, and the fit through the wrapped
+        cluster gave 86400·k plus a stage. Six of the seven dead pages were
+        that shape: 132 681, 138 573, 148 011, 191 129, 240 455, 251 614 s.
+
+    So fit the labels unwrapped AND as read, put the misread hours back on
+    whichever line they land near, and keep the fit that explains more
+    labels. A genuine midnight crossing still wins — because unwrapping
+    explains it and reading raw does not — and on a tie the unwrapped fit
+    is kept, so a chart that never crosses midnight is read as before.
+
+    When the misread is the MAJORITY the minute ladder cannot say which
+    hour is true: 01421 p178 reads 09:25 03:30 03:35 03:40 09:45 03:50
+    09:55, and a line through the 03s explains every label as well as one
+    through the 09s. The page prints "Start Time 09:25" in text beside the
+    chart, and that is `start_hint`: among fits that explain equally many
+    labels, the one that starts nearest the printed start wins. Each
+    whole-ladder swap (every 3 read as 9, every 9 read as 3) is tried as
+    its own hypothesis so that case has a candidate to choose.
+    """
+    def unwrap(seq):
+        vals = [v for v, _ in seq]
+        for i in range(1, len(vals)):
+            if vals[i] < vals[i - 1] - 3600:
+                for j in range(i, len(vals)):
+                    vals[j] += 86400
+        return [(v, c) for v, (_, c) in zip(vals, seq)]
+
+    def hint_term(a, b):
+        if start_hint is None:
+            return 0.0
+        d = abs((a + b * x0 - start_hint + 43200) % 86400 - 43200)
+        return -d
+
+    best = None
+    cands = []
+    for swapped in (list(pts), _swap_hours(pts, 6 * 3600), _swap_hours(pts, -6 * 3600)):
+        cands += [unwrap(swapped), list(swapped)]
+    for cand in cands:
+        fit = _ransac(cand, x0, x1, tol_frac=0.02)
+        if fit is None or fit[1] <= 0:
+            continue
+        a, b, inl = fit
+        keep = list(inl)
+        for k in range(len(cand)):
+            if k in inl:
+                continue
+            v, cx = cand[k]
+            pred = a + b * cx
+            # minutes the label is off the line, folded into (-30, 30]:
+            # on the right minute means the hour was the misread
+            dm = ((v - pred) / 60.0 + 30.0) % 60.0 - 30.0
+            if abs(dm) <= 1.5:
+                cand[k] = (pred + dm * 60.0, cx)
+                keep.append(k)
+        cols = np.array([cand[k][1] for k in keep], float)
+        vals = np.array([cand[k][0] for k in keep], float)
+        A = np.vstack([np.ones(len(keep)), cols]).T
+        (a2, b2), *_ = np.linalg.lstsq(A, vals, rcond=None)
+        if b2 <= 0:
+            continue
+        # Labels explained BEFORE any misread is put back come first: a
+        # hypothesis that needs the recovery step to tie one that does not
+        # is the weaker reading. 01350 p186 reads 12:50 13:00 … 13:50 and
+        # they are true; "every 13 is a 19" explains the 13s only by
+        # rewriting them, and 12:50 only by dragging it to 18:50. Ranked on
+        # raw inliers the true ladder wins 7 to 6 and the printed start is
+        # never consulted. The hint decides only genuine ties.
+        score = (len(inl), len(keep), hint_term(a2, b2), -b2 * (x1 - x0))
+        if best is None or score > best[0]:
+            best = (score, (float(a2), float(b2)))
+    return None if best is None else best[1]
 
 
 B_AXIS_RANGE = {"press": (10.0, 250.0), "rate": (1.5, 60.0),
@@ -1197,6 +1290,7 @@ def detect_b(page):
 # carries both fields, every date says (m/d/y), every time says (hh:mm).
 _B_DATE = re.compile(r"Interval Date\s*(\d{1,2})/(\d{1,2})/(\d{2})\s*\(m/d/y\)")
 _B_START = re.compile(r"Start Time\s*(\d{1,2}):(\d{2})\s*\(hh:mm\)")
+_B_ELAPSED = re.compile(r"Elapsed Time\s*(\d{1,2}):(\d{2}):(\d{2})\s*\(h:mm:ss\)")
 
 
 def page_meta_b(page):
@@ -1215,6 +1309,10 @@ def page_meta_b(page):
         hh, mi = int(m.group(1)), int(m.group(2))
         if hh < 24 and mi < 60:
             meta["start_time"] = f"{hh:02d}:{mi:02d}:00"
+    m = _B_ELAPSED.search(text)
+    if m:
+        meta["elapsed_s"] = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                             + int(m.group(3)))
     m = B_STAGE.search(text)
     if m:
         meta["stage"] = int(m.group(1))
@@ -1253,18 +1351,79 @@ def _b_main_image(page):
     return max(imgs, key=lambda im: im[3])
 
 
+def _crop_to_printed_window(meta, samples, channels, info, slack_s=60.0):
+    """The chart window is often wider than the stage, and the page says by
+    how much.
+
+    01433 p155 plots the job's first 13.5 hours around a one-hour stage 1
+    (printed: Start Time 11:05, Elapsed Time 1:00:02), and the 8.3-hour cap
+    threw the stage away. p213's two-hour window holds a 34-minute stage 60;
+    exported whole, the stage "ran" until 08:23 and stage 61 at 08:04 was
+    flagged as starting before it finished (#640). Same file, same cause.
+
+    Trimmed to [Start Time, Start Time + Elapsed] plus a minute of slack at
+    the end, so sample 0 IS the printed start. Only when that window sits
+    inside the chart's own clock axis: 01350 p186 prints Start Time 02:41
+    under a chart whose axis runs 12:50-13:58, and which of the two is
+    wrong is not knowable here — that page is left whole and noted.
+    """
+    el, st = meta.get("elapsed_s"), meta.get("start_time") or ""
+    if not el or not st:
+        return samples, channels, info, meta
+    t0, n = float(info["t0_seconds"]), float(info["duration_s"])
+    if n <= el + 2 * slack_s + 120:
+        return samples, channels, info, meta         # the window is the stage
+    printed = int(st[:2]) * 3600 + int(st[3:5]) * 60
+    s = None
+    for shift in (0, 86400, -86400):                # the axis clock may be unwrapped
+        cand = printed + shift - t0
+        if -slack_s <= cand <= n - 60:
+            s = cand
+            break
+    notes = list(info.get("notes") or [])
+    if s is None:
+        notes.append("the page prints a Start Time outside the chart's own "
+                     "clock axis; the window is kept whole and the printed "
+                     "time stays on the export")
+        return samples, channels, dict(info, notes=notes), meta
+    a, b = max(0.0, s), min(n, s + el + slack_s)
+    if b - a < 60:
+        return samples, channels, info, meta
+    sel = (samples >= a) & (samples < b)
+    out = samples[sel] - samples[sel][0]
+    chans = [dict(c, values=np.asarray(c["values"])[sel]) for c in channels]
+    x0, y0, x1, y1 = info["plot"]
+    pps = (x1 - x0) / n
+    notes.append("chart window wider than the stage; trimmed to the Start "
+                 "Time and Elapsed Time the page prints")
+    info = dict(info, t0_seconds=t0 + a, duration_s=int(round(b - a)),
+                plot=(x0 + a * pps, y0, x0 + b * pps, y1),
+                window_s=int(round(n)), notes=notes)
+    if s < 0:
+        # the window opens after the printed start: sample 0 is the window's
+        # edge, so the export's clock has to say so too
+        w = int(round(t0)) % 86400
+        meta = dict(meta, start_time=f"{w // 3600:02d}:{w % 3600 // 60:02d}:{w % 60:02d}")
+    return out, chans, info, meta
+
+
 def extract_page_b(page, sample_sec=1.0):
     """-> (meta, samples, channels, info)"""
     im = _b_main_image(page)
     img = _pixmap(page.parent, im)
-    samples, channels, info = extract_image_b(img, sample_sec)
+    meta = page_meta_b(page)
+    st = meta.get("start_time") or ""
+    hint = int(st[:2]) * 3600 + int(st[3:5]) * 60 if st else None
+    samples, channels, info = extract_image_b(img, sample_sec, start_hint=hint)
+    samples, channels, info, meta = _crop_to_printed_window(
+        meta, samples, channels, info)
     # Layout B has no whole-job page — detect_b requires a "Stage # N"
-    # caption — so every page here is a single stage and the cap applies.
+    # caption — so every page here is a single stage and the cap applies,
+    # to the stage the page prints rather than to the window around it.
     if info["duration_s"] > STAGE_MAX_S:
         raise ValueError("trican-B: implausible stage duration "
                          f"{info['duration_s']}s")
     _attach_geom(page, im, img, info)
-    meta = page_meta_b(page)
     if info.get("conc_derived"):
         channels = _check_derived_conc(channels, meta, info)
     return meta, samples, channels, info
