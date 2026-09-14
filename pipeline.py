@@ -806,7 +806,8 @@ def _trican_clock(doc, results, notes):
         return
     if not clocks:
         return
-    dated = clocked = 0
+    dated = clocked = resolved = 0
+    how = ""
     for r in tri:
         md = r["meta"]
         m = re.match(r"\d+", str(md.get("stage")).strip())
@@ -815,16 +816,27 @@ def _trican_clock(doc, results, notes):
         entry = clocks.get(int(m.group(0)))
         if not entry:
             continue
+        took = False
         if not md.get("date") and entry["date"]:
             md["date"] = entry["date"]
             dated += 1
+            took = True
         if (md.get("start_time") or "00:00:00") == "00:00:00" \
                 and entry["start"] != "00:00:00":
             md["start_time"] = entry["start"]
             clocked += 1
+            took = True
+        # A 12-hour table read through a rule is the table's time, not the
+        # chart's, and the export has to say so (00015, #639).
+        if took and entry.get("resolved"):
+            resolved += 1
+            how = entry["resolved"]
+            md.setdefault("warnings", []).append("clock: " + how)
     if dated or clocked:
         notes.append(f"{max(dated, clocked)} Trican chart(s) dated and clocked "
-                     f"from the STAGE INFORMATION page that follows each one")
+                     f"from the STAGE INFORMATION page that follows each one"
+                     + (f" — {resolved} of them from a {how}; these times are "
+                        f"the table's, not the chart's" if resolved else ""))
 
 
 def _step_clock(doc, results, notes):

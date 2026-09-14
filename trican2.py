@@ -265,6 +265,14 @@ _MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
 # not the job, but they bracket it, which is all the year needs. See _year_for.
 _DOC_DATE = re.compile(r"\b(20[0-2]\d)-(\d{2})-(\d{2})\b")
 _DOC_DATE_MON = re.compile(r"\b(20[0-2]\d)-([A-Z]{3})-(\d{1,2})\b")
+# The 2015 layout (00015): a bare "05:32" in the Start Time cell — a 12-hour
+# clock with no AM/PM, no date, printed per stage — and, on the job's own
+# day sheet, "Start Date: July 06, 2015" and "Start Time: 3:01 pm".
+_BARE_START = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*(?:([AaPp])\.?[Mm]\.?)?\s*$")
+_LONG_DATE = re.compile(r"\b(January|February|March|April|May|June|July|August|"
+                        r"September|October|November|December)\s+(\d{1,2}),?\s+(20[0-2]\d)\b")
+_JOB_START = re.compile(r"Start Date:\s*" + _LONG_DATE.pattern)
+_DAY_ANCHOR = re.compile(r"Start Time:\s*(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm]\.?")
 
 
 def _parse_start(text):
@@ -304,6 +312,109 @@ def document_dates(doc, pages=6):
                 out.append(date(int(m.group(1)), _MONTHS.index(mon) + 1,
                                 int(m.group(3))))
     return sorted(set(out))
+
+
+def job_start_date(doc):
+    """The 'Start Date: July 06, 2015' a Trican job sheet prints, or None."""
+    for pno in range(len(doc)):
+        m = _JOB_START.search(doc[pno].get_text())
+        if m:
+            mon = [x[:3] for x in ("january", "february", "march", "april", "may", "june",
+                                   "july", "august", "september", "october", "november",
+                                   "december")].index(m.group(1).lower()[:3]) + 1
+            try:
+                return date(int(m.group(3)), mon, int(m.group(2)))
+            except ValueError:
+                return None
+    return None
+
+
+def day_anchors(doc):
+    """Every 'Start Time: 3:01 pm' a day sheet prints, as minutes of the day.
+    The one clock in a 12-hour filing that says which half of the day it is."""
+    out = []
+    for pno in range(len(doc)):
+        for m in _DAY_ANCHOR.finditer(doc[pno].get_text()):
+            hh, mm = int(m.group(1)) % 12, int(m.group(2))
+            if m.group(3).upper() == "P":
+                hh += 12
+            out.append(hh * 60 + mm)
+    return out
+
+
+def resolve_bare(bare, anchors=(), start_date=None):
+    """[(stage, h12, mm, 'A'|'P'|None)] in stage order -> {stage: entry}.
+
+    A stage table printing 03:00, 04:29, 05:32, 12:00, 08:27 … with no AM/PM
+    (00015, #639) has two readings, twelve hours apart, and both are
+    monotonic once the day is allowed to roll over. The order of stages
+    settles everything BUT the first stage's half of the day: each later
+    stage is the earliest reading of its digits that does not run before
+    the stage before it. The first stage's half is taken from a day sheet
+    that prints an explicit clock within ten minutes of it ("Start Time:
+    3:01 pm" for a table starting 03:00), failing that from whichever
+    reading makes the job shorter, and failing that AM.
+
+    Every entry says how it was resolved, because these are the table's
+    times read through a rule, not the chart's — the asymmetric-
+    verification warning in HANDOFF, applied.
+    """
+    if not bare:
+        return {}
+    bare = sorted(bare, key=lambda b: b[0])
+
+    def walk(first_pm):
+        seq, day, prev = [], 0, None
+        for i, (stage, h12, mm, ap) in enumerate(bare):
+            base = (h12 % 12) * 60 + mm
+            if ap:
+                cands = [base + (720 if ap == "P" else 0)]
+            elif i == 0:
+                cands = [base + (720 if first_pm else 0)]
+            else:
+                cands = sorted((base, base + 720))
+            pick = next((c for c in cands if prev is None or c >= prev), None)
+            if pick is None:                    # neither half fits: next day
+                day += 1
+                pick = cands[0]
+            seq.append((stage, day, pick))
+            prev = pick
+        span = (seq[-1][1] - seq[0][1]) * 1440 + seq[-1][2] - seq[0][2]
+        return seq, span
+
+    stage0, h0, m0, ap0 = bare[0]
+    how = "AM/PM by the order of stages"
+    if ap0:
+        first_pm = ap0 == "P"
+        how = "the first stage prints its AM/PM; the rest by the order of stages"
+    else:
+        base0 = (h0 % 12) * 60 + m0
+        near = [a for a in anchors if min(abs(a - base0), abs(a - base0 - 720)) <= 10]
+        if near:
+            first_pm = abs(near[0] - base0 - 720) < abs(near[0] - base0)
+            how += ", the first anchored by the day sheet's own clock"
+        else:
+            (_a, span_am), (_p, span_pm) = walk(False), walk(True)
+            if span_pm == span_am:
+                # 00015 without its day sheet: 23.8 h either way. This is a
+                # guess and the label says so; a wrong half-day here moves
+                # every stage twelve hours, which is why the anchor is
+                # looked for first.
+                first_pm = False
+                how += ", the first a GUESS — both halves of the day fit equally, taken as the morning"
+            else:
+                first_pm = span_pm < span_am
+                how += ", the first by the shorter job"
+    seq, _ = walk(first_pm)
+    out = {}
+    for stage, day, mins in seq:
+        d = ""
+        if start_date is not None:
+            dd = date.fromordinal(start_date.toordinal() + day)
+            d = f"{dd.year:04d}-{dd.month:02d}-{dd.day:02d}"
+        out[stage] = {"date": d, "start": f"{mins // 60:02d}:{mins % 60:02d}:00",
+                      "resolved": "12-hour clock from the stage table, " + how}
+    return out
 
 
 def _year_for(mon, day, doc_dates):
@@ -371,15 +482,25 @@ def stage_clock(doc):
     if not rows:
         return {}
     doc_dates = document_dates(doc)
-    out = {}
+    out, bare = {}, []
     for r in rows:
-        got = _parse_start(r.get("start"))
-        if not got:
+        try:
+            stage = int(r["stage"])
+        except (KeyError, TypeError, ValueError):
             continue
-        mon, day, hh, mm = got
-        y = _year_for(mon, day, doc_dates)
-        out[r["stage"]] = {
-            "date": f"{y:04d}-{mon:02d}-{day:02d}" if y else "",
-            "start": f"{hh:02d}:{mm:02d}:00",
-        }
+        got = _parse_start(r.get("start"))
+        if got:
+            mon, day, hh, mm = got
+            y = _year_for(mon, day, doc_dates)
+            out[stage] = {
+                "date": f"{y:04d}-{mon:02d}-{day:02d}" if y else "",
+                "start": f"{hh:02d}:{mm:02d}:00",
+            }
+            continue
+        m = _BARE_START.match(str(r.get("start") or ""))
+        if m and int(m.group(1)) <= 24 and int(m.group(2)) < 60:
+            bare.append((stage, int(m.group(1)), int(m.group(2)),
+                         (m.group(3) or "").upper() or None))
+    if bare:
+        out.update(resolve_bare(bare, day_anchors(doc), job_start_date(doc)))
     return out
