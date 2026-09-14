@@ -552,9 +552,14 @@ _DATE = re.compile(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})")
 
 
 def _start(st):
+    """The stage's clock as a datetime, or None for the pipeline's default.
+
+    The default is no date AND 00:00:00. A dated stage starting at 00:00:00
+    is midnight: 00015's stage 4 (a 12-hour "12:00" resolved to the next
+    day's midnight) was being read as unclocked and re-flagged."""
     d, t = str(_meta(st, "date") or ""), str(_meta(st, "start_time") or "")
     m = _DATE.search(d)
-    if not m or not t or t == "00:00:00":
+    if not m or not t:
         return None
     try:
         hh, mm, ss = (int(x) for x in (t.split(":") + ["0", "0"])[:3])

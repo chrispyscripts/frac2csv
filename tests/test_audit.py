@@ -295,6 +295,14 @@ class Clocks(unittest.TestCase):
         res = audit.audit_stages(stages, [])
         self.assertEqual(of(res, "clock.none"), [])
 
+    def test_midnight_with_a_date_is_a_clock(self):
+        stages = [stage("3", 39, date="2015-07-06", start="17:32:00"),
+                  stage("4", 41, date="2015-07-07", start="00:00:00"),
+                  stage("5", 43, date="2015-07-07", start="08:27:00")]
+        res = audit.audit_stages(stages, [])
+        self.assertEqual(kinds(res) & {"clock.absent", "clock.none", "clock.in-table"}, set())
+        self.assertEqual(of(res, "clock.absent", "info"), [])
+
     def test_clock_hint_reads_the_page(self):
         self.assertEqual(audit._clock_hint("Clock Time (hour:min)\n18:30 18:40 18:50 19:32\nElapsed"), "18:30–19:32")
         self.assertEqual(audit._clock_hint("Elapsed Time (min)\n210.0 220.0 230.0"), "")
