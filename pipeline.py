@@ -1305,6 +1305,89 @@ def _pick_variant(results, notes):
     return results
 
 
+# A table's stage column: the Lab's own Stage Number term, plus the bare
+# "Interval" Canyon prints, admitted only when its values are numbers.
+_STAGE_COL = re.compile(r"^\s*(stage(\s*(no\.?|number|#|_number))?|zone\s*#?|interval\s*#?)\s*$", re.I)
+_LABEL_COL = re.compile(r"stage\s*label|interval\s*label", re.I)
+_HAS_DATE = re.compile(r"\bdate\b", re.I)
+_HAS_START = re.compile(r"\bstart\b", re.I)
+
+
+def _join_stage_meta(results):
+    """Every table with a stage column carries the stage's label, date and
+    start time from the chart list — the three things the Lab's stage list
+    shows and the table CSVs left blank on every template (Carmine,
+    2026-09-14).
+
+    Only where the table prints no column of its own for it: a sheet with
+    its own Start Time keeps it and gets nothing added. Only where the charts
+    sharing that stage number AGREE — STEP's surface and chemical charts of
+    one stage do, CalFrac's Surface and BH sheets do, and a stage charted
+    twice on two clocks (BJ 00636's "5" and "5 (2)") does not, and stays
+    blank rather than guessed. The Surface/BH suffix is a chart type, not
+    part of the stage's name (#546), and is dropped from the label. A chart
+    without a date or with the 00:00:00 default contributes nothing, so a
+    blank here still means the file did not say.
+    """
+    charts = {}
+    for r in results:
+        if r.get("type") != "series":
+            continue
+        m = r.get("meta") or {}
+        lab = str(m.get("stage") or "").strip()
+        n = pe.stage_num(lab)
+        if n >= 10 ** 9:
+            continue
+        v = _VARIANT_STAGE.match(lab)
+        if v:
+            lab = v.group(1).strip()
+        date = str(m.get("date") or "").strip()
+        start = str(m.get("start_time") or "").strip()
+        if not date:
+            start = ""                                # the default, not a clock
+        charts.setdefault(n, []).append((lab, date, start))
+    agreed = {}
+    for n, seen in charts.items():
+        labs = {x[0] for x in seen}
+        dates = {x[1] for x in seen if x[1]}
+        starts = {x[2] for x in seen if x[2]}
+        agreed[n] = (labs.pop() if len(labs) == 1 else "",
+                     dates.pop() if len(dates) == 1 else "",
+                     starts.pop() if len(starts) == 1 else "")
+    if not agreed:
+        return
+    for r in results:
+        if r.get("type") != "table":
+            continue
+        cols = list(r.get("columns") or [])
+        rows = [list(x) for x in (r.get("rows") or [])]
+        si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+        if si is None or not rows:
+            continue
+        vals = [str(row[si]).strip() for row in rows if si < len(row) and str(row[si]).strip()]
+        if not vals or sum(pe.stage_num(v) < 10 ** 9 for v in vals) < 0.6 * len(vals):
+            continue
+        add = []
+        if not any(_LABEL_COL.search(str(c)) for c in cols):
+            add.append(("Stage Label", 0))
+        if not any(_HAS_DATE.search(str(c)) for c in cols):
+            add.append(("Date", 1))
+        if not any(_HAS_START.search(str(c)) for c in cols):
+            add.append(("Start Time", 2))
+        if not add:
+            continue
+        names = [a for a, _ in add]
+        out_rows = []
+        for row in rows:
+            n = pe.stage_num(row[si]) if si < len(row) else 10 ** 9
+            meta = agreed.get(n, ("", "", ""))
+            extra = [meta[k] for _, k in add]
+            out_rows.append(row[:si + 1] + extra + row[si + 1:])
+        r["columns"] = cols[:si + 1] + names + cols[si + 1:]
+        r["rows"] = out_rows
+        r["stage_meta_joined"] = names
+
+
 def _normalise_tables(results, filename=None):
     fallback = pe.filename_uwi(filename) if filename else ""
     for r in results:
@@ -2477,4 +2560,5 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # and only then is the stage in the form the daily report names.
     _daily_ops_fill(doc, results, notes)
     _normalise_tables(results, filename)
+    _join_stage_meta(results)
     return results, notes

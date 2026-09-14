@@ -127,6 +127,23 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
 - Monitor Pressure on 01350 s1: a 7-minute gap at 60:25 where the curve
   goes 0.2 → 44. Not one of the six; unexamined.
 
+### Tables carry the stage's label, date and start time (2026-09-14)
+
+Carmine: "tables are leaving stage name and date / time blank for all
+types. That data is available on the stage list." It was — on the charts —
+and neither export path joined it: the Lab derived a Stage Label only where
+the name said more than the number (`bf8209a`) and derived no date at all;
+the batch drop-a-folder CSV wrote the raw table. `pipeline._join_stage_meta`
+now runs last in `extract_document`, after every clock pass, so both paths
+and the view get it: every table with a stage column gets `Stage Label`,
+`Date`, `Start Time` right after that column, from the charts sharing the
+stage number. Only where the table has no column of its own for it; only
+where those charts AGREE (STEP surface + chemical do, CalFrac Surface + BH
+do with the suffix dropped, a stage charted twice on two clocks does not
+and stays blank); a chart with no date contributes nothing. The Lab's Our
+Terms map the three by name (`stagelabel`, `datetime`), and `keepColumn`
+keeps anything not explicitly dropped. 9 tests; the 12 JS suites unchanged.
+
 ### The audit finds what Carmine flags, before he flags it (2026-09-14)
 
 `audit.py` runs over the Lab's own payload and emits findings — the kinds
