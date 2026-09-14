@@ -53,6 +53,30 @@ def _fit(pairs):
     return float(a), float(b)
 
 
+def _black_is_curve(p1, p2):
+    """Black shares its ink with the axes, the grid and the tick marks.
+
+    A long axis-aligned segment is a frame or a gridline and was always
+    dropped. The TICK MARKS were not: each is a 2.4-pt vertical on the
+    panel's time axis, one per time label, and it slipped under the 5-pt
+    floor — so every black series (BHP, Combined WH, Proppant Blender on
+    00229) took a point ON THE BASELINE at every label and exported a
+    plunge to zero there, the same second in all three panels (#629). The
+    rendered chart shows nothing of the kind.
+
+    A curve sampled in time is never exactly vertical — of 12,000 coloured
+    segments on that page, none was — so any vertical black segment is the
+    axis's, whatever its length. Exactly horizontal ones can be a hold at a
+    constant value, so those keep the length test.
+    """
+    dx, dy = abs(p1.x - p2.x), abs(p1.y - p2.y)
+    if dx < 0.01:
+        return False
+    if dy < 0.01 and dx > 5:
+        return False
+    return True
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -105,6 +129,13 @@ def extract_page(page, sample_sec=1.0):
          or re.search(r"#\s*(\d+)\b", text))
     if m:
         meta.stage = m.group(1)
+        # A stage pumped in two runs prints two charts: 00229's "#7 - Shut
+        # down early" on p37 and "#7 - continued" on p39. Both said "7",
+        # the Lab merged a 35-minute chart with a 46-minute one, and the
+        # audit called it a doubled stage. CalFrac's second run of a zone
+        # is "13 (2)" (#617); the same name here keeps the two apart.
+        if re.search(r"#\s*" + m.group(1) + r"\b[^\n]{0,40}?\bcontinued\b", text, re.I):
+            meta.stage = f"{m.group(1)} (2)"
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     if m:
         meta.date = m.group(0)
@@ -194,12 +225,8 @@ def extract_page(page, sample_sec=1.0):
                 for item in d["items"]:
                     if item[0] == "l":
                         p1, p2 = item[1], item[2]
-                        if color == (0.0, 0.0, 0.0):
-                            # black shares ink with axes/grid: drop long
-                            # axis-aligned segments
-                            if (abs(p1.x - p2.x) < 0.01 or abs(p1.y - p2.y) < 0.01) and \
-                               max(abs(p1.x - p2.x), abs(p1.y - p2.y)) > 5:
-                                continue
+                        if color == (0.0, 0.0, 0.0) and not _black_is_curve(p1, p2):
+                            continue
                         pts.append((p1.x, p1.y))
                         pts.append((p2.x, p2.y))
                     elif item[0] == "c":
