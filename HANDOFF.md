@@ -194,6 +194,31 @@ Stages 9 and 10 are not in the summary, sit at midnight, and FracView's
 00026, 00015 and 00041 through the same pass: nothing moved, every
 channel identical — the search only runs where lag zero fails.
 
+### Eight BJ books with no charts and a table nobody read (#647, 01151-01158)
+
+"No extractable data — 8 files in one batch", the 2025 Ovintiv Tower Lake
+completions. Rendered: each book is the operator's WellOps daily reports
+and a Well Completion History drawn entirely as outlines (0 text chars,
+thousands of drawings, the "picture" and "own font" wordings of the
+auto-report were the same pages), a wellbore schematic (the page with
+the most drawings — the "1 page draws plotted curves" wording), and a BJ
+Post Frac Summary whose LAST page is a real text table: "Totals",
+one row per interval — start time, top depth, breakdown / max / avg
+pressure, clean and slurry volumes, max / avg rate, ISIP, additive and
+sand totals, min / max conc. No treatment chart anywhere in any of the
+eight. "No charts" is honest; "no tables" was not.
+
+`bj_summary.parse_totals` read that page all along (48 rows, 17 columns
+on 01156, first try). The pipeline gated it on a BJ chart having been
+read — `_summary(bj_summary, "BJ chart" in chart_srcs, …)` — so a book
+with the table and no chart came back empty. Gated now on the book's own
+page (`bj_summary.detect_document`), the way Liberty and CalFrac already
+were. Rows per book: 01151 37, 01152 50, 01153 66, 01154 49, 01155 22,
+01156 48, 01157 39, 01158 27 — 338 filed intervals with start time and
+ISIP. `bj_wellops.py` reads the Stimulation Intervals blocks of the same
+daily reports, but those pages are outlines here, so it has nothing to
+read; that is the OCR class and it stays open.
+
 **Still open after this pass:**
 
 - **The pad and the flush — BUILT and measured (`4d2a978`).** The walk
@@ -224,6 +249,9 @@ channel identical — the search only runs where lag zero fails.
   stage: named in the note (`unnumbered_title`), not read as a stage. p65
   is a wellbore schematic. The outlined-font BJ class is real but it is
   01156/01157 (#647), not this file.
+- The outlined-text WellOps daily reports of 01151-01158 (#647): every
+  page 0 text chars; the Stimulation Intervals blocks `bj_wellops` reads
+  are there as paths. OCR of a rendered page is the only route (Phase 4).
 - 00180 pairs 11→12 and 18→19 disagree at every lag (five of ten
   channels); stages 9 and 10 are not in the Daily Stage Summary and sit at
   midnight. Look at the pages.

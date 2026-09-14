@@ -2774,7 +2774,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 "columns": tab["columns"], "rows": tab["rows"],
                 "source": title})
 
-    _summary(bj_summary, "BJ chart" in chart_srcs,
+    # Gate on BJ's OWN Totals page as well as on the chart source: the 2025
+    # Ovintiv/BJ books (#647) print the per-interval table and no chart at
+    # all, and came back empty with 22-66 rows sitting on the last page.
+    _summary(bj_summary, "BJ chart" in chart_srcs
+             or bj_summary.detect_document(doc),
              "Totals — per-interval frac summary",
              lambda d: _bj_totals(d))
     # Gate on Liberty's OWN pages as well as on the chart source, for exactly

@@ -233,19 +233,6 @@
   "expect": false
  },
  {
-  "issue": "#644",
-  "file": "00634",
-  "said": "No extractable data \u2014 BJ with outlined title/legend (new class, unread)",
-  "stages": [
-   ""
-  ],
-  "channel": null,
-  "kinds": [
-   "stage.missing"
-  ],
-  "expect": true
- },
- {
   "issue": "#646",
   "file": "00026",
   "said": "gaps in TR pressure (Tr Press under WH Rate; repaired: _deduce_under press pairs)",
@@ -288,6 +275,21 @@
    "stage.missing",
    "channel.absent",
    "clock.absent"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#647",
+  "file": "01155",
+  "said": "No extractable data \u2014 8 files (repaired: BJ Totals table gated on its own page; no charts in the books)",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.failed",
+   "channel.absent",
+   "clock.none"
   ],
   "expect": false
  }

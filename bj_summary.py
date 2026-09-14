@@ -79,6 +79,21 @@ def is_totals_page(page):
             and re.search(r"(Breakdown|Max\.?\s*Pressure)", t) is not None)
 
 
+def detect_document(doc):
+    """Does this document carry a per-interval Totals page at all?
+
+    The eight 2025 Ovintiv/BJ books of #647 (01151-01158) are the operator's
+    daily reports drawn as outlines, a Well Completion History the same way,
+    and a BJ Post Frac Summary whose last page is this table — 22 to 66
+    rows of start time, depth, pressures, rates, ISIP and sand — with no
+    treatment chart anywhere. The pipeline gated the table on a BJ chart
+    having been read, so those books came back "no extractable charts or
+    tables" with the table sitting on the page. Gate on the page instead,
+    as Liberty and CalFrac already do.
+    """
+    return any(is_totals_page(doc[p]) for p in range(doc.page_count))
+
+
 def _spans(page):
     out = []
     for b in page.get_text("dict")["blocks"]:
