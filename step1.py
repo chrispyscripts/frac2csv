@@ -342,6 +342,12 @@ def _frame_bbox(img):
 # contradict.
 RATE_AXIS_MAX = 50
 
+# a pixel darker than this (R+G+B) is ink of some colour, not the page:
+# the khaki where two pens blend at the floor sums to ~510, the palest
+# column of an anti-aliased descent ~570, the paper 740+
+INK_SUM = 700
+INK_CHROMA = 20            # max(RGB) - min(RGB): below this it is grey or black, not a pen
+
 NEW_SURFACE = {"red": ("Surface Pressure", "MPa", "pressure"),
                "blue": ("Slurry Rate", "m3/min", "rate"),
                "cyan": ("Slurry Rate", "m3/min", "rate"),
@@ -673,7 +679,15 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # "deduced" from Chem Conc (green) on ten of thirty stages.
     if lqty == "pressure" and "orange" in traced and "green" in traced:
         o, g = traced["orange"], traced["green"]
-        cols = _fill_under(o["sub"], o["py"], g["sub"], g["py"])
+        # every non-white pixel of the plot, for the floor walk: the pad
+        # and the flush sit under whatever is at the floor, blends and the
+        # other pens included (01316 p195, #627)
+        # ...and every pixel a hue mask owns: the sphere reaches tints too
+        # pale for the darkness test (the anti-aliased descent on p195)
+        ink = _ink(img, y0, y1, x0, x1)
+        for mk in masks.values():
+            ink |= mk[y0:y1, x0:x1]
+        cols = _fill_under(o["sub"], o["py"], g["sub"], g["py"], ink=ink)
         o["filled"] = len(cols)
     seen = set()
     for base, tr in traced.items():
@@ -717,9 +731,28 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     return samples, channels, info
 
 
-def _fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
+def _ink(img, y0, y1, x0, x1):
+    """Every non-paper pixel of the plot, any colour -> bool (rows, cols).
+
+    Summed in int: the composite is uint8, and a uint8 sum of three
+    channels wraps at 256 — white (765) came out 253 and read as ink,
+    which made the first measurement of the pad walk right by accident.
+    """
+    crop = np.asarray(img)[y0:y1, x0:x1].astype(int)
+    dark = crop.sum(axis=2) < INK_SUM
+    # ...and COLOURED: the frame's ticks, gridlines and the grey wash at the
+    # right edge of 01316 p150's plot are dark too, and a floor walk that
+    # took them for a stroke ran orange 230 s past where the well's own
+    # curves end. Two pens blended read as khaki (chroma ~80), a pale
+    # descent ~45-60, the greys 3-5.
+    chroma = crop.max(axis=2) - crop.min(axis=2)
+    return dark & (chroma > INK_CHROMA)
+
+
+def _fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, ink=None):
     """Btm Prop Conc under Prop Conc — see curve_trace.fill_under."""
-    return ct.fill_under(sub_o, py_o, sub_g, py_g, tol_px=tol_px, gap=gap)
+    return ct.fill_under(sub_o, py_o, sub_g, py_g, tol_px=tol_px, gap=gap,
+                         ink=ink)
 
 
 def _chosen_run(sub, py, gap=2):

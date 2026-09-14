@@ -92,6 +92,7 @@ SPIKE_FRAC = 0.04          # of axis span: the smallest excursion that counts
 SPIKE_WARN_N = 3
 SPIKE_WARN_FRAC = 0.15     # one excursion this big is a warn on its own
 SPIKE_PLUNGE_FRAC = 0.5    # no axis: a downward spike losing this much of the peak still warns
+SPIKE_EDGE_S = 300.0       # pressure spikes this close to a stage's ends are transients, at INFO
 ALIGN_WIN_S = 2            # spikes within this many seconds count as the same moment
 ALIGN_MIN_CH = 3           # channels that must share the moment
 PIN_TOL = 0.005            # of axis span: "at full scale"
@@ -357,15 +358,35 @@ def spikes(st, ch, sample_sec):
         scale = f"{abs(biggest) / peak * 100:.0f}% of the channel's peak, no axis known"
     tops = sorted(zip(mags, runs), key=lambda t: -abs(t[0]))[:3]
     where = ", ".join(f"{_mmss(fin[r[0]] * sample_sec)} ({m:+.3g})" for m, r in tops)
+    action = "a label, tick or gridline caught by the mask — check the ink at those seconds"
+    # A PRESSURE spike inside the first or last minutes of a stage is what a
+    # ball seating or the pumps shutting down looks like, and the page draws
+    # it: on 00026, 39 of the 44 BH Pressure excursions flagged here were
+    # strokes of the brown curve itself, 20-100 px tall, nearly all at the
+    # stage's edges. Said as what it is, at INFO, so the sweep's warnings
+    # are left for the mask's mistakes.
+    total = float(fin[-1] * sample_sec) if fin.size else 0.0
+    edge = all(fin[r[0]] * sample_sec < SPIKE_EDGE_S
+               or fin[r[-1]] * sample_sec > total - SPIKE_EDGE_S for r in runs)
+    if edge and _is_pressure(ch) and sev == WARN:
+        sev = INFO
+        action = ("pressure transients at the stage's edges — a ball seating or "
+                  "the pumps shutting down, which the page draws; not a mask error")
     out = [_f("spike", sev, st, ch,
               f"{len(runs)} excursion(s) of ≤{SPIKE_MAX_RUN} samples beyond {thr:.3g} "
               f"from the local median; {down} downward; largest {biggest:+.3g} "
               f"({scale})"
               + ("; reaches the axis floor" if floor else "") + f" — at {where}",
-              "a label, tick or gridline caught by the mask — check the ink at those seconds",
+              action,
               count=len(runs), largest=biggest,
               at=[round(float(fin[r[0]] * sample_sec), 1) for r in runs])]
     return out
+
+
+def _is_pressure(ch):
+    k = (str(ch.get("key") or "") + " " + str(ch.get("label") or "")
+         + " " + str(ch.get("unit") or "")).lower()
+    return "press" in k or "mpa" in k or "kpa" in k
 
 
 def aligned_spikes(st, spike_findings, sample_sec):

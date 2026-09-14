@@ -118,7 +118,8 @@ def resample(samples, t_cols, vals, gap_factor=6.0, min_gap_s=20.0):
     return out
 
 
-def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, islands=True):
+def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, islands=True,
+               ink=None):
     """A curve under another: the columns where the hidden one can only be
     where the covering one is. -> the columns filled; py_o is filled in place.
 
@@ -253,22 +254,65 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2, islands=True):
     H = sub_o.shape[0]
     floor_px = max(3.0, FLOOR_FRAC * H)
     at_floor = lambda row: np.isfinite(row) and row >= H - 1 - floor_px
-    for edge, order in ((lo, range(lo - 1, -1, -1)), (hi, range(hi + 1, n))):
-        if not at_floor(seed[edge]):
+    # `ink` — every non-background pixel of the plot, any colour — widens
+    # the floor walk to what the page actually shows at the floor. 01316
+    # p195 (#627): through the pad, orange at zero sits under BLUE for the
+    # first 21 columns, under GREEN for the next 25, and for eight columns
+    # under a KHAKI that is the orange and green pens blended — no mask
+    # owns it, and a walk that knows only the green cover stops there. In
+    # the flush the orange descent reaches the floor as a pale three-column
+    # stroke the colour sphere rejects, so its last traced row sits
+    # mid-descent and the walk never starts. Ink at the floor is a stroke
+    # of something, and the hidden curve at zero is under it.
+    floor_from = int(H - 1 - floor_px)
+    floor_ink = None if ink is None else ink[floor_from:, :].any(axis=0)
+
+    def reaches_floor(edge, direction):
+        """The hidden curve's own edge at the floor — by its traced row,
+        or by an unclassified stroke running from that row to the floor
+        within a few columns."""
+        if at_floor(seed[edge]):
+            return True
+        if ink is None or not np.isfinite(seed[edge]):
+            return False
+        top = int(seed[edge])
+        # a steep descent is anti-aliased across two or three columns — on
+        # 01316 p195 the orange's last classified column holds rows 380-418,
+        # the next carries the stroke on from 419 to the floor — so the
+        # columns within reach are read together: ink from the seed row
+        # itself down to the floor band, no hole wider than three pixels
+        # ...and on BOTH sides of the edge: the dense body of p195's descent
+        # sits two columns left of the last column the orange mask claims
+        a = max(0, edge - COVER_SKIP_MAX)
+        b = min(n, edge + COVER_SKIP_MAX + 1)
+        col = ink[top:, a:b].any(axis=1)
+        idx = np.flatnonzero(col)
+        if not len(idx) or idx[0] > 3 or not col[-max(1, int(floor_px)):].any():
+            return False
+        return not (len(idx) > 1 and np.diff(idx).max() > 3)
+
+    for edge, order, direction in ((lo, range(lo - 1, -1, -1), -1),
+                                   (hi, range(hi + 1, n), +1)):
+        if not reaches_floor(edge, direction):
             continue
-        last, missed = seed[edge], 0
+        floor_row = float(seed[edge]) if at_floor(seed[edge]) else float(H - 2)
+        last, missed = floor_row, 0
         for c in order:
             if np.isfinite(py_o[c]):
                 break                               # the hidden curve is drawn again
             r = cover_run(c)
-            if r is None or len(r) > riser or not at_floor(cover[c]):
+            if r is not None and len(r) <= riser and at_floor(cover[c]):
+                row = float(cover[c])
+            elif floor_ink is not None and floor_ink[c]:
+                row = floor_row
+            else:
                 missed += 1
                 if missed > COVER_SKIP_MAX:
                     break
                 continue
-            py_o[c] = float(cover[c])
+            py_o[c] = row
             filled.add(c)
-            last, missed = py_o[c], 0
+            last, missed = row, 0
     return sorted(filled)
 
 

@@ -133,6 +133,19 @@ class Planted(unittest.TestCase):
         self.assertEqual(g[0]["span"], [1200, 1260])
         self.assertEqual(g[0]["seconds"], 60.0)
 
+    def test_pressure_spikes_at_the_stage_edges_are_information(self):
+        # 00026: a ball seating in the first minutes, a shutdown in the last —
+        # the page draws them; the sweep's warnings are for the mask's errors
+        res = audit.audit_stages([stage("6", 15, spikes=(60, 120, N - 90))], [])
+        self.assertEqual(of(res, "spike"), [])
+        info = [f for f in of(res, "spike", "info") if f["channel"] == "Tr Press"]
+        self.assertTrue(info)
+        self.assertIn("transients at the stage's edges", info[0]["action"])
+
+    def test_a_mid_stage_spike_still_warns_even_with_one_at_the_edge(self):
+        res = audit.audit_stages([stage("7", 16, spikes=(60, 900, 1500))], [])
+        self.assertTrue([f for f in of(res, "spike") if f["channel"] == "Tr Press"])
+
     def test_spikes(self):
         res = audit.audit_stages([stage("5", 14, spikes=(500, 900, 1500))], [])
         sp = of(res, "spike")

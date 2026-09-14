@@ -219,20 +219,62 @@ ISIP. `bj_wellops.py` reads the Stimulation Intervals blocks of the same
 daily reports, but those pages are outlines here, so it has nothing to
 read; that is the OCR class and it stays open.
 
+### STEP's pad and flush: the floor walk reads the page (01316 s45, #627)
+
+The handoff's own guess was wrong — "orange's zero is under the FRAME LINE"
+— and the probe said so before anything was built: orange has 0 px on the
+frame row and 0 on the row past it, where green has 222. What the pixels
+show instead, column by column through the pad: BLUE on the floor for the
+first 21 columns (the rate at zero before pumping), GREEN for the next 25,
+then eight columns of khaki — (207,190,116), the orange and green pens
+blended where both sit at zero — that no hue mask owns, then orange itself
+at the floor from column 57 and rising from 69. A floor walk that knows
+only the green cover stops at the khaki after three dropouts. In the flush
+the orange descent reaches the floor as a pale stroke spread over columns
+683-685, which the colour sphere rejects, so the last traced row sat
+mid-descent (388 of 718) and the walk never started.
+
+`curve_trace.fill_under(…, ink=)` takes every non-paper pixel of the plot:
+the floor walk continues over any column with ink at the floor (a stroke
+of something is over the hidden zero), and an edge counts as "at the
+floor" when ink runs from its traced row to the floor band within three
+columns either side (the descent's dense body sits two columns LEFT of
+the last column the orange mask claims). `step1._ink` builds it — summed
+in int, because a uint8 sum of three channels wraps at 256 and the first
+measurement was right by accident — and keeps only COLOURED ink (chroma
+> 20): the grey wash at the right edge of p150's plot is dark too, and a
+walk that took it for a stroke ran orange 230 s past where the well's own
+curves end. Wired for STEP only; Trican's crop includes the frame row and
+would walk it.
+
+Measured: 01316 s45 Btm Prop Conc 70 → 98%, span 468..5822 s → 0..7428;
+s1 79 → 80%, the tail stopping at 11876 where the rate's floor stroke
+ends. File-wide and on six more STEP books: see the commit.
+
+### 00026's BH Pressure "spikes" are the page (#646, the open class)
+
+44 excursions flagged on 22 stages, classified at the page: 39 are
+strokes of the brown curve itself, 20-100 px tall, at ball seats and
+shutdowns; 3 are the red curve's anti-aliased fringe where it crosses the
+brown (p90 02:34 +22 MPa, p108, p110); 2 short strays. The audit now says
+what the 39 are: a PRESSURE spike inside the first or last five minutes
+of a stage is a transient the page draws, at INFO with its own action
+text (`SPIKE_EDGE_S`). 00026 spike warnings 11 → 5; the five left are
+mid-stage and real. The three fringes stay open — the tracer picks the
+fringe run for a few samples where red crosses brown — and are small.
+
 **Still open after this pass:**
 
-- **The pad and the flush — BUILT and measured (`4d2a978`).** The walk
-  goes past the visible span only while the cover's stroke is at the
-  floor and only from an edge itself at the floor. 00025 s1 WH 54 → 100%,
-  01350 s3/6/7 68-74 → 100%, files 94 → 100% and 87 → 99%, BH and peaks
-  untouched (#641, #643). **STEP's version stays open, with its numbers:**
-  01316 s45 BH's first ink is 1.0 kg/m3 (at the floor) but green at that
-  column is already 21.9 — the cover lifted off before the hidden curve
-  showed, so there is no floor stroke to walk along; orange's zero there
-  is under the FRAME LINE, not under green. That is the v0.9.10 Trican
-  lesson (read one row past the frame) applied to STEP's orange — probe
-  the frame row on p195 before building. And its flush edge is 106.6, not
-  the floor: orange stops being drawn mid-descent, cause unknown.
+- **The pad and the flush — BUILT for Trican (`4d2a978`) and now for STEP
+  (the section below).** 01316 s45's orange was never under the frame line:
+  through the pad it sits under blue, then green, then eight columns of the
+  KHAKI the two pens make together; in the flush its descent reaches the
+  floor as a pale stroke spread over three columns. The floor walk now
+  reads the page's ink, not one cover's mask.
+- 00026: three BH Pressure fringes where the red curve crosses the brown
+  (p90 02:34, p108 02:19, p110 01:55) — the tracer takes the crossing's
+  anti-aliased run for a few samples. Small; a blend-aware `series_masks`
+  for layout A is the fix (Phase 2.1).
 - **STEP "Combined Clean Rate" is 86-94% missing inside its drawn span on
   seven stages of 01316** (2, 5, 8, 12, 36.2, 42, 44). Seen on the
   scorecard, not looked at. A new class; the mask/strip/trace probe first.
