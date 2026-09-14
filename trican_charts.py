@@ -1153,13 +1153,41 @@ def _strip_rules(masks, rows, x0, y0, x1, y1):
                 m = masks.get(key)
                 if m is None or not _is_rule_row(m, r, x0, x1):
                     continue          # no rule of this colour on this row
-                m[max(0, r - 1):r + 2, :] = False
+                # Take the dashes and leave the curve. Blanking the row whole
+                # took every HOLD that sat on a gridline with it: a proppant
+                # schedule steps 100, 200, 300 kg/m3 and holds each for
+                # minutes, exactly on the rules drawn at 100, 200, 300 in the
+                # curve's own colour. On 01350 p187, 214 of WH Prop Conc's
+                # 637 inked columns lost everything here and 2 at the
+                # tracer; 364 of that file's 384 mid-chart gaps began and
+                # ended on one level (#638, #635, #641). A dash is 1 px
+                # (361 runs, median 1, longest 1, on 00583 and 01350); a
+                # curve along the row is one run of tens.
+                for rr in range(max(0, r - 1), min(m.shape[0], r + 2)):
+                    _drop_short_runs(m[rr], _RULE_DASH_MAX)
 
 
-def extract_image_b(img, sample_sec=1.0):
+# A run on a rule row no longer than this is a dash (or the anti-aliased
+# halo of one on the rows either side); longer is the curve lying along it.
+# A curve CROSSING the rule leaves a run of 2-4 px on the row and loses it,
+# which is the 3-px gap curve_positions has always bridged.
+_RULE_DASH_MAX = 4
+
+
+def _drop_short_runs(row, max_len):
+    idx = np.flatnonzero(row)
+    if not len(idx):
+        return
+    cuts = np.flatnonzero(np.diff(idx) > 1) + 1
+    for g in np.split(idx, cuts):
+        if len(g) <= max_len:
+            row[g] = False
+
+
+def extract_image_b(img, sample_sec=1.0, start_hint=None):
     img = np.asarray(img).astype(int)
     x0, y0, x1, y1, rows = b_box(img)
-    tcal = b_time_axis(img, x0, x1, y1)
+    tcal = b_time_axis(img, x0, x1, y1, start_hint)
     if tcal is None:
         raise ValueError("trican-B: time axis unreadable")
     ta, tb = tcal
