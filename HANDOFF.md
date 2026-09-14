@@ -101,6 +101,29 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
   from a printed am/pm anchor, and a tie is a guess that must say so. A
   dated 00:00:00 is midnight, not the default.
 
+### The chart clocks itself, tails hand over, overviews go (#645, later on 2026-09-14)
+
+"Still some overlap" after the chain fix, with a FracView shot of 00041's
+stages 10-12. Measured on the payload rather than the screenshot: EVERY
+stage's window ran 4-10 min past the next stage's start, and over the
+overlap the two charts agree to 1-2% on pressure — the same minutes
+printed twice. Three mechanisms, each measured through the real pipeline
+against a worktree at the old commit:
+
+| mechanism, as measured | fix | measured |
+|---|---|---|
+| layout A prints a 24-hour **"Clock Time (hour:min)" axis ABOVE the frame**; the reader took the elapsed strip only and clocked the chart from the sheet's 12-hour Start Time, which times the STAGE, not the chart (p73: sheet 21:40, axis 21:38), and is sometimes plain wrong (p117: sheet 12:00, axis 06:22-07:25, and the day sheet's "End Time 7:24 am" sides with the axis) | `trican_charts.clock_axis`: OCR the strip above the frame — the tick band flush against the rule is skipped, the labels are the band after it — and take each label as an independent reading of the origin through the elapsed axis's own slope; the median of the agreeing majority, three at least. `_trican_clock` keeps the chart's time, takes the sheet's DATE (`_nearest_date`, yesterday / today / tomorrow, whichever puts the chart nearest the sheet) and names every sheet that disagrees by more than two minutes | 00041 34 of 34 and 00015 11 of 11 clocked from the axis; 00015 s4's 12:00-vs-18:30 standoff settled for 18:30; on 00041 the sheets disagree on 11 stages, 19-23 by 47-53 min — and read from the axes, in stage order, the well ran 18 → 19 → 20 → 21 → 22 → 23 → 24. The chain fix's "23 pumped between 18 and 19" was the SHEETS' error, not the order of pumping: in that block each sheet's times are the chart one stage higher (23's are 19's); the charts agree with each other and with the depths in their titles |
+| the sleeves open with the pumps running and **each chart plots on into the next stage**; the next chart re-plots those minutes | `pipeline._hand_over_tails`: consecutive clocked charts of one source; cut the first at the second's start ONLY where the samples agree over the overlap (mean gap ≤ 5% of the channel's range on two thirds of the shared channels); a pair that disagrees is kept as printed and said on the stage | 00041: 28 tails, 190 min, 0 overlaps left, 170 of 170 kept channels byte-identical to before; 00015: 9 tails, 65 min, 55 of 55 kept channels identical to HEAD's, `gap.hold` 4 → 2 |
+| the **CONTINUOUS section re-plots the job end to end** (00041 p119-129: 18.5 h, 12 h, then stages 31-34 again, at 65 s per pixel) as nameless, clockless stages that FracView laid after stage 34 — 33 hours of the well twice | `pipeline._trican_continuous`: clocked from its own axis, dated from the stage whose start it matches, dropped when the stage windows cover ≥ 90% of it, kept and said otherwise (it is then the only copy) | 00041 6 dropped, 00015 2 dropped; `clock.absent` 6 → 0, `stage.unlabelled` gone |
+
+The audit now carries `clock.overlap` at INFO for anything over a minute
+(the WARN floor stays at the Lab's fifteen), so what the hand-over leaves —
+a pair that disagrees — is on the sweep. `flat.rule` INFO went 46 → 57 on
+00041: `FLAT_MIN_FRAC` is 6% of the stage and the stages are shorter, so
+the same rate plateaus crossed the line. `_abs_start` is the one place
+that says what "dated at 00:00:00" means: no time read, except on a chart
+that clocked itself, where midnight is a time.
+
 **Still open after this pass:**
 
 - **The pad and the flush — BUILT and measured (`4d2a978`).** The walk
@@ -118,17 +141,9 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
 - **STEP "Combined Clean Rate" is 86-94% missing inside its drawn span on
   seven stages of 01316** (2, 5, 8, 12, 36.2, 42, 44). Seen on the
   scorecard, not looked at. A new class; the mask/strip/trace probe first.
-- **The 2015 Trican clock: read the chart's own top axis.** The stage
-  table's 12-hour clock is resolved by the sheets' finish → start chain
-  now (#645: 00041's stage 23 was pumped between 18 and 19, and stage
-  order read its 06:45 as 18:45 and carried twelve hours through every
-  stage after). The chain is exact where it holds; where it breaks — 00041's
-  31-34 sit after gaps — the digits alone cannot say, and the day sheet's
-  "End Time 7:24 am" argues against the reading they got. Every one of
-  these charts prints "Clock Time (hour:min)" ABOVE the plot, as pixels.
-  b_time_axis already reads exactly that strip for layout B; point it at
-  the strip above layout A's frame and the chart clocks itself, the table
-  becomes a cross-check, and the 12-hour rule is retired. Do this next.
+- **The 2015 Trican clock — DONE, the chart reads its own top axis**
+  (the section below). The 12-hour rule on the sheet is now the fallback
+  for a chart whose strip cannot be read; on 00041 and 00015 that is none.
 - **BJ with an outlined title (00634, #644):** the time axis is text, the
   title and legend are outlines, `bj1.detect` wants the title line in
   text, and `bj1` has no OCR path at all. The easy half of the BJ-textless
@@ -136,14 +151,16 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
 - 01433's WH Prop Conc sits at 69% against BH's 100% after both Trican
   fixes; its loss is neither the rules nor DH's cover. Probe p212-p216
   the same way (mask / strip / trace) before guessing.
-- 00015 is layout A (grey gridlines, a different tracer) and keeps 5
-  `gap.hold`s; the strip fix is layout B only.
+- 00015 is layout A (grey gridlines, a different tracer) and keeps 2
+  `gap.hold`s (4 against HEAD: one was on a CONTINUOUS re-plot, now
+  dropped, one in stage 10's handed-over tail); the strip fix is layout B
+  only.
 - 00229 stage 8 at 34:12: Blender Clean, Blender Slurry and Slurry Rate
   spike together. Not a tick — look at the page.
-- 01350 p186 prints `Start Time 02:41` under a chart whose clock axis
-  runs 12:50-13:58; 00015's stage 4 sheet says 12:00 where its chart's
-  axis reads 18:30. Both are left standing on the export as the report
-  printed them.
+- 01350 p186 (layout B) prints `Start Time 02:41` under a chart whose
+  clock axis runs 12:50-13:58 — left standing as printed. 00015's stage 4
+  now reads 18:30 from its own axis, with the sheet's 12:00 named beside
+  it (layout A clocks itself since the section below).
 - 01433 stage 16 has no page. Honest; it stays on the ladder as missing.
 - Monitor Pressure on 01350 s1: a 7-minute gap at 60:25 where the curve
   goes 0.2 → 44. Not one of the six; unexamined.

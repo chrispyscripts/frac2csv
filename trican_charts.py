@@ -403,6 +403,121 @@ def _ocr_column(img, xa, xb, y0, y1, side):
     return pts
 
 
+# ------------------------------------------------- the chart's own clock
+#
+# Every layout-A chart prints a second time axis ABOVE the frame, titled
+# "Clock Time (hour:min)", in 24-hour time: 00041 p73 reads 21:38 .. 22:48
+# over an elapsed axis of 861.0 .. 930.2 min. Until now the template read
+# the elapsed strip only and took the clock from the STAGE INFORMATION
+# table that follows each chart, which is (a) a 12-hour clock with no AM/PM
+# on the 2015 sheets and (b) the STAGE's start, not the chart's: p73's table
+# says 21:40, and p117's says 12:00 under a chart whose axis runs 06:22 ..
+# 07:25 (the day sheet's "End Time 7:24 am" agrees with the chart). Reading
+# the strip makes the chart clock itself.
+
+CLOCK_TOL_S = 60.0          # a label is printed to the minute, at a tick ±2 px
+
+
+def _row_bands(strip):
+    """All bands of text rows in a strip -> [(row_from, row_to)], the same
+    on-rule as _first_row_band."""
+    w = strip.shape[1]
+    dark = (strip.sum(axis=2) < 450).sum(axis=1)
+    on = (dark > max(2, w * 0.004)) & (dark < 0.25 * w)
+    bands, start = [], None
+    for i, v in enumerate(on):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            bands.append((start, i)); start = None
+    if start is not None:
+        bands.append((start, len(on)))
+    return [(b0, b1) for b0, b1 in bands
+            if b1 - b0 >= 6 and dark[b0:b1].max() > w * 0.015]
+
+
+def clock_labels(img, x0, x1, y0):
+    """OCR the "Clock Time (hour:min)" labels above the frame -> [(seconds
+    since midnight, x)], left to right.
+
+    The strip is walked from the frame upward. The row of tick marks sits
+    flush against the frame rule and is 6-7 rows tall on the larger
+    (1265 px) whole-job render, which is exactly the height test that tells
+    ticks from digits on the 977 px stage pages — so any band touching the
+    frame is the ticks and is skipped, and the labels are the first band
+    after it. The axis title is farther up still and never reached.
+    """
+    from PIL import Image
+    H, W, _ = img.shape
+    k = max(46, int(0.055 * (x1 - x0)))
+    top = max(0, y0 - k)
+    if y0 - top < 12:
+        return []
+    strip = img[top:y0][::-1]                    # row 0 is nearest the frame
+    bands = [b for b in _row_bands(strip) if b[0] > 2]
+    if not bands:
+        return []
+    b0, b1 = bands[0]
+    lab = strip[max(0, b0 - 2):b1 + 2][::-1]
+    pts = []
+    for ca, cb in _ink_columns(lab, gap=8):
+        if cb - ca < 12:
+            continue
+        cx = (ca + cb) / 2.0
+        if not (x0 - 40 <= cx <= x1 + 40):
+            continue
+        crop = lab[:, max(0, ca - 4):cb + 4]
+        pil = Image.fromarray(crop.astype(np.uint8))
+        pil = pil.resize((pil.width * 4, pil.height * 4), Image.LANCZOS)
+        for text, _wx, _wy in ar.ocr_words(np.array(pil).astype(int), psm=7,
+                                           whitelist="0123456789:"):
+            # the colon drops out now and then ("2221" on 00041 p111); the
+            # last two digits are the minutes either way
+            m = re.fullmatch(r"(\d{1,2}):?(\d{2})", text.strip())
+            if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+                pts.append((int(m.group(1)) * 3600 + int(m.group(2)) * 60, cx))
+                break
+    pts.sort(key=lambda p: p[1])
+    return pts
+
+
+def _clock_origin(pts, x0, tb, tol=CLOCK_TOL_S):
+    """[(seconds, x)] left to right + the elapsed axis's sec/px -> (seconds
+    at x0, labels agreeing, labels read), or None.
+
+    The two axes are the same pixels: a minute of clock time is a minute of
+    elapsed time, so the elapsed fit's slope is the clock's slope too and
+    every label is an independent reading of where the frame's left edge
+    sits on the clock. The median of the readings that agree is the origin;
+    one misread hour moves one reading twelve hours and loses the vote.
+    A label earlier than the one before it by more than an hour is the next
+    day (23:42 .. 00:47 on 00041 p77).
+    """
+    if len(pts) < 3 or not tb or tb <= 0:
+        return None
+    vals, shift = [], 0.0
+    for i, (v, cx) in enumerate(pts):
+        if i and v + shift < vals[-1] - 3600:
+            shift += 86400.0
+        vals.append(v + shift)
+    origins = [v - tb * (cx - x0) for v, (_, cx) in zip(vals, pts)]
+    med = float(np.median(origins))
+    agree = [o for o in origins if abs(o - med) <= tol]
+    if len(agree) < 3 or len(agree) * 2 < len(origins):
+        return None
+    return float(np.median(agree)) % 86400.0, len(agree), len(origins)
+
+
+def clock_axis(img, x0, x1, y0, tb):
+    """-> (seconds since midnight at x0, labels agreeing, labels read) from
+    the Clock Time strip above the frame, or None when it cannot be read."""
+    try:
+        pts = clock_labels(img, x0, x1, y0)
+    except Exception:                            # pragma: no cover - OCR
+        return None
+    return _clock_origin(pts, x0, tb)
+
+
 def grid_rows(img, x0, x1, y0, y1):
     """Rows carrying a gridline or a frame rule, inside the plot only.
 
@@ -524,6 +639,7 @@ def extract_image(img, sample_sec=1.0):
     n = int((ta + tb * x1) - t_start)
     if not (60 < n < 400000):
         raise ValueError(f"trican: implausible duration {n}s")
+    clock = clock_axis(img, x0, x1, y0, tb)
 
     rows = grid_rows(img, x0, x1, y0, y1)
     press = _axis_fit(_ocr_column(img, 0, x0 - 1, y0, y1, "left"),
@@ -624,6 +740,10 @@ def extract_image(img, sample_sec=1.0):
     # 415 min, not at 0, and the exported samples restart at 0.
     info = {"plot": box, "t0_seconds": float(t_start), "duration_s": int(n),
             "notes": notes, "press_scale": press_scale,
+            # the chart's own wall clock at sample 0, from the Clock Time
+            # strip above the frame; None when that strip could not be read
+            "clock_s": None if clock is None else clock[0],
+            "clock_labels": None if clock is None else (clock[1], clock[2]),
             "press_axis": None if press is None else
             (press[0] + press[1] * y1, press[0] + press[1] * y0),
             "rate_axis": None if rate is None else

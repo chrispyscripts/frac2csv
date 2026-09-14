@@ -661,6 +661,17 @@ def _clocks_one_source(stages, table=None):
                               f"starts {t:%H:%M:%S}, {(pt + timedelta(minutes=pdur) - t).seconds // 60} "
                               f"min before stage {plabel} finished",
                               "one of the two clocks is wrong, or the stages genuinely overlap"))
+            # Shorter than that is still drawn twice by FracView (#645: every
+            # 00041 chart ran 4-10 min into the next). The pipeline now hands
+            # a tail over to the next chart where the two agree, so what is
+            # left at this size is a pair that disagrees, or a clock a few
+            # minutes off — worth a line, not an alarm.
+            elif t < pt + timedelta(minutes=pdur) - timedelta(seconds=60):
+                out.append(_f("clock.overlap", INFO, st, None,
+                              f"starts {t:%H:%M:%S}, {(pt + timedelta(minutes=pdur) - t).seconds / 60:.1f} "
+                              f"min before stage {plabel} finished",
+                              "a short overlap the hand-over pass left: the two charts "
+                              "disagree over those minutes, or one clock is minutes off"))
         prev = (t, float(_meta(st, "duration_min") or 0.0), _stage_label(st))
     # Every stage of a template without a clock is one finding about the
     # template, not N about the charts: either its charts plot elapsed

@@ -808,6 +808,7 @@ def _trican_clock(doc, results, notes):
         return
     dated = clocked = resolved = 0
     how = ""
+    chart, differ = 0, []
     for r in tri:
         md = r["meta"]
         m = re.match(r"\d+", str(md.get("stage")).strip())
@@ -815,6 +816,31 @@ def _trican_clock(doc, results, notes):
             continue
         entry = clocks.get(int(m.group(0)))
         if not entry:
+            continue
+        if md.get("clock_chart"):
+            # The chart clocked itself from its own Clock Time axis. The
+            # table supplies the DATE (the axis prints none) and a second
+            # opinion on the time, and where the two differ the chart is
+            # kept: 00041 p117 prints "Start Time 12:00" under a chart
+            # whose axis runs 06:22-07:25, and the day sheet's "End Time
+            # 7:24 am" sides with the chart. p73's sheet says 21:40 for a
+            # chart that opens at 21:38 — the sheet times the STAGE, the
+            # axis times the chart, and the samples are the chart's.
+            chart += 1
+            cs = _secs(md["start_time"])
+            ts = _secs(entry["start"]) if entry["start"] else None
+            if entry["date"]:
+                md["date"] = _nearest_date(entry["date"], ts, cs)
+                dated += 1
+            if ts is not None:
+                off = abs((cs - ts + 43200) % 86400 - 43200)
+                if off > 120:
+                    differ.append(f"stage {m.group(0)} (sheet {entry['start'][:5]}, "
+                                  f"chart {md['start_time'][:5]})")
+                    md.setdefault("warnings", []).append(
+                        f"the STAGE INFORMATION sheet's Start Time "
+                        f"{entry['start'][:5]} is {_fmt_off(off)} off the "
+                        f"chart's own axis; the chart is kept")
             continue
         took = False
         if not md.get("date") and entry["date"]:
@@ -832,11 +858,252 @@ def _trican_clock(doc, results, notes):
             resolved += 1
             how = entry["resolved"]
             md.setdefault("warnings", []).append("clock: " + how)
-    if dated or clocked:
-        notes.append(f"{max(dated, clocked)} Trican chart(s) dated and clocked "
+    if chart:
+        notes.append(f"{chart} Trican chart(s) clocked from their own Clock "
+                     f"Time axis (24-hour, printed above the plot) and dated "
                      f"from the STAGE INFORMATION page that follows each one"
+                     + (f"; the sheet's Start Time differs from the chart on "
+                        f"{len(differ)} of them and the chart is kept: "
+                        + ", ".join(differ[:6])
+                        + (", …" if len(differ) > 6 else "") if differ else ""))
+    if clocked or (dated > chart):
+        notes.append(f"{max(dated - chart, clocked)} Trican chart(s) dated and "
+                     f"clocked from the STAGE INFORMATION page that follows "
+                     f"each one"
                      + (f" — {resolved} of them from a {how}; these times are "
                         f"the table's, not the chart's" if resolved else ""))
+
+
+def _secs(hms):
+    """'HH:MM:SS' -> seconds since midnight."""
+    h, m, s = (str(hms).split(":") + ["0", "0"])[:3]
+    return int(h) * 3600 + int(m) * 60 + int(float(s))
+
+
+def _fmt_off(seconds):
+    return (f"{seconds / 3600:.1f} h" if seconds >= 3600
+            else f"{int(round(seconds / 60))} min")
+
+
+def _nearest_date(date_str, table_s, chart_s):
+    """The day the chart's clock falls on, given the sheet's own date and
+    time for the same stage -> 'YYYY-MM-DD'.
+
+    The axis prints hours and minutes and no day. The sheet's date is right
+    to the day and its time to within the 12-hour fold, so of yesterday,
+    the sheet's day and tomorrow, the one that puts the chart's time
+    nearest the sheet's is the chart's day: a chart opening 23:58 under a
+    sheet dated the 13th at 00:01 opened on the 12th.
+    """
+    if table_s is None:
+        return date_str
+    try:
+        d0 = datetime.fromisoformat(str(date_str)[:10])
+    except ValueError:
+        return date_str
+    ref = d0 + timedelta(seconds=table_s)
+    best = None
+    for k in (0, -1, 1):
+        d = d0 + timedelta(days=k)
+        gap = abs((d + timedelta(seconds=chart_s) - ref).total_seconds())
+        if best is None or gap < best[0] - 1:
+            best = (gap, d.date().isoformat())
+    return best[1]
+
+
+def _abs_start(r):
+    """A series' clock as a datetime, or None when it has no real one.
+
+    Dated at 00:00:00 means "no time read" everywhere but on a chart that
+    clocked itself (clock_chart), where midnight is a time like any other.
+    """
+    md = r.get("meta") or {}
+    d, st = md.get("date"), md.get("start_time") or ""
+    if not d or not st:
+        return None
+    if st == "00:00:00" and not md.get("clock_chart"):
+        return None
+    try:
+        return datetime.fromisoformat(str(d)[:10]) + timedelta(seconds=_secs(st))
+    except ValueError:
+        return None
+
+
+def _sample_sec(r):
+    s = r.get("samples")
+    try:
+        return float(s[1] - s[0]) if len(s) > 1 else 1.0
+    except (TypeError, IndexError):
+        return 1.0
+
+
+def _trican_continuous(results, notes):
+    """Drop a Trican CONTINUOUS chart when the stage charts already carry
+    every minute of it.
+
+    00041 closes with six "CONTINUOUS PRESSURES, RATES, AND CONCENTRATIONS"
+    pages: the whole job re-plotted end to end — 18.5 h and 12 h for stages
+    1-30 at 65 s per pixel, then stages 31-34 again one each. They carry no
+    stage number, so they exported as six nameless stages with no clock,
+    and FracView laid all 33 hours of them after stage 34. Every minute of
+    them is on a stage chart at eight times the resolution.
+
+    Clocked from its own axis and dated from the stage whose start it
+    matches, a continuous chart that the stage windows cover is dropped and
+    said so. One that covers minutes no stage chart has — or that could not
+    be clocked — stays, because then it is the only copy.
+    """
+    tri = [r for r in results if r.get("type") == "series"
+           and str(r.get("source") or "").startswith("Trican")]
+    cont = [r for r in tri if r["meta"].get("continuous")]
+    if not cont:
+        return
+    stages = []
+    for r in tri:
+        if r["meta"].get("continuous"):
+            continue
+        t0 = _abs_start(r)
+        if t0 is None:
+            continue
+        stages.append((t0, t0 + timedelta(
+            seconds=len(r["samples"]) * _sample_sec(r)), r["meta"]))
+    stages.sort(key=lambda s: s[0])
+    dropped, kept = [], []
+    for r in cont:
+        md = r["meta"]
+        why = None
+        if not md.get("clock_chart") or not stages:
+            why = "no clock could be read for it"
+        else:
+            cs = _secs(md["start_time"])
+            near = min(stages, key=lambda s: abs(
+                (cs - _secs(s[2]["start_time"]) + 43200) % 86400 - 43200))
+            gap = abs((cs - _secs(near[2]["start_time"]) + 43200) % 86400 - 43200)
+            if gap > 1800 or not near[2].get("date"):
+                why = "no stage chart opens within half an hour of it, so it has no day"
+            else:
+                md["date"] = _nearest_date(near[2]["date"],
+                                           _secs(near[2]["start_time"]), cs)
+                t0 = _abs_start(r)
+                t1 = t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+                covered, cursor = 0.0, t0
+                for a, b, _m in stages:
+                    a, b = max(a, cursor), min(b, t1)
+                    if b > a:
+                        covered += (b - a).total_seconds()
+                        cursor = b
+                frac = covered / max(1.0, (t1 - t0).total_seconds())
+                if frac >= 0.9:
+                    dropped.append(r)
+                else:
+                    miss = ((t1 - t0).total_seconds() - covered) / 60.0
+                    why = f"{miss:.0f} min of it are on no stage chart"
+        if why:
+            kept.append((r["page"], why))
+    if dropped:
+        for r in dropped:
+            results.remove(r)
+        pages = ", ".join(f"p{r['page']}" for r in dropped)
+        notes.append(f"{len(dropped)} CONTINUOUS chart(s) not exported ({pages}): "
+                     f"the same job re-plotted end to end, and every minute of "
+                     f"them is on a stage chart at higher resolution")
+    for pg, why in kept:
+        notes.append(f"p{pg}: CONTINUOUS chart kept as a stage of its own — {why}")
+
+
+HANDOVER_MIN_S = 30.0      # shorter than this is clock rounding, not a tail
+HANDOVER_TOL = 0.05        # of the channel's own range over the stage
+
+
+def _hand_over_tails(results, notes):
+    """Where one chart runs on into the next and the next re-plots those
+    minutes, cut the first at the second's start.
+
+    Every Trican layout-A chart on 00041 runs 4-10 minutes past its sheet's
+    Finish Time — the sleeves are opened with the pumps still running, and
+    the page keeps plotting into the next stage — and the next chart opens
+    on the same minutes: stage 1's last 4.3 min and stage 2's first 4.3 are
+    the same pressures to 1%. Exported whole, every stage overlapped the one
+    after it and FracView drew both (#645, the "still some overlap").
+
+    The cut is made only where the samples say the two charts agree over the
+    overlap (mean gap under 5% of the channel's range, on two thirds of the
+    channels both plot). Where they disagree the overlap is real or a clock
+    is wrong; that stays as printed and is said on the stage.
+    """
+    import numpy as np
+    per = {}
+    for r in results:
+        if r.get("type") != "series" or r["meta"].get("continuous"):
+            continue
+        t0 = _abs_start(r)
+        smp = r.get("samples")
+        if t0 is None or smp is None or len(smp) == 0:
+            continue
+        per.setdefault(str(r.get("source") or ""), []).append((t0, r))
+    trimmed, differ = [], []
+    for src, items in per.items():
+        items.sort(key=lambda x: x[0])
+        for (ta, a), (tb, b) in zip(items, items[1:]):
+            sec = _sample_sec(a)
+            n_a = len(a["samples"])
+            end_a = ta + timedelta(seconds=n_a * sec)
+            ov = (end_a - tb).total_seconds()
+            if ov < HANDOVER_MIN_S:
+                continue
+            off = int(round((tb - ta).total_seconds() / sec))
+            if off * sec < 60.0:
+                continue                         # nothing of A would be left
+            k = min(n_a - off, len(b["samples"]))
+            if k < 10:
+                continue
+            compared, agreed = 0, 0
+            for label, va in a["data"].items():
+                vb = b["data"].get(label)
+                if vb is None:
+                    continue
+                xa = np.asarray(va, float)
+                xb = np.asarray(vb, float)
+                seg_a, seg_b = xa[off:off + k], xb[:k]
+                ok = np.isfinite(seg_a) & np.isfinite(seg_b)
+                if ok.sum() < 10:
+                    continue
+                fin = xa[np.isfinite(xa)]
+                scale = float(fin.max() - fin.min()) if fin.size else 0.0
+                if scale <= 0:
+                    continue
+                compared += 1
+                if float(np.mean(np.abs(seg_a[ok] - seg_b[ok]))) <= HANDOVER_TOL * scale:
+                    agreed += 1
+            sb = b["meta"].get("stage") or "?"
+            if compared and agreed * 3 >= compared * 2:
+                a["samples"] = a["samples"][:off]
+                a["data"] = {l: v[:off] for l, v in a["data"].items()}
+                a["meta"]["duration_min"] = off * sec / 60.0
+                a["meta"].setdefault("warnings", []).append(
+                    f"last {ov / 60:.1f} min not exported here: the chart runs "
+                    f"on into stage {sb}, whose own chart re-plots those "
+                    f"minutes (same values), so the export hands over where "
+                    f"the next chart begins")
+                trimmed.append((a["meta"].get("stage") or "?", ov))
+            elif compared:
+                a["meta"].setdefault("warnings", []).append(
+                    f"overlaps stage {sb} by {ov / 60:.1f} min and the two "
+                    f"charts disagree there — one clock is wrong, or the "
+                    f"stages overlap for real; both kept as printed")
+                differ.append((a["meta"].get("stage") or "?", sb, ov))
+    if trimmed:
+        total = sum(o for _s, o in trimmed) / 60.0
+        notes.append(f"{len(trimmed)} chart(s) ran on into the next stage and "
+                     f"were cut where the next chart begins — {total:.0f} min "
+                     f"in all, every minute of it re-plotted on the next "
+                     f"chart with the same values, so nothing is lost and "
+                     f"nothing is exported twice")
+    if differ:
+        notes.append(f"{len(differ)} pair(s) of charts overlap and disagree "
+                     f"there, kept as printed: "
+                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)" for a, b, o in differ[:8])
+                     + (", …" if len(differ) > 8 else ""))
 
 
 def _step_clock(doc, results, notes):
@@ -1872,6 +2139,22 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             "date": "", "start_time": "00:00:00",
                             "duration_min": len(samples) / 60.0,
                             "warnings": []}
+                    if md.get("continuous"):
+                        meta["continuous"] = True
+                    clk = info.get("clock_s")
+                    if clk is not None:
+                        # The chart's own "Clock Time (hour:min)" axis, a
+                        # 24-hour clock printed above the frame, quoted to
+                        # the minute it is printed at. The STAGE INFORMATION
+                        # table becomes the date and a second opinion —
+                        # _trican_clock. See trican_charts.clock_axis.
+                        cs = int(round(clk / 60.0)) * 60 % 86400
+                        meta["start_time"] = f"{cs // 3600:02d}:{cs % 3600 // 60:02d}:00"
+                        meta["clock_chart"] = True
+                        na, nb = info.get("clock_labels") or (0, 0)
+                        meta["warnings"].append(
+                            "clock: read from the chart's own Clock Time axis "
+                            f"({na} of {nb} labels agree)")
                     results.append(_series(
                         meta, samples, data, "Trican treatment chart (raster)",
                         pno + 1, units, geom=info.get("geom"), frames=frames))
@@ -2188,6 +2471,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
     # a Canyon chart page dates itself from the job, not from the interval
     _canyon_dates(doc, results, notes)
+
+    # a Trican CONTINUOUS chart re-plots the stage charts end to end
+    _trican_continuous(results, notes)
+    # consecutive charts that print the same minutes twice
+    _hand_over_tails(results, notes)
 
     # --- SK 'FracR' per-stage engineering tables (document-level) ---
     if any(sk.detect(doc[p]) for p in range(npages)):
