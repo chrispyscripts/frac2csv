@@ -75,6 +75,12 @@ spans are drawn dashed — they are drawn, not measured.">Interpolate</button>
 they look identical once drawn: a gap, where the chart has no ink to read, and
 a FLAT RUN, where something that is not the curve — a horizontal rule — was
 read as if it were. Gaps shade grey, flat runs carmine.">Missing Data</button>
+      <button type="button" class="btn" id="fitdata"
+              title="Scale each chart to the values in THIS file rather than to
+the axis the sheet prints. A printed axis is the same on every stage — a conc
+axis of 0..1000 whether the stage peaked at 950 or at 40 — so a small stage
+drawn against it sits in the bottom tenth of its row. Off, every chart is drawn
+against the axis its source page prints.">Fit to data</button>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
     </div>
@@ -227,6 +233,13 @@ $("missing").addEventListener("click", () => {
   $("missing").classList.toggle("on", showMissing);
   build();                     // the header line changes with it
 });
+$("fitdata").addEventListener("click", () => {
+  fitData = !fitData;
+  localStorage.setItem("f2c.fitdata", fitData ? "1" : "0");
+  $("fitdata").classList.toggle("on", fitData);
+  applyScale();
+  build();                     // the header line names the scale in use
+});
 $("interp").addEventListener("click", () => {
   interp = !interp;
   localStorage.setItem("f2c.interp", interp ? "1" : "0");
@@ -284,6 +297,7 @@ function applyStage(d) {
   state.id = d.id || "";
   state.haveStage = true;
   state.channels = d.channels || [];
+  applyScale();
   state.n = d.n; state.dsec = d.dsec || 1; state.tMax = d.tMax || 1;
   state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
   state.page = d.page; state.pageCount = d.pageCount || 0;
@@ -325,6 +339,7 @@ function updatePageLbl() {
   $("openpdf").disabled = !state.page || !lab();
   $("interp").classList.toggle("on", interp);
   $("missing").classList.toggle("on", showMissing);
+  $("fitdata").classList.toggle("on", fitData);
 }
 
 // ---------- layout ----------
@@ -337,6 +352,48 @@ function updatePageLbl() {
 // a gap stays an empty cell there.
 let interp = localStorage.getItem("f2c.interp") === "1";
 let showMissing = localStorage.getItem("f2c.missing") === "1";
+// Default ON. The printed axis is what the source page draws against, which is
+// the right answer when you are checking a trace against the sheet, and the
+// wrong one when you are reading the trace itself: it is the same axis on every
+// stage of the file, so the stage that peaked at a twentieth of it gets a
+// twentieth of its row (Carmine, 2026-09-13).
+let fitData = localStorage.getItem("f2c.fitdata") !== "0";
+
+// Round a top-of-axis up to a number worth printing beside a gridline.
+function niceCeil(v) {
+  if (!(v > 0) || !isFinite(v)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / e;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+}
+
+// The range a chart is drawn against, from the data it actually holds.
+//
+// Anchored at zero rather than at the minimum. A minimum-to-maximum fit would
+// fill the row more completely, and for a channel that sits flat it fills it
+// with NOISE: a rate holding 14.0 +/- 0.05 would be drawn as a mountain range,
+// which is exactly the misreading the flat-run shading exists to prevent. Zero
+// to the data's own top keeps the magnitude honest and still gives the trace
+// the height of the row. Below zero only when the data actually goes there.
+function dataScale(c) {
+  if (c.dataLo == null || c.dataHi == null ||
+      !isFinite(c.dataLo) || !isFinite(c.dataHi)) return null;
+  const lo = Math.min(0, c.dataLo);
+  const hi = Math.max(c.dataHi, lo + 1e-9);
+  return { lo, hi: lo + (niceCeil(hi - lo) || 1) };
+}
+
+// Put the chosen scale where the drawing code already looks for it, keeping
+// the printed one so the switch is reversible without another round trip.
+function applyScale() {
+  for (const c of state.channels) {
+    if (c.pLo === undefined) { c.pLo = c.lo; c.pHi = c.hi; }
+    const d = fitData ? dataScale(c) : null;
+    c.lo = d ? d.lo : c.pLo;
+    c.hi = d ? d.hi : c.pHi;
+    c.fitted = !!d;
+  }
+}
 
 // what fraction of a channel's samples are missing, and the longest run
 function gapStats(vals) {
@@ -421,7 +478,8 @@ function build() {
           esc(c.name) + (c.unit ? ' <span class="u">' + esc(c.unit) + "</span>" : "") +
         "</span>" +
         '<span class="rng">' + fmtV(c.lo) + " – " + fmtV(c.hi) +
-          (c.printed ? " · chart axis" : " · auto") +
+          (c.fitted ? " · this file"
+                    : (c.printed ? " · chart axis" : " · auto")) +
           (c.off ? " · hidden in the Lab" : "") +
           (gs.missing
             ? " · " + gs.pct.toFixed(1) + "% missing" +

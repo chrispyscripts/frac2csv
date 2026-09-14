@@ -40,7 +40,17 @@
   /* The key used to be painted in the top-right of the plot, where the hover
      readout lands — at 22px that box sat straight on top of it. Out here it
      collides with nothing and the channels become real buttons. */
-  .chankey { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 9px; }
+  .chankey { display:flex; flex-wrap:wrap; gap:6px 10px; margin:0 0 9px;
+             align-items:flex-start; }
+  .chankey .ck { display:flex; flex-direction:column; align-items:stretch;
+                 gap:3px; }
+  .chankey .gain { display:flex; align-items:center; gap:5px; padding:0 3px; }
+  .chankey .gain input { flex:1; width:78px; height:12px; margin:0;
+                         accent-color:var(--carmine); cursor:ew-resize; }
+  .chankey .gain b { font:600 10px var(--mono); color:var(--mut);
+                     min-width:30px; text-align:right; font-variant-numeric:
+                     tabular-nums; cursor:pointer; }
+  .chankey .ck.off .gain { opacity:.3; pointer-events:none; }
   .chankey button { display:inline-flex; align-items:center; gap:6px;
                     font:inherit; font-size:11.5px; font-weight:600;
                     cursor:pointer; border:1px solid var(--line);
@@ -218,6 +228,54 @@ function saveHidden() {
   try { localStorage.setItem("f2c.fvHidden",
         JSON.stringify([...hiddenChans])); } catch (e) {}
 }
+// How far each channel is stretched up its own axis, by NAME, 1 = untouched.
+//
+// Every curve here is drawn against its own maximum across the well, so a
+// channel that spends the job at a tenth of its peak is a tenth of the plot
+// tall and its shape cannot be read beside the others. This multiplies that
+// channel and only that channel, in THIS window — it is a way of looking, not
+// an edit, so it changes no value, no export and nothing the Lab holds.
+//
+// Kept by name and written down for the same reason hiddenChans is: Carmine
+// cycles a folder with this window open, and setting the same stretch on forty
+// files one file at a time is a chore, not a setting.
+const chanGain = new Map(function () {
+  try { return Object.entries(JSON.parse(
+      localStorage.getItem("f2c.fvGain") || "{}")); }
+  catch (e) { return []; }
+}());
+// Symmetric about 1 on purpose: 1/8 and 8 put "untouched" exactly halfway
+// along the travel, so the handle sitting centred MEANS untouched.
+const GAIN_MIN = 0.125, GAIN_MAX = 8;
+const gainOf = nm => {
+  const g = +chanGain.get(nm);
+  return (isFinite(g) && g > 0) ? Math.min(GAIN_MAX, Math.max(GAIN_MIN, g)) : 1;
+};
+function saveGain() {
+  try {
+    const o = {};
+    for (const [k, v] of chanGain) if (+v !== 1) o[k] = +v;
+    localStorage.setItem("f2c.fvGain", JSON.stringify(o));
+  } catch (e) {}
+}
+// A slider moving linearly from 0.25 to 8 spends most of its travel above 2,
+// which is the part nobody wants. Geometric, so one notch is one ratio
+// wherever the handle is and 1.0 sits in the middle.
+const SLIDER_N = 240;
+function gainToPos(g) {
+  return Math.round(SLIDER_N *
+    (Math.log(g / GAIN_MIN) / Math.log(GAIN_MAX / GAIN_MIN)));
+}
+function posToGain(p) {
+  const g = GAIN_MIN * Math.pow(GAIN_MAX / GAIN_MIN, p / SLIDER_N);
+  // Three decimals, not two: at the quiet end of the travel 0.125 rounded to
+  // 0.13, which is 4% adrift and leaves barely a dozen distinct settings
+  // below 1x. The readout still prints two.
+  return Math.abs(g - 1) < 0.04 ? 1 : Math.round(g * 1000) / 1000;
+}
+const fmtGain = g => (g === 1 ? "1\u00d7"
+  : (g < 10 ? g.toFixed(2).replace(/\.?0+$/, "") : String(Math.round(g))) + "\u00d7");
+
 let keySig = "";            // so the strip is rebuilt only when it changes
 
 function renderKey(names) {
@@ -228,6 +286,8 @@ function renderKey(names) {
   const host = $("chankey");
   host.innerHTML = "";
   names.forEach((nm, ni) => {
+    const cell = document.createElement("div");
+    cell.className = "ck" + (hiddenChans.has(nm) ? " off" : "");
     const b = document.createElement("button");
     b.type = "button";
     b.className = hiddenChans.has(nm) ? "off" : "";
@@ -242,7 +302,42 @@ function renderKey(names) {
       keySig = "";                 // force the strip to restyle
       draw();
     });
-    host.appendChild(b);
+    cell.appendChild(b);
+
+    // The stretch for this channel, under its own switch.
+    const row = document.createElement("div");
+    row.className = "gain";
+    const sl = document.createElement("input");
+    sl.type = "range"; sl.min = "0"; sl.max = String(SLIDER_N); sl.step = "1";
+    sl.value = String(gainToPos(gainOf(nm)));
+    sl.title = "Stretch " + nm + " up its own axis, in this window only. " +
+               "Double-click the number to put it back to 1x.";
+    const out = document.createElement("b");
+    out.textContent = fmtGain(gainOf(nm));
+    out.title = "Back to 1x";
+    // input, not change: the curve follows the handle while it is dragged.
+    // The key is NOT rebuilt here — rebuilding it mid-drag would replace the
+    // slider under the mouse and drop the gesture — so keySig is left alone
+    // and only the readout and the canvas are touched.
+    sl.addEventListener("input", () => {
+      const g = posToGain(+sl.value);
+      if (g === 1) chanGain.delete(nm); else chanGain.set(nm, g);
+      out.textContent = fmtGain(g);
+      saveGain();
+      draw();
+    });
+    const reset = () => {
+      chanGain.delete(nm);
+      sl.value = String(gainToPos(1));
+      out.textContent = fmtGain(1);
+      saveGain();
+      draw();
+    };
+    out.addEventListener("click", reset);
+    sl.addEventListener("dblclick", reset);
+    row.appendChild(sl); row.appendChild(out);
+    cell.appendChild(row);
+    host.appendChild(cell);
   });
 }
 let captionMode = localStorage.getItem("f2c.fvCaption") || "number";
@@ -709,10 +804,19 @@ function draw() {
   for (const st of well.stages) for (const c of st.channels)
     if (!names.includes(c.name)) names.push(c.name);
 
+  // Clipped to the plot from here on. Until the per-channel stretch existed
+  // every value was at most its channel's maximum, so nothing could leave the
+  // frame; a gain above 1 is a deliberate instruction to run a curve off the
+  // top, and the part that leaves must not be painted over the time axis or
+  // the hover readout.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(PAD.l, PAD.t, plotW, plotH); ctx.clip();
   for (let ni = 0; ni < names.length; ni++) {
     const name = names[ni];
     if (hiddenChans.has(name)) continue;
-    const mx = MAXES.get(name) || 1;
+    // The channel's own maximum across the well, divided by this window's
+    // stretch for it: a 2x gain halves the value that reaches the top.
+    const mx = (MAXES.get(name) || 1) / gainOf(name);
     ctx.lineWidth = 1.25;
     // Two passes once anything is cut: the whole curve faintly FIRST, so a
     // committed cut still shows the data it is taking out, then the surviving
@@ -773,6 +877,7 @@ function draw() {
     }
     ctx.globalAlpha = 1;
   }
+  ctx.restore();
 
   // boundaries — the draggable bit
   for (let i = 0; i < edits.bounds.length; i++) {

@@ -4626,12 +4626,24 @@ function stackPayload() {
     // instead of 14,000 boxed numbers, and the child needs no null checks.
     const src = c.values, len = src.length;
     const vals = new Float64Array(len);
+    // What this channel ACTUALLY reaches in this stage, alongside the axis the
+    // sheet prints. The printed axis is the same numbers on every stage of the
+    // file — a conc axis of 0..1000 whether the stage peaked at 950 or at 40 —
+    // so a stage drawn against it can spend its whole row in the bottom tenth.
+    // The stacked window scales to this instead (Carmine, 2026-09-13); the
+    // printed range still travels so the reader can switch back and so the
+    // window can say which of the two it is showing.
+    let dLo = Infinity, dHi = -Infinity;
     for (let i = 0; i < len; i++) {
       const v = src[i];
-      vals[i] = (v == null || !isFinite(v)) ? NaN : v;
+      const ok = (v != null && isFinite(v));
+      vals[i] = ok ? v : NaN;
+      if (ok) { if (v < dLo) dLo = v; if (v > dHi) dHi = v; }
     }
+    const has = isFinite(dLo) && isFinite(dHi);
     chans.push({ name: chanName(c), unit: c.unit || "", color: c._color,
                  lo: r.lo, hi: r.hi, printed: !!r.printed,
+                 dataLo: has ? dLo : null, dataHi: has ? dHi : null,
                  vmax: round2(c._vmax), off: gState.hidden.has(ci),
                  values: vals });
   });
