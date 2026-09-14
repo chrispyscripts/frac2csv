@@ -202,5 +202,20 @@
    "pair.coverage"
   ],
   "expect": false
+ },
+ {
+  "issue": "#643",
+  "file": "00025",
+  "said": "wh prop conc missing data (layout A pad; repaired 4d2a978)",
+  "stages": [
+   "1"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "pair.coverage"
+  ],
+  "expect": false
  }
 ]

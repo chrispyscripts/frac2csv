@@ -103,15 +103,21 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
 
 **Still open after this pass:**
 
-- **The pad and the flush, under the cover.** `fill_under` is confined to
-  the hidden curve's VISIBLE span by design. 01350 stages 3, 6, 7 keep
-  WH at 68-74% against BH's 100%, and 01316 stage 45 keeps BH at 70%
-  against WH's 95%, and in every case the missing seconds are before the
-  first ink or after the last, where the cover sits on the axis floor
-  with the hidden curve's zero under it. The rule that closes it: walk
-  beyond the span only while the cover's trace is AT THE FLOOR — zero is
-  what the pen would draw there, and nowhere else is anything forced.
-  Not written; measure it on those four stages first.
+- **The pad and the flush — BUILT and measured (`4d2a978`).** The walk
+  goes past the visible span only while the cover's stroke is at the
+  floor and only from an edge itself at the floor. 00025 s1 WH 54 → 100%,
+  01350 s3/6/7 68-74 → 100%, files 94 → 100% and 87 → 99%, BH and peaks
+  untouched (#641, #643). **STEP's version stays open, with its numbers:**
+  01316 s45 BH's first ink is 1.0 kg/m3 (at the floor) but green at that
+  column is already 21.9 — the cover lifted off before the hidden curve
+  showed, so there is no floor stroke to walk along; orange's zero there
+  is under the FRAME LINE, not under green. That is the v0.9.10 Trican
+  lesson (read one row past the frame) applied to STEP's orange — probe
+  the frame row on p195 before building. And its flush edge is 106.6, not
+  the floor: orange stops being drawn mid-descent, cause unknown.
+- **STEP "Combined Clean Rate" is 86-94% missing inside its drawn span on
+  seven stages of 01316** (2, 5, 8, 12, 36.2, 42, 44). Seen on the
+  scorecard, not looked at. A new class; the mask/strip/trace probe first.
 - 01433's WH Prop Conc sits at 69% against BH's 100% after both Trican
   fixes; its loss is neither the rules nor DH's cover. Probe p212-p216
   the same way (mask / strip / trace) before guessing.
