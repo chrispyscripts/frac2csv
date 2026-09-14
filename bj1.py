@@ -32,8 +32,52 @@ TIME_RE = re.compile(r"([A-Z][a-z]{2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 # a HYPHEN on others: 00633 titles its charts "100-12-27-079-16W6 - Well D -
 # Stage 03 Plug Wash" and matched nothing, so its 10 chart pages read as an
 # empty file with no failure note at all — detect simply never fired.
-_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{3}-\d{2}W\d"
+# ...and the township is printed with its leading zero dropped on some
+# filings: 00634 titles its charts "102-09-28-79-16W6 - Well E - Stage 01"
+# where every table on the same book says 102/09-28-079-16W6/00. Two digits
+# matched nothing, so its four chart pages were skipped as schematics and the
+# file came back empty (#644). The UWI is padded back to three below.
+_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{2,3}-\d{2}W\d"
                       r"|\d{3}[-/][A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
+
+
+def unnumbered_title(page):
+    """The title of a BJ chart page that names no stage -> the line, or None.
+
+    00634 p72-73 are titled "102-09-28-79-16W6 - Well E - plug erosion":
+    a well id, the word Well, a time axis, and no stage. Not a treatment
+    stage and not read as one — but not a schematic either, and the skip
+    note should say what it is.
+    """
+    t = page.get_text()
+    if TIME_RE.search(t) is None:
+        return None
+    for line in t.splitlines():
+        if " - Well " in line and "Stage" not in line \
+                and _WELL_ID.search(line) is not None:
+            return line.strip()
+    return None
+
+
+def parse_title(text):
+    """-> (uwi, stage) from the chart title's well id and stage number, or
+    ("", "") when the text has neither shape."""
+    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{2,3})-(\d{2})W(\d)"
+                  r".*?Stage\s*(\d+)", text, re.S)
+    if m:
+        g = list(m.groups()[:6])
+        g[3] = g[3].zfill(3)               # "79" on the title, 079 on the well
+        return "{}{}{}{}{}W{}00".format(*g), str(int(m.group(7)))
+    # The NTS-named filings ("200/C-022-C-094-G-01 - Well D - Stage 14")
+    # matched neither half of that pattern, so every chart came back as
+    # stage "?" even once detect let them through (#371). The UWI is the
+    # id with its separators dropped, which is the same shape the DLS
+    # branch above builds and what canon_uwi would make of it anyway.
+    mn = re.search(r"(\d{3})[-/]([A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2})"
+                   r".*?Stage\s*(\d+)", text, re.S)
+    if mn:
+        return mn.group(1) + re.sub(r"-", "", mn.group(2)) + "00", str(int(mn.group(3)))
+    return "", ""
 
 
 def detect(page):
@@ -134,22 +178,9 @@ def extract_page(page, sample_sec=1.0):
     text = page.get_text()
 
     meta = PageMeta()
-    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)"
-                  r".*?Stage\s*(\d+)", text, re.S)
-    if m:
-        meta.uwi = "{}{}{}{}{}W{}00".format(*m.groups()[:6])
-        meta.stage = str(int(m.group(7)))
-    else:
-        # The NTS-named filings ("200/C-022-C-094-G-01 - Well D - Stage 14")
-        # matched neither half of that pattern, so every chart came back as
-        # stage "?" even once detect let them through (#371). The UWI is the
-        # id with its separators dropped, which is the same shape the DLS
-        # branch above builds and what canon_uwi would make of it anyway.
-        mn = re.search(r"(\d{3})[-/]([A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2})"
-                       r".*?Stage\s*(\d+)", text, re.S)
-        if mn:
-            meta.uwi = mn.group(1) + re.sub(r"-", "", mn.group(2)) + "00"
-            meta.stage = str(int(mn.group(3)))
+    uwi, stage = parse_title(text)
+    if uwi:
+        meta.uwi, meta.stage = uwi, stage
     title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")
     meta.title = title[:60]
 

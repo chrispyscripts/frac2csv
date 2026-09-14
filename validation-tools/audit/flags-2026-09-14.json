@@ -274,5 +274,21 @@
    "clock.backwards"
   ],
   "expect": false
+ },
+ {
+  "issue": "#644",
+  "file": "00634",
+  "said": "No extractable data (repaired: two-digit township in the BJ title)",
+  "stages": [
+   "1"
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.failed",
+   "stage.missing",
+   "channel.absent",
+   "clock.absent"
+  ],
+  "expect": false
  }
 ]

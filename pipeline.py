@@ -1925,6 +1925,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # schematic/table pages that draw like charts — reported as one line, not
     # one per page: a 171-page report has dozens and they are not errors
     _not_charts = []
+    _bj_unnumbered = []      # BJ chart pages whose title names no stage
     # IFS pages that name an interval and carry the chart as a BITMAP instead
     # of vector art. The reader is a vector reader, so it finds no strokes and
     # the page is skipped — which is correct, but it used to happen in total
@@ -2359,7 +2360,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
         if fc.page_kind(page) == "vector":
             if not cprog.is_chart_page(page):
-                _not_charts.append(pno + 1)     # summarised after the loop
+                untitled = bj1.unnumbered_title(page)
+                if untitled:
+                    _bj_unnumbered.append((pno + 1, untitled))
+                else:
+                    _not_charts.append(pno + 1)     # summarised after the loop
                 continue
             if fc.is_chemicals(page):
                 notes.append(f"p{pno + 1}: chemicals chart — additive "
@@ -2444,6 +2449,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             f"{', …' if len(_ifs_raster) > 8 else ''}. The chart is in the "
             f"PDF and can be read by eye; it is this reader that cannot, "
             f"because it looks for stroked curves and finds a picture.")
+    if _bj_unnumbered:
+        notes.append(f"{len(_bj_unnumbered)} BJ chart page(s) titled without a "
+                     f"stage number, not read as a stage: "
+                     + "; ".join(f"p{pg} \"{t.split(' - ', 1)[-1][:40]}\""
+                                 for pg, t in _bj_unnumbered[:6])
+                     + (", …" if len(_bj_unnumbered) > 6 else ""))
     if _not_charts:
         notes.append(f"{len(_not_charts)} page(s) skipped as schematics or "
                      f"tables that draw like charts (p"

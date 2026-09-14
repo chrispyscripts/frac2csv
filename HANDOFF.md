@@ -214,10 +214,16 @@ channel identical — the search only runs where lag zero fails.
 - **The 2015 Trican clock — DONE, the chart reads its own top axis**
   (the section below). The 12-hour rule on the sheet is now the fallback
   for a chart whose strip cannot be read; on 00041 and 00015 that is none.
-- **BJ with an outlined title (00634, #644):** the time axis is text, the
-  title and legend are outlines, `bj1.detect` wants the title line in
-  text, and `bj1` has no OCR path at all. The easy half of the BJ-textless
-  class (no slant). Sized, not built.
+- **00634 (#644) — DONE, and the earlier diagnosis was wrong.** Its chart
+  pages are plain text: title, legend, ticks and time labels all in the
+  layer. What rejected them was `bj1._WELL_ID` wanting a three-digit
+  township where the title prints "102-09-28-79-16W6" (the tables on the
+  same book say 102/09-28-079-16W6/00). Two digits accepted, the UWI
+  padded back (`parse_title`); Stage 1 reads p70+p71, five channels,
+  maxima on the page. p72-73 are "Well E - plug erosion", a chart with no
+  stage: named in the note (`unnumbered_title`), not read as a stage. p65
+  is a wellbore schematic. The outlined-font BJ class is real but it is
+  01156/01157 (#647), not this file.
 - 00180 pairs 11→12 and 18→19 disagree at every lag (five of ten
   channels); stages 9 and 10 are not in the Daily Stage Summary and sit at
   midnight. Look at the pages.

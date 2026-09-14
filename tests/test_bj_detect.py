@@ -86,6 +86,44 @@ class BJDetect(unittest.TestCase):
                 bj1.detect(_Page(f"Apr-13 22:15\n{wid} - Well D - Stage 01\n")),
                 wid)
 
+    def test_a_two_digit_township_is_the_same_well(self):
+        # #644: 00634 titles "102-09-28-79-16W6" where its tables say
+        # 102/09-28-079-16W6/00; four chart pages were skipped as schematics
+        self.assertTrue(bj1.detect(
+            _Page("Apr-13 19:30\n102-09-28-79-16W6 - Well E - Stage 01\n")))
+
+
+class ParseTitle(unittest.TestCase):
+
+    def test_township_is_padded_back_to_three_digits(self):
+        self.assertEqual(bj1.parse_title("102-09-28-79-16W6 - Well E - Stage 01"),
+                         ("102092807916W600", "1"))
+        self.assertEqual(bj1.parse_title("100-12-27-079-16W6 - Well D - Stage 03"),
+                         ("100122707916W600", "3"))
+
+    def test_nts_names_still_parse(self):
+        self.assertEqual(bj1.parse_title("200/C-022-C-094-G-01 - Well A - Stage 12"),
+                         ("200C022C094G0100", "12"))
+
+    def test_nothing_is_nothing(self):
+        self.assertEqual(bj1.parse_title("Service Company\nStage\n"), ("", ""))
+
+
+class Unnumbered(unittest.TestCase):
+
+    def test_a_plug_erosion_chart_is_named_not_read(self):
+        # 00634 p72: a well, a time axis, no stage
+        self.assertEqual(
+            bj1.unnumbered_title(_Page("Apr-13 19:30\n102-09-28-79-16W6 - Well E - plug erosion\n")),
+            "102-09-28-79-16W6 - Well E - plug erosion")
+
+    def test_a_stage_chart_is_not_unnumbered(self):
+        self.assertIsNone(bj1.unnumbered_title(_Page(CHART)))
+
+    def test_no_time_axis_is_not_a_chart(self):
+        self.assertIsNone(bj1.unnumbered_title(
+            _Page("102-09-28-79-16W6 - Well E - plug erosion\n")))
+
 
 if __name__ == "__main__":
     unittest.main()
