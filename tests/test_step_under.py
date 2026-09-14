@@ -130,6 +130,30 @@ class NotFromRawInk(unittest.TestCase):
         self.assertEqual(py_o[101], 250.0)          # reached from the right, at the floor — not from the glyph
 
 
+class Islands(unittest.TestCase):
+    """00324: a two-column orange fleck at 650 and a green fleck beside it
+    seeded a chain along the logo. Islands seed nothing and cover nothing."""
+
+    def test_an_island_in_either_trace_is_invisible_to_the_walk(self):
+        o = np.zeros((H, W), bool); g = np.zeros((H, W), bool)
+        py_o = np.full(W, np.nan); py_o[:100] = 250.0; py_o[300:] = 250.0
+        py_o[120:122] = 40.0                                                   # an orange fleck near the top
+        stroke(o, range(0, 100), np.full(100, 250.0)); stroke(o, range(300, 400), np.full(100, 250.0))
+        o[39:42, 120:122] = True
+        stroke(g, range(0, 400), np.full(W, 250.0))                            # green rides the floor …
+        g[39:42, 122:126] = True                                               # … with a fleck beside the orange one
+        py_g = np.full(W, 250.0); py_g[122:125] = 40.0                         # the tracer put green at 40 for 3 columns
+        cols = step1._fill_under(o, py_o, g, py_g)
+        self.assertTrue(all(abs(py_o[c] - 250.0) < 1e-9 for c in cols))        # nothing deduced at 40
+        # the orange fleck is GONE, not merely ignored — a fill either side of
+        # it would otherwise make it a neighbour of real readings and the
+        # export's despeckle would keep it (00324 p130 col 248, 643 kg/m3)
+        self.assertEqual(py_o[120], 250.0); self.assertIn(120, cols); self.assertIn(121, cols)
+        self.assertTrue(all(c in cols for c in range(100, 122)))              # the walk crosses the whole gap …
+        self.assertTrue(all(c in cols for c in range(126, 300)))              # … either side of the cover's own fleck
+        self.assertTrue(all(np.isnan(py_o[122:125])))                         # the cover's fleck columns: no cover, dropouts
+
+
 class WhUnderDh(unittest.TestCase):
     """Trican layout B, 01350 p227: WH at the floor under DH's zero line."""
 

@@ -667,7 +667,11 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # page shows green and no orange at all, and the orange trace came back
     # blank there — 37.9% of a stage on 00349 (#112), 80% of one on 01316
     # (#627). Deduce it: see _fill_under.
-    if "orange" in traced and "green" in traced:
+    # …and only on the SURFACE chart, where orange and green are the same
+    # concentration at the two ends of the pipe. On the chemical chart they
+    # are two different additives, and 00324's Chem Conc (orange) was being
+    # "deduced" from Chem Conc (green) on ten of thirty stages.
+    if lqty == "pressure" and "orange" in traced and "green" in traced:
         o, g = traced["orange"], traced["green"]
         cols = _fill_under(o["sub"], o["py"], g["sub"], g["py"])
         o["filled"] = len(cols)

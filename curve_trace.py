@@ -162,7 +162,23 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
     is counted and the channel says so.
     """
     n = sub_o.shape[1]
-    span = np.flatnonzero(np.isfinite(py_o))
+    # A trace fresh from curve_positions still carries one-to-three-column
+    # islands — legend flecks, the fringe of a printed mark — that the
+    # tracer's own despeckle removes later. Read BEFORE that, an orange
+    # island at 650 kg/m3 seeded the walk and a green island beside it was
+    # "the cover", and BH's peak doubled on fifteen stages of 00324 with WH
+    # at 320. Islands seed nothing and cover nothing; the walk sees only
+    # runs of four columns or more on either side.
+    # …and the hidden trace's islands are blanked IN PLACE, not merely
+    # ignored. Left standing, a fleck between two filled columns is an
+    # island no longer: 00324 p130 col 248 held a one-column orange fleck
+    # at 643 kg/m3 that the export's despeckle had always deleted; with
+    # the floor filled either side of it the despeckle kept it, and the
+    # export drew a triangle to 643 with WH at 26. The fill must not lend
+    # a fleck a neighbour.
+    py_o[:] = _no_islands(py_o)
+    seed, cover = py_o, _no_islands(py_g)
+    span = np.flatnonzero(np.isfinite(seed))
     if len(span) < 2:
         return []
     lo, hi = int(span[0]), int(span[-1])
@@ -178,13 +194,13 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
 
     def cover_run(c):
         """The cover's run holding its traced row in this column, or None."""
-        if not np.isfinite(py_g[c]):
+        if not np.isfinite(cover[c]):
             return None
         ys = np.flatnonzero(sub_g[:, c])
         if not len(ys):
             return None
         for r in np.split(ys, np.flatnonzero(np.diff(ys) > gap) + 1):
-            if r[0] - 0.5 <= py_g[c] <= r[-1] + 0.5:
+            if r[0] - 0.5 <= cover[c] <= r[-1] + 0.5:
                 return r
         return None
 
@@ -192,13 +208,13 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
         last = np.nan
         missed = 0
         for c in order:
-            if np.isfinite(py_o[c]):
-                last, missed = py_o[c], 0
+            if np.isfinite(seed[c]):
+                last, missed = seed[c], 0
                 continue
             if not np.isfinite(last):
                 continue
             r = cover_run(c)
-            if r is None or len(r) > riser or abs(float(py_g[c]) - last) > tol:
+            if r is None or len(r) > riser or abs(float(cover[c]) - last) > tol:
                 # The cover's own trace has dropout columns — curve_positions
                 # leaves them and the export bridges them later — and one of
                 # them used to end the walk: 01316 stage 45's 55-minute hole
@@ -209,10 +225,23 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
                 if missed > COVER_SKIP_MAX:
                     last = np.nan               # the trace is lost here
                 continue
-            py_o[c] = float(py_g[c])
+            py_o[c] = float(cover[c])
             filled.add(c)
             last, missed = py_o[c], 0
     return sorted(filled)
+
+
+def _no_islands(py, island=3, join=2):
+    """A copy of a trace with its islands of `island` columns or fewer
+    blanked — the same shape step1._despeckle removes from the export."""
+    out = np.array(py, dtype=float, copy=True)
+    fin = np.flatnonzero(np.isfinite(out))
+    if not len(fin):
+        return out
+    for grp in np.split(fin, np.flatnonzero(np.diff(fin) > join) + 1):
+        if len(grp) <= island:
+            out[grp] = np.nan
+    return out
 
 
 # consecutive columns the cover's trace may be missing before the hidden
