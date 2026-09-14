@@ -186,5 +186,21 @@
    "pair.coverage"
   ],
   "expect": false
+ },
+ {
+  "issue": "#642",
+  "file": "00016",
+  "said": "missing wh prop con data (layout A; repaired WH\u2190DH)",
+  "stages": [
+   "20"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "gap.missing",
+   "pair.coverage"
+  ],
+  "expect": false
  }
 ]

@@ -543,6 +543,27 @@ def extract_image(img, sample_sec=1.0):
     masks = series_masks(img)
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
+    # WH Conc is painted first and DH Conc over it, on this layout as on
+    # layout B: two staircases, the second delayed, and wherever the delayed
+    # one catches up the page shows light green and no dark green at all.
+    # 00016 p76 (#642): of 187 columns with no WH ink inside its span, 117
+    # have DH's ink exactly at WH's row. Traced first, then deduced from
+    # DH's own trace — see curve_trace.fill_under; islands=False because
+    # this tracer keeps every column it reads.
+    traced = {}
+    for key, _l, _u, _a, _f in SERIES:
+        mask = masks.get(key)
+        if mask is None or not mask.any():
+            continue
+        y_end = min(y1 + 2, mask.shape[0])
+        sub = mask[y0 + 1:y_end, x0 + 1:x1]
+        traced[key] = (sub, ar.curve_positions(sub))
+    if "wh_conc" in traced and "dh_conc" in traced:
+        (ws, wp), (ds, dp) = traced["wh_conc"], traced["dh_conc"]
+        if ct.fill_under(ws, wp, ds, dp, islands=False):
+            notes.append("WH Prop Conc: read from under DH Prop Conc where the "
+                         "page paints the DH curve over it and the two coincide "
+                         "— deduced, not traced")
     for key, label, unit, axis, factor in SERIES:
         scale = factor * (press_scale if axis == "press" else 1.0)
         cal = fits.get(axis)
@@ -565,8 +586,7 @@ def extract_image(img, sample_sec=1.0):
         # y1 to y1+4, while WH Prop Conc has 9,582 and DH Prop Conc 24,476 —
         # all of them on y1+1 exactly, none on y1+2 or beyond.  So this widens
         # by one row, not by a guess, and only the two conc traces can move.
-        y_end = min(y1 + 2, mask.shape[0])
-        sub = mask[y0 + 1:y_end, x0 + 1:x1]
+        sub, py_rel = traced[key]
         cov = float(sub.any(axis=0).mean())
         if cov < 0.05:
             continue
@@ -579,7 +599,7 @@ def extract_image(img, sample_sec=1.0):
         # concentration for ink the chart drew to mean zero.  The clamp only
         # bites where the pen fell below the frame; a curve inside the plot is
         # untouched.
-        py = np.minimum(ar.curve_positions(sub) + y0 + 1, float(y1))
+        py = np.minimum(py_rel + y0 + 1, float(y1))
         vals = (a + bb * py) * scale
         n_cols = sub.shape[1]
         t_cols = (ta + tb * (np.arange(n_cols) + x0 + 1)) - t_start
