@@ -342,8 +342,43 @@ def day_anchors(doc):
     return out
 
 
+def _chain_order(bare):
+    """The order the stages were PUMPED, from the sheets' own finish -> start
+    chain, when the sheets print finishes.
+
+    00041 (#645): stage 18 finishes 06:45, stage 23 runs 06:45-07:37, and
+    stage 19 starts 07:37 — 23 was pumped between 18 and 19. Resolved in
+    stage-number order, 23 had to follow 22 (09:58), its 06:45 became
+    18:45, and every stage after it carried a twelve-hour error: charts
+    overlapping, "19 starts before 23". The chain is exact string matching
+    and needs no guessing; rows it does not reach (a gap between stages)
+    follow in stage order from where it broke.
+    """
+    rows = sorted(bare, key=lambda b: b[0])
+    key = lambda h, m: f"{h:02d}:{m:02d}"
+    if not all(len(b) > 4 and b[4] for b in rows):
+        return rows
+    by_start = {}
+    for b in rows:
+        by_start.setdefault(key(b[1], b[2]), []).append(b)
+    finishes = {key(*b[4]) for b in rows}
+    placed, order = set(), []
+    for head in rows:
+        if head[0] in placed or key(head[1], head[2]) in finishes:
+            continue                                    # not a head: something finishes here
+        cur = head
+        while cur is not None and cur[0] not in placed:
+            order.append(cur); placed.add(cur[0])
+            nxt = [c for c in by_start.get(key(*cur[4]), []) if c[0] not in placed]
+            cur = min(nxt, key=lambda c: c[0]) if nxt else None
+    for b in rows:                                      # anything the chain never reached
+        if b[0] not in placed:
+            order.append(b); placed.add(b[0])
+    return order
+
+
 def resolve_bare(bare, anchors=(), start_date=None):
-    """[(stage, h12, mm, 'A'|'P'|None)] in stage order -> {stage: entry}.
+    """[(stage, h12, mm, 'A'|'P'|None[, (fin_h12, fin_mm)])] -> {stage: entry}.
 
     A stage table printing 03:00, 04:29, 05:32, 12:00, 08:27 … with no AM/PM
     (00015, #639) has two readings, twelve hours apart, and both are
@@ -361,11 +396,14 @@ def resolve_bare(bare, anchors=(), start_date=None):
     """
     if not bare:
         return {}
-    bare = sorted(bare, key=lambda b: b[0])
+    chained = _chain_order(bare)
+    by_chain = chained != sorted(bare, key=lambda b: b[0])
+    bare = chained
 
     def walk(first_pm):
         seq, day, prev = [], 0, None
-        for i, (stage, h12, mm, ap) in enumerate(bare):
+        for i, b in enumerate(bare):
+            stage, h12, mm, ap = b[0], b[1], b[2], b[3]
             base = (h12 % 12) * 60 + mm
             if ap:
                 cands = [base + (720 if ap == "P" else 0)]
@@ -382,8 +420,9 @@ def resolve_bare(bare, anchors=(), start_date=None):
         span = (seq[-1][1] - seq[0][1]) * 1440 + seq[-1][2] - seq[0][2]
         return seq, span
 
-    stage0, h0, m0, ap0 = bare[0]
-    how = "AM/PM by the order of stages"
+    stage0, h0, m0, ap0 = bare[0][:4]
+    how = ("AM/PM by the order of pumping — the sheets' finish → start chain"
+           if by_chain else "AM/PM by the order of stages")
     if ap0:
         first_pm = ap0 == "P"
         how = "the first stage prints its AM/PM; the rest by the order of stages"
@@ -499,8 +538,10 @@ def stage_clock(doc):
             continue
         m = _BARE_START.match(str(r.get("start") or ""))
         if m and int(m.group(1)) <= 24 and int(m.group(2)) < 60:
+            f = _BARE_START.match(str(r.get("finish") or ""))
+            fin = (int(f.group(1)), int(f.group(2))) if f else None
             bare.append((stage, int(m.group(1)), int(m.group(2)),
-                         (m.group(3) or "").upper() or None))
+                         (m.group(3) or "").upper() or None, fin))
     if bare:
         out.update(resolve_bare(bare, day_anchors(doc), job_start_date(doc)))
     return out

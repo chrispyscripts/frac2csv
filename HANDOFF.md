@@ -118,6 +118,21 @@ eb5b4cf, 58cd951, 6f1f2a6, 2a5218b, 74fa9cf and the fill_under commits after.
 - **STEP "Combined Clean Rate" is 86-94% missing inside its drawn span on
   seven stages of 01316** (2, 5, 8, 12, 36.2, 42, 44). Seen on the
   scorecard, not looked at. A new class; the mask/strip/trace probe first.
+- **The 2015 Trican clock: read the chart's own top axis.** The stage
+  table's 12-hour clock is resolved by the sheets' finish → start chain
+  now (#645: 00041's stage 23 was pumped between 18 and 19, and stage
+  order read its 06:45 as 18:45 and carried twelve hours through every
+  stage after). The chain is exact where it holds; where it breaks — 00041's
+  31-34 sit after gaps — the digits alone cannot say, and the day sheet's
+  "End Time 7:24 am" argues against the reading they got. Every one of
+  these charts prints "Clock Time (hour:min)" ABOVE the plot, as pixels.
+  b_time_axis already reads exactly that strip for layout B; point it at
+  the strip above layout A's frame and the chart clocks itself, the table
+  becomes a cross-check, and the 12-hour rule is retired. Do this next.
+- **BJ with an outlined title (00634, #644):** the time axis is text, the
+  title and legend are outlines, `bj1.detect` wants the title line in
+  text, and `bj1` has no OCR path at all. The easy half of the BJ-textless
+  class (no slant). Sized, not built.
 - 01433's WH Prop Conc sits at 69% against BH's 100% after both Trican
   fixes; its loss is neither the rules nor DH's cover. Probe p212-p216
   the same way (mask / strip / trace) before guessing.

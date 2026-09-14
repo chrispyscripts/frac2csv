@@ -217,5 +217,32 @@
    "pair.coverage"
   ],
   "expect": false
+ },
+ {
+  "issue": "#645",
+  "file": "00041",
+  "said": "charts overlap after the 12-hour resolution (repaired: chain order)",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.overlap",
+   "clock.backwards"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#644",
+  "file": "00634",
+  "said": "No extractable data \u2014 BJ with outlined title/legend (new class, unread)",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.missing"
+  ],
+  "expect": true
  }
 ]

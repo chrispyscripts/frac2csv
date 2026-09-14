@@ -63,6 +63,36 @@ class Resolve(unittest.TestCase):
         self.assertNotIn("anchored", out[1]["resolved"])
 
 
+class ChainOrder(unittest.TestCase):
+    """00041 (#645): stage 23 was pumped between 18 and 19."""
+
+    ROWS = [(18, 5, 53, None, (6, 45)), (19, 7, 37, None, (8, 26)), (20, 8, 26, None, (9, 12)),
+            (21, 9, 12, None, (9, 58)), (22, 9, 58, None, (10, 44)), (23, 6, 45, None, (7, 37)),
+            (24, 10, 44, None, (11, 25)), (25, 11, 25, None, (12, 10)), (26, 12, 10, None, (12, 52))]
+
+    def test_the_chain_puts_23_between_18_and_19(self):
+        self.assertEqual([b[0] for b in trican2._chain_order(self.ROWS)], [18, 23, 19, 20, 21, 22, 24, 25, 26])
+
+    def test_resolved_along_the_chain_nothing_jumps_twelve_hours(self):
+        out = trican2.resolve_bare(self.ROWS, anchors=[5 * 60 + 53], start_date=date(2015, 11, 13))
+        self.assertEqual(out[23]["start"], "06:45:00")            # not 18:45
+        self.assertEqual(out[19]["start"], "07:37:00")
+        self.assertEqual(out[24]["start"], "10:44:00")            # not 22:44
+        self.assertEqual(out[26]["start"], "12:10:00")            # noon, same day
+        self.assertEqual({out[k]["date"] for k in out}, {"2015-11-13"})
+        self.assertIn("order of pumping", out[23]["resolved"])
+
+    def test_without_finishes_the_stage_order_stands(self):
+        rows = [(1, 3, 0, None), (2, 4, 29, None)]
+        self.assertEqual([b[0] for b in trican2._chain_order(rows)], [1, 2])
+        out = trican2.resolve_bare(rows, anchors=[15 * 60 + 1])
+        self.assertIn("order of stages", out[1]["resolved"])
+
+    def test_a_gap_in_the_chain_continues_in_stage_order(self):
+        rows = [(15, 12, 41, None, (1, 38)), (16, 4, 5, None, (4, 58)), (17, 4, 58, None, (5, 53))]
+        self.assertEqual([b[0] for b in trican2._chain_order(rows)], [15, 16, 17])
+
+
 class Parse(unittest.TestCase):
 
     def test_bare_and_marked_forms(self):
