@@ -31,7 +31,10 @@ axis_column_ok. A chart that comes back with no axis is a chart the client
 sees is missing; a chart with an axis off by a factor of ten is one they do
 not.
 """
+import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import fitz
 import numpy as np
@@ -115,6 +118,151 @@ def garbled(page):
     return out
 
 
+# How many pages to OCR at once, and why it is not "as many as possible".
+#
+# Measured on a 10-core machine over 12 pages of 00339: sequential 0.95s a
+# page, a pool of 3 0.39s (2.4x), of 6 0.24s (3.9x), of 9 0.22s (4.4x). Past
+# six the curve is nearly flat, and every extra worker is one more tesseract
+# competing for the same memory bandwidth. One core is left for the renderer
+# and the UI.
+_POOL_CAP = 8
+# How many pages may be rendered ahead of the pool.
+#
+# Set from a MEASUREMENT, after an estimate sent this the wrong way twice.
+# The arithmetic said a 200 dpi page is ~11 MB, so 280 of them would be 3 GB
+# and had to be bounded tightly. Rendering all 279 pages of 00148 up front
+# actually peaks at 1071 MB — LOWER than the run bounded to 16 (1207 MB) and
+# the batched one (1296 MB), because the bounded versions run longer and hold
+# more of everything else instead.
+#
+# Four, because the memory is measurable and the speed difference is not.
+# Three runs of the same file, same load, one process each:
+#
+#     lookahead=4    545.4s   1384 MB
+#     lookahead=6    548.6s   1492 MB
+#     lookahead=12   552.0s   1941 MB
+#
+# 1.2% apart in time and 557 MB apart in peak memory, so there is nothing to
+# buy by rendering further ahead. (An earlier run appeared to show a large
+# speed penalty at lookahead=2; it was taken under different load and does not
+# reproduce. Timings on a busy machine were the single biggest source of wrong
+# conclusions in this work — the output signature never moved.)
+_LOOKAHEAD = 4
+# Above this the machine is already busy — another window, or anything else
+# he is running — and piling more tesseract processes on makes every one of
+# them slower. Checked once per document, not per page.
+_BUSY_FRAC = 0.80
+
+
+def _machine_busy():
+    """Is the machine already loaded? -> True / False / None when unknown.
+
+    None matters: a reading we could not take must not be read as "idle".
+    Windows has no getloadavg, so the EXE will mostly answer None here and
+    fall back to the core count alone — which is the behaviour to degrade to,
+    not a reason to refuse to parallelise at all.
+    """
+    try:
+        one, _five, _fifteen = os.getloadavg()
+    except (AttributeError, OSError):
+        return None
+    cores = os.cpu_count() or 1
+    return one > cores * _BUSY_FRAC
+
+
+def pool_size(want=None):
+    """How many pages to OCR at once on this machine, right now."""
+    if want:
+        return max(1, int(want))
+    cores = os.cpu_count() or 1
+    n = min(_POOL_CAP, max(1, cores - 1))
+    if _machine_busy():
+        n = max(1, n // 2)
+    return n
+
+
+def prefetch(pages, dpi=DPI, workers=None, on_page=None):
+    """Warm the OCR cache for `pages`, several at a time.
+
+    The whole point of the split above: rendering is 5% of the cost and is
+    NOT thread-safe, OCR is the other 95% and is a subprocess, so the render
+    runs here on one thread and the reading runs in a pool. Nothing about
+    extraction changes — the per-document cache simply already holds the
+    answer by the time the sequential pass asks for it, which is what keeps
+    every order-dependent rule (a Bottom Hole sheet borrowing the zones of
+    the Surface sheet printed before it) working exactly as it did.
+
+    Best-effort throughout. A page that fails here is not cached, and the
+    sequential pass renders and reads it the old way.
+    """
+    if not available():
+        return 0
+    todo = []
+    for page in pages:
+        store = _cache(page)
+        if store is None or (page.number, dpi) in store:
+            continue
+        try:
+            if not garbled(page):
+                continue              # a readable text layer needs no OCR
+        except Exception:
+            continue
+        todo.append(page)
+    if not todo:
+        return 0
+    n = pool_size(workers)
+    if n <= 1:
+        return 0
+    done = 0
+    # Bounded, but WITHOUT a barrier, and the difference is the whole speedup.
+    #
+    # A rendered page at 200 dpi is about 11 MB, so rendering a 400-page
+    # filing up front would hold roughly 4 GB at once. The obvious fix —
+    # render a batch, wait for it, render the next — gives the memory back
+    # and hands back the speed with it: measured on 00148, sequential 477s,
+    # unbounded pool 330s, BATCHED 451s. The barrier idles the renderer
+    # waiting for the slowest page in each batch and then idles the workers
+    # waiting for the next batch to be rendered.
+    #
+    # A semaphore bounds what is alive without ever stopping the flow: the
+    # renderer runs ahead until `inflight` pages are outstanding and then
+    # blocks on the next one, which a finishing worker immediately unblocks.
+    inflight = max(2, n * _LOOKAHEAD)
+    room = threading.Semaphore(inflight)
+    futures = []
+    with ThreadPoolExecutor(max_workers=n) as pool:
+        for page in todo:
+            room.acquire()
+            store = _cache(page)
+            try:
+                store[("img", page.number, dpi)] = _render(page, dpi)
+            except Exception:
+                room.release()
+                continue
+            fut = pool.submit(words, page, dpi)
+            fut.add_done_callback(lambda _f: room.release())
+            futures.append(fut)
+        for fut in as_completed(futures):
+            try:
+                fut.result()
+            except Exception:
+                pass
+            done += 1
+            if on_page is not None:
+                try:
+                    on_page(done, len(futures))
+                except Exception:
+                    pass
+
+    # anything left unrendered would otherwise hold a page's bitmap for the
+    # life of the document
+    for page in todo:
+        store = _cache(page)
+        if store is not None:
+            store.pop(("img", page.number, dpi), None)
+    return done
+
+
 def words(page, dpi=DPI):
     """[{text, rect, conf, line}] for the page, in PAGE coordinates.
 
@@ -181,7 +329,10 @@ def _unturn(box, k, w, h):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _render_and_read(page, dpi):
+def _render(page, dpi):
+    """The page as an RGB array. MUST run on the thread that owns the doc:
+    a fitz.Document is not thread-safe and rendering one from two threads
+    crashes rather than returning wrong data."""
     pix = page.get_pixmap(dpi=dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
         pix.height, pix.width, pix.n)
@@ -189,6 +340,17 @@ def _render_and_read(page, dpi):
         img = img[..., :3]
     elif pix.n == 1:
         img = np.repeat(img, 3, axis=2)
+    return img
+
+
+def _render_and_read(page, dpi):
+    pre = _cache(page)
+    key = ("img", page.number, dpi)
+    img = None
+    if pre is not None:
+        img = pre.pop(key, None)          # rendered ahead by prefetch()
+    if img is None:
+        img = _render(page, dpi)
     h, w = img.shape[0], img.shape[1]
     # No whitelist: these are chart titles, legends and captions, and
     # restricting the alphabet on running text costs more than it buys.

@@ -1514,6 +1514,33 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         if groups:
             notes.append(f"{len(groups)} stage(s) from acquisition chart pages.")
 
+    # --- OCR every textless page first, several at a time ---
+    #
+    # The app was single-threaded end to end, so a 400-page filing spent about
+    # six minutes with one core busy and the rest of the machine idle. OCR is
+    # 95% of that time and tesseract is a SUBPROCESS, so pages can be read
+    # concurrently; rendering is the other 5% and is NOT thread-safe, which is
+    # why ocr_labels.prefetch renders on this thread and only reads in a pool.
+    #
+    # The loop below is untouched and still runs page by page in order. That
+    # is deliberate: it carries state that only means anything in order — an
+    # uncaptioned CalFrac Bottom Hole sheet borrows the zones of the Surface
+    # sheet printed immediately before it (_last_progress), and the variant
+    # pairing downstream reads page order too. Parallelising THAT would break
+    # both. All this does is make sure the answer is already cached when the
+    # sequential pass asks for it.
+    #
+    # Measured on 12 pages of 00339, 10 cores: 0.95s a page sequentially,
+    # 0.24s at six workers, 0.22s at nine. Best effort — a page that fails
+    # here is simply read the old way when the loop reaches it.
+    if raster:
+        try:
+            ocr_labels.prefetch(
+                [doc[p] for p in range(npages)],
+                on_page=(lambda d, t: on_page(d, t)) if on_page else None)
+        except Exception as e:
+            notes.append(f"OCR prefetch skipped — {e}")
+
     # --- per-page chart templates ---
     for pno in range(npages):
         if on_page is not None:
