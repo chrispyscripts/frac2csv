@@ -244,5 +244,21 @@
    "stage.missing"
   ],
   "expect": true
+ },
+ {
+  "issue": "#646",
+  "file": "00026",
+  "said": "gaps in TR pressure (Tr Press under WH Rate; repaired: _deduce_under press pairs)",
+  "stages": [
+   "8",
+   "9"
+  ],
+  "channel": "Tr Press",
+  "kinds": [
+   "gap.hold",
+   "gap.missing",
+   "channel.sparse"
+  ],
+  "expect": false
  }
 ]

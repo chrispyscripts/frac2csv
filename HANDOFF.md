@@ -124,6 +124,40 @@ the same rate plateaus crossed the line. `_abs_start` is the one place
 that says what "dated at 00:00:00" means: no time read, except on a chart
 that clocked itself, where midnight is a time.
 
+### Pressure under rate and conc (#646, 00026, later still on 2026-09-14)
+
+"Gaps in TR pressure", with a FracView shot of 00026 stage 8: Surface
+Pressure at 56 MPa and WH Rate at 9.9 m3/min sit on the same rows for 30
+of the stage's 44 minutes, and the page paints the rate over the pressure.
+The scanner had it before the flag did — `gap.hold` on Tr Press, stages 8
+and 9 — and the mechanism is the one `fill_under` already reads for WH
+Conc under DH Conc (#642) and STEP's orange under green (#627). The paint
+order is the legend order, so every earlier series can hide under every
+later one: `trican_charts._UNDER_PAIRS` now walks Surface under Rate / WH
+Conc / DH Conc and BH under Surface / Rate / WH Conc / DH Conc, in paint
+order, so a chain (BH under a Surface that was itself deduced) reaches
+through. One note per hidden curve names its covers and the count.
+
+Measured through `extract_page` and the audit, HEAD-tree payloads as the
+before:
+
+| file | moved | unchanged |
+|---|---|---|
+| 00026 | Tr Press s8 89 → 100%, s9 93 → 100%; BH Pressure s9-11 84-93 → 100%, s12-13 80 → 93% (BH is at ZERO for twenty minutes there, on the frame line, and hidden only where the conc curves rest on the floor over it — checked at 330 dpi); `gap.hold` 2 → 0, `gap.missing` 12 → 4 | every maximum but one within a pen (s22 BH 53.70 → 53.82) |
+| 00041 | BH Pressure s7 78 → 100%, five more stages to 100%; `gap.hold` 1 → 0, `gap.missing` 9 → 5 | maxima within a pen (s9 Tr +0.15) |
+| 00015 | Tr and BH to 100% on ten stages; `gap.hold` 2 → 0, `gap.missing` 10 → 2 | maxima identical |
+
+The samples that moved and were already finite are the ones `resample`
+had bridged with a straight line across a short hidden stretch (median
+0.7% of range, longest run 85 samples). The largest, 00015 s7 at 3.5 min:
+the bridge fell 52.6 → 34.6 in a straight line; deduced, the pressure
+holds at 52.5 while the rate holds at 6.5 and drops with it. That is the
+page, not the bridge.
+
+What the pass does NOT do: BH under the frame line at zero is read by the
+frame-row rule already; nothing here walks a pressure along a riser (the
+three-pen rule) or invents ink where no cover is.
+
 **Still open after this pass:**
 
 - **The pad and the flush — BUILT and measured (`4d2a978`).** The walk

@@ -617,6 +617,38 @@ def _axis_fit(pts, rows, y0, y1):
     return a, b, len(inl)
 
 
+# (hidden, cover): the cover is painted later and over the hidden curve.
+# Walked in this order so a fill through a cover uses the cover's own
+# filled trace. Legend order on the page: BH Pressure, Surface Pressure,
+# Annulus Pressure, WH Rate, WH Conc, DH Conc.
+_UNDER_PAIRS = (("wh_conc", "dh_conc"),
+                ("surface", "rate"), ("surface", "wh_conc"), ("surface", "dh_conc"),
+                ("bh", "surface"), ("bh", "rate"), ("bh", "wh_conc"), ("bh", "dh_conc"))
+
+
+def _deduce_under(traced, notes):
+    """Fill each hidden curve's trace from under its cover, in paint order.
+
+    `traced` is {series key: (mask crop, traced rows)}; the rows are filled
+    in place and a note per pair says how many columns. -> {hidden: count}.
+    """
+    labels = {k: l for k, l, _u, _a, _f in SERIES}
+    out, covers = {}, {}
+    for hidden, cover in _UNDER_PAIRS:
+        if hidden in traced and cover in traced:
+            (hs, hp), (cs, cp) = traced[hidden], traced[cover]
+            got = ct.fill_under(hs, hp, cs, cp, islands=False)
+            if got:
+                out[hidden] = out.get(hidden, 0) + len(got)
+                covers.setdefault(hidden, []).append(labels[cover])
+    for hidden, n in out.items():
+        over = " and ".join(covers[hidden])
+        notes.append(f"{labels[hidden]}: {n} columns read from under {over} "
+                     f"where the page paints {over} over it and the two "
+                     f"coincide — deduced, not traced")
+    return out
+
+
 def extract_image(img, sample_sec=1.0):
     """-> (samples, channels, info) for one main Trican chart image."""
     img = np.asarray(img).astype(int)
@@ -674,12 +706,15 @@ def extract_image(img, sample_sec=1.0):
         y_end = min(y1 + 2, mask.shape[0])
         sub = mask[y0 + 1:y_end, x0 + 1:x1]
         traced[key] = (sub, ar.curve_positions(sub))
-    if "wh_conc" in traced and "dh_conc" in traced:
-        (ws, wp), (ds, dp) = traced["wh_conc"], traced["dh_conc"]
-        if ct.fill_under(ws, wp, ds, dp, islands=False):
-            notes.append("WH Prop Conc: read from under DH Prop Conc where the "
-                         "page paints the DH curve over it and the two coincide "
-                         "— deduced, not traced")
+    # The page paints the series in legend order, each over the ones before
+    # it, so a curve that coincides with a later one is hidden under it. WH
+    # Conc under DH Conc was the first pair (#642); 00026 p84 (#646) has
+    # Surface Pressure under WH Rate for 30 of its 44 minutes — the two sit on
+    # the same rows at 56 MPa and 9.9 m3/min — and p70 has BH Pressure under
+    # WH Rate the same way. Deduced in paint order so a chain (BH under
+    # Surface under Rate) is walked through a cover that has itself been
+    # filled. The names are the legend's, so the note reads like the page.
+    _deduce_under(traced, notes)
     for key, label, unit, axis, factor in SERIES:
         scale = factor * (press_scale if axis == "press" else 1.0)
         cal = fits.get(axis)
