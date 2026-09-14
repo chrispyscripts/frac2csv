@@ -3955,8 +3955,44 @@ function stageEndMs(st) {
   return a + (st.n || 0) * ((st.sample_sec || 1) * 1000);
 }
 
-// -> [{i, st, prevEnd}] for every stage that starts before its predecessor
-// finished. Stages with no printed clock are skipped, not guessed at.
+// How much overlap is worth reporting.
+//
+// A stage's START is printed on its page and we read it. Its END is not
+// printed anywhere — it is start + samples x interval, an estimate off a
+// traced curve. So comparing a printed start against an estimated end and
+// flagging ANY overlap flags the estimate's own error.
+//
+// Measured over the wells Carmine flagged (2026-09-14): Canyon 00151 flagged
+// 28 of 38 stages and 00280 20 of 29, with no overlap anywhere above 5.9
+// minutes; Halliburton IFS 00080 flagged 17 of 18, median 3.8 minutes. Those
+// are traced durations running a minute or two long, not mislabelled clocks —
+// "it flags the majority of the stages ... not from data actually observed
+// from within the document itself".
+//
+// Sanjel 00020 is why the threshold is a PROPORTION and not a flat number: it
+// carries both kinds at once. Stages 2, 3 and 5 overlap by 10-20 minutes on
+// durations of 110-125 — slop — while stages 4 and 6 overlap by 812 and 1061
+// minutes on durations of ~105. The whole stage sits inside its predecessor
+// there, and that is a real wrong clock. Slop tops out near 18% of a stage;
+// the real errors are 773% and 1001%. Nothing lands between.
+//
+// Set from the measured slop, not a round number. The largest false overlap
+// anywhere in those wells is Sanjel's 20 minutes on a 112-minute stage — 18%
+// — and Halliburton IFS's 11.9 on 78, 15%. A third of a stage clears all of
+// it with room to spare, while still calling a half-stage overlap what it is.
+// The floor keeps a very short stage from being flagged for a minute of slop.
+const OVERLAP_FRAC = 0.35;        // of the starting stage's own duration
+const OVERLAP_FLOOR_MS = 15 * 60 * 1000;
+function overlapWorthFlagging(startMs, prevEndMs, durMs) {
+  if (!isFinite(startMs) || !isFinite(prevEndMs)) return false;
+  const over = prevEndMs - startMs;
+  if (over <= 0) return false;
+  return over > Math.max(OVERLAP_FLOOR_MS, (durMs || 0) * OVERLAP_FRAC);
+}
+
+// -> [{i, st, prevEnd}] for every stage that starts MEANINGFULLY before its
+// predecessor finished. Stages with no printed clock are skipped, not
+// guessed at.
 function stageTimeIssues(stages) {
   const out = [];
   let prev = null, prevEnd = NaN, prevKey = null;
@@ -3977,7 +4013,8 @@ function stageTimeIssues(stages) {
       if (isFinite(e) && (!isFinite(prevEnd) || e > prevEnd)) prevEnd = e;
       continue;
     }
-    if (prev !== null && isFinite(prevEnd) && a < prevEnd)
+    if (prev !== null && overlapWorthFlagging(
+            a, prevEnd, stageEndMs(stages[i]) - a))
       out.push({ i, st: stages[i], prev, prevEnd });
     prev = i;
     prevKey = key;

@@ -20,8 +20,12 @@ function lift(name) {
 }
 // no corrections stored in this harness
 const timeFixGet = () => null;
+// the thresholds the guard uses, lifted so the test cannot drift from them
+const OVERLAP_FRAC = parseFloat(src.match(/const OVERLAP_FRAC = ([\d.]+)/)[1]);
+const OVERLAP_FLOOR_MS = eval(src.match(/const OVERLAP_FLOOR_MS = ([^;]+);/)[1]);
 eval(lift("stageStartMs"));
 eval(lift("stageEndMs"));
+eval(lift("overlapWorthFlagging"));
 eval(lift("stageTimeIssues"));
 
 let pass = 0, fail = 0;

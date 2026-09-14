@@ -840,14 +840,31 @@ function seqPoints() {
 // Which steps run backwards: the next stage begins before this one's readings
 // ended. Kept apart from the drawing so the rule can be tested against real
 // wells rather than eyeballed on a canvas.
+// The same threshold the Lab's stage list uses, and for the same reason: a
+// stage's START is printed and read, its END is start + samples x interval,
+// an estimate. Flagging any overlap at all flags the estimate's own error —
+// 28 of 38 stages on Canyon 00151, none of them over 5.9 minutes. Sanjel
+// 00020 is why it is a proportion: 10-20 minute slop on 110-minute stages
+// sits beside 812- and 1061-minute overlaps that are real.
+const SEQ_OVERLAP_FRAC = 0.35;
+// MILLISECONDS. buildDispMap computes hi as t0 + n * dsec * 1000, so these
+// axes are in ms — writing this in seconds would have left the floor a
+// thousand times too small and the fix doing nothing.
+const SEQ_OVERLAP_FLOOR = 15 * 60 * 1000;
+
 function seqBreaks(pts) {
   const out = [];
-  for (let k = 0; k + 1 < pts.length; k++)
-    // Two ways the line can fault, and both are the same complaint. The next
-    // stage begins before this one's readings ended — they overlap in time.
-    // Or it carries a LOWER number than this one: the clock put it here and
-    // the filing numbered it somewhere else.
-    if (pts[k + 1].a < pts[k].hi || pts[k + 1].seq < pts[k].seq) out.push(k);
+  for (let k = 0; k + 1 < pts.length; k++) {
+    // Two ways the line can fault, and they are NOT the same complaint. A
+    // LOWER number than the stage before it is read straight off the filing
+    // and needs no tolerance. An overlap is measured against an estimated
+    // end, so it has to clear the estimate's own slop first.
+    const inverted = pts[k + 1].seq < pts[k].seq;
+    const over = pts[k].hi - pts[k + 1].a;
+    const dur = Math.max(0, (pts[k + 1].hi || 0) - (pts[k + 1].a || 0));
+    const overlapped = over > Math.max(SEQ_OVERLAP_FLOOR, dur * SEQ_OVERLAP_FRAC);
+    if (inverted || overlapped) out.push(k);
+  }
   return out;
 }
 

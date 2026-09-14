@@ -70,6 +70,11 @@
               title="Bridge gaps in a curve with a straight line. Raster charts
 lose samples wherever curves cross, and the gaps break the trace. Bridged
 spans are drawn dashed — they are drawn, not measured.">Interpolate</button>
+      <button type="button" class="btn" id="missing"
+              title="Shade what is NOT measured. Two things break a trace and
+they look identical once drawn: a gap, where the chart has no ink to read, and
+a FLAT RUN, where something that is not the curve — a horizontal rule — was
+read as if it were. Gaps shade grey, flat runs carmine.">Missing Data</button>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
     </div>
@@ -216,6 +221,12 @@ window.addEventListener("message", e => {
   else if (d.type === "stacked:view") applyView(d);
   else if (d.type === "stacked:page") applyPage(d);
 });
+$("missing").addEventListener("click", () => {
+  showMissing = !showMissing;
+  localStorage.setItem("f2c.missing", showMissing ? "1" : "0");
+  $("missing").classList.toggle("on", showMissing);
+  build();                     // the header line changes with it
+});
 $("interp").addEventListener("click", () => {
   interp = !interp;
   localStorage.setItem("f2c.interp", interp ? "1" : "0");
@@ -313,6 +324,7 @@ function updatePageLbl() {
   $("pglbl").textContent = state.page ? ("PDF p." + state.page) : "";
   $("openpdf").disabled = !state.page || !lab();
   $("interp").classList.toggle("on", interp);
+  $("missing").classList.toggle("on", showMissing);
 }
 
 // ---------- layout ----------
@@ -324,6 +336,7 @@ function updatePageLbl() {
 // says how much of the curve is bridge. Nothing here touches the exported CSV:
 // a gap stays an empty cell there.
 let interp = localStorage.getItem("f2c.interp") === "1";
+let showMissing = localStorage.getItem("f2c.missing") === "1";
 
 // what fraction of a channel's samples are missing, and the longest run
 function gapStats(vals) {
@@ -334,6 +347,65 @@ function gapStats(vals) {
     else run = 0;
   }
   return { missing, longest, pct: vals.length ? 100 * missing / vals.length : 0 };
+}
+
+// A run of samples all sitting on ONE value, across a stretch of the chart.
+//
+// This is what a horizontal rule traced as data looks like, and it is the
+// thing that is impossible to see in a list of numbers. 01350 page 226 came
+// out with 44% of its WH Prop Conc samples at exactly 698.29, spread from
+// sample 9 to 3019 — the full width of the plot — against a report that
+// prints a maximum of 504. The same 698.29 turns up on five pages of a
+// different well. A curve does not do that; a rule does.
+//
+// Tolerance is relative to the channel's own span, so a genuinely flat
+// pressure hold is not mistaken for a rule: what is caught is a value that
+// does not move AT ALL while time passes.
+const FLAT_MIN_FRAC = 0.06;      // shorter than this is a plateau, not a rule
+function flatRuns(vals, lo, hi) {
+  const span = Math.abs((hi ?? 1) - (lo ?? 0)) || 1;
+  const tol = span * 1e-4;
+  const out = [];
+  let i = 0;
+  const need = Math.max(12, Math.round(vals.length * FLAT_MIN_FRAC));
+  while (i < vals.length) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { i++; continue; }
+    let j = i + 1;
+    while (j < vals.length && vals[j] != null && isFinite(vals[j])
+           && Math.abs(vals[j] - v) <= tol) j++;
+    if (j - i >= need) out.push([i, j, v]);
+    i = j > i ? j : i + 1;
+  }
+  return out;
+}
+
+// [start, end) runs of samples with nothing in them
+function gapRuns(vals) {
+  const out = [];
+  let i = 0;
+  while (i < vals.length) {
+    const v = vals[i];
+    if (v != null && isFinite(v)) { i++; continue; }
+    let j = i;
+    while (j < vals.length && (vals[j] == null || !isFinite(vals[j]))) j++;
+    out.push([i, j]);
+    i = j;
+  }
+  return out;
+}
+
+// "44% flat at 698.29" — the sentence that names the fault outright.
+function flatNote(c) {
+  const runs = flatRuns(c.values || [], c.lo, c.hi);
+  if (!runs.length) return "";
+  let held = 0, biggest = runs[0];
+  for (const r of runs) {
+    held += r[1] - r[0];
+    if (r[1] - r[0] > biggest[1] - biggest[0]) biggest = r;
+  }
+  const pct = 100 * held / Math.max(1, (c.values || []).length);
+  return " · " + pct.toFixed(0) + "% flat at " + fmtV(biggest[2]);
 }
 
 function build() {
@@ -354,7 +426,8 @@ function build() {
           (gs.missing
             ? " · " + gs.pct.toFixed(1) + "% missing" +
               (interp ? " (bridged, longest " + gs.longest + ")" : "")
-            : "") + "</span>" +
+            : "") +
+          (showMissing ? flatNote(c) : "") + "</span>" +
         '<span class="ro"></span>' +
       "</div><canvas></canvas>";
     host.appendChild(el);
@@ -438,6 +511,33 @@ function drawChart(b) {
   const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
   g.save();
   g.beginPath(); g.rect(PAD.L, 0, plotW, bot); g.clip();
+
+  // What is NOT measured here, shaded under the curve.
+  //
+  // Two faults look identical once a trace is drawn: a GAP, where the chart
+  // had no ink to read, and a FLAT RUN, where something that is not the curve
+  // was read as if it were. The second is the dangerous one — it exports a
+  // number, and a number is believed. Separate colours because the answer is
+  // different: a gap is honest and a flat run is wrong.
+  if (showMissing && c.values && c.values.length) {
+    const n = c.values.length;
+    const xAt = k => PAD.L + (k / Math.max(1, n - 1)) * plotW;
+    g.save();
+    for (const [a, b] of gapRuns(c.values)) {
+      g.fillStyle = "rgba(105,112,119,0.13)";
+      g.fillRect(xAt(a), PAD.T, Math.max(1.5, xAt(b) - xAt(a)), plotH);
+    }
+    for (const [a, b, v] of flatRuns(c.values, c.lo, c.hi)) {
+      g.fillStyle = "rgba(163,22,49,0.13)";
+      g.fillRect(xAt(a), PAD.T, Math.max(1.5, xAt(b) - xAt(a)), plotH);
+      const y = PAD.T + (1 - (v - c.lo) / ((c.hi - c.lo) || 1)) * plotH;
+      g.strokeStyle = "#a31631"; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(xAt(a), y); g.lineTo(xAt(b), y); g.stroke();
+      g.setLineDash([]);
+    }
+    g.restore();
+  }
+
   g.strokeStyle = c.color; g.lineWidth = 1.4;
   g.lineJoin = "round";
   g.beginPath();

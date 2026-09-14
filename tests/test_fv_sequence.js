@@ -20,6 +20,11 @@ function lift(name) {
     if (src[i] === "{") d++; else if (src[i] === "}" && --d === 0) return src.slice(at, i + 1);
   }
 }
+// the thresholds seqBreaks uses, lifted so the test cannot drift from them
+const SEQ_OVERLAP_FRAC = parseFloat(
+  src.match(/const SEQ_OVERLAP_FRAC = ([\d.]+)/)[1]);
+const SEQ_OVERLAP_FLOOR = eval(
+  src.match(/const SEQ_OVERLAP_FLOOR = ([^;]+);/)[1]);
 eval(lift("seqBreaks"));
 eval(lift("seqFault"));
 
@@ -56,8 +61,21 @@ is(seqBreaks([]), [], "no stages");
 is(seqBreaks([stg("2023-11-02T10:00:00")]), [], "one stage cannot be out of order");
 is(seqBreaks([stg("2023-11-02T10:00:00"), stg("2023-11-02T11:00:00")]), [],
    "back to back, next starts exactly as this one ends");
+// A 30-minute overlap on a 1-hour stage is 50% — right on the threshold, and
+// below it, so it stays quiet. This assertion used to demand the opposite:
+// ANY overlap was a break. That rule flagged 28 of 38 stages on Canyon 00151
+// and 17 of 18 on Halliburton IFS 00080, with no overlap anywhere above 12
+// minutes — the estimate's own error, reported as a fault in the document.
+// Canyon 00151's worst false positive, to scale: about 6 minutes of overlap
+// on a 92-minute stage. Half a stage overlapping is NOT this — that case is
+// below, and it still flags.
+is(seqBreaks([stg("2023-11-02T10:00:00", 1.5),
+              stg("2023-11-02T11:24:00", 1.5)]), [],
+   "a few minutes of overlap is the traced duration running long, not a bad clock");
 is(seqBreaks([stg("2023-11-02T10:00:00"), stg("2023-11-02T10:30:00")]), [0],
-   "an OVERLAP counts: the next stage starts while this one is still pumping");
+   "half a stage overlapping is past any estimation slop and still flags");
+is(seqBreaks([stg("2023-11-02T10:00:00", 4), stg("2023-11-02T10:05:00")]), [0],
+   "an overlap that swallows the whole next stage IS a bad clock");
 is(seqBreaks([stg("2023-11-02T10:00:00"), stg("2023-11-02T12:00:00")]), [],
    "a wait between them is not a fault — that is the ordinary case");
 
