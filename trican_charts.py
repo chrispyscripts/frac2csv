@@ -719,6 +719,13 @@ B_SERIES = [
     ("dh_conc", (199, 204, 51), "DH Prop Conc", "kg/m3", "conc"),
 ]
 B_RADIUS = 42
+# how far toward white a series' fringe still counts as its ink (0 = the
+# colour itself, 1 = the page). (255,157,157) is 0.62 of the way; (255,201,201)
+# is 0.79 and is left to the page.
+B_BLEND_MAX = 0.8
+# …and never nearer the page than this, in RGB distance: the page's own
+# smudges are pale and they are nobody's ink
+B_WHITE_MARGIN = 80.0
 
 
 def b_masks(img):
@@ -729,9 +736,32 @@ def b_masks(img):
     because Monitor Pressure (189,153,153) is only 67 away from the grey the
     axis labels are printed in, and the two olives are 6 apart in hue.
     """
-    flat = img.reshape(-1, 3)
-    d = np.stack([((flat - np.array(c)) ** 2).sum(axis=1)
-                  for _k, c, _l, _u, _a in B_SERIES], axis=1)
+    flat = img.reshape(-1, 3).astype(float)
+    # A stroke's anti-aliased fringe is the series colour BLENDED WITH THE
+    # PAGE, and on a steep stroke the fringe is most of the ink: 01433 p177's
+    # Mainline Pressure falls 43 → 30 MPa in nine columns and leaves
+    # (254,163,163), (253,114,115) — 140 and more from pure red, outside
+    # the radius, so the export had a 25-second hole where the page has a
+    # line (#636). So each series claims the segment from its colour toward
+    # white, up to B_BLEND_MAX of the way — still visibly coloured, never
+    # the background — and a pixel belongs to the nearest segment within
+    # B_RADIUS of it. Pure colours score exactly as before; Monitor's own
+    # pink (189,153,153) stays 60+ from red's blend line and a grey label
+    # is no nearer any segment than it was to the point.
+    white = np.array([255.0, 255.0, 255.0])
+    d = []
+    for _k, c, _l, _u, _a in B_SERIES:
+        c = np.array(c, float)
+        v = white - c
+        # the segment stops B_WHITE_MARGIN short of the page, whatever the
+        # colour: for red that is 78% of the way, for Monitor's light pink
+        # only 50% — a fixed fraction let (255,236,236) into Monitor's mask
+        t_max = min(B_BLEND_MAX, 1.0 - B_WHITE_MARGIN / float(np.sqrt(v @ v)))
+        t = ((flat - c) @ v) / float(v @ v)
+        t = np.clip(t, 0.0, max(0.0, t_max))
+        near = c + t[:, None] * v
+        d.append(((flat - near) ** 2).sum(axis=1))
+    d = np.stack(d, axis=1)
     best = d.argmin(axis=1)
     ok = d[np.arange(len(flat)), best] <= B_RADIUS ** 2
     out = {}
@@ -1233,6 +1263,7 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
 
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
+    traced = {}
     for key, _c, label, unit, axis in B_SERIES:
         cal, mask = fits.get(axis), masks.get(key)
         if mask is None or not mask.any():
@@ -1244,8 +1275,25 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
         if cal is None:
             notes.append(f"{label}: {axis} axis unreadable")
             continue
+        traced[key] = {"label": label, "unit": unit, "axis": axis, "cal": cal,
+                       "sub": sub, "cov": cov, "py": ar.curve_positions(sub),
+                       "filled": 0}
+    # WH Prop Conc is painted first and DH Prop Conc over it. Where they
+    # coincide — the floor through the pad and the flush, the rest of any
+    # hold the delayed DH catches up on — the page shows DH and no olive at
+    # all, and WH came back blank there. See curve_trace.fill_under.
+    if "wh_conc" in traced and "dh_conc" in traced:
+        w, d = traced["wh_conc"], traced["dh_conc"]
+        w["filled"] = len(ct.fill_under(w["sub"], w["py"], d["sub"], d["py"]))
+        if w["filled"]:
+            notes.append("WH Prop Conc: read from under DH Prop Conc where the "
+                         "page paints the DH curve over it and the two coincide "
+                         "— deduced, not traced")
+    for key, tr in traced.items():
+        label, unit, axis, cal, sub, cov = (tr["label"], tr["unit"], tr["axis"],
+                                            tr["cal"], tr["sub"], tr["cov"])
         a, bb, ntick = cal
-        py = ar.curve_positions(sub) + y0
+        py = tr["py"] + y0
         vals = a + bb * py
         t_cols = (ta + tb * (np.arange(sub.shape[1]) + x0 + 1)) - t_start
         if np.isfinite(vals).sum() < 30:
@@ -1254,7 +1302,8 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
                          "values": ct.resample(samples, t_cols, vals),
                          "ticks": ntick, "coverage": cov,
                          "axis_frame": (float(a + bb * y0),
-                                        float(a + bb * y1))})
+                                        float(a + bb * y1)),
+                         "filled_cols": tr["filled"]})
         # A sparse channel is not necessarily a broken one, and on this
         # template it usually is not. Say where the absence is, because "WH
         # Prop Conc is 31% empty" reads as a fault and "it is not drawn until

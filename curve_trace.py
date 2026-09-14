@@ -116,3 +116,83 @@ def resample(samples, t_cols, vals, gap_factor=6.0, min_gap_s=20.0):
         for i in np.where(np.diff(t) > limit)[0]:
             out[(samples > t[i]) & (samples < t[i + 1])] = np.nan
     return out
+
+
+def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
+    """A curve under another: the columns where the hidden one can only be
+    where the covering one is. -> the columns filled; py_o is filled in place.
+
+    Two templates draw the same pair. STEP paints Btm Prop Conc (orange)
+    first and Prop Conc (green) over it (#112, #627). Trican layout B paints
+    WH Prop Conc (olive) first and DH Prop Conc over it: on a long hold the
+    delayed DH catches up and covers WH for the rest of it, and through the
+    pad and the flush both sit on the axis floor with DH on top — 01350 p227
+    has no olive in 553 columns where DH's ink is at row 417, the floor
+    (#638's remainder). Where the two coincide the page shows the cover and
+    none of the hidden curve, and every attempt to fill that from the
+    neighbour has been backed out — the guard "donor matches the hidden
+    curve at BOTH edges of the gap" cannot fire on real occlusion, because
+    the donor LEAVING is what makes the hidden curve reappear (HANDOFF).
+
+    This is not a fill from a neighbour. A curve with no ink in a column
+    inside its own drawn span is under something, and the only thing it can
+    be under is another curve's stroke in that column — if orange were
+    anywhere else it would be visible. So the reading is deduced, column by
+    column, and only where the deduction is forced:
+
+      - the column lies inside orange's drawn span, between its first ink
+        and its last;
+      - orange's trace continues from the previous column (real or already
+        deduced) to a green stroke in this column within `tol_px` — two of
+        the orange pen's own widths — of where it was;
+      - that green run is a stroke, not a riser: no taller than three pens.
+        On a riser orange could be anywhere along it and nothing is forced.
+
+    Walked left to right and then right to left, so a stretch bracketed on
+    one side only is still reached from the side it has. Every filled column
+    is counted and the channel says so.
+    """
+    n = sub_o.shape[1]
+    span = np.flatnonzero(np.isfinite(py_o))
+    if len(span) < 2:
+        return []
+    lo, hi = int(span[0]), int(span[-1])
+    heights = []
+    for c in span[::max(1, len(span) // 200)]:
+        ys = np.flatnonzero(sub_o[:, c])
+        if len(ys):
+            heights.append(len(ys))
+    pen = float(np.median(heights)) if heights else 3.0
+    tol = tol_px if tol_px is not None else max(4.0, 2.0 * pen)
+    riser = 3.0 * pen
+    filled = set()
+
+    def runs(c):
+        ys = np.flatnonzero(sub_g[:, c])
+        if not len(ys):
+            return []
+        return [r for r in np.split(ys, np.flatnonzero(np.diff(ys) > gap) + 1)]
+
+    for order in (range(lo, hi + 1), range(hi, lo - 1, -1)):
+        last = np.nan
+        for c in order:
+            if np.isfinite(py_o[c]):
+                last = py_o[c]
+                continue
+            if not np.isfinite(last):
+                continue
+            best = None
+            for r in runs(c):
+                if len(r) > riser:
+                    continue
+                row = float(np.median(r))
+                d = abs(row - last)
+                if d <= tol and (best is None or d < best[0]):
+                    best = (d, row)
+            if best is None:
+                last = np.nan                       # the trace is lost here
+                continue
+            py_o[c] = best[1]
+            filled.add(c)
+            last = best[1]
+    return sorted(filled)
