@@ -190,17 +190,31 @@ def fill_under(sub_o, py_o, sub_g, py_g, tol_px=None, gap=2):
 
     for order in (range(lo, hi + 1), range(hi, lo - 1, -1)):
         last = np.nan
+        missed = 0
         for c in order:
             if np.isfinite(py_o[c]):
-                last = py_o[c]
+                last, missed = py_o[c], 0
                 continue
             if not np.isfinite(last):
                 continue
             r = cover_run(c)
             if r is None or len(r) > riser or abs(float(py_g[c]) - last) > tol:
-                last = np.nan                       # the trace is lost here
+                # The cover's own trace has dropout columns — curve_positions
+                # leaves them and the export bridges them later — and one of
+                # them used to end the walk: 01316 stage 45's 55-minute hole
+                # had WH at 242.3 through every second of it and BH at 242.3
+                # on both sides, and stayed empty. A few columns without the
+                # cover are a dropout; more than that is the cover leaving.
+                missed += 1
+                if missed > COVER_SKIP_MAX:
+                    last = np.nan               # the trace is lost here
                 continue
             py_o[c] = float(py_g[c])
             filled.add(c)
-            last = py_o[c]
+            last, missed = py_o[c], 0
     return sorted(filled)
+
+
+# consecutive columns the cover's trace may be missing before the hidden
+# curve is taken to have parted from it (~18 s on a STEP chart at 6 s/column)
+COVER_SKIP_MAX = 3

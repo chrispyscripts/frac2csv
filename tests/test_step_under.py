@@ -85,6 +85,34 @@ class FillUnder(unittest.TestCase):
         self.assertTrue(np.all(np.isnan(py_o[300:])))
 
 
+class CoverDropouts(unittest.TestCase):
+    """01316 stage 45: the cover's trace has single-column dropouts, and the
+    walk must step over them — but not over the cover leaving."""
+
+    def scene(self, gap_cols):
+        o = np.zeros((H, W), bool); g = np.zeros((H, W), bool)
+        py_o = np.full(W, np.nan); py_o[:150] = 200.0; py_o[250:] = 200.0
+        stroke(o, range(0, 150), np.full(150, 200.0)); stroke(o, range(250, 400), np.full(150, 200.0))
+        stroke(g, range(0, 400), np.full(W, 200.0))          # green rides orange all along
+        py_g = np.full(W, 200.0)
+        for c in gap_cols:
+            py_g[c] = np.nan                                  # the tracer left these columns
+        return o, py_o, g, py_g
+
+    def test_a_dropout_column_does_not_end_the_walk(self):
+        o, py_o, g, py_g = self.scene([170, 171, 205])
+        cols = step1._fill_under(o, py_o, g, py_g)
+        self.assertEqual(len(cols), 100 - 3)                   # everything but the dropouts themselves
+        self.assertTrue(np.all(np.isnan(py_o[[170, 171, 205]])))
+
+    def test_the_cover_leaving_does_end_it(self):
+        o, py_o, g, py_g = self.scene(range(180, 220))       # 40 columns with no cover trace
+        cols = step1._fill_under(o, py_o, g, py_g)
+        self.assertTrue(set(range(150, 180)) <= set(cols))    # reached from the left …
+        self.assertTrue(set(range(220, 250)) <= set(cols))    # … and from the right
+        self.assertFalse(set(range(184, 216)) & set(cols))    # … not across the absence
+
+
 class NotFromRawInk(unittest.TestCase):
     """00324: an orange glyph kept as a 654 'peak' must not chain along the
     green logo's ink. Only the cover's traced row counts."""
