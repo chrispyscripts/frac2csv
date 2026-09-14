@@ -99,7 +99,8 @@ PIN_MIN_S = 30.0
 PAIR_TOL = 0.15            # WH vs BH Prop Conc peak disagreement
 PAIR_COV_TOL = 0.25        # WH vs BH Prop Conc coverage disagreement, in points
 PRESENT_FRAC = 0.5         # a channel on this share of a template's stages is expected
-OVERLAP_MIN_S = 120.0      # a stage starting this far inside the previous one
+OVERLAP_FRAC = 0.35        # the Lab's OVERLAP_FRAC: of the starting stage's own duration
+OVERLAP_FLOOR_S = 900.0    # the Lab's OVERLAP_FLOOR_MS: never under fifteen minutes
 
 PAIRS = [("WH Prop Conc", "BH Prop Conc")]
 # findings that speak for a whole channel on a stage; its gaps sit under them
@@ -642,7 +643,15 @@ def _clocks_one_source(stages, table=None):
                               f"starts {t:%Y-%m-%d %H:%M:%S}, before stage {plabel} "
                               f"({pt:%Y-%m-%d %H:%M:%S})",
                               "a misread date or a lost PM — the Fix time button, or the reader"))
-            elif t < pt + timedelta(minutes=pdur) - timedelta(seconds=OVERLAP_MIN_S):
+            # The Lab's own rule (index.html OVERLAP_FRAC / OVERLAP_FLOOR_MS):
+            # a chart window a few minutes wider than its stage is not an
+            # overlap — 00015's windows run 4-10 min past the table's
+            # durations on every stage — a stage starting more than 35% of
+            # its own length, and at least fifteen minutes, inside the one
+            # before it is.
+            elif t < pt + timedelta(minutes=pdur) - timedelta(
+                    seconds=max(OVERLAP_FLOOR_S,
+                                OVERLAP_FRAC * 60.0 * float(_meta(st, "duration_min") or 0.0))):
                 out.append(_f("clock.overlap", WARN, st, None,
                               f"starts {t:%H:%M:%S}, {(pt + timedelta(minutes=pdur) - t).seconds // 60} "
                               f"min before stage {plabel} finished",

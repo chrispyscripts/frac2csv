@@ -148,6 +148,15 @@ class Planted(unittest.TestCase):
         self.assertEqual(len(of(res, "stage.doubled")), 1)
         self.assertEqual(of(res, "stage.failed")[0]["page"], 12)
 
+    def test_a_window_a_few_minutes_wide_of_its_stage_is_not_an_overlap(self):
+        # 00015: 94-minute chart windows over 88-minute stages, back to back
+        stages = [stage("1", 10, start="15:00:00", dur=94.0), stage("2", 11, start="16:29:00", dur=70.0),
+                  stage("3", 12, start="17:32:00", dur=65.0)]
+        self.assertEqual(of(audit.audit_stages(stages, []), "clock.overlap"), [])
+        # 01433 stage 61: 19 minutes inside a 37-minute stage 60 — the Lab flags it, so does this
+        stages = [stage("60", 213, start="06:03:00", dur=140.0), stage("61", 214, start="08:04:00", dur=37.0)]
+        self.assertEqual(len(of(audit.audit_stages(stages, []), "clock.overlap")), 1)
+
     def test_clock_backwards(self):
         stages = [stage("1", 10, start="08:00:00"), stage("2", 11, start="09:00:00"),
                   stage("3", 12, start="07:30:00")]
