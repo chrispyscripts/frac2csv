@@ -44,7 +44,13 @@ Kinds, and the client report each answers:
     stage.missing      numbers absent from the 1..N ladder         (#625)
     stage.doubled      one label produced twice
     stage.failed       a chart page the reader gave up on, by reason
-    clock.absent       no date, or the 00:00:00 default
+    clock.absent       no date, or the 00:00:00 default — a warning when the
+                       page is known to print a clock the reader did not take
+    clock.in-table     the report's own stage table prints a start for this
+                       stage and the chart has none — a join never made (#639)
+    clock.none         no stage of a template has a clock: the layout's time
+                       axis is unread, or the charts plot elapsed minutes (#639)
+    stage.unlabelled   charts with no stage label (overview plots) — info
     clock.backwards    starts before the stage before it
     clock.overlap      starts before the stage before it finished (#589)
 
@@ -54,7 +60,7 @@ Usage:
     python3 audit.py report.pdf --save payload.json --json findings.json
     python3 audit.py payload.json --matrix         # re-audit a saved payload
 
-or from code, audit_stages(stages, notes) on the serialize() output.
+or from code, audit_stages(stages, notes, tables) on the serialize() output.
 """
 import hashlib
 import json
@@ -493,8 +499,13 @@ def ladder(stages, notes):
     seen = {}
     for st, l in zip(stages, labels):
         seen.setdefault((st.get("source", ""), l), []).append(st.get("page"))
+    unlabelled = sum(len(pg) for (src, l), pg in seen.items() if not l.strip())
+    if unlabelled:
+        out.append(_f("stage.unlabelled", INFO, None, None,
+                      f"{unlabelled} chart(s) with no stage label — overview or whole-treatment plots",
+                      "not on the ladder; check the CSV names them sensibly"))
     for (src, l), pages in seen.items():
-        if len(pages) > 1:
+        if len(pages) > 1 and l.strip():
             out.append(_f("stage.doubled", WARN, None, None,
                           f"stage {l!r} produced {len(pages)} times by {src}, pages {pages}",
                           "two sheets of one run merged, or one run read twice"))
@@ -551,29 +562,78 @@ def _start(st):
         return None
 
 
-def clocks(stages):
+_STAGE_COL = re.compile(r"^(stage|interval|zone)\b", re.I)
+_START_COL = re.compile(r"^start(?!.*date)|start.?time", re.I)
+_CLOCK = re.compile(r"^\s*([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?\s*([AaPp][Mm])?\s*$")
+
+
+def table_clocks(tables):
+    """{stage number: 'HH:MM'} from any table that prints a start per stage.
+
+    00015 (#639): the pipeline reads a Trican summary table with a start
+    for all 11 stages and every chart still exports 00:00:00. The table is
+    the report's own printed number, so a chart without a clock while its
+    row has one is a join that was never made. Note what the join needs:
+    these sheets print a 12-hour clock with no AM/PM (12:44, 01:48, 02:48)
+    over a two-day job — the #588 lost-PM trap — so the number is reported
+    here, not applied.
+    """
+    out = {}
+    for t in tables or []:
+        cols = [str(c) for c in t.get("columns") or []]
+        si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(c)), None)
+        ti = next((i for i, c in enumerate(cols) if _START_COL.match(c)), None)
+        if si is None or ti is None:
+            continue
+        for row in t.get("rows") or []:
+            if len(row) <= max(si, ti):
+                continue
+            k = stage_num(row[si])
+            v = str(row[ti]).strip()
+            if k < 10 ** 9 and _CLOCK.match(v) and k not in out:
+                out[k] = v
+    return out
+
+
+def clocks(stages, tables=None):
     out = []
     by_src = {}
     for st in stages:
         by_src.setdefault(st.get("source", ""), []).append(st)
+    printed = table_clocks(tables)
     for group in by_src.values():
-        out += _clocks_one_source(group)
+        out += _clocks_one_source(group, printed)
     return out
 
 
-def _clocks_one_source(stages):
+def _clocks_one_source(stages, table=None):
     """One template's stages in ladder order. STEP's surface and chemical
     charts of one stage share a clock by design, so a stage is never
     compared with another chart of the same number."""
+    table = table or {}
     out = []
     order = sorted(stages, key=lambda st: (stage_num(_stage_label(st)), st.get("page") or 0))
     prev = None
+    absent, in_table = [], []
     for st in order:
         t = _start(st)
         if t is None:
-            out.append(_f("clock.absent", INFO, st, None,
-                          f"date {_meta(st, 'date')!r}, start {_meta(st, 'start_time')!r}",
-                          "no clock on this chart; the CSV will date it from the default"))
+            absent.append(st)
+            printed = st.get("clock_printed")
+            row = table.get(stage_num(_stage_label(st)))
+            if row:
+                in_table.append(st)
+                out.append(_f("clock.in-table", WARN, st, None,
+                              f"the report's stage table prints start {row} for this stage; "
+                              f"the chart carries {_meta(st, 'start_time')!r}",
+                              "a join never made — the table's clock, with its day and "
+                              "AM/PM resolved, belongs on the chart"))
+            else:
+                out.append(_f("clock.absent", WARN if printed else INFO, st, None,
+                              f"date {_meta(st, 'date')!r}, start {_meta(st, 'start_time')!r}"
+                              + (f" — the page prints a clock axis, {printed}" if printed else ""),
+                              "the reader did not take the clock this page prints" if printed else
+                              "no clock on this chart; the CSV will date it from the default"))
             continue
         if prev and stage_num(prev[2]) != stage_num(_stage_label(st)):
             pt, pdur, plabel = prev
@@ -588,6 +648,33 @@ def _clocks_one_source(stages):
                               f"min before stage {plabel} finished",
                               "one of the two clocks is wrong, or the stages genuinely overlap"))
         prev = (t, float(_meta(st, "duration_min") or 0.0), _stage_label(st))
+    # Every stage of a template without a clock is one finding about the
+    # template, not N about the charts: either its charts plot elapsed
+    # minutes (00020 — the daily report is the source, see HANDOFF) or the
+    # reader misses this layout's time axis (00015, #639).
+    if len(stages) >= 3 and len(absent) == len(stages):
+        printed = sum(1 for st in absent if st.get("clock_printed"))
+        checked = any("clock_printed" in st for st in absent)
+        src = stages[0].get("source", "")
+        if in_table:
+            where = (f"; the report's stage table prints a start for {len(in_table)} of them "
+                     f"({', '.join(table[stage_num(_stage_label(st))] for st in in_table[:4])}"
+                     + (" …" if len(in_table) > 4 else "") + ")")
+            action = ("join the table's clock to the charts — mind the 12-hour times without "
+                      "AM/PM and the job's day count (#588)")
+        elif printed:
+            where = f"; {printed} of them print a clock axis on the page"
+            action = "the reader misses this layout's time axis — read the page"
+        elif checked:
+            where = ("; the pages' text layer prints no clock axis (a raster chart carries "
+                     "its axis in the image, which only OCR can read)")
+            action = "elapsed-minute charts, or a clock axis drawn as pixels — look at the page"
+        else:
+            where = "; whether the pages print one is not known without the PDF"
+            action = "elapsed-minute charts: the operator's daily report is the source (HANDOFF)"
+        out.append(_f("clock.none", WARN, None, None,
+                      f"0 of {len(stages)} {src} stages carry a date or a start time" + where,
+                      action, source=src, printed=printed, in_table=len(in_table)))
     return out
 
 
@@ -607,7 +694,7 @@ def digest(stages):
     return out
 
 
-def audit_stages(stages, notes=None):
+def audit_stages(stages, notes=None, tables=None):
     findings, coverage = [], {}
     for st in stages:
         sec = float(st.get("sample_sec") or 1.0)
@@ -634,7 +721,7 @@ def audit_stages(stages, notes=None):
             f["severity"] = INFO
     lad, ladder_info = ladder(stages, notes)
     findings += lad
-    findings += clocks(stages)
+    findings += clocks(stages, tables)
     by_kind = {}
     for f in findings:
         k = f["kind"] + ("" if f["severity"] == WARN else " (info)")
@@ -709,13 +796,36 @@ def load_pdf(path, on_page=None):
     npages = len(doc)
     results, notes = pipeline.extract_document(
         doc, filename=os.path.basename(path), on_page=on_page)
-    doc.close()
     stages, tables, notes, summary = localapp.serialize(results, notes)
+    # What the page prints that the reader may not have taken. Only the
+    # clock for now: 00015 (#639) prints "Clock Time (hour:min)" 18:30-19:32
+    # over every chart and exported 00:00:00 for all of them. The payload
+    # alone cannot tell that blank from an elapsed-minute chart; the page can.
+    texts = {}
+    for st in stages:
+        pg = st.get("page")
+        if pg and pg not in texts and 1 <= pg <= npages:
+            texts[pg] = doc[pg - 1].get_text()
+        st["clock_printed"] = _clock_hint(texts.get(pg, ""))
+    doc.close()
     return {"file": os.path.basename(path), "npages": npages,
             "seconds": round(time.time() - t0, 1), "stages": stages,
-            "tables": [{k: v for k, v in t.items() if k != "rows"}
-                       | {"nrows": len(t["rows"])} for t in tables],
+            # rows kept: the stage tables are the report's own printed
+            # numbers, and a clock or a peak printed there and absent from
+            # the chart is a finding only the rows can make
+            "tables": tables,
             "notes": notes}
+
+
+_HHMM = re.compile(r"\b([01]?\d|2[0-3]):[0-5]\d\b")
+
+
+def _clock_hint(text):
+    """'18:30–19:32' if the page prints a wall-clock axis, else ''."""
+    ticks = _HHMM.findall(text) and [m.group(0) for m in _HHMM.finditer(text)]
+    if re.search(r"clock\s*time", text, re.I) or (ticks and len(ticks) >= 3):
+        return f"{ticks[0]}–{ticks[-1]}" if ticks else "a clock axis"
+    return ""
 
 
 def main(argv):
@@ -734,7 +844,7 @@ def main(argv):
             print(f"payload → {out}", file=sys.stderr)
     else:
         payload = json.load(open(argv[0]))
-    res = audit_stages(payload["stages"], payload.get("notes"))
+    res = audit_stages(payload["stages"], payload.get("notes"), payload.get("tables"))
     print(report(payload, res, show_matrix="--matrix" in argv))
     if "--json" in argv:
         out = argv[argv.index("--json") + 1]

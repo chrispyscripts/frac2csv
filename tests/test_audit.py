@@ -251,5 +251,74 @@ class FromTheAcceptanceRun(unittest.TestCase):
         self.assertTrue(of(res, "gap.missing", "info"))       # … they are info
 
 
+class Clocks(unittest.TestCase):
+    """#639: 00015 prints "Clock Time (hour:min)" over every chart and every
+    stage exported 00:00:00. Without the page that blank is information —
+    00020's charts plot elapsed minutes and have no clock to read. With the
+    page, it is a warning, and 0 of N is one finding about the template."""
+
+    def unclocked(self, n, printed):
+        out = []
+        for k in range(1, n + 1):
+            st = stage(str(k), 30 + 2 * k, date="", start="00:00:00")
+            if printed:
+                st["clock_printed"] = "18:30–19:32"
+            out.append(st)
+        return out
+
+    def test_no_clock_and_no_page_is_information(self):
+        res = audit.audit_stages(self.unclocked(4, printed=False), [])
+        self.assertEqual(of(res, "clock.absent"), [])
+        self.assertEqual(len(of(res, "clock.absent", "info")), 4)
+        none = of(res, "clock.none")
+        self.assertEqual(len(none), 1)
+        self.assertEqual(none[0]["printed"], 0)
+
+    def test_a_printed_clock_the_reader_missed_is_a_warning(self):
+        res = audit.audit_stages(self.unclocked(4, printed=True), [])
+        self.assertEqual(len(of(res, "clock.absent")), 4)
+        self.assertIn("18:30–19:32", of(res, "clock.absent")[0]["evidence"])
+        self.assertEqual(of(res, "clock.none")[0]["printed"], 4)
+
+    def test_one_unclocked_stage_among_clocked_ones_is_not_a_template_fault(self):
+        stages = [stage("1", 10, start="08:00:00"), stage("2", 11, start="09:00:00"),
+                  stage("3", 12, date="", start="00:00:00")]
+        res = audit.audit_stages(stages, [])
+        self.assertEqual(of(res, "clock.none"), [])
+
+    def test_clock_hint_reads_the_page(self):
+        self.assertEqual(audit._clock_hint("Clock Time (hour:min)\n18:30 18:40 18:50 19:32\nElapsed"), "18:30–19:32")
+        self.assertEqual(audit._clock_hint("Elapsed Time (min)\n210.0 220.0 230.0"), "")
+        self.assertEqual(audit._clock_hint("Job Date: 2015-07-19\nStart 08:15"), "")   # one token is not an axis
+
+    def test_a_start_printed_in_the_stage_table_is_a_join_never_made(self):
+        # 00015: the summary table has a start for every stage, no chart has one
+        table = {"title": "well — per-stage engineering data (Trican)", "kind": "summary",
+                 "columns": ["UWI", "stage", "start", "finish", "total_time_min"],
+                 "rows": [["x", "1", "03:00", "04:29", "88.5"], ["x", "2", "04:29", "05:32", "63.1"],
+                          ["x", "3", "05:32", "06:31", "59.7"], ["x", "4", "12:00", "01:00", "60.2"]]}
+        res = audit.audit_stages(self.unclocked(4, printed=False), [], [table])
+        f = of(res, "clock.in-table")
+        self.assertEqual([x["stage"] for x in f], ["1", "2", "3", "4"])
+        self.assertIn("05:32", f[2]["evidence"])
+        self.assertEqual(of(res, "clock.absent", "info"), [])         # in-table replaces absent
+        none = of(res, "clock.none")[0]
+        self.assertEqual(none["in_table"], 4)
+        self.assertIn("AM/PM", none["action"])
+
+    def test_a_start_date_column_is_not_a_start_time(self):
+        table = {"title": "t", "kind": "summary", "columns": ["Stage", "Start Date", "Max Press"],
+                 "rows": [["1", "2025-02-15", "60"]]}
+        self.assertEqual(audit.table_clocks([table]), {})
+        self.assertEqual(audit.table_clocks([{"columns": ["stage", "start"], "rows": [["7", "3:05 PM"], ["8", "-"]]}]),
+                         {7: "3:05 PM"})
+
+    def test_unlabelled_overview_charts_are_not_doubles(self):
+        stages = [stage("1", 10), stage("2", 11), stage("", 57, dur=272), stage("", 59, dur=432)]
+        res = audit.audit_stages(stages, [])
+        self.assertEqual(of(res, "stage.doubled"), [])
+        self.assertEqual(of(res, "stage.unlabelled", "info")[0]["evidence"][:1], "2")
+
+
 if __name__ == "__main__":
     unittest.main()

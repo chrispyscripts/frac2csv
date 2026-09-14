@@ -1,10 +1,149 @@
 [
- {"issue": "#638", "file": "01350", "said": "WH Prop Con missing in a number of stages", "stages": ["1", "2", "3"], "channel": "WH Prop Conc", "kinds": ["channel.sparse", "gap.hold", "pair.coverage"], "expect": true},
- {"issue": "#634", "file": "01350", "said": "spikes in wh prop conc (698.29 rule)", "stages": ["41"], "channel": "WH Prop Conc", "kinds": ["flat.rule", "pair.disagree", "spike"], "expect": false},
- {"issue": "#627", "file": "01316", "said": "missing data on a number of graphs", "stages": ["45"], "channel": null, "kinds": ["channel.sparse", "gap.hold", "gap.missing", "channel.absent", "channel.empty"], "expect": true},
- {"issue": "#635", "file": "01421", "said": "gaps in wh prop con", "stages": ["14"], "channel": "WH Prop Conc", "kinds": ["channel.sparse", "gap.hold", "gap.missing"], "expect": true},
- {"issue": "#636", "file": "01433", "said": "Gaps in TR Press", "stages": ["24"], "channel": "Tr Press", "kinds": ["channel.sparse", "gap.hold", "gap.missing"], "expect": true},
- {"issue": "#636b", "file": "01433", "said": "No dates or times (repaired by 7b70f0c)", "stages": ["24"], "channel": null, "kinds": ["clock.absent"], "expect": false},
- {"issue": "#625", "file": "01433", "said": "5 stages missing", "stages": [""], "channel": null, "kinds": ["stage.missing", "stage.failed"], "expect": true},
- {"issue": "#629", "file": "00229", "said": "large downward spikes", "stages": ["7"], "channel": null, "kinds": ["spike", "spike.aligned"], "expect": true}
+ {
+  "issue": "#638",
+  "file": "01350",
+  "said": "WH Prop Con missing in a number of stages",
+  "stages": [
+   "1",
+   "2",
+   "3"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "pair.coverage"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#634",
+  "file": "01350",
+  "said": "spikes in wh prop conc (698.29 rule)",
+  "stages": [
+   "41"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "flat.rule",
+   "pair.disagree",
+   "spike"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#627",
+  "file": "01316",
+  "said": "missing data on a number of graphs",
+  "stages": [
+   "45"
+  ],
+  "channel": null,
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "gap.missing",
+   "channel.absent",
+   "channel.empty"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#635",
+  "file": "01421",
+  "said": "gaps in wh prop con",
+  "stages": [
+   "14"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "gap.missing"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#636",
+  "file": "01433",
+  "said": "Gaps in TR Press",
+  "stages": [
+   "24"
+  ],
+  "channel": "Tr Press",
+  "kinds": [
+   "channel.sparse",
+   "gap.hold",
+   "gap.missing"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#636b",
+  "file": "01433",
+  "said": "No dates or times (repaired by 7b70f0c)",
+  "stages": [
+   "24"
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.absent"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#625",
+  "file": "01433",
+  "said": "5 stages missing",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.missing",
+   "stage.failed"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#629",
+  "file": "00229",
+  "said": "large downward spikes",
+  "stages": [
+   "7"
+  ],
+  "channel": null,
+  "kinds": [
+   "spike",
+   "spike.aligned"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#639",
+  "file": "00015",
+  "said": "no dates or times",
+  "stages": [
+   ""
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.none"
+  ],
+  "expect": true
+ },
+ {
+  "issue": "#639b",
+  "file": "00015",
+  "said": "no dates or times (stage 4)",
+  "stages": [
+   "4"
+  ],
+  "channel": null,
+  "kinds": [
+   "clock.in-table",
+   "clock.absent"
+  ],
+  "expect": true
+ }
 ]
