@@ -39,6 +39,89 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.9.0</h2>
+    <ul>
+      <li><b>A Trican chart from 2015 now carries the clock it prints
+        itself.</b> These charts print a 24-hour &ldquo;Clock Time&rdquo;
+        axis above the plot, and it is read from there. Until now the stage
+        was placed from the stage-information sheet that follows each chart,
+        which prints a 12-hour time with no AM or PM and times the stage,
+        not the chart &mdash; on one well the sheet said 12:00 under a chart
+        whose own axis runs 06:22 to 07:25, and the day sheet agreed with
+        the chart. Where the sheet and the chart differ, the stage says so
+        and the chart is kept</li>
+      <li><b>Charts no longer overlap the stage after them.</b> Every chart
+        in these reports runs a few minutes past the end of its stage, and
+        the next chart starts on those same minutes, so both copies were
+        drawn on top of each other. Where the two charts agree the first now
+        hands over where the second begins &mdash; nothing is lost and
+        nothing is exported twice. On STEP books, where the start time is
+        filed to the minute, the overlap also says to the second where the
+        chart sits, and the stage is moved to it; one well had every stage
+        drawn twice, half a minute apart</li>
+      <li><b>The whole-job overview pages at the back of a Trican report
+        are no longer exported as extra stages.</b> They re-plot the job end
+        to end at a fraction of the resolution, carry no stage number and no
+        clock, and were being laid after the last stage &mdash; 33 hours of
+        the well twice on one file. Where the stage charts already cover
+        them they are set aside and the file says so</li>
+      <li><b>Treating pressure no longer drops out where it runs under the
+        rate line.</b> On stage 8 of one well the pressure and the rate sat
+        on the same pixels for thirty of forty-four minutes with the rate
+        painted on top, and the pressure came back with holes. A curve with
+        no ink inside its own span is under the curve painted after it, and
+        it is now read from there: that stage went from 89% to 100%, and the
+        same rule closes bottom-hole pressure gaps under the concentration
+        curves on other stages</li>
+      <li><b>Bottom-hole proppant concentration reads through the pad and
+        the flush on STEP charts.</b> At zero it sits under the rate line,
+        then the surface concentration, then a blend of the two pens that
+        no colour owns, and its drop to zero at the end is drawn so faintly
+        it was being lost mid-descent. The reader now follows whatever ink
+        is on the floor. The flagged stage went from 70% to 98%, and across
+        seven STEP books the channel gained on nearly every stage without
+        a single maximum moving</li>
+      <li><b>Wellhead proppant concentration on Trican charts no longer
+        goes missing on the holds, the pad and the flush.</b> The dotted
+        gridlines behind these charts are drawn in the series&rsquo; own
+        colours and were being stripped out together with the readings that
+        sit on them; and wherever the downhole curve is painted over the
+        wellhead one &mdash; on every hold it catches up on, and through the
+        pad and flush where both are at zero &mdash; the wellhead value is
+        now read from under it. Stages that were half missing are whole,
+        and the peaks are unchanged</li>
+      <li><b>Stages that failed with &ldquo;implausible stage
+        duration&rdquo; are back.</b> The font on the 2024 and 2025 Trican
+        charts prints a 9 that reads as a 3, so 19:00 came back as 13:00
+        and the clock fit landed on a day that does not exist. The
+        misread hours are put back on the line, and the start time the page
+        prints in text settles the rest. Seven dead pages across three
+        wells read</li>
+      <li><b>Canyon charts no longer plunge to zero at every time
+        label.</b> The tick marks under the axis are drawn in the same black
+        as the curves and were being read as a reading of zero at each one.
+        A run that says &ldquo;continued&rdquo; is also now its own stage,
+        rather than fusing with the run before it</li>
+      <li><b>BJ books that came back empty now read.</b> One filing titled
+        its charts with a two-digit township (&ldquo;-79-&rdquo; where the
+        tables say 079) and every chart page was skipped as a schematic; it
+        now reads. Eight 2025 books held no treatment charts at all &mdash;
+        only the operator&rsquo;s daily reports drawn as outlines and a BJ
+        post-frac summary &mdash; but that summary&rsquo;s per-interval
+        table, with start time, pressures, rates, ISIP and sand for every
+        interval, is now exported: 338 intervals across the eight</li>
+      <li><b>A curve you switch off stays off.</b> Turning a channel off on
+        the main graph used to last until the next stage or file; it now
+        holds across charts and files until you turn it back on</li>
+      <li><b>Tables carry the stage&rsquo;s label, date and start time.</b>
+        The stage tables and their CSV export were leaving those blank even
+        when the chart list had them; they are joined in now, only where the
+        table has no column of its own and the charts agree</li>
+      <li><b>Charts scale to the data in the file, and each FracView curve
+        has its own stretch.</b> A well whose pressures never pass 40 MPa no
+        longer sits in the bottom half of an 80 MPa axis</li>
+    </ul>
+
     <h2>Well map &mdash; 13 September</h2>
     <ul>
       <li><b>The well map is back at a working address.</b> 166,070 wells you
