@@ -39,6 +39,44 @@ And one about agents: a subagent reported "89 files errored" as fact. The
 rows said otherwise, because it had already retried them. **Read the data the
 agent read** before repeating what it concluded.
 
+## The website's well view (2026-09-15)
+
+The Lab gathers the data; the site (`web/`, Vercel project `frac2csv-web`)
+is what a customer sees. Its new page `web/public/well.html?wa=<WA>` draws
+the wellbore left to right by measured depth and stands each stage's
+traces over the interval the report printed for it — the shape of the
+"integrating geology with completions" slide Chris sent, minus the geology
+until LAS arrives.
+
+**Data flow.** `audit.py <pdf> --save payload.json` (or the Lab) →
+`well_json.py payload.json --wa 30209 --index web/public/data/wells/index.json`
+→ `web/public/data/wells/30209.json` (one file per well, ~300-500 KB,
+traces thinned to ≤360 points a stage by bin means; the full-rate samples
+stay in the Lab export) → the map popup offers "Well view →" for every WA
+in the index. Deploy is `npx vercel --prod` from `web/`.
+
+**Stage depths** are new on the payload: `meta.top_m` / `meta.base_m`,
+set from the chart title on Trican layout A ("Stage 12: 4055.65 -
+4056.65 m") and STEP ("2,702.50-2,802.50 m"), from the printed Depth on
+layout B, and otherwise joined by stage number from any table with a
+depth column (`_join_stage_depth`: the BJ Totals "Top Depth (m)",
+Peloton's Top / Bottom Depth, FracR). A stage with none is `placed`: the
+page hatches it on the bar and stands it between the measured stages its
+number falls between, and says so. Measured so far: 00041 34/34, 00910
+50/50, 00180 25/27 (STEP vector prints no interval; the Daily Stage
+Summary joined the rest).
+
+**The page.** Panels are equal width — a one-metre Trican interval still
+gets a readable plot — ordered by depth heel → toe (or by stage number),
+each with a connector down to its true segment on the bar; the bar is the
+filed lateral where the well record has one. Channels toggle; the scale
+is shared across the well or per stage; hover gives the stage's depth,
+clock, minutes and peaks and shows its notes. `WELL.logs` is the LAS
+slot: `{name, unit, md:[…], v:[…]}` draws as a ribbon under the depth
+axis (`drawLogs`) and the track takes no space until a log is there —
+Chris: "we will be doing LAS data in the future, design with that in
+mind but leave it off for now".
+
 ## In flight right now
 
 ### Six defect classes repaired against the audit (2026-09-14)

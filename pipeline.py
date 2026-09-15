@@ -1696,6 +1696,95 @@ _HAS_DATE = re.compile(r"\bdate\b", re.I)
 _HAS_START = re.compile(r"\bstart\b", re.I)
 
 
+_INTERVAL_RE = re.compile(r"(-?[\d,]+(?:\.\d+)?)\s*(?:-|–|to)\s*(-?[\d,]+(?:\.\d+)?)")
+
+
+def _parse_interval(text):
+    """'2,702.50-2,802.50 m' / '4055.65 - 4056.65 m' -> (top_m, base_m), or
+    (None, None). Metres are what every template prints; feet would need a
+    unit on the page and none has printed one."""
+    m = _INTERVAL_RE.search(str(text or ""))
+    if not m:
+        return None, None
+    try:
+        a, b = (float(m.group(1).replace(",", "")), float(m.group(2).replace(",", "")))
+    except ValueError:
+        return None, None
+    return (min(a, b), max(a, b))
+
+
+def _set_depth(meta, top=None, base=None):
+    """Stage depth on the meta, when the page gave one: top_m <= base_m, a
+    single depth as both. Never overwrites a depth already there."""
+    if meta.get("top_m") is not None or meta.get("base_m") is not None:
+        return
+    if top is None and base is None:
+        return
+    if top is None:
+        top = base
+    if base is None:
+        base = top
+    meta["top_m"], meta["base_m"] = float(min(top, base)), float(max(top, base))
+
+
+_DEPTH_COL = re.compile(r"depth", re.I)
+_TOP_COL = re.compile(r"\btop\b|\bfrom\b|\bupper\b", re.I)
+_BASE_COL = re.compile(r"\bbottom\b|\bbase\b|\bto\b|\blower\b", re.I)
+
+
+def _join_stage_depth(results):
+    """A chart that printed no depth takes it from a table that did, by
+    stage number: the BJ Totals table's "Top Depth (m)", Peloton's Top /
+    Bottom Depth, the FracR sheet's depth. Only where the chart has none,
+    and only where the table's stage numbers are real stage numbers.
+
+    The well view draws each stage at its depth along the lateral; a stage
+    with none is placed by order and says so, so this join is what turns a
+    BJ or Halliburton book from "placed" into "measured".
+    """
+    depth = {}
+    for r in results:
+        if r.get("type") != "table":
+            continue
+        cols = list(r.get("columns") or [])
+        si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+        if si is None:
+            continue
+        di = [i for i, c in enumerate(cols) if _DEPTH_COL.search(str(c))]
+        if not di:
+            continue
+        ti = next((i for i in di if _TOP_COL.search(str(cols[i]))), None)
+        bi = next((i for i in di if _BASE_COL.search(str(cols[i]))), None)
+        if ti is None and bi is None:
+            ti = di[0]
+        for row in r.get("rows") or []:
+            if si >= len(row):
+                continue
+            n = pe.stage_num(row[si])
+            if n >= 10 ** 9 or n in depth:
+                continue
+            vals = []
+            for i in (ti, bi):
+                v = None
+                if i is not None and i < len(row):
+                    try:
+                        v = float(str(row[i]).replace(",", ""))
+                    except ValueError:
+                        v = None
+                vals.append(v)
+            if vals[0] is not None or vals[1] is not None:
+                depth[n] = (vals[0], vals[1])
+    if not depth:
+        return
+    for r in results:
+        if r.get("type") != "series":
+            continue
+        m = r.get("meta") or {}
+        n = pe.stage_num(str(m.get("stage") or ""))
+        if n in depth:
+            _set_depth(m, *depth[n])
+
+
 def _join_stage_meta(results):
     """Every table with a stage column carries the stage's label, date and
     start time from the chart list — the three things the Lab's stage list
@@ -2258,6 +2347,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             "warnings": []}
                     if md.get("continuous"):
                         meta["continuous"] = True
+                    _set_depth(meta, md.get("top_m"), md.get("base_m"))
                     clk = info.get("clock_s")
                     if clk is not None:
                         # The chart's own "Clock Time (hour:min)" axis, a
@@ -2315,6 +2405,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             "start_time": md.get("start_time") or "00:00:00",
                             "duration_min": len(samples) / 60.0,
                             "warnings": list(_stage_notes)}
+                    _set_depth(meta, md.get("depth_m"), md.get("depth_m"))
                     if md.get("clock_chart"):
                         # sample 0 is on the chart's own clock axis; the
                         # printed Start Time is the stage's and is kept
@@ -2367,6 +2458,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
                                 "warnings": list(info.get("notes") or [])}
+                        _set_depth(meta, *_parse_interval(md.get("interval")))
                         # STEP reported no `scales` at all, so every STEP
                         # chart arrived with an empty axis map — and the
                         # peak-outside-axis check, the one diagnostic that
@@ -2993,5 +3085,6 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # and only then is the stage in the form the daily report names.
     _daily_ops_fill(doc, results, notes)
     _normalise_tables(results, filename)
+    _join_stage_depth(results)
     _join_stage_meta(results)
     return results, notes

@@ -341,6 +341,13 @@ function applyColor() {
     map.setPaintProperty("wells-" + p.code, "circle-color", colorExpr(mode));
 }
 
+// Wells that have a lateral view built from their frac report (well.html):
+// data/wells/index.json lists them, and the popup offers the view for those.
+const VIEWS = new Set();
+fetch("data/wells/index.json").then(r => r.ok ? r.json() : null)
+  .then(d => { for (const w of (d && d.wells) || []) VIEWS.add(String(w.wa || "").replace(/^0+/, "")); })
+  .catch(() => {});
+
 function popupHTML(p) {
   const fmt = (v, unit, dp) => v === undefined ? null :
     `<b>${(+v).toLocaleString(undefined, {maximumFractionDigits: dp === undefined ? 1 : dp})}${unit}</b>`;
@@ -377,6 +384,7 @@ function popupHTML(p) {
     ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
     <div class="actions">
       <button class="favbtn${isFav ? " on" : ""}">${isFav ? "★ favourited" : "☆ favourite"}</button>
+      ${VIEWS.has(String(p.wa || "").replace(/^0+/, "")) ? `<a class="btn" href="/well.html?wa=${encodeURIComponent(p.wa)}">Well view →</a>` : ""}
       <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}&prov=${p.prov}">Extract charts →</a>
     </div>
     <div class="tagrow">${tags.map(t => `<span class="tag" data-t="${t}" title="click to remove">${t}</span>`).join("")}

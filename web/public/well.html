@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frac2CSV — Well view</title>
+<style>
+  :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
+          --acc:#1d5bd8; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+          --press:#d62b2b; --rate:#1f6fd6; --wh:#2e8b57; --bh:#8a5cd6; --bhp:#7a3b2e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif; }
+  .wrap { padding:18px 22px 40px; max-width:1500px; margin:0 auto; }
+  header { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; }
+  header h1 { font-size:20px; margin:0; }
+  header .sub { color:var(--mut); font-family:var(--mono); font-size:12.5px; }
+  header a { color:var(--acc); text-decoration:none; font-size:13px; }
+  .facts { display:flex; flex-wrap:wrap; gap:6px 18px; margin:10px 0 6px; color:var(--mut); font-size:13px; }
+  .facts b { color:var(--ink); font-weight:600; }
+  .controls { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin:12px 0 10px; font-size:13px; }
+  .controls label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+  .controls .sw { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .controls select { font:inherit; padding:2px 6px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 10px 6px; }
+  .figure { overflow-x:auto; overflow-y:hidden; }
+  svg { display:block; }
+  .tip { position:fixed; pointer-events:none; background:#17222e; color:#fff; padding:8px 10px; border-radius:8px;
+         font-size:12.5px; line-height:1.4; max-width:320px; box-shadow:0 6px 24px rgba(0,0,0,.25); display:none; z-index:9; }
+  .tip b { color:#ffd166; }
+  .foot { color:var(--mut); font-size:12.5px; margin-top:10px; }
+  .notes { margin-top:14px; }
+  .notes summary { cursor:pointer; color:var(--mut); font-size:13px; }
+  .notes ul { font-size:12.5px; color:var(--mut); padding-left:18px; }
+  .stagenotes { font-size:12.5px; color:var(--mut); margin-top:8px; }
+  .empty { padding:40px 0; color:var(--mut); }
+  .empty a { color:var(--acc); }
+  .list a { display:block; padding:6px 0; border-bottom:1px solid var(--line); color:var(--ink); text-decoration:none; }
+  .list a span { color:var(--mut); font-family:var(--mono); font-size:12px; margin-left:10px; }
+  @media (max-width:640px) { .wrap { padding:12px 14px 30px; } header h1 { font-size:17px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="name">Well view</h1>
+    <span class="sub" id="ids"></span>
+    <a href="/map.html">← Well map</a>
+    <a id="extract" href="/" hidden>Extract charts →</a>
+  </header>
+  <div class="facts" id="facts"></div>
+  <div class="controls" id="controls" hidden>
+    <label><span class="sw" style="background:var(--press)"></span><input type="checkbox" data-k="press" checked> Pressure</label>
+    <label><span class="sw" style="background:var(--rate)"></span><input type="checkbox" data-k="rate" checked> Rate</label>
+    <label><span class="sw" style="background:var(--wh)"></span><input type="checkbox" data-k="wh_conc" checked> WH conc</label>
+    <label><span class="sw" style="background:var(--bh)"></span><input type="checkbox" data-k="bh_conc"> BH conc</label>
+    <label><span class="sw" style="background:var(--bhp)"></span><input type="checkbox" data-k="bh_press"> BH pressure</label>
+    <label>Scale <select id="scale"><option value="well">shared across the well</option><option value="stage">each stage to its own peak</option></select></label>
+    <label>Order <select id="order"><option value="depth">by depth, heel → toe</option><option value="stage">by stage number</option></select></label>
+  </div>
+  <div class="card">
+    <div class="figure" id="figure"></div>
+    <div class="foot" id="foot"></div>
+  </div>
+  <div class="stagenotes" id="stagenotes"></div>
+  <details class="notes" id="notes" hidden><summary>What the reader said about this file</summary><ul id="notelist"></ul></details>
+  <div class="tip" id="tip"></div>
+</div>
+<script>
+// ---------------------------------------------------------------- data
+const COLORS = { press: "var(--press)", rate: "var(--rate)", wh_conc: "var(--wh)", bh_conc: "var(--bh)", bh_press: "var(--bhp)" };
+const NAMES = { press: "Pressure", rate: "Rate", wh_conc: "WH conc", bh_conc: "BH conc", bh_press: "BH pressure" };
+const q = new URLSearchParams(location.search);
+const WA = q.get("wa");
+let WELL = null;
+const show = new Set(["press", "rate", "wh_conc"]);
+
+async function main() {
+  if (!WA) return landing();
+  let r;
+  try { r = await fetch(`data/wells/${encodeURIComponent(WA)}.json`); } catch (e) {}
+  if (!r || !r.ok) {
+    document.getElementById("figure").innerHTML =
+      `<div class="empty">No well file for WA ${WA}. <a href="well.html">See the wells with a view.</a></div>`;
+    return;
+  }
+  WELL = await r.json();
+  header();
+  document.getElementById("controls").hidden = false;
+  for (const cb of document.querySelectorAll("#controls input")) cb.addEventListener("change", () => {
+    cb.checked ? show.add(cb.dataset.k) : show.delete(cb.dataset.k); draw();
+  });
+  document.getElementById("scale").addEventListener("change", draw);
+  document.getElementById("order").addEventListener("change", draw);
+  window.addEventListener("resize", draw);
+  draw();
+  notes();
+}
+
+async function landing() {
+  let idx = { wells: [] };
+  try { idx = await (await fetch("data/wells/index.json")).json(); } catch (e) {}
+  const el = document.getElementById("figure");
+  if (!idx.wells.length) { el.innerHTML = `<div class="empty">No wells have a view yet.</div>`; return; }
+  el.innerHTML = `<div class="list">` + idx.wells.map(w =>
+    `<a href="well.html?wa=${encodeURIComponent(w.wa)}">${w.name || w.uwi || w.wa}
+       <span>${w.prov || ""} ${w.wa} · ${w.stages} stages${w.measured ? `, ${w.measured} with a printed depth` : ""}${w.year ? " · " + w.year : ""}</span></a>`).join("") + `</div>`;
+  document.getElementById("name").textContent = "Wells with a view";
+}
+
+function header() {
+  const w = WELL.well;
+  document.getElementById("name").textContent = w.name || w.uwi || `WA ${w.wa}`;
+  document.getElementById("ids").textContent = [w.uwi, w.wa ? `WA ${w.wa}` : null, w.prov].filter(Boolean).join(" · ");
+  const ex = document.getElementById("extract");
+  if (w.wa) { ex.href = `/?well=${encodeURIComponent(w.wa)}&prov=${(w.prov || "bc").toLowerCase()}`; ex.hidden = false; }
+  const measured = WELL.stages.filter(s => !s.placed).length;
+  const facts = [
+    w.year ? `vintage <b>${w.year}</b>` : null,
+    w.td_m ? `MD <b>${Math.round(w.td_m).toLocaleString()} m</b>` : null,
+    w.lateral_m ? `lateral <b>~${Math.round(w.lateral_m).toLocaleString()} m</b>` : null,
+    `stages charted <b>${WELL.stages.length}</b>` + (w.stages_filed ? ` of ${w.stages_filed} filed` : ""),
+    `<b>${measured}</b> with a printed depth${measured < WELL.stages.length ? `, ${WELL.stages.length - measured} placed by order` : ""}`,
+    WELL.file ? `<span style="font-family:var(--mono);font-size:12px">${WELL.file}</span>` : null,
+  ].filter(Boolean);
+  document.getElementById("facts").innerHTML = facts.map(f => `<span>${f}</span>`).join("");
+}
+
+// ---------------------------------------------------------------- layout
+// Panels are equal width so a one-metre interval still has a readable
+// plot; the bar underneath shows each stage where it really is, and the
+// connector between them is what ties the two truths together.
+function ordered() {
+  const S = WELL.stages.slice();
+  const byN = document.getElementById("order").value === "stage";
+  if (byN) return S.sort((a, b) => a.n - b.n);
+  const meas = S.filter(s => !s.placed).sort((a, b) => a.top_m - b.top_m);
+  if (!meas.length) return S.sort((a, b) => b.n - a.n);           // stage 1 at the toe, by convention
+  // a placed stage goes between the measured stages its number falls between
+  for (const s of S) if (s.placed) {
+    const lo = meas.filter(m => m.n < s.n).sort((a, b) => b.n - a.n)[0];
+    const hi = meas.filter(m => m.n > s.n).sort((a, b) => a.n - b.n)[0];
+    if (lo && hi) { const f = (s.n - lo.n) / (hi.n - lo.n); s._md = lo.top_m + (hi.top_m - lo.top_m) * f; }
+    else if (lo) s._md = lo.top_m + (lo.n === meas[0].n ? -1 : 1) * 30 * (s.n - lo.n);
+    else if (hi) s._md = hi.top_m - (hi.n === meas[meas.length - 1].n ? -1 : 1) * 30 * (hi.n - s.n);
+    else s._md = 0;
+  } else s._md = (s.top_m + s.base_m) / 2;
+  return S.sort((a, b) => a._md - b._md);
+}
+
+function niceStep(span, target) {
+  const raw = span / target, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= raw) return m * p;
+  return 10 * p;
+}
+
+function draw() {
+  const S = ordered();
+  const N = S.length;
+  const fig = document.getElementById("figure");
+  const avail = Math.max(320, fig.clientWidth - 2);
+  const PADL = 78, PADR = 34, PANEL_MIN = 26;
+  const W = Math.max(avail, PADL + PADR + PANEL_MIN * N);
+  const PT = 34, PANEL_H = 250, BAR_Y = PT + PANEL_H + 44, BAR_H = 18, AXIS_Y = BAR_Y + BAR_H + 22;
+  const LOG_H = WELL.logs && WELL.logs.length ? 90 : 0;          // the LAS track, when there is one
+  const H = AXIS_Y + 24 + LOG_H;
+  const pw = (W - PADL - PADR) / N;
+  const scaleWell = document.getElementById("scale").value === "well";
+
+  // the value each channel is scaled against
+  const maxWell = {};
+  for (const k of Object.keys(COLORS)) {
+    let m = 0;
+    for (const s of S) { const p = s.peaks && s.peaks[k]; if (p != null && p > m) m = p; }
+    maxWell[k] = m || 1;
+  }
+
+  // the measured-depth scale of the bar
+  const meas = S.filter(s => !s.placed);
+  let md0, md1;
+  if (meas.length) {
+    md0 = Math.min(...meas.map(s => s.top_m)); md1 = Math.max(...meas.map(s => s.base_m));
+    const pad = Math.max(40, (md1 - md0) * 0.04); md0 -= pad; md1 += pad;
+    if (WELL.well.td_m && WELL.well.td_m > md1 && WELL.well.td_m - md1 < 400) md1 = WELL.well.td_m;
+  } else if (WELL.well.td_m && WELL.well.lateral_m) { md1 = WELL.well.td_m; md0 = md1 - WELL.well.lateral_m; }
+  else { md0 = 0; md1 = N; }
+  const xOfMd = md => PADL + (md - md0) / (md1 - md0) * (W - PADL - PADR);
+
+  let g = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="ui-monospace,Menlo,monospace" font-size="10.5">`;
+  g += `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="6" height="6" fill="#e9eef3"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9fb0c0" stroke-width="1.5"/></pattern></defs>`;
+
+  // y-axis labels for the two headline channels
+  const yTop = PT, yBot = PT + PANEL_H;
+  g += `<text x="${PADL - 8}" y="${yTop + 4}" text-anchor="end" fill="var(--press)">${fmt(maxWell.press)} MPa</text>`;
+  g += `<text x="${PADL - 8}" y="${yTop + 18}" text-anchor="end" fill="var(--rate)">${fmt(maxWell.rate)} m³/min</text>`;
+  if (show.has("wh_conc") || show.has("bh_conc"))
+    g += `<text x="${PADL - 8}" y="${yTop + 32}" text-anchor="end" fill="var(--wh)">${fmt(Math.max(maxWell.wh_conc, maxWell.bh_conc))} kg/m³</text>`;
+  g += `<text x="${PADL - 8}" y="${yBot + 3}" text-anchor="end" fill="#5b6b7b">0</text>`;
+  g += `<line x1="${PADL}" y1="${yBot + .5}" x2="${W - PADR}" y2="${yBot + .5}" stroke="#dfe6ec"/>`;
+
+  // stage panels
+  S.forEach((s, i) => {
+    const x0 = PADL + i * pw, x1 = x0 + pw;
+    g += `<rect class="panel" data-i="${i}" x="${x0}" y="${yTop - 14}" width="${pw}" height="${PANEL_H + 14}" fill="${i % 2 ? "#f3f6f9" : "#ffffff"}" stroke="none"/>`;
+    g += `<text x="${x0 + pw / 2}" y="${yTop - 4}" text-anchor="middle" fill="${s.placed ? "#9fb0c0" : "#17222e"}" font-size="${pw < 30 ? 9 : 11}" font-weight="600">${s.label}</text>`;
+    for (const k of ["bh_conc", "wh_conc", "bh_press", "rate", "press"]) {
+      if (!show.has(k) || !s.series[k]) continue;
+      const v = s.series[k];
+      const top = scaleWell ? maxWell[k] : Math.max(s.peaks[k] || 0, 1e-9);
+      let d = "", pen = false;
+      const n = v.length, inner = Math.max(2, pw - 4);
+      for (let j = 0; j < n; j++) {
+        const y = v[j];
+        if (y == null) { pen = false; continue; }
+        const px = x0 + 2 + (n > 1 ? j / (n - 1) : 0) * inner;
+        const py = yBot - Math.min(1, y / top) * (PANEL_H - 2);
+        d += (pen ? "L" : "M") + px.toFixed(1) + " " + py.toFixed(1); pen = true;
+      }
+      g += `<path d="${d}" fill="none" stroke="${COLORS[k]}" stroke-width="${pw < 40 ? 1 : 1.3}" stroke-linejoin="round"/>`;
+    }
+  });
+
+  // the wellbore: a bar along measured depth, each stage where it really is
+  g += `<rect x="${PADL}" y="${BAR_Y}" width="${W - PADL - PADR}" height="${BAR_H}" fill="#e9eef3" rx="3"/>`;
+  g += `<text x="${PADL - 8}" y="${BAR_Y + BAR_H - 4}" text-anchor="end" fill="#5b6b7b">heel</text>`;
+  g += `<text x="${W - PADR + 6}" y="${BAR_Y + BAR_H - 4}" fill="#5b6b7b">toe</text>`;
+  S.forEach((s, i) => {
+    const cx = PADL + (i + .5) * pw;
+    let a, b;
+    if (!s.placed) { a = xOfMd(s.top_m); b = xOfMd(s.base_m); if (b - a < 3) { const m = (a + b) / 2; a = m - 1.5; b = m + 1.5; } }
+    else { const m = xOfMd(s._md != null ? s._md : md0 + (i + .5) * (md1 - md0) / N); a = m - 3; b = m + 3; }
+    const col = s.placed ? "url(#hatch)" : (i % 2 ? "#1d5bd8" : "#3b7ded");
+    g += `<path d="M${cx} ${yBot + 1} L${cx} ${yBot + 16} L${(a + b) / 2} ${BAR_Y - 6} L${(a + b) / 2} ${BAR_Y}" fill="none" stroke="#b7c3cf" stroke-width="1"/>`;
+    g += `<rect class="seg" data-i="${i}" x="${a}" y="${BAR_Y}" width="${b - a}" height="${BAR_H}" fill="${col}" stroke="${s.placed ? "#9fb0c0" : "none"}"/>`;
+  });
+
+  // the measured-depth axis
+  const step = niceStep(md1 - md0, Math.max(4, Math.floor((W - PADL - PADR) / 90)));
+  for (let m = Math.ceil(md0 / step) * step; m <= md1; m += step) {
+    const x = xOfMd(m);
+    g += `<line x1="${x}" y1="${BAR_Y + BAR_H}" x2="${x}" y2="${BAR_Y + BAR_H + 5}" stroke="#9fb0c0"/>`;
+    g += `<text x="${x}" y="${AXIS_Y}" text-anchor="middle" fill="#5b6b7b">${Math.round(m).toLocaleString()}</text>`;
+  }
+  g += `<text x="${W - PADR}" y="${AXIS_Y + 14}" text-anchor="end" fill="#9fb0c0">measured depth, m</text>`;
+
+  // the log track: drawn only when a log is here (LAS to come)
+  if (LOG_H) g += drawLogs(PADL, AXIS_Y + 20, W - PADL - PADR, LOG_H, xOfMd);
+
+  g += `</svg>`;
+  fig.innerHTML = g;
+  wireHover(fig, S);
+  document.getElementById("foot").innerHTML = meas.length
+    ? `Panels are equal width and read left to right along the wellbore; the bar shows each stage at the depth its report printed${meas.length < N ? ", hatched where it printed none and the stage is placed by its number" : ""}. Traces are thinned to ${S[0].step_s ? S[0].step_s + " s" : "a few seconds"} per point; the full-rate samples are in the export.`
+    : `This report prints no stage depths, so the stages stand in stage order with stage 1 at the toe; the bar is the well's filed lateral. Traces are thinned to a few seconds per point; the full-rate samples are in the export.`;
+}
+
+function drawLogs(x0, y0, w, h, xOfMd) {
+  // A gamma-ray (or any) log as a ribbon along the lateral: {name, unit,
+  // md:[...], v:[...]} in WELL.logs. Reserved; nothing is rendered until a
+  // log is loaded from LAS.
+  let g = `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#fbfcfd" stroke="#dfe6ec"/>`;
+  for (const L of WELL.logs) {
+    if (!L.md || !L.v) continue;
+    const vmax = Math.max(...L.v.filter(x => x != null)), vmin = Math.min(...L.v.filter(x => x != null));
+    let d = ""; let pen = false;
+    for (let i = 0; i < L.md.length; i++) {
+      if (L.v[i] == null) { pen = false; continue; }
+      const px = xOfMd(L.md[i]), py = y0 + h - (L.v[i] - vmin) / Math.max(1e-9, vmax - vmin) * (h - 4) - 2;
+      d += (pen ? "L" : "M") + px.toFixed(1) + " " + py.toFixed(1); pen = true;
+    }
+    g += `<path d="${d}" fill="none" stroke="#2e8b57" stroke-width="1"/>`;
+    g += `<text x="${x0 + 6}" y="${y0 + 12}" fill="#5b6b7b">${L.name}${L.unit ? " (" + L.unit + ")" : ""}</text>`;
+  }
+  return g;
+}
+
+// ---------------------------------------------------------------- hover
+function wireHover(fig, S) {
+  const tip = document.getElementById("tip");
+  const els = fig.querySelectorAll(".panel, .seg");
+  for (const el of els) {
+    el.addEventListener("mousemove", ev => {
+      const s = S[+el.dataset.i];
+      const depth = s.placed ? "no depth printed — placed by stage number"
+        : (s.top_m === s.base_m ? `${fmt(s.top_m)} m` : `${fmt(s.top_m)} – ${fmt(s.base_m)} m`);
+      const when = [s.date, s.start ? s.start.slice(0, 5) : ""].filter(Boolean).join(" ");
+      const peaks = Object.entries(s.peaks || {}).filter(([k]) => show.has(k))
+        .map(([k, v]) => `${NAMES[k]} <b>${fmt(v)}</b> ${WELL.units[k] || ""}`).join(" · ");
+      tip.innerHTML = `<div><b>Stage ${s.label}</b> · ${depth}</div><div>${when}${when ? " · " : ""}${s.minutes} min · p${s.page}</div><div>${peaks}</div>`;
+      tip.style.display = "block";
+      tip.style.left = Math.min(window.innerWidth - 340, ev.clientX + 14) + "px";
+      tip.style.top = (ev.clientY + 14) + "px";
+      const notes = document.getElementById("stagenotes");
+      notes.textContent = s.notes && s.notes.length ? `Stage ${s.label}: ` + s.notes.join(" · ") : "";
+    });
+    el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  }
+}
+
+function notes() {
+  const ns = WELL.notes || [];
+  if (!ns.length) return;
+  const d = document.getElementById("notes"); d.hidden = false;
+  document.getElementById("notelist").innerHTML = ns.map(n => `<li>${esc(n)}</li>`).join("");
+}
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const fmt = v => v == null ? "–" : (Math.abs(v) >= 100 ? Math.round(v).toLocaleString() : (Math.round(v * 10) / 10).toString());
+
+main();
+</script>
+</body>
+</html>
