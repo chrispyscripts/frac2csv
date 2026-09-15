@@ -84,8 +84,19 @@ def find_well(wa=None, uwis=()):
     return {}
 
 
+# "12 Surface" / "12 BH" / "12 Bottom Hole": one stage charted on two pages,
+# the chart TYPE tacked onto the label. The same rule the Lab's stage list
+# applies: the type is not part of the stage's name.
+_VARIANT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(?:-\s*)?(?:surface|surf|bh|bottom\s*hole|btm)\b.*$", re.I)
+
+
+def _label(stage):
+    m = _VARIANT.match(str(stage or ""))
+    return m.group(1) if m else str(stage).strip()
+
+
 def build(payload, wa=None, source_file=""):
-    stages = []
+    by_stage = {}
     uwis = set()
     for s in payload.get("stages", []):
         m = s.get("meta") or {}
@@ -111,8 +122,9 @@ def build(payload, wa=None, source_file=""):
         sec = float(s.get("sample_sec") or 1.0)
         step = max(1, int(math.ceil(n / float(POINTS))))
         top, base = m.get("top_m"), m.get("base_m")
-        stages.append({
-            "n": stage_num(m.get("stage")), "label": str(m.get("stage")),
+        label = _label(m.get("stage"))
+        entry = {
+            "n": stage_num(label), "label": label,
             "top_m": top, "base_m": base, "placed": top is None and base is None,
             "date": m.get("date") or "", "start": m.get("start_time") or "",
             "clock_chart": bool(m.get("clock_chart")),
@@ -120,8 +132,25 @@ def build(payload, wa=None, source_file=""):
             "page": s.get("page"), "source": s.get("source", ""),
             "series": series, "peaks": peaks,
             "notes": [w for w in (m.get("warnings") or [])],
-        })
-    stages.sort(key=lambda x: x["n"])
+        }
+        have = by_stage.get(label)
+        if have is None:
+            by_stage[label] = entry
+            continue
+        # a second chart of the same stage: its channels fill what the first
+        # lacks (CalFrac's Bottom Hole page brings BH conc to the Surface
+        # page's pressure and rate); a depth or clock the first lacked, too
+        for k, v in series.items():
+            if k not in have["series"]:
+                have["series"][k] = v
+                have["peaks"][k] = peaks[k]
+        if have["placed"] and not entry["placed"]:
+            have.update(top_m=top, base_m=base, placed=False)
+        if not have["date"] and entry["date"]:
+            have.update(date=entry["date"], start=entry["start"])
+        have["notes"] += [w for w in entry["notes"] if w not in have["notes"]]
+        have["pages"] = sorted(set([have["page"], entry["page"]] + have.get("pages", [])))
+    stages = sorted(by_stage.values(), key=lambda x: x["n"])
     well = find_well(wa, uwis)
     return {
         "v": 1,
