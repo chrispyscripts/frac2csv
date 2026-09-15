@@ -1727,7 +1727,10 @@ def _set_depth(meta, top=None, base=None):
     meta["top_m"], meta["base_m"] = float(min(top, base)), float(max(top, base))
 
 
-_DEPTH_COL = re.compile(r"depth", re.I)
+# "Top Depth (m)", "Bottom Depth (mKB)", CalFrac's "Interval Top (m)",
+# a bare "MD (m)" — a column named for a depth, or a top / bottom in metres
+_DEPTH_COL = re.compile(r"depth|\b(?:interval|perf|zone)\s*(?:top|bottom|base)\b"
+                        r"|\b(?:top|bottom|base)\s*\(\s*m|\bMD\s*\(", re.I)
 _TOP_COL = re.compile(r"\btop\b|\bfrom\b|\bupper\b", re.I)
 _BASE_COL = re.compile(r"\bbottom\b|\bbase\b|\bto\b|\blower\b", re.I)
 

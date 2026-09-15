@@ -59,6 +59,13 @@ class JoinFromTable(unittest.TestCase):
         pipeline._join_stage_depth([chart, table])
         self.assertEqual((chart["meta"]["top_m"], chart["meta"]["base_m"]), (2411.5, 2430.0))
 
+    def test_calfrac_interval_top_is_a_depth(self):
+        chart = {"type": "series", "meta": {"stage": "2"}}
+        table = {"type": "table", "columns": ["UWI", "Zone", "Stage Label", "Interval Top (m)", "ISIP (MPa)"],
+                 "rows": [["", "1", "1", "3775.1", "12.0"], ["", "2", "2", "3749.2", "12.8"]]}
+        pipeline._join_stage_depth([chart, table])
+        self.assertEqual((chart["meta"]["top_m"], chart["meta"]["base_m"]), (3749.2, 3749.2))
+
     def test_no_depth_column_does_nothing(self):
         chart = {"type": "series", "meta": {"stage": "7"}}
         table = {"type": "table", "columns": ["Stage", "ISIP"], "rows": [["7", "30"]]}

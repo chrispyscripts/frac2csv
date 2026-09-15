@@ -342,8 +342,16 @@ function applyColor() {
 }
 
 // Wells that have a lateral view built from their frac report (well.html):
-// data/wells/index.json lists them, and the popup offers the view for those.
+// data/wells/index.json lists them. While the beta stands in, every well's
+// "Show Data" opens the same demo well (BETA_DEMO_WA); set it to "" and each
+// well opens its own view where one exists.
+const BETA_DEMO_WA = "0489324";
 const VIEWS = new Set();
+function showDataHref(p) {
+  if (BETA_DEMO_WA) return `/well.html?wa=${encodeURIComponent(BETA_DEMO_WA)}`;
+  const wa = String(p.wa || "").replace(/^0+/, "");
+  return VIEWS.has(wa) ? `/well.html?wa=${encodeURIComponent(p.wa)}` : `/well.html`;
+}
 fetch("data/wells/index.json").then(r => r.ok ? r.json() : null)
   .then(d => { for (const w of (d && d.wells) || []) VIEWS.add(String(w.wa || "").replace(/^0+/, "")); })
   .catch(() => {});
@@ -384,8 +392,7 @@ function popupHTML(p) {
     ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
     <div class="actions">
       <button class="favbtn${isFav ? " on" : ""}">${isFav ? "★ favourited" : "☆ favourite"}</button>
-      ${VIEWS.has(String(p.wa || "").replace(/^0+/, "")) ? `<a class="btn" href="/well.html?wa=${encodeURIComponent(p.wa)}">Well view →</a>` : ""}
-      <a class="btn" href="/?well=${encodeURIComponent(p.wa || (p.u || "").split(" ")[0] || "")}&prov=${p.prov}">Extract charts →</a>
+      <a class="btn" href="${showDataHref(p)}">Show Data →</a>
     </div>
     <div class="tagrow">${tags.map(t => `<span class="tag" data-t="${t}" title="click to remove">${t}</span>`).join("")}
       <input class="taginput" placeholder="+ tag, Enter" maxlength="24"></div></div>`;

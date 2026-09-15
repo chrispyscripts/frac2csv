@@ -46,7 +46,6 @@
     <h1 id="name">Well view</h1>
     <span class="sub" id="ids"></span>
     <a href="/map.html">← Well map</a>
-    <a id="extract" href="/" hidden>Extract charts →</a>
   </header>
   <div class="facts" id="facts"></div>
   <div class="controls" id="controls" hidden>
@@ -112,8 +111,6 @@ function header() {
   const w = WELL.well;
   document.getElementById("name").textContent = w.name || w.uwi || `WA ${w.wa}`;
   document.getElementById("ids").textContent = [w.uwi, w.wa ? `WA ${w.wa}` : null, w.prov].filter(Boolean).join(" · ");
-  const ex = document.getElementById("extract");
-  if (w.wa) { ex.href = `/?well=${encodeURIComponent(w.wa)}&prov=${(w.prov || "bc").toLowerCase()}`; ex.hidden = false; }
   const measured = WELL.stages.filter(s => !s.placed).length;
   const facts = [
     w.year ? `vintage <b>${w.year}</b>` : null,
