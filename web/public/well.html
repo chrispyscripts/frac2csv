@@ -156,7 +156,9 @@ function draw() {
   const N = S.length;
   const fig = document.getElementById("figure");
   const avail = Math.max(320, fig.clientWidth - 2);
-  const PADL = 78, PADR = 34, PANEL_MIN = 26;
+  // the vertical section is drawn only when the record says how deep the well is
+  const VERT = !!(WELL.well.td_m && (WELL.well.tvd_m || WELL.well.lateral_m));
+  const PADL = VERT ? 150 : 78, PADR = 34, PANEL_MIN = 26;
   const W = Math.max(avail, PADL + PADR + PANEL_MIN * N);
   const PT = 34, PANEL_H = 250, BAR_Y = PT + PANEL_H + 44, BAR_H = 18, AXIS_Y = BAR_Y + BAR_H + 22;
   const LOG_H = WELL.logs && WELL.logs.length ? 90 : 0;          // the LAS track, when there is one
@@ -179,16 +181,39 @@ function draw() {
     md0 = Math.min(...meas.map(s => s.top_m)); md1 = Math.max(...meas.map(s => s.base_m));
     const pad = Math.max(40, (md1 - md0) * 0.04); md0 -= pad; md1 += pad;
     if (WELL.well.td_m && WELL.well.td_m > md1 && WELL.well.td_m - md1 < 400) md1 = WELL.well.td_m;
+    // the record's own heel, when it lies within reach of the first stage
+    if (WELL.well.td_m && WELL.well.lateral_m) {
+      const heel = WELL.well.td_m - WELL.well.lateral_m;
+      if (heel < md0 && md0 - heel < 600) md0 = heel;
+    }
   } else if (WELL.well.td_m && WELL.well.lateral_m) { md1 = WELL.well.td_m; md0 = md1 - WELL.well.lateral_m; }
   else { md0 = 0; md1 = N; }
   const xOfMd = md => PADL + (md - md0) / (md1 - md0) * (W - PADL - PADR);
+  const yTop = PT, yBot = PT + PANEL_H;
 
   let g = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="ui-monospace,Menlo,monospace" font-size="10.5">`;
   g += `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <rect width="6" height="6" fill="#e9eef3"/><line x1="0" y1="0" x2="0" y2="6" stroke="#9fb0c0" stroke-width="1.5"/></pattern></defs>`;
 
+  // the wellbore's vertical section: surface at the top, measured depth
+  // down the hole to the heel, a curved build into the lateral
+  if (VERT) {
+    const xv = 34, R = 34, yS = yTop - 12, yH = BAR_Y + BAR_H / 2;
+    const heelMd = md0, vspan = Math.max(1, yH - R - yS);
+    g += `<path d="M${xv} ${yS} L${xv} ${yH - R} A${R} ${R} 0 0 0 ${xv + R} ${yH} L${PADL} ${yH}" fill="none" stroke="#c9d3dc" stroke-width="7" stroke-linecap="round"/>`;
+    g += `<path d="M${xv} ${yS} L${xv} ${yH - R} A${R} ${R} 0 0 0 ${xv + R} ${yH} L${PADL} ${yH}" fill="none" stroke="#7f93a5" stroke-width="1.2"/>`;
+    g += `<text x="${xv + 10}" y="${yS + 4}" fill="#5b6b7b">surface</text>`;
+    const vstep = niceStep(heelMd, 4);
+    for (let m = vstep; m < heelMd - vstep * 0.3; m += vstep) {
+      const y = yS + (m / heelMd) * vspan;
+      g += `<line x1="${xv - 6}" y1="${y}" x2="${xv + 6}" y2="${y}" stroke="#7f93a5"/>`;
+      g += `<text x="${xv + 10}" y="${y + 3.5}" fill="#5b6b7b">${Math.round(m).toLocaleString()} m</text>`;
+    }
+    g += `<text x="${xv + R + 4}" y="${yH - 10}" fill="#5b6b7b">heel ${Math.round(heelMd).toLocaleString()} m</text>`;
+    if (WELL.well.tvd_m) g += `<text x="${xv + R + 4}" y="${yH + 14}" fill="#9fb0c0">TVD ${Math.round(WELL.well.tvd_m).toLocaleString()} m</text>`;
+  }
+
   // y-axis labels for the two headline channels
-  const yTop = PT, yBot = PT + PANEL_H;
   g += `<text x="${PADL - 8}" y="${yTop + 4}" text-anchor="end" fill="var(--press)">${fmt(maxWell.press)} MPa</text>`;
   g += `<text x="${PADL - 8}" y="${yTop + 18}" text-anchor="end" fill="var(--rate)">${fmt(maxWell.rate)} m³/min</text>`;
   if (show.has("wh_conc") || show.has("bh_conc"))
@@ -201,6 +226,8 @@ function draw() {
     const x0 = PADL + i * pw, x1 = x0 + pw;
     g += `<rect class="panel" data-i="${i}" x="${x0}" y="${yTop - 14}" width="${pw}" height="${PANEL_H + 14}" fill="${i % 2 ? "#f3f6f9" : "#ffffff"}" stroke="none"/>`;
     g += `<text x="${x0 + pw / 2}" y="${yTop - 4}" text-anchor="middle" fill="${s.placed ? "#9fb0c0" : "#17222e"}" font-size="${pw < 30 ? 9 : 11}" font-weight="600">${s.label}</text>`;
+    if (!s.placed && pw >= 34)
+      g += `<text x="${x0 + pw / 2}" y="${yBot + 12}" text-anchor="middle" fill="#7f93a5" font-size="9">${Math.round(s.top_m).toLocaleString()}</text>`;
     for (const k of ["bh_conc", "wh_conc", "bh_press", "rate", "press"]) {
       if (!show.has(k) || !s.series[k]) continue;
       const v = s.series[k];
@@ -220,7 +247,7 @@ function draw() {
 
   // the wellbore: a bar along measured depth, each stage where it really is
   g += `<rect x="${PADL}" y="${BAR_Y}" width="${W - PADL - PADR}" height="${BAR_H}" fill="#e9eef3" rx="3"/>`;
-  g += `<text x="${PADL - 8}" y="${BAR_Y + BAR_H - 4}" text-anchor="end" fill="#5b6b7b">heel</text>`;
+  if (!VERT) g += `<text x="${PADL - 8}" y="${BAR_Y + BAR_H - 4}" text-anchor="end" fill="#5b6b7b">heel</text>`;
   g += `<text x="${W - PADR + 6}" y="${BAR_Y + BAR_H - 4}" fill="#5b6b7b">toe</text>`;
   S.forEach((s, i) => {
     const cx = PADL + (i + .5) * pw;
