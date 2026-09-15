@@ -66,6 +66,16 @@ number falls between, and says so. Measured so far: 00041 34/34, 00910
 50/50, 00180 25/27 (STEP vector prints no interval; the Daily Stage
 Summary joined the rest).
 
+**Beta (2026-09-15).** The map popup's button is "Show Data →" and, while
+`BETA_DEMO_WA` in map.html is set, every well opens the same demo: 00089,
+ARC HZ 102 ANTEN 2-12-66-25 (AB licence 0489324), CalFrac, 61 stages all
+at a printed depth from the Treatment Summary's "Interval Top (m)". Set
+`BETA_DEMO_WA = ""` and each well opens its own view where one exists.
+A stage charted on two pages (CalFrac's Surface and Bottom Hole) is one
+panel: `well_json` merges by stage number and the chart type is not part
+of the name. The wellbore's vertical section (surface → heel, measured
+depth ticks, TVD) is drawn whenever the record has a total depth.
+
 **The page.** Panels are equal width — a one-metre Trican interval still
 gets a readable plot — ordered by depth heel → toe (or by stage number),
 each with a connector down to its true segment on the bar; the bar is the
