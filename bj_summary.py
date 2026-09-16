@@ -18,6 +18,8 @@ ISIP, proppant by mesh, min/max concentration.
 """
 import re
 
+import fitz
+
 # first-line headings that mark each kind of summary page, in display order
 SUMMARY_KINDS = [
     ("totals", r"^Totals\s*$"),
@@ -65,7 +67,8 @@ def find_summary_pages(doc):
 # Each Totals data row is anchored on its start-time cell. WellView writes
 # that as ISO ('2024-10-05 03:14') in some exports and US ('10/5/2024 3:14')
 # in others — matching only ISO dropped whole documents on the floor.
-_ROWDATE = re.compile(r"(?:20\d\d-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/20\d\d)")
+# "2025-01-29", "1/29/2025 2:33" — and the 2019 JobMaster books' "6/1/19 0:23"
+_ROWDATE = re.compile(r"(?:20\d\d-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/(?:20)?\d\d)")
 
 
 def is_totals_page(page):
@@ -73,7 +76,7 @@ def is_totals_page(page):
     # some vintages, so a literal ' ' match silently skipped whole documents —
     # find_summary_pages still listed the page, which is why those files
     # showed a Totals page with nothing parsed from it. \s covers NBSP/NNBSP.
-    t = page.get_text()
+    t = _plain(page.get_text())
     return (re.search(r"^Totals\s*$", t, re.M) is not None
             and re.search(r"Interval\s*#", t) is not None
             and re.search(r"(Breakdown|Max\.?\s*Pressure)", t) is not None)
@@ -94,14 +97,27 @@ def detect_document(doc):
     return any(is_totals_page(doc[p]) for p in range(doc.page_count))
 
 
+def _plain(t):
+    """Every dash a plain hyphen, every space a plain space: the 2019
+    JobMaster books print "2019‐05‐31" with U+2010 and pad with
+    non-breaking spaces, and a date that fails on one character is a row
+    the parser never sees (00013)."""
+    return (t.replace("\u00a0", " ").replace("\u2010", "-").replace("\u2011", "-")
+            .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-"))
+
+
 def _spans(page):
     out = []
+    M = page.rotation_matrix if page.rotation else None
     for b in page.get_text("dict")["blocks"]:
         for ln in b.get("lines", []):
             for sp in ln["spans"]:
-                t = sp["text"].strip()
+                t = _plain(sp["text"]).strip()
                 if t:
-                    x0, y0, x1, y1 = sp["bbox"]
+                    r = fitz.Rect(sp["bbox"])
+                    if M is not None:
+                        r = (r * M).normalize()
+                    x0, y0, x1, y1 = r
                     out.append((x0, (y0 + y1) / 2, t))
     return out
 

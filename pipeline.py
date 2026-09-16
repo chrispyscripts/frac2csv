@@ -1222,6 +1222,60 @@ def _hand_over_tails(results, notes):
                      + (", …" if len(differ) > 8 else ""))
 
 
+_TOTALS_START = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{2,4})\s+(\d{1,2}):(\d{2})")
+
+
+def _bj_clock(results, notes):
+    """A BJ chart with no clock of its own takes the Totals table's Start
+    time for its interval.
+
+    The JobMaster charts (2019 Duvernay) plot elapsed minutes and print only
+    the JOB's start date in the footer; the per-interval Totals table on the
+    same book prints "1/29/2025 2:33" for every interval. Joined by stage
+    number, only where the chart's clock is the default.
+    """
+    tab = next((r for r in results if r.get("type") == "table"
+                and str(r.get("source") or "").startswith("Totals")), None)
+    if tab is None:
+        return
+    cols = list(tab.get("columns") or [])
+    si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+    ti = next((i for i, c in enumerate(cols) if re.search(r"start", str(c), re.I)), None)
+    if si is None or ti is None:
+        return
+    clocks = {}
+    for row in tab.get("rows") or []:
+        if max(si, ti) >= len(row):
+            continue
+        n = pe.stage_num(row[si])
+        m = _TOTALS_START.search(str(row[ti] or ""))
+        if n < 10 ** 9 and m:
+            mo, d, y, hh, mm = (int(x) for x in m.groups())
+            if y < 100:
+                y += 2000                        # "6/1/19"
+            clocks[n] = (f"{y:04d}-{mo:02d}-{d:02d}", f"{hh:02d}:{mm:02d}:00")
+    if not clocks:
+        return
+    took = 0
+    for r in results:
+        if r.get("type") != "series" or not str(r.get("source") or "").startswith("BJ"):
+            continue
+        md = r["meta"]
+        if (md.get("start_time") or "00:00:00") != "00:00:00":
+            continue
+        n = pe.stage_num(str(md.get("stage") or ""))
+        if n in clocks:
+            md["date"], md["start_time"] = clocks[n]
+            md.setdefault("warnings", []).append(
+                "clock: the Totals table's Start time for this interval — the "
+                "chart plots elapsed minutes and prints none")
+            took += 1
+    if took:
+        notes.append(f"{took} BJ chart(s) clocked from the Totals table's Start time "
+                     f"for their interval; the charts plot elapsed minutes and print "
+                     f"no clock of their own")
+
+
 def _step_clock(doc, results, notes):
     """Give a STEP chart that prints no clock the start time its own report
     files for that stage, and check the ones that do print one against it.
@@ -3087,6 +3141,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # time, not two treatments; _pick_variant collapses them to a bare "1"
     # and only then is the stage in the form the daily report names.
     _daily_ops_fill(doc, results, notes)
+    # after the summary tables are on the results: the BJ Totals table is
+    # what clocks a JobMaster chart
+    _bj_clock(results, notes)
     _normalise_tables(results, filename)
     _join_stage_depth(results)
     _join_stage_meta(results)

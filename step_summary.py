@@ -61,6 +61,8 @@ only job-level Well/Product Information.  The cover sheet is still listed by
 find_summary_pages() so it can be viewed.
 """
 import re
+
+import fitz
 from datetime import datetime, timedelta
 
 TITLE = "Treatment Report - Daily Stage Summary"
@@ -89,11 +91,24 @@ _VALUE = re.compile(r"^(?:-?[\d,]+(?:\.\d+)?|\d{1,2}:\d{2}(?::\d{2})?|"
 
 # --------------------------------------------------------------- page kinds
 
+def _plain(t):
+    """Every dash a plain hyphen and every space a plain space: the 2018
+    Vesta books print "Treatment Report ‐ Daily Stage Summary" with U+2010
+    and non-breaking spaces throughout, and a title that fails on one
+    character reads as no summary at all (00587)."""
+    return (t.replace("\u00a0", " ").replace("\u2010", "-").replace("\u2011", "-")
+            .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-"))
+
+
+def _text(page):
+    return _plain(page.get_text())
+
+
 def is_stage_summary_page(page):
     """True for a Daily-Stage-Summary sheet that actually carries the grid
     (the first sheet of the set is a well/product cover with the same
     title and no grid at all)."""
-    t = page.get_text()
+    t = _text(page)
     if TITLE not in t:
         return False
     if not _TOTALS.search(t):
@@ -117,7 +132,7 @@ def detect(doc):
 
 
 def _page_kind(page):
-    t = page.get_text()
+    t = _text(page)
     if TITLE in t:
         return "stage-summary" if is_stage_summary_page(page) else "daily"
     if re.search(r"STEP Energy Services Interval Summary", t):
@@ -153,14 +168,21 @@ def _cells(page):
     on one PDF line but are separated by a real gap (label vs unit) stay
     separate cells; spans split only by a font change are re-joined."""
     out = []
+    # the 2018 Vesta sheets are landscape pages stored portrait with
+    # /Rotate 90: read in the stored frame the grid comes back transposed,
+    # so every span is stood up the way the viewer shows it
+    M = page.rotation_matrix if page.rotation else None
     for b in page.get_text("dict")["blocks"]:
         for ln in b.get("lines", []):
             cur = None
             for sp in ln["spans"]:
-                t = sp["text"]
+                t = _plain(sp["text"])
                 if not t.strip():
                     continue
-                x0, y0, x1, y1 = sp["bbox"]
+                r = fitz.Rect(sp["bbox"])
+                if M is not None:
+                    r = (r * M).normalize()
+                x0, y0, x1, y1 = r
                 y = (y0 + y1) / 2
                 if cur and x0 - cur[2] < 6:
                     cur = (min(cur[0], y), cur[1], max(cur[2], x1),

@@ -100,23 +100,89 @@ def detect(page):
     none is lost. All five spreadsheet pages lose it.
     """
     t = page.get_text()
+    if is_jobmaster(t):
+        return True
     if TIME_RE.search(t) is None:
         return False                   # no time axis anywhere on the page
     return any("Stage" in line and _WELL_ID.search(line) is not None
                for line in t.splitlines())
 
 
+def _rgb(c):
+    """A span's colour as the (r, g, b) triple drawings use, rounded 2."""
+    try:
+        c = int(c)
+    except (TypeError, ValueError):
+        return (0.0, 0.0, 0.0)
+    return tuple(round(((c >> sh) & 255) / 255.0, 2) for sh in (16, 8, 0))
+
+
+def _upright(page):
+    """The matrix that stands a rotated page up, or None.
+
+    The JobMaster books (BJ, 2019 Duvernay) are landscape pages stored
+    portrait with /Rotate 90: the viewer shows them upright, but every
+    span and drawing comes back in the stored frame, time running DOWN the
+    page. Everything here is read in the frame the viewer shows.
+    """
+    return page.rotation_matrix if page.rotation else None
+
+
 def _spans(page):
     out = []
+    M = _upright(page)
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
                 t = span["text"].strip()
                 if t:
-                    x0, y0, x1, y1 = span["bbox"]
+                    r = fitz.Rect(span["bbox"])
+                    if M is not None:
+                        r = (r * M).normalize()
+                    x0, y0, x1, y1 = r
                     out.append({"t": t, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
-                                "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2})
+                                "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2,
+                                "color": _rgb(span.get("color", 0))})
     return out
+
+
+def _drawings(page):
+    """page.get_drawings(), stood upright on a rotated page."""
+    drawings = page.get_drawings()
+    M = _upright(page)
+    if M is None:
+        return drawings
+    out = []
+    for d in drawings:
+        e = dict(d)
+        e["rect"] = (d["rect"] * M).normalize()
+        items = []
+        for it in d["items"]:
+            kind = it[0]
+            if kind in ("l", "c"):
+                items.append((kind,) + tuple(p * M for p in it[1:]))
+            elif kind == "re":
+                items.append((kind, (it[1] * M).normalize()) + tuple(it[2:]))
+            elif kind == "qu":
+                items.append((kind, it[1] * M) + tuple(it[2:]))
+            else:
+                items.append(it)
+        e["items"] = items
+        out.append(e)
+    return out
+
+
+# BJ's JobMaster charts (2019 Duvernay): one page per zone, titled "Well 2
+# Zone 1" under a "Well Name: 102/05-26-062-21W5" header, plotted against
+# "Elapsed Time (min)" with no clock and no legend — each series is named
+# by its axis title, printed in the series' own colour.
+_JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+Zone\s+(\d+)\b")
+_JM_WELL = re.compile(r"Well Name:\s*(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
+_JM_START = re.compile(r"Job Start:\s*(?:\w+,\s*)?([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})")
+
+
+def is_jobmaster(text):
+    return "JobMaster" in text and "Elapsed Time" in text and _JM_ZONE.search(text) is not None
 
 
 def _fit(pairs):
@@ -183,6 +249,14 @@ def extract_page(page, sample_sec=1.0):
         meta.uwi, meta.stage = uwi, stage
     title = next((s["t"] for s in spans if " - Stage" in s["t"]), "")
     meta.title = title[:60]
+    jobmaster = is_jobmaster(text)
+    if jobmaster:
+        z = _JM_ZONE.search(text)
+        w = _JM_WELL.search(text)
+        meta.stage = str(int(z.group(2)))
+        meta.title = f"Well {int(z.group(1))} Zone {int(z.group(2))}"
+        if w:
+            meta.uwi = "{}{}{}{}{}W{}00".format(*w.groups())
 
     # A stage can be charted MORE THAN ONCE. BJ names the aborted run in the
     # title — "- Stage 06 Plug Slip", "- Stage 17 HRF", "- Stage 41 Winterize"
@@ -231,13 +305,41 @@ def extract_page(page, sample_sec=1.0):
             # different because of typesetting
             tlabels.append((secs, f"{mon}-{int(day):02d} "
                                   f"{int(hh):02d}:{mm}"))
-    if len(tpts) < 3:
+    if len(tpts) < 3 and jobmaster:
+        # "Elapsed Time (min)" under the plot, its labels the row above it
+        cap = next((s for s in spans if "Elapsed Time" in s["t"]), None)
+        if cap is not None:
+            # The row of elapsed labels ("100", "200") sits just above the
+            # caption — and so do the four value axes' "0" ticks, nine pixels
+            # higher, which read as t=0 at four x positions and made the
+            # first fit run 0.07 min per pixel. The labels are the row with
+            # the most members nearest the caption; the zeros stay with
+            # their tick columns.
+            rows = {}
+            for s in spans:
+                if not re.fullmatch(r"\d+(?:\.\d+)?", s["t"]):
+                    continue
+                if cap["cy"] - 30 < s["cy"] < cap["cy"] - 2:
+                    key = next((k for k in rows if abs(k - s["cy"]) <= 3), None)
+                    rows.setdefault(s["cy"] if key is None else key, []).append(s)
+            best = max(rows.values(), key=lambda r: (len(r) >= 2, -abs(r[0]["cy"] - cap["cy"])),
+                       default=[])
+            for s in best:
+                tpts.append((float(s["t"]) * 60.0, s["cx"], s["cy"]))
+            tpts.sort(key=lambda p: p[1])
+        if len(tpts) < 2:
+            raise ValueError("bj1: elapsed-time labels not found")
+        m = _JM_START.search(text)
+        if m and m.group(1)[:3] in MONTHS:       # "May 31" and "June 01" alike
+            meta.date = f"{int(m.group(3)):04d}-{MONTHS[m.group(1)[:3]]:02d}-{int(m.group(2)):02d}"
+        tlabels = [(t, f"{t / 60:g} min") for t, _x, _y in tpts]
+    elif len(tpts) < 3:
         raise ValueError("bj1: time labels not found")
     # year rollover inside a stage: "Dec-31 ... Jan-01" labels wrap the
     # month*31+day clock backwards — push the new-year cluster up a
     # synthetic year (372 days) so time keeps increasing
     lo = min(p[0] for p in tpts)
-    if max(p[0] for p in tpts) - lo > 186 * 86400:
+    if daytags and max(p[0] for p in tpts) - lo > 186 * 86400:
         YEAR = 372 * 86400
         tpts = [(s + YEAR, x, cy) if s - lo < 186 * 86400 else (s, x, cy)
                 for s, x, cy in tpts]
@@ -246,9 +348,10 @@ def extract_page(page, sample_sec=1.0):
         tlabels = [(s + YEAR, lab) if s - lo < 186 * 86400 else (s, lab)
                    for s, lab in tlabels]
     # year is absent from the chart — resolve it from the document's tables
-    _, start_mon, start_day = min(daytags)
-    year = _resolve_year(page.parent, start_mon, start_day)
-    meta.date = f"{year:04d}-{start_mon:02d}-{start_day:02d}"
+    if daytags:
+        _, start_mon, start_day = min(daytags)
+        year = _resolve_year(page.parent, start_mon, start_day)
+        meta.date = f"{year:04d}-{start_mon:02d}-{start_day:02d}"
 
     # A stage can be charted twice with the SAME printed title — a zoomed
     # detail view beside the full treatment, or two genuinely separate
@@ -269,16 +372,21 @@ def extract_page(page, sample_sec=1.0):
     # by right-edge x
     nums = [s for s in spans if re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"])
             and s["cy"] < time_y - 5]
+    # Ticks align on their right edge on BJ-1, on their LEFT edge on the
+    # right-hand axes of a JobMaster page ("0", "500", "1000" all start at
+    # x=712): a column is a run that shares either edge.
     cols = defaultdict(list)
+    lefts = {}
     for s in nums:
         placed = False
         for key in list(cols):
-            if abs(key - s["x1"]) < 8:
+            if abs(key - s["x1"]) < 8 or abs(lefts[key] - s["x0"]) < 8:
                 cols[key].append(s)
                 placed = True
                 break
         if not placed:
             cols[round(s["x1"])].append(s)
+            lefts[round(s["x1"])] = s["x0"]
     fits = {}          # col_x -> (a, b, y_lo, y_hi)
     for key, ss in cols.items():
         if len(ss) < 3:
@@ -327,7 +435,7 @@ def extract_page(page, sample_sec=1.0):
             axis_names[s["t"]] = key
 
     # legend: black names with a short colored dash stroke to the left
-    drawings = page.get_drawings()
+    drawings = _drawings(page)
     dashes = []
     for d in drawings:
         c = d.get("color")
@@ -377,6 +485,21 @@ def extract_page(page, sample_sec=1.0):
     # guard below: the auxiliary single-series pages BJ emits alongside each
     # stage plot their only curve in black, so bailing out first threw them all
     # away as "no legend colors".
+    # JobMaster prints no legend: each axis title IS its series' name, in
+    # the series' own colour, so the title's text colour names the stroke
+    if jobmaster and not name_color:
+        blacks = []
+        for s in spans:
+            if s["t"] not in axis_names:
+                continue
+            if max(s["color"]) - min(s["color"]) > 0.2:
+                name_color[s["t"]] = s["color"]
+            elif max(s["color"]) < 0.25:
+                blacks.append(s["t"])
+        # one black-titled series (Comb ThinFrac HV) draws in black too; two
+        # would be indistinguishable from each other and from the grid
+        if len(blacks) == 1:
+            name_color[blacks[0]] = (0.0, 0.0, 0.0)
     legend_names = {s["t"] for s in spans
                     if re.search(r"\([^)]+\)", s["t"]) and (s["y1"] - s["y0"]) <= 20}
     black_cands = [n for n in legend_names
@@ -498,6 +621,8 @@ def extract_page(page, sample_sec=1.0):
                  "tb": float(tfit[1]), "v0": float(v0), "v1": float(v1)}
 
     day_sec = t_lo % 86400
+    if jobmaster:
+        day_sec = 0.0            # elapsed minutes name no clock; the Totals table may
     meta.start_time = (f"{int(day_sec // 3600):02d}:"
                        f"{int(day_sec % 3600 // 60):02d}:"
                        f"{int(day_sec % 60):02d}")
