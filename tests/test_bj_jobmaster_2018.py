@@ -62,6 +62,22 @@ class Title(unittest.TestCase):
                          ("102/16-11-062-22W5 Well 3", 1, "Stage", ""))
         self.assertIsNone(bj1.jm_title("Offset Wells"))
 
+    def test_int_abbreviation_and_lower_case_meridian(self):
+        self.assertEqual(bj1.jm_title("100/11-14-62-19W5 Well 6 Int 4", word=True),
+                         ("100/11-14-62-19W5 Well 6", 4, "Interval", ""))
+        self.assertEqual(bj1.parse_title("100/14-31-062-16w5 - Well 5 - Stage 01"), ("100143106216W500", "1"))
+        self.assertIsNotNone(bj1._WELL_ID.search("100/14-31-062-16w5 - Well 5 - Stage 01"))
+
+    def test_years_harvested_from_every_date_spelling(self):
+        class Page:
+            def __init__(self, t): self.t = t
+            def get_text(self): return self.t
+        class Doc(list):
+            pass
+        doc = Doc([Page("Report Printed: 8/23/2022"), Page("Post Frac Summary Report August 11, 2022"),
+                   Page("Date 2019-05-17")])
+        self.assertEqual(bj1._doc_year_map(doc), {(8, 23): 2022, (8, 11): 2022, (5, 17): 2019})
+
     def test_2019_additives_page_names_no_zone(self):
         self.assertIsNone(bj1.jm_title("Slickwater Additives"))
 

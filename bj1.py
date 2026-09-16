@@ -37,7 +37,9 @@ TIME_RE = re.compile(r"([A-Z][a-z]{2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 # where every table on the same book says 102/09-28-079-16W6/00. Two digits
 # matched nothing, so its four chart pages were skipped as schematics and the
 # file came back empty (#644). The UWI is padded back to three below.
-_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{2,3}-\d{2}W\d"
+# the 2022 Chevron books (00440-00442) print the meridian in lower case,
+# "100/14-31-062-16w5 - Well 5 - Stage 01"; the id is the same id
+_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{2,3}-\d{2}[Ww]\d"
                       r"|\d{3}[-/][A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
 
 
@@ -62,7 +64,7 @@ def unnumbered_title(page):
 def parse_title(text):
     """-> (uwi, stage) from the chart title's well id and stage number, or
     ("", "") when the text has neither shape."""
-    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{2,3})-(\d{2})W(\d)"
+    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{2,3})-(\d{2})[Ww](\d)"
                   r".*?Stage\s*(\d+)", text, re.S)
     if m:
         g = list(m.groups()[:6])
@@ -249,7 +251,7 @@ def _drawings(page):
 # Vesta's 2018 Joffre books (00071, 00136, 00143) write "Zone #1"; Chevron's
 # 2019 pad (00191-00196) writes "102/16-11-062-22W5  Well 3 - Stage 1".
 _JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+(Zone|Interval)\s*#?\s*(\d+)\b", re.I)
-_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval|Frac|Stage)\s*#?\s*(\d+)\b"
+_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval|Int|Frac|Stage)\s*#?\s*(\d+)\b"
                            r"\s*([A-Za-z][A-Za-z0-9 ]{0,30})?\s*$", re.M | re.I)
 # "Well Name: 102/05-26-062-21W5" — or "Well Name: VESTA SYLAKE 100/10-20-
 # 037-01W5" (00009) and "Well Name: 16-14-064-21W5 100/10-22-064-21W5"
@@ -286,6 +288,8 @@ def jm_title(text, word=False):
         out = (well, int(z.group(3)))
         w = z.group(2)
         w = "Frac #" if w.lower().startswith("frac") else w.capitalize()
+        if w == "Int":
+            w = "Interval"                   # JobMaster 5.00 abbreviates (00232)
         if "#" in z.group(0) and w != "Frac #":
             w += " #"                        # "Zone #1" keeps its own spelling
         return out + (w, " ".join((z.group(4) or "").split())) if word else out
@@ -336,8 +340,18 @@ def _doc_year_map(doc):
         return cached
     m = {}
     for p in range(len(doc)):
-        for mo in re.finditer(r"\b(20\d{2})-(\d{2})-(\d{2})\b", doc[p].get_text()):
+        text = doc[p].get_text()
+        for mo in re.finditer(r"\b(20\d{2})-(\d{2})-(\d{2})\b", text):
             m[(int(mo.group(2)), int(mo.group(3)))] = int(mo.group(1))
+        # the 2022 Chevron books (00440-00442) date their daily reports
+        # "8/23/2022" and their summary "August 11, 2022" and print no ISO
+        # date anywhere, so every chart landed in 2000
+        for mo in re.finditer(r"\b(\d{1,2})/(\d{1,2})/(20\d{2})\b", text):
+            m[(int(mo.group(1)), int(mo.group(2)))] = int(mo.group(3))
+        for mo in re.finditer(r"\b([A-Z][a-z]{2,8})\.?\s+(\d{1,2}),\s*(20\d{2})\b", text):
+            mon = MONTHS.get(mo.group(1)[:3])
+            if mon:
+                m[(mon, int(mo.group(2)))] = int(mo.group(3))
     try:
         doc._bj1_year_map = m
     except Exception:
@@ -387,6 +401,10 @@ def extract_page(page, sample_sec=1.0):
     if jobmaster:
         well, zone, word, qual = jm_title(text, word=True)
         w = _JM_WELL.search(text) or _JM_UWI.search(text)
+        if w is None:
+            # 00232's "Well Name: 15-01-62-19W5 11-14-62-19W5" names no
+            # UWI; the title "100/11-14-62-19W5 Well 6 Int 4" does
+            w = re.search(r"(\d{3})/(\d{2})-(\d{2})-(\d{2,3})-(\d{2})[Ww](\d)", well)
         meta.stage = f"{zone} {qual}" if qual else str(zone)
         meta.title = f"{well} {word}{'' if word.endswith('#') else ' '}{zone}" + (f" {qual}" if qual else "")
         if w:
