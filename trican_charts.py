@@ -649,10 +649,13 @@ def _deduce_under(traced, notes):
     return out
 
 
-def extract_image(img, sample_sec=1.0):
-    """-> (samples, channels, info) for one main Trican chart image."""
+def extract_image(img, sample_sec=1.0, box=None):
+    """-> (samples, channels, info) for one main Trican chart image.
+    `box` gives the plot frame when the caller already knows it (a scanned
+    page, where the frame is found on the whole page — see scan_frames)."""
     img = np.asarray(img).astype(int)
-    box = _frame_bbox(img)
+    if box is None:
+        box = _frame_bbox(img)
     if box is None:
         raise ValueError("trican: no plot frame")
     x0, y0, x1, y1 = box
@@ -856,12 +859,105 @@ def _attach_geom(page, im, img, info):
     info["geom"] = _page_geom(info, w / r.width, h / r.height, r.x0, r.y0)
 
 
+# A scanned page (00006-00008, Trican 2018 Spirit River: the layout-A page
+# photocopied, one image per page with an OCR layer) has no chart image of
+# its own — the "main image" is the whole page — and its frame edges are
+# jpeg-soft: the left edge is not dark for 60% of the page's height, so
+# _frame_bbox finds nothing. The edges ARE the longest dark runs on the
+# page, and a frame is a pair of them one above the other.
+SCAN_ROW_FRAC = 0.5      # a frame edge spans at least this much of the width
+SCAN_DARK = 380          # R+G+B under this is the frame's ink on a scan
+SCAN_MARGIN = (160, 100, 170, 90)   # left, top, right, bottom: room for the
+                                    # tick ladders and the clock strip
+
+
+def _longest_run(row):
+    """(length, first, last) of the longest run of True in a 1-D mask."""
+    best = (0, 0, 0)
+    cur = start = 0
+    for i, v in enumerate(row):
+        if v:
+            if cur == 0:
+                start = i
+            cur += 1
+            if cur > best[0]:
+                best = (cur, start, i)
+        else:
+            cur = 0
+    return best
+
+
+def scan_frames(img):
+    """The plot frames on a scanned page -> [(x0, y0, x1, y1)], top first.
+
+    Rows whose longest dark run spans SCAN_ROW_FRAC of the width are frame
+    edges (00006 p42: rows 457 and 770 for the treatment chart, 1102 and
+    1376 for the chemical one, nothing else). Consecutive edge rows are one
+    edge; edges are paired top-to-bottom where their runs line up in x,
+    and the frame's columns are the run's own extent.
+    """
+    arr = np.asarray(img).astype(int)
+    H, W = arr.shape[:2]
+    dark = arr.sum(axis=2) < SCAN_DARK
+    cand = np.where(dark.sum(axis=1) >= SCAN_ROW_FRAC * W)[0]
+    edges = []
+    for y in cand:
+        n, a, b = _longest_run(dark[y])
+        if n < SCAN_ROW_FRAC * W:
+            continue
+        if edges and y - edges[-1][-1][0] <= 3:
+            edges[-1].append((int(y), a, b))
+        else:
+            edges.append([(int(y), a, b)])
+    frames, i = [], 0
+    while i + 1 < len(edges):
+        top = edges[i]
+        j = i + 1
+        while j < len(edges):
+            bot = edges[j]
+            if abs(top[0][1] - bot[0][1]) < 0.1 * W and abs(top[0][2] - bot[0][2]) < 0.1 * W:
+                break
+            j += 1
+        if j >= len(edges):
+            i += 1
+            continue
+        bot = edges[j]
+        y0, y1 = top[0][0], bot[-1][0]
+        x0 = min(min(a for _, a, _ in top), min(a for _, a, _ in bot))
+        x1 = max(max(b for _, _, b in top), max(b for _, _, b in bot))
+        if y1 - y0 >= 0.08 * H and x1 - x0 >= 0.4 * W:
+            frames.append((int(x0), int(y0), int(x1), int(y1)))
+        i = j + 1
+    return frames
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, channels, info)"""
     im = _main_image(page)
     img = _pixmap(page.parent, im)
     meta = page_meta(page)
-    samples, channels, info = extract_image(img, sample_sec)
+    arr = np.asarray(img).astype(int)
+    box = _frame_bbox(arr)
+    if box is not None:
+        samples, channels, info = extract_image(arr, sample_sec, box=box)
+    else:
+        frames = scan_frames(arr)
+        if not frames:
+            raise ValueError("trican: no plot frame")
+        x0, y0, x1, y1 = frames[0]              # the treatment chart is the upper one
+        H, W = arr.shape[:2]
+        ml, mt, mr, mb = SCAN_MARGIN
+        cx0, cy0 = max(0, x0 - ml), max(0, y0 - mt)
+        crop = arr[cy0:min(H, y1 + mb), cx0:min(W, x1 + mr)]
+        samples, channels, info = extract_image(
+            crop, sample_sec, box=(x0 - cx0, y0 - cy0, x1 - cx0, y1 - cy0))
+        px = info.get("plot")
+        if px:
+            info["plot"] = (px[0] + cx0, px[1] + cy0, px[2] + cx0, px[3] + cy0)
+        info.setdefault("notes", []).append(
+            "scanned page: the plot frame was found on the page image and the "
+            "chart read from a crop around it; the scan's colours are softer "
+            "than a rendered page's")
     if not meta.get("continuous") and info["duration_s"] > STAGE_MAX_S:
         raise ValueError("trican: implausible stage duration "
                          f"{info['duration_s']}s")
