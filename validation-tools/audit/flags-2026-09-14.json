@@ -306,5 +306,31 @@
    "clock.backwards"
   ],
   "expect": false
+ },
+ {
+  "issue": "#649",
+  "file": "01732",
+  "said": "did not pick up stage 3a (repaired: a lower-case re-frac letter is accepted in the Liberty stage label)",
+  "stages": [
+   "3a"
+  ],
+  "channel": null,
+  "kinds": [
+   "stage.missing"
+  ],
+  "expect": false
+ },
+ {
+  "issue": "#650",
+  "file": "00887",
+  "said": "did not pick up wh conc \u2014 its name on these charts is not in the alias ini (repaired: Proppant Conc -> WH Prop Conc for Liberty)",
+  "stages": [
+   "01"
+  ],
+  "channel": "WH Prop Conc",
+  "kinds": [
+   "channel.missing"
+  ],
+  "expect": false
  }
 ]
