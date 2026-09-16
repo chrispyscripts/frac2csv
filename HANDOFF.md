@@ -49,7 +49,19 @@ through the app's own call chain in parallel (`--summary` says what came
 out and why); `detectcensus.py` says which reader would fire on each file.
 Chris's standing goal: every file in those lists reads in the program.
 
-**Where it stands (2026-09-15, end of day): all 227 read.** 225 produce
+**The full pass (2026-09-16, 16:30): 1,163 of the 1,191 new files
+produce charts, 0 error, and the 28 that do not each say why.** BJ 195
+of 195, Liberty 118 of 118, STEP 57 of 57, Schlumberger 48 of 48, CalFrac
+82 of 83, Halliburton 144 of 153, Trican 503 of 519. The 28: nine
+Halliburton-filed books whose only charts are SLB whole-job PRC plots
+(dropped by design; see the open class below), Canyon 00553 (the old
+variant), CalFrac 00224 and thirteen Trican filings that carry daily
+reports, schedules or WellView tables and no vendor chart at all (the
+reader says so), and three Trican books whose charts are pasted
+screenshots (open class). Rows in
+`batch-lists/aer-full-2026-09-15/quickpass-full-2026-09-16.jsonl`.
+
+**Where it stood on 2026-09-15, end of day: all 227 of the test lists read.** 225 produce
 charts (11,728 in all) and 282 tables; two produce tables only, for
 reasons the reader prints — Canyon 00553 is the old Canyon chart variant
 (the deferred class, see memory) and Halliburton 00030 carries only SLB
