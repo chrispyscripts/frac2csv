@@ -54,6 +54,14 @@ class Title(unittest.TestCase):
         self.assertEqual(bj1._unshift("Job Number:  PRJ1001029"), "Job Number:  PRJ1001029")
         self.assertEqual(bj1._unshift(""), "")
 
+    def test_zone_hash_and_well_dash_stage(self):
+        self.assertEqual(bj1.jm_title("Vesta Well 2 102/01-27 Zone #1", word=True),
+                         ("Vesta Well 2 102/01-27", 1, "Zone #", ""))
+        self.assertEqual(bj1.jm_title("Vesta 100/08-06 Zone #12"), ("Vesta 100/08-06", 12))
+        self.assertEqual(bj1.jm_title("102/16-11-062-22W5  Well 3 - Stage 1", word=True),
+                         ("102/16-11-062-22W5 Well 3", 1, "Stage", ""))
+        self.assertIsNone(bj1.jm_title("Offset Wells"))
+
     def test_2019_additives_page_names_no_zone(self):
         self.assertIsNone(bj1.jm_title("Slickwater Additives"))
 
@@ -65,7 +73,13 @@ class Title(unittest.TestCase):
 
     def test_uwi_from_the_2018_header(self):
         m = bj1._JM_UWI.search(P101)
-        self.assertEqual("{}{}{}{}{}W{}00".format(*m.groups()), "100012403224W400")
+        self.assertEqual(bj1._jm_uwi(m), "100012403224W400")
+
+    def test_two_digit_township_on_the_well_name_line(self):
+        m = bj1._JM_WELL.search("Well Name:   05-02-37-01W5 102/01-27-37-01W5")
+        self.assertEqual(bj1._jm_uwi(m), "102012703701W500")
+        m = bj1._JM_WELL.search("Well Name:   VESTA JOFFRE 08-06-40-27 100/08-06-40-27W4/00")
+        self.assertEqual(bj1._jm_uwi(m), "100080604027W400")
 
 
 class CubicUnits(unittest.TestCase):

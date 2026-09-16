@@ -246,14 +246,24 @@ def _drawings(page):
 # "… Frac #2 Ball Seat Attempt" — the qualifier stays in the stage key, as
 # it does for "- Stage 06 Plug Slip" below, so the attempt and the frac
 # stay separate charts.
-_JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+(Zone|Interval)\s+(\d+)\b", re.I)
-_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval|Frac\s*#)\s*(\d+)\b"
+# Vesta's 2018 Joffre books (00071, 00136, 00143) write "Zone #1"; Chevron's
+# 2019 pad (00191-00196) writes "102/16-11-062-22W5  Well 3 - Stage 1".
+_JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+(Zone|Interval)\s*#?\s*(\d+)\b", re.I)
+_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval|Frac|Stage)\s*#?\s*(\d+)\b"
                            r"\s*([A-Za-z][A-Za-z0-9 ]{0,30})?\s*$", re.M | re.I)
 # "Well Name: 102/05-26-062-21W5" — or "Well Name: VESTA SYLAKE 100/10-20-
 # 037-01W5" (00009) and "Well Name: 16-14-064-21W5 100/10-22-064-21W5"
 # (00017): the UWI is somewhere on the line, not necessarily first
-_JM_WELL = re.compile(r"Well Name:[^\n]*?(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
-_JM_UWI = re.compile(r"UWI:\s*(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
+# the township is two digits on 00071's "102/01-27-37-01W5" and 00136's
+# "100/08-06-40-27W4"; the UWI wants three (037, 040), as parse_title does
+_JM_WELL = re.compile(r"Well Name:[^\n]*?(\d{3})/(\d{2})-(\d{2})-(\d{2,3})-(\d{2})W(\d)")
+_JM_UWI = re.compile(r"UWI:\s*(\d{3})/(\d{2})-(\d{2})-(\d{2,3})-(\d{2})W(\d)")
+
+
+def _jm_uwi(m):
+    g = list(m.groups())
+    g[3] = g[3].zfill(3)
+    return "{}{}{}{}{}W{}00".format(*g)
 
 
 def jm_title(text, word=False):
@@ -276,6 +286,8 @@ def jm_title(text, word=False):
         out = (well, int(z.group(3)))
         w = z.group(2)
         w = "Frac #" if w.lower().startswith("frac") else w.capitalize()
+        if "#" in z.group(0) and w != "Frac #":
+            w += " #"                        # "Zone #1" keeps its own spelling
         return out + (w, " ".join((z.group(4) or "").split())) if word else out
     return None
 
@@ -378,7 +390,7 @@ def extract_page(page, sample_sec=1.0):
         meta.stage = f"{zone} {qual}" if qual else str(zone)
         meta.title = f"{well} {word}{'' if word.endswith('#') else ' '}{zone}" + (f" {qual}" if qual else "")
         if w:
-            meta.uwi = "{}{}{}{}{}W{}00".format(*w.groups())
+            meta.uwi = _jm_uwi(w)
 
     # A stage can be charted MORE THAN ONCE. BJ names the aborted run in the
     # title — "- Stage 06 Plug Slip", "- Stage 17 HRF", "- Stage 41 Winterize"
