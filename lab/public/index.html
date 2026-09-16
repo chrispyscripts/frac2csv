@@ -446,6 +446,35 @@
     <button type="button" class="btn gear" id="settingsbtn" title="Settings">⚙ Settings</button>
   </div>
 
+  <!-- Export options (asked before any Export-button save; #-name suffixes) -->
+  <div class="modalback" id="exoptsback" hidden>
+    <div class="modal" id="exoptsmodal" role="dialog" aria-label="Export options" style="max-width:420px">
+      <div class="modalhead">
+        <span>Export options</span>
+        <button type="button" class="x" id="exoptsclose" title="Close">×</button>
+      </div>
+      <div class="modalbody">
+        <div class="setrow">
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="exOptProvider">
+            <span>Append the service provider to the file name <span class="excolsnote">(e.g. -CalFrac)</span></span>
+          </label>
+        </div>
+        <div class="setrow">
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input type="checkbox" id="exOptKind">
+            <span>Append whether the charts were read from an image or from vector drawing <span class="excolsnote">(-image / -vector)</span></span>
+          </label>
+        </div>
+        <div class="setrow excolsnote" id="exoptsnote"></div>
+        <div class="setrow" style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn" id="exoptscancel">Cancel</button>
+          <button type="button" class="btn primary" id="exoptsgo">Export</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Settings panel (opened by the gear) -->
   <div class="modalback" id="settingsback" hidden>
     <div class="modal" id="settingsmodal" role="dialog" aria-label="Settings">
@@ -1439,12 +1468,12 @@ async function saveExports(entry, dir) {
   }
   let n = 0;
   if (entry.well) {
-    const base = secondsBase(entry.well);
+    const base = secondsBase(entry, entry.well);
     if (settings.format !== "xlsx") { await put(base + ".csv", wellCSV(entry.well.stages, entry.name)); n++; }
     if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs, entry.name)); n++; }
   }
   for (const t of (entry._tables || [])) {
-    await put(entry.name.replace(/\.pdf$/i, "") + "-stages-table.csv", tableCSV(t, entry));
+    await put(entry.name.replace(/\.pdf$/i, "") + exportSuffix(entry) + "-stages-table.csv", tableCSV(t, entry));
     n++;
   }
   return n;
@@ -5982,24 +6011,69 @@ async function emit(entry, name, content, binary) {
   if (binary) saveBlob(name, content, XLSX_MIME); else saveText(name, content);
   return name;
 }
+// ---- export name options: "-<Provider>" and "-image"/"-vector" ----
+// Asked in a pop-up before any Export-button save (both boxes remembered);
+// the batch "save beside PDF" path uses the remembered answer silently.
+const exOpts = { provider: false, kind: false };
+try { Object.assign(exOpts, JSON.parse(localStorage.getItem("f2c.exportOpts") || "{}")); } catch {}
+function saveExOpts() {
+  try { localStorage.setItem("f2c.exportOpts", JSON.stringify(exOpts)); } catch {}
+}
+// what one entry's files would be called with the boxes as they stand
+function exportSuffix(entry) {
+  let s = "";
+  if (exOpts.provider) {
+    const p = (entry && entry.provider) || (entry && entry.well && wellProvider(entry.well)) || "";
+    if (p && p !== "Other") s += "-" + p.replace(/[^A-Za-z0-9]+/g, "");
+  }
+  if (exOpts.kind && entry) {
+    const stages = (entry.well && entry.well.stages) || [];
+    const anyImage = stages.some(st => fromImage(st.source))
+      || (entry._tables || []).some(t => fromImage(t.source));
+    s += (stages.length || (entry._tables || []).length) ? (anyImage ? "-image" : "-vector") : "";
+  }
+  return s;
+}
+function askExportOptions(entry) {
+  return new Promise(resolve => {
+    const back = $("exoptsback");
+    $("exOptProvider").checked = !!exOpts.provider;
+    $("exOptKind").checked = !!exOpts.kind;
+    const preview = () => {
+      exOpts.provider = $("exOptProvider").checked;
+      exOpts.kind = $("exOptKind").checked;
+      const e = entry || (current && current.entry);
+      const base = e && e.well ? e.well.base : (e ? e.name.replace(/\.pdf$/i, "") : "file");
+      $("exoptsnote").textContent = e ? "e.g. " + base + exportSuffix(e) + "-seconds.csv" : "";
+    };
+    $("exOptProvider").onchange = preview;
+    $("exOptKind").onchange = preview;
+    preview();
+    const done = ok => { back.hidden = true; if (ok) saveExOpts(); resolve(ok); };
+    $("exoptsgo").onclick = () => done(true);
+    $("exoptscancel").onclick = () => done(false);
+    $("exoptsclose").onclick = () => done(false);
+    back.hidden = false;
+  });
+}
 // Per-second curve exports carry a -seconds suffix, so a chart download is
 // never confused with the stage-table one sitting beside it in the folder.
-const secondsBase = well => well.base + "-seconds";
+const secondsBase = (entry, well) => well.base + exportSuffix(entry) + "-seconds";
 
 // the seconds file(s) for one well, honoring the format setting
 async function emitSeconds(entry, well) {
   const out = [];
   if (settings.format !== "xlsx")
-    out.push(await emit(entry, secondsBase(well) + ".csv", wellCSV(well.stages, entry.name), false));
+    out.push(await emit(entry, secondsBase(entry, well) + ".csv", wellCSV(well.stages, entry.name), false));
   if (settings.format !== "csv")
-    out.push(await emit(entry, secondsBase(well) + ".xlsx",
+    out.push(await emit(entry, secondsBase(entry, well) + ".xlsx",
                         wellXLSX(well.stages, settings.xlsxTabs), true));
   return out;
 }
 // the summary table CSV(s) for one entry (BJ Totals etc.)
 async function emitSummary(entry) {
   const out = [];
-  const base = entry.name.replace(/\.pdf$/i, "");
+  const base = entry.name.replace(/\.pdf$/i, "") + exportSuffix(entry);
   const used = new Set();
   for (const t of (entry._tables || [])) {
     // every table used to be written as "<base>-summary.csv"; in a zip keyed
@@ -6024,18 +6098,21 @@ function entriesInScope() {
 async function exportSecondsOne() {
   const e = current && current.entry;
   if (!e || !e.well) return;
+  if (!(await askExportOptions(e))) return;
   const files = await emitSeconds(e, e.well);
   exportDone(files);
 }
 async function exportSummaryOne() {
   const e = current && current.entry;
   if (!e || !(e._tables && e._tables.length)) return;
+  if (!(await askExportOptions(e))) return;
   const files = await emitSummary(e);
   exportDone(files);
 }
 async function exportSecondsAll() {
   const list = entriesInScope().filter(e => e.well);
   if (!list.length) return;
+  if (!(await askExportOptions(list[0]))) return;
   if (isLocal()) {
     let n = 0; const written = [];
     for (const e of list) {
@@ -6047,9 +6124,9 @@ async function exportSecondsAll() {
     const pairs = [];
     for (const e of list) {
       if (settings.format !== "xlsx")
-        pairs.push({ name: secondsBase(e.well) + ".csv", text: wellCSV(e.well.stages, e.name) });
+        pairs.push({ name: secondsBase(e, e.well) + ".csv", text: wellCSV(e.well.stages, e.name) });
       if (settings.format !== "csv")
-        pairs.push({ name: secondsBase(e.well) + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs, e.name) });
+        pairs.push({ name: secondsBase(e, e.well) + ".xlsx", bin: wellXLSX(e.well.stages, settings.xlsxTabs, e.name) });
     }
     await emitZip(pairs, "carmines-seconds.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
@@ -6057,6 +6134,7 @@ async function exportSecondsAll() {
 async function exportSummaryAll() {
   const list = entriesInScope().filter(e => e._tables && e._tables.length);
   if (!list.length) return;
+  if (!(await askExportOptions(list[0]))) return;
   if (isLocal()) {
     let n = 0; const written = [];
     for (const e of list) {
@@ -6068,7 +6146,7 @@ async function exportSummaryAll() {
     const pairs = [];
     for (const e of list)
       for (const t of e._tables)
-        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + "-summary.csv", text: tableCSV(t, e) });
+        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + exportSuffix(e) + "-summary.csv", text: tableCSV(t, e) });
     await emitZip(pairs, "carmines-summary.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
 }

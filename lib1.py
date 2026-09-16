@@ -954,7 +954,10 @@ def extract_page(page, sample_sec=1.0):
          # distinct stages under one label. Uppercase-only and 2-4 letters, so
          # the lowercase "of" in "Stage 01 of 47" (handled above) and ordinary
          # words after the name are not swallowed.
-         or re.search(rf"{_STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Z]?"
+         # The re-frac letter is printed in either case: "Stage 4A" and, on
+         # 01732 p207, "Middle Montney Stage 3a" — which this pattern
+         # refused, so the re-plug frac of stage 3 filed as no stage (#649).
+         or re.search(rf"{_STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Za-z]?"
                       r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]+[A-Z]{2,4})?)\b()",
                       text))
     if m:

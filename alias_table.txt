@@ -31,7 +31,7 @@ chart_headers_include = PRC
 chart_stage_tokens = Stage , STG
 curve.Tr Press = Treating Pressure , Treating Pressure 2 , Treatin Pressure
 curve.Slurry Rate = Slurry Rate, Slur Rate, CFLD Rate
-curve.WH Prop Conc = Prop Con,Prop Conc
+curve.WH Prop Conc = Prop Con,Prop Conc, Proppant Conc
 curve.BH Prop Conc = BH Prop Conc, Btm Prop Conc, Denso 2, BH PROP CON
 
 SCHLUM-1
