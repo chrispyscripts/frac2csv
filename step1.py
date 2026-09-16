@@ -117,7 +117,14 @@ def _big_images(page):
     for im in page.get_images(full=True):
         if im[2] < 500 or im[3] < 300:
             continue
-        rects = page.get_image_rects(im[0])
+        try:
+            rects = page.get_image_rects(im[0])
+        except Exception:
+            # get_image_rects decodes the image, and 00490 (Halliburton,
+            # 2022) carries one MuPDF cannot ("not enough data to determine
+            # image format"); it took the whole 247-page book down from
+            # inside detect. A picture that will not decode is not a chart.
+            continue
         if rects:
             out.append((rects[0].y0, im))
     out.sort(key=lambda p: p[0])
