@@ -305,6 +305,78 @@ def span_text(page, bbox, direction=(1.0, 0.0)):
     return out
 
 
+def span_texts(page, spans):
+    """[(bbox, direction), ...] -> [text, ...], read in ONE tesseract call.
+
+    span_text costs a tesseract start per span, a quarter second each: a
+    JobMaster chart page in a character-less font has sixty spans and
+    took 15 s to read, and 00584's 108 chart pages ran past the batch
+    runner's budget. Here every span's crop is stacked into one tall
+    image with white gutters between, read once, and the words handed
+    back to the crop whose band they fell in — so a line tesseract
+    merges or splits still lands on the right span.
+    """
+    if not available() or not spans:
+        return [""] * len(spans)
+    store = _cache(page)
+    keys = [("span", getattr(page, "number", None), tuple(round(v, 1) for v in b),
+             tuple(round(v, 2) for v in d)) for b, d in spans]
+    out = [store.get(k) if store is not None else None for k in keys]
+    todo = [i for i, t in enumerate(out) if t is None]
+    if not todo:
+        return out
+    crops = []
+    for i in todo:
+        bbox, direction = spans[i]
+        try:
+            r = fitz.Rect(bbox) + (-SPAN_PAD, -SPAN_PAD, SPAN_PAD, SPAN_PAD)
+            pix = page.get_pixmap(matrix=fitz.Matrix(SPAN_SCALE, SPAN_SCALE), clip=r)
+            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width, pix.n)
+            img = img[..., :3] if pix.n >= 3 else np.repeat(img, 3, axis=2)
+            if abs(direction[0]) < 0.5:
+                img = np.rot90(img, 3 if direction[1] < 0 else 1)
+            crops.append((i, np.ascontiguousarray(img)))
+        except Exception:
+            crops.append((i, None))
+    gutter = 40
+    W = max((c.shape[1] for _, c in crops if c is not None), default=0) + 2 * gutter
+    H = sum((c.shape[0] + gutter for _, c in crops if c is not None), gutter)
+    texts = {i: "" for i, _ in crops}
+    if W > 2 * gutter and H > gutter:
+        sheet = np.full((H, W, 3), 255, np.uint8)
+        bands = []
+        y = gutter
+        for i, c in crops:
+            if c is None:
+                continue
+            sheet[y:y + c.shape[0], gutter:gutter + c.shape[1]] = c
+            bands.append((i, y, y + c.shape[0]))
+            y += c.shape[0] + gutter
+        words = {i: [] for i, _, _ in bands}
+        try:
+            boxes = ar.ocr_boxes(sheet.astype(int), psm=6, whitelist="")
+        except Exception:
+            boxes = []
+        for b in boxes:
+            t = (b.get("text") or "").strip()
+            if not t:
+                continue
+            cy = (b["y0"] + b["y1"]) / 2.0
+            for i, y0, y1 in bands:
+                if y0 - gutter / 2 <= cy < y1 + gutter / 2:
+                    words[i].append((b["x0"], t))
+                    break
+        for i in words:
+            t = " ".join(t for _x, t in sorted(words[i]))
+            texts[i] = re.sub(r"(?<=m)[*?\u00b3](?=/|\)|$)", "3", t)
+    for i in todo:
+        out[i] = texts.get(i, "")
+        if store is not None:
+            store[keys[i]] = out[i]
+    return out
+
+
 def text_spans(page):
     """[(bbox, text)] for every OCR'd line carrying a letter.
 

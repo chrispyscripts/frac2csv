@@ -202,14 +202,21 @@ def _spans(page):
                       if b.get("type") == 0 for l in b.get("lines", []))
         if n_spans > JM_OCR_MAX_SPANS:
             return out
-    for block in page.get_text("dict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line["spans"]:
-                t = _unshift(span["text"]).strip()
-                if t and garbled:
-                    # the box and colour are the page's; the text is read
-                    # off the ink, because the font names no characters
-                    t = ocr_labels.span_text(page, span["bbox"], line.get("dir", (1.0, 0.0)))
+    raw = [(span, line.get("dir", (1.0, 0.0)))
+           for block in page.get_text("dict")["blocks"]
+           for line in block.get("lines", []) for span in line["spans"]]
+    texts = [_unshift(span["text"]).strip() for span, _d in raw]
+    if garbled:
+        # the box and colour are the page's; the text is read off the
+        # ink, because the font names no characters — all spans in one
+        # tesseract call (ocr_labels.span_texts)
+        want = [k for k, t in enumerate(texts) if t]
+        got = ocr_labels.span_texts(page, [(raw[k][0]["bbox"], raw[k][1]) for k in want])
+        for k, t in zip(want, got):
+            texts[k] = t
+    for (span, _d), t in zip(raw, texts):
+        if True:
+            if True:
                 if t:
                     r = fitz.Rect(span["bbox"])
                     if M is not None:
