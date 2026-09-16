@@ -1898,6 +1898,12 @@ def _join_stage_depth(results):
         cols = list(r.get("columns") or [])
         si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
         if si is None:
+            # the same spilt heading _bj_clock allows for: "SURFACTANT,
+            # FraCare FBS 200 Interval #" (00575)
+            si = next((i for i, c in enumerate(cols)
+                       if re.search(r"\b(?:Interval|Stage)\s*#?\s*$", str(c), re.I)
+                       and len(str(c)) < 60), None)
+        if si is None:
             continue
         di = [i for i, c in enumerate(cols) if _DEPTH_COL.search(str(c))]
         if not di:
