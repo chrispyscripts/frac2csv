@@ -158,6 +158,14 @@ Classes found and fixed in the pass (be76d56 through 1925091):
   `_upright` stands the content up from the "Elapsed Time" caption's own
   line direction. The additives page there is "Additives" alone and
   never detects.
+  The full pass (all 1,191, lists in `batch-lists/aer-full-2026-09-15/`,
+  results in the session scratchpad's `quickpass-full.jsonl`, started
+  2026-09-15 late evening) found two more title forms in its first
+  hundred: Vesta's Joffre books (00071, 00136, 00143) write "Zone #1"
+  and Chevron's pad (00191-00196) "102/16-11-062-22W5  Well 3 - Stage 1";
+  both read now, and two-digit townships on the Well Name line ("-37-")
+  are zero-filled. The pass's workers hold the code they started with,
+  so a watcher re-runs every empty or tables-only row when it exits.
 - **Trican layout A photocopied (00006, 00007, 00008 — 2018 Spirit
   River).** The page is one scanned image with an OCR layer; the reader's
   "main image" is therefore the whole page and `step1._frame_bbox` finds
