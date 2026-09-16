@@ -184,12 +184,24 @@ def _garbled(page):
         return False
 
 
+# A JobMaster chart page carries thirty to sixty spans. A daily-report
+# page in the same character-less font carries hundreds, and reading each
+# one off the ink is a tesseract call apiece — 00584 spent its whole
+# 1,500 s budget on such pages before reaching a chart. Past this many
+# spans a garbled page is not a chart and is left unread.
+JM_OCR_MAX_SPANS = 120
+
+
 def _spans(page):
     out = []
     M = _upright(page)
     garbled = _garbled(page)
     if garbled:
         import ocr_labels
+        n_spans = sum(len(l["spans"]) for b in page.get_text("dict")["blocks"]
+                      if b.get("type") == 0 for l in b.get("lines", []))
+        if n_spans > JM_OCR_MAX_SPANS:
+            return out
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
