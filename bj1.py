@@ -198,8 +198,13 @@ def _drawings(page):
 # well named by its operator and location, no "Well N".
 # Murphy's books (00017, 00018) say "Well A interval 1" / "Well B Interval
 # 3" for the same page; zone and interval are the same word here.
+# Husky's (00106): "Husky 100/06-24-048-19W5 Frac #2", and the aborted run
+# "… Frac #2 Ball Seat Attempt" — the qualifier stays in the stage key, as
+# it does for "- Stage 06 Plug Slip" below, so the attempt and the frac
+# stay separate charts.
 _JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+(Zone|Interval)\s+(\d+)\b", re.I)
-_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval)\s+(\d+)\s*$", re.M | re.I)
+_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval|Frac\s*#)\s*(\d+)\b"
+                           r"\s*([A-Za-z][A-Za-z0-9 ]{0,30})?\s*$", re.M | re.I)
 # "Well Name: 102/05-26-062-21W5" — or "Well Name: VESTA SYLAKE 100/10-20-
 # 037-01W5" (00009) and "Well Name: 16-14-064-21W5 100/10-22-064-21W5"
 # (00017): the UWI is somewhere on the line, not necessarily first
@@ -210,12 +215,13 @@ _JM_UWI = re.compile(r"UWI:\s*(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
 def jm_title(text, word=False):
     """-> (well label, zone number) from a JobMaster page's title line, or
     None: ("Well 2", 1) for the 2019 books, ("RIFE 100/01-24", 6) for 2018.
-    With `word`, the page's own word for the stage comes third — "Zone" or
-    "Interval" (Murphy's 00017/00018 say interval)."""
+    With `word`, two more: the page's own word for the stage — "Zone",
+    "Interval" (Murphy's 00017/00018), "Frac #" (Husky's 00106) — and the
+    qualifier printed after the number ("Ball Seat Attempt"), or ""."""
     z = _JM_ZONE.search(text)
     if z:
         out = (f"Well {int(z.group(1))}", int(z.group(3)))
-        return out + (z.group(2).capitalize(),) if word else out
+        return out + (z.group(2).capitalize(), "") if word else out
     z = _JM_ZONE_2018.search(text)
     if z:
         # "Vesta 100/10-20  Well 1 - Zone 1" (00009), "102/04-26-062-21W5
@@ -224,7 +230,9 @@ def jm_title(text, word=False):
         well = re.sub(r"\s*-\s*$", "", " ".join(z.group(1).split()))
         well = re.sub(r"\bWell(\d+)\b", r"Well \1", well)
         out = (well, int(z.group(3)))
-        return out + (z.group(2).capitalize(),) if word else out
+        w = z.group(2)
+        w = "Frac #" if w.lower().startswith("frac") else w.capitalize()
+        return out + (w, " ".join((z.group(4) or "").split())) if word else out
     return None
 
 
@@ -309,10 +317,10 @@ def extract_page(page, sample_sec=1.0):
     meta.title = title[:60]
     jobmaster = is_jobmaster(text)
     if jobmaster:
-        well, zone, word = jm_title(text, word=True)
+        well, zone, word, qual = jm_title(text, word=True)
         w = _JM_WELL.search(text) or _JM_UWI.search(text)
-        meta.stage = str(zone)
-        meta.title = f"{well} {word} {zone}"
+        meta.stage = f"{zone} {qual}" if qual else str(zone)
+        meta.title = f"{well} {word}{'' if word.endswith('#') else ' '}{zone}" + (f" {qual}" if qual else "")
         if w:
             meta.uwi = "{}{}{}{}{}W{}00".format(*w.groups())
 

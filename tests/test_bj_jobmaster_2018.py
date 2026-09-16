@@ -40,6 +40,13 @@ class Title(unittest.TestCase):
         self.assertEqual(bj1.jm_title("Well B Interval 17"), ("Well B", 17))
         self.assertIsNone(bj1.jm_title("Additives 1 - 4"))
 
+    def test_frac_number_and_its_qualifier(self):
+        self.assertEqual(bj1.jm_title("Husky 100/06-24-048-19W5 Frac #2"), ("Husky 100/06-24-048-19W5", 2))
+        self.assertEqual(bj1.jm_title("Husky 100/06-24-048-19W5 Frac #2 Ball Seat Attempt", word=True),
+                         ("Husky 100/06-24-048-19W5", 2, "Frac #", "Ball Seat Attempt"))
+        self.assertEqual(bj1.jm_title("Well A interval 1", word=True), ("Well A", 1, "Interval", ""))
+        self.assertIsNone(bj1.jm_title("Additives"))
+
     def test_2019_additives_page_names_no_zone(self):
         self.assertIsNone(bj1.jm_title("Slickwater Additives"))
 
