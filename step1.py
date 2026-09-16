@@ -54,7 +54,7 @@ def _detect_tiled(page):
     widths = set()
     tiles = 0
     for im in ims:
-        rects = page.get_image_rects(im[0])
+        rects = _rects(page, im[0])
         if not rects:
             continue
         w = rects[0].width
@@ -106,6 +106,14 @@ def _detect_new(page):
             and re.search(r"Interval\s+\d+", t) is not None)
 
 
+def _rects(page, xref):
+    """page.get_image_rects, or [] for a picture MuPDF cannot decode."""
+    try:
+        return page.get_image_rects(xref)
+    except Exception:
+        return []
+
+
 def _big_images(page):
     """The page's chart-sized images, PLACED ones only, top to bottom.
 
@@ -117,14 +125,11 @@ def _big_images(page):
     for im in page.get_images(full=True):
         if im[2] < 500 or im[3] < 300:
             continue
-        try:
-            rects = page.get_image_rects(im[0])
-        except Exception:
-            # get_image_rects decodes the image, and 00490 (Halliburton,
-            # 2022) carries one MuPDF cannot ("not enough data to determine
-            # image format"); it took the whole 247-page book down from
-            # inside detect. A picture that will not decode is not a chart.
-            continue
+        # get_image_rects decodes the image, and 00490 (Halliburton, 2022)
+        # carries one MuPDF cannot ("not enough data to determine image
+        # format"); it took the whole 247-page book down from inside
+        # detect. A picture that will not decode is not a chart.
+        rects = _rects(page, im[0])
         if rects:
             out.append((rects[0].y0, im))
     out.sort(key=lambda p: p[0])
@@ -145,7 +150,7 @@ def composite(page):
     doc = page.parent
     placed = []
     for im in page.get_images(full=True):
-        rects = page.get_image_rects(im[0])
+        rects = _rects(page, im[0])
         if not rects:
             continue
         r = rects[0]
@@ -171,8 +176,8 @@ def composite(page):
             pix = page.get_pixmap(matrix=fitz.Matrix(sc, sc), alpha=False)
             return (np.frombuffer(pix.samples, dtype=np.uint8)
                     .reshape(pix.height, pix.width, pix.n)[:, :, :3].astype(int))
-    ims = sorted(page.get_images(full=True),
-                 key=lambda im: page.get_image_rects(im[0])[0].y0)
+    ims = sorted((im for im in page.get_images(full=True) if _rects(page, im[0])),
+                 key=lambda im: _rects(page, im[0])[0].y0)
     arrs = []
     for im in ims:
         pix = fitz.Pixmap(doc, im[0])
