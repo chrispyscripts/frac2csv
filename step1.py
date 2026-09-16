@@ -48,13 +48,21 @@ def _detect_tiled(page):
     ims = page.get_images(full=True)
     if len(ims) < 3:
         return False
+    # The 2019 books tile the WHOLE page — title, interval, the info table —
+    # and park a 102x7 pt logo and two hairline rules among the tiles.
+    # Those are not tiles; the uniform full-width stripes are (00180-1021).
     widths = set()
+    tiles = 0
     for im in ims:
         rects = page.get_image_rects(im[0])
         if not rects:
-            return False
-        widths.add(round(rects[0].width))
-    return len(widths) == 1 and widths.pop() > page.rect.width * 0.9
+            continue
+        w = rects[0].width
+        if w < page.rect.width * 0.3:
+            continue
+        widths.add(round(w))
+        tiles += 1
+    return tiles >= 3 and len(widths) == 1 and widths.pop() > page.rect.width * 0.9
 
 
 def _page_text(page):
@@ -117,8 +125,45 @@ def _big_images(page):
 
 
 def composite(page):
-    """Stack the page's image tiles top-to-bottom at native resolution."""
+    """The page's image tiles laid back where the page puts them, at the
+    tiles' own resolution; top-to-bottom stacking as the fallback.
+
+    The 2019 books tile the whole page and park a 102x7 pt logo and two
+    hairline rules among the stripes: stacked and stretched to the common
+    width, the logo became a 1100-px block glued under the chemical chart
+    and the title tiles (narrower than the chart's) never reached the rows
+    page_meta reads (00180-1021). Placed by rect there is no stretching:
+    each tile is scaled by the one factor the chart tiles set.
+    """
     doc = page.parent
+    placed = []
+    for im in page.get_images(full=True):
+        rects = page.get_image_rects(im[0])
+        if not rects:
+            continue
+        r = rects[0]
+        if r.width < 4 or r.height < 2:
+            continue                             # a rule, not a tile
+        placed.append((r, im))
+    wide = [r for r, _ in placed if r.width > page.rect.width * 0.5]
+    if len(placed) >= 3 and wide:
+        # px per pt from the chart tiles themselves
+        scales = []
+        for r, im in placed:
+            if r.width > page.rect.width * 0.5:
+                try:
+                    scales.append(fitz.Pixmap(doc, im[0]).width / float(r.width))
+                except Exception:
+                    pass
+        if scales:
+            # Render the page at the tiles' own scale: the chart tiles land
+            # 1:1, and the title, the interval and the info table — drawn as
+            # vector outlines on these pages, in no tile and no text layer —
+            # come with them, where page_meta reads them.
+            sc = float(np.median(scales))
+            pix = page.get_pixmap(matrix=fitz.Matrix(sc, sc), alpha=False)
+            return (np.frombuffer(pix.samples, dtype=np.uint8)
+                    .reshape(pix.height, pix.width, pix.n)[:, :, :3].astype(int))
     ims = sorted(page.get_images(full=True),
                  key=lambda im: page.get_image_rects(im[0])[0].y0)
     arrs = []
@@ -311,7 +356,9 @@ def page_meta(img):
     m = re.search(r"([\d,]+\.\d+)\s*m\s*-\s*([\d,]+\.\d+)\s*m", text)
     if m:
         meta["interval"] = f"{m.group(1)}-{m.group(2)} m"
-    if "Prop Conc" not in text and "Casing" in text.replace("Cacinn", "Casing"):
+    if re.search(r"Treatment Analysis|Interval Summary|Prop Conc", text):
+        meta["kind"] = "main"                # the 2019 tiled header names the page
+    elif "Casing" in text.replace("Cacinn", "Casing"):
         meta["kind"] = "casing"
     elif "Prop Conc" not in text:
         # garbled OCR on the casing twin is common; main pages OCR cleanly
@@ -400,6 +447,64 @@ def _right_columns(pts, gap=18):
     return out
 
 
+def _clock_axis(img, x0, x1, y1):
+    """The "HH:MM" labels under the frame -> (seconds at x=0, sec/px), or
+    None. Seconds are of the day, so t0 is the chart's wall-clock start."""
+    from PIL import Image
+    import trican_charts as tc
+    H, W = img.shape[:2]
+    ya, yb = min(H - 1, y1 + 2), min(H, y1 + 48)
+    xa, xb = max(0, x0 - 30), min(W, x1 + 30)
+    strip = np.asarray(img[ya:yb, xa:xb]).astype(np.uint8)
+    if strip.size == 0:
+        return None
+    big = np.array(Image.fromarray(strip).resize((strip.shape[1] * 3, strip.shape[0] * 3),
+                                                 Image.LANCZOS)).astype(int)
+
+    def label(text):
+        m = re.fullmatch(r"(\d{1,2}):(\d{2})", text.strip())
+        if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60
+        return None
+
+    # Each label is read on its own. A three-hour stage prints its labels
+    # forty pixels apart at this render, and one read over the whole strip
+    # runs them together — "10:5011:0011:1011:20", one position for four
+    # labels — so 00180-1021 p117 got one usable label from the nineteen
+    # printed and fell to the numeric reader, which fitted a three-minute
+    # stage. The ink separates cleanly at the gaps between labels (wider
+    # than the gaps inside one), so the strip is cut there and each piece
+    # read as a line, its position the piece's own centre.
+    pts = []
+    dark = big.sum(axis=2) < 450
+    for a, b in ar._col_groups(dark, gap=20, min_w=30):
+        sub = big[:, max(0, a - 6):min(big.shape[1], b + 6)]
+        for text, _wx, _wy in ar.ocr_words(sub, psm=7, whitelist="0123456789:"):
+            sec = label(text)
+            if sec is not None:
+                pts.append((sec, xa + (a + b) / 6.0))
+                break
+    if len(pts) < 3:
+        # the whole-strip read, for a strip the columns did not separate
+        pts = []
+        for text, wx, _wy in ar.ocr_words(big, psm=6, whitelist="0123456789:"):
+            sec = label(text)
+            if sec is not None:
+                pts.append((sec, xa + wx / 3.0))
+    if len(pts) < 3:
+        return None
+    pts.sort(key=lambda p: p[1])
+    fit = tc._b_clock_fit(pts, x0, x1)
+    if fit is None or fit[1] <= 0:
+        return None
+    a, b = float(fit[0]), float(fit[1])
+    if a + b * x0 < 0:
+        # a chart that opens before the midnight its labels count from
+        # (00180-1021 p112 read -1:59:41): the same clock, the day before
+        a += 86400.0
+    return a, b
+
+
 def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     """Chart with black tick labels on stacked value axes, each named by its
     own rotated title (Pressure / Rate / Concentration).
@@ -418,7 +523,17 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     if box is None:
         raise ValueError("step1: no frame")
     x0, y0, x1, y1 = box
-    tcal = ar.time_calibration(img, x0, x1, y1)
+    # The 2019 tiled books label the axis with a wall clock — 13:40, 13:50
+    # … — and nothing else. Read that first, the way layout B's is read
+    # (trican_charts._b_clock_fit: misread hours put back on the minute
+    # ladder), from the strip upscaled three times, which is what makes
+    # this font's 7-pixel digits legible; the numeric reader, tried second,
+    # took "13:50" for minutes on 00180-1021 p98 and fitted a 140-second
+    # stage. A "Time (min)" axis has no colons and falls straight through.
+    tcal = _clock_axis(img, x0, x1, y1)
+    clock_axis = tcal is not None
+    if tcal is None:
+        tcal = ar.time_calibration(img, x0, x1, y1)
     if tcal is None:
         raise ValueError("step1: time axis unreadable")
     ta, tb = tcal
@@ -721,6 +836,11 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         raise ValueError("step1: no channel calibrated")
     info = {"plot": box, "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": []}
+    if clock_axis:
+        # the axis IS a wall clock: sample 0 sits at its first second, and
+        # _place_on_clock adds the date from the footer where it agrees
+        s0 = int(t_start) % 86400
+        info["clock_start"] = "%02d:%02d:%02d" % (s0 // 3600, s0 // 60 % 60, s0 % 60)
     for c in channels:
         if c.get("filled_cols"):
             secs = c["filled_cols"] * tb

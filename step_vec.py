@@ -27,6 +27,15 @@ import numpy as np
 import curve_trace as ct
 
 NUM = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
+
+
+def _plain(t):
+    """The page's text with its typographic spaces and dashes made plain.
+    Vesta's 2018 books (00585-00590) set "STEP Energy Services" with
+    non-breaking spaces and the interval's dash as U+2010, so nothing here
+    matched and four whole files read as schematics."""
+    return (t or "").replace("\xa0", " ").replace("\u2010", "-").replace("\u2011", "-") \
+        .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
 _UNIT = re.compile(r"\(([^)]*)\)\s*$")
 
 # How far past its own outermost tick LABEL a curve's ink may still be that
@@ -41,7 +50,7 @@ LADDER_PAD = 8.0
 def detect(page):
     """A STEP report page drawn as vector, not scanned."""
     try:
-        text = page.get_text()
+        text = _plain(page.get_text())
     except Exception:
         return False
     if "STEP Energy Services" not in text:
@@ -64,7 +73,7 @@ def _spans(page):
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for s in line["spans"]:
-                t = s["text"].strip()
+                t = _plain(s["text"]).strip()
                 if not t:
                     continue
                 x0, y0, x1, y1 = s["bbox"]
@@ -123,15 +132,26 @@ def extract_page(page, sample_sec=1.0):
         raise ValueError("step_vec: no time axis caption found")
 
     meta = Meta()
-    text = page.get_text()
+    text = _plain(page.get_text())
     meta.warnings = []
     m = re.search(r"-\s*Stage\s+([A-Za-z0-9]+)", text)
+    if m is None:
+        # the Interval Summary layout (Vesta 2018): "Treatment 1" over the
+        # interval "5,992.40 m - 6,040.30 m", the well as "LSD:"
+        m = re.search(r"\bTreatment\s+(\d+)\b", text)
     meta.stage = m.group(1) if m else None
     m = re.search(r"\b(\d{1,2})/(\d{1,2})/(20\d\d)\b", text)
     meta.date = f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else ""
     m = re.search(r"^(.*?)\s*-\s*Stage\s", text, re.M)
     meta.title = (m.group(1).strip() if m else "")[:60]
-    meta.uwi = ""
+    # the info table prints its labels in one column and its values in the
+    # next, so "LSD:" and the location are not neighbours in the text
+    m = re.search(r"\b([0-9]{3}/[0-9]{2}-[0-9]{2}-[0-9]{3}-[0-9]{2}W[0-9])M?\b", text)
+    meta.uwi = m.group(1) if m else ""
+    if not meta.title and meta.stage and re.search(r"\bTreatment\s+\d+\b", text):
+        meta.title = f"Treatment {meta.stage}"
+    m = re.search(r"([\d,]+(?:\.\d+)?)\s*m\s*-\s*([\d,]+(?:\.\d+)?)\s*m\b", text)
+    meta.interval = f"{m.group(1)} m - {m.group(2)} m" if m else ""
 
     # curve points grouped by colour, kept with their y so a band can claim them
     strokes = {}

@@ -351,6 +351,22 @@ def parse_stage_summary(doc):
     data = {}            # stage label -> {field: value}
     seq = []             # stage labels in document order
     job, prev_first = 1, None
+    # One field, one name across the sheet's pages. 00180-1021's five-page
+    # sheet heads its date column "Date (YYYY-MM-DD)" on the first page and
+    # "Date YYYY-MM-DD" on the other four, and the two came through as two
+    # columns — the second one nothing looked at, so stages 11-45 had no
+    # date and their charts stayed undated. Names that differ only in
+    # punctuation and spacing are the same column, kept under the first
+    # spelling seen.
+    canon = {}
+
+    def same(name, unit):
+        # the first page parses "Date (YYYY-MM-DD)" as the name "Date" with
+        # the unit "YYYY-MM-DD"; the others read "Date YYYY-MM-DD" whole —
+        # so the identity is name and unit together
+        key = re.sub(r"[^a-z0-9]+", "", (name + (unit or "")).lower())
+        return canon.setdefault(key, (name, unit))
+
     for pg in pages:
         try:
             parsed = _parse_page(pg)
@@ -359,6 +375,7 @@ def parse_stage_summary(doc):
         if not parsed:
             continue
         stages, fields = parsed
+        fields = [same(name, unit) + (vals,) for name, unit, vals in fields]
         # a book that staples two jobs together restarts the stage numbers;
         # tag the second set so it cannot silently overwrite the first
         first = _numeric(stages[0])
@@ -413,7 +430,7 @@ def _iso_date(t):
     'Date (yyyy/mm/dd)' over 2017/04/10, the 2024 layout 'Date (YYYY-MM-DD)'
     over 2024-06-14. Both are year-first, so no d/m ambiguity arises."""
     t = str(t or "").strip()
-    m = re.fullmatch(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", t)
+    m = re.fullmatch(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?", t)
     if not m:
         return ""
     y, mo, d = (int(x) for x in m.groups())

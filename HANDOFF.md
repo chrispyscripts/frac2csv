@@ -39,6 +39,91 @@ And one about agents: a subagent reported "89 files errored" as fact. The
 rows said otherwise, because it had already retried them. **Read the data the
 agent read** before repeating what it concluded.
 
+## The new Alberta files: a pass over 227 of them (2026-09-15)
+
+Carmine added 1,191 files to the SSD on 2026-09-14 (AER-Frac-Duvernay 738,
+AER-Frac-Spirit-River 453; manifests and a vendor census in
+`batch-lists/`). `batch-lists/aer-new-2026-09-14/` holds up to 30 per
+company for testing, and `validation-tools/quickpass.py` runs a list
+through the app's own call chain in parallel (`--summary` says what came
+out and why); `detectcensus.py` says which reader would fire on each file.
+Chris's standing goal: every file in those lists reads in the program.
+
+Classes found and fixed in the pass (be76d56 and the commit after it):
+
+- **BJ JobMaster (2019 Duvernay; 29 of the 30 BJ books).** Landscape pages
+  stored with /Rotate 90, one page per zone titled "Well 2 Zone 1", an
+  "Elapsed Time (min)" axis, no legend: each series is named by its axis
+  title in the series' own colour. `bj1` stands the page upright, takes
+  the elapsed row above the caption (the value axes' zeros sit nine pixels
+  higher and read as t=0 four times), clusters tick labels on either edge
+  (the right-hand axes are left-aligned), names the one black-titled
+  series, dates the page from "Job Start" (full month names), and leaves
+  the clock blank; `pipeline._bj_clock` fills it from the book's Totals
+  table, which 2019 prints as "6/1/19 0:23" (two-digit years, U+2010
+  dashes, non-breaking spaces — `bj_summary` reads them plain and
+  upright). 00013: 0 → 41 charts, 41 clocked, 41 at a printed depth.
+- **The Vesta / "Baker" books (00585-00590).** Petrosight daily reports,
+  a STEP "Treatment Report ‐ Daily Stage Summary" and STEP "Interval
+  Summary" chart pages drawn as VECTOR — the `step_vec` layout, which
+  `step_vec.detect` missed because the page sets "STEP Energy Services"
+  with non-breaking spaces and the interval's dash as U+2010. `step_vec`
+  now reads the text plain, takes "Treatment N" as the stage where there
+  is no "- Stage N", the interval from the header and the LSD from the
+  info table; the pipeline carries the interval into top/base depth as it
+  does for the tiled books; `alias_table` maps "SURFACE 1" / "SURFACE 1B"
+  to Tr Press. 00587: 0 → 61 charts, all numbered, dated, clocked (from
+  the summary) and at depth, plus the 61-row table.
+- **STEP 2019 tiled Interval Summary (00180-1021, filed under
+  "unknown"; the Encana Duvernay books).** The page is three image strips
+  plus logo images. `step1._detect_tiled` ignores images narrower than
+  30% of the page, `composite` renders the page at the strips' scale (the
+  title is vector text, not in any strip), `_clock_axis` reads the
+  "HH:MM" labels one ink column at a time (a whole-strip read runs a
+  three-hour stage's nineteen labels together into one word and the
+  numeric fallback fitted a three-minute stage), a start that lands
+  before midnight is folded to the day before, pages whose image xrefs
+  repeat the page before them are read once (stages 13/17/24/38/44 are
+  printed twice), a chart whose "Treatment N" did not OCR takes its
+  number from the Daily Stage Summary row with its Top Depth
+  (`pipeline._stage_from_depth`), and "Interval Summary" in the header
+  marks the page main. The summary's five pages head the date column
+  two ways ("Date (YYYY-MM-DD)" / "Date YYYY-MM-DD"); `step_summary`
+  now keeps one column per name+unit, so all 45 stages carry a date and
+  `_step_clock` dates every chart and overrides the OCR'd footer years
+  (2016/2076 for 2019). 00180-1021: 0 → 30 surface + 24 chemical charts,
+  every one numbered, dated, clocked and at depth, 5 reprints dropped.
+- **Scanned CalFrac/MView overviews (00019, 00031, 00035 — Tourmaline
+  and TAQA 2018 Spirit River).** Every page a picture with a rough OCR
+  layer, and the only treatment charts are the whole-job overviews:
+  "Zones 1-19 … Surface", its "Bottom Hole" twin, Chemicals, Net
+  Pressure — no per-zone charts exist in these books. `calfrac_scan.py`
+  reads the overviews: frame from `raster_core.find_frame_px`, minutes
+  axis from `auto_raster.time_calibration_ex` with a plain fit of the
+  OCR'd minute labels as fallback (five labels 0..200 were refused),
+  tick ladders OCR'd from the strips — pressure in tens on the left, rate
+  and concentration interleaved on the right and split by magnitude (a
+  TAQA N2 ladder is the lower of two in the hundreds) — curves by hue
+  family (blue pressure, red rate, green/purple concentration; TAQA's
+  teal wellhead conc is taken from the cyan family). Black curves (Bottom
+  Hole Pressure, Annulus Pressure) and TAQA's maroon formation conc
+  cannot be told apart from the frame or the rate on a scan and are
+  named in a note. The Bottom Hole page borrows the zones of the Surface
+  page in front of it. Stage keys are "Zones 1-19 Surface" / "Zones 1-19
+  BH"; the axis is elapsed, so the clock stays blank and the date comes
+  from the MView footer where the OCR kept it (Tourmaline yes, TAQA no).
+  00019/00031/00035: 0 → 3-4 overview charts each.
+
+Still open from the pass:
+
+- **00575 (BJ JobMaster 2018 with a symbolic font).** 88 scanned
+  daily-report pages with no text layer and 95 vector pages whose text
+  extracts as "!\" #$" — the chart pages ("Additives 100/01-24 Zone 9",
+  "Elapsed Time (min)") draw their curves as vector art but name nothing
+  readable. See the run result in the pass summary before deciding: the
+  bj1 JobMaster path needs the axis titles, so this is the "vector, no
+  text" class (HANDOFF, "The 'no text at all' class") on a BJ template.
+
 ## The website's well view (2026-09-15)
 
 The Lab gathers the data; the site (`web/`, Vercel project `frac2csv-web`)

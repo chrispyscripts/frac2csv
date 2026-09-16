@@ -31,6 +31,7 @@ import bj_fracturing
 import bj_summary
 import calfrac_summary
 import calfrac_progress as cprog
+import calfrac_scan as cscan
 import liberty_summary
 import ocr_labels
 import lib1
@@ -1276,6 +1277,66 @@ def _bj_clock(results, notes):
                      f"no clock of their own")
 
 
+def _stage_from_depth(results, table, tol_m=1.5):
+    """A STEP chart whose header OCR lost its "Treatment N" but kept its
+    interval takes the stage number from the Daily Stage Summary row with
+    that Top Depth. -> the number of charts numbered.
+
+    00180-1021 p98: the header reads "6,837.00 m - 6,877.30 m — a 0 a I ee"
+    where p100 reads "Treatment 5 6,727.00 m - 6,777.30 m"; the sheet on
+    p95 prints Top Depth 6,837.0 against stage 2. The interval is the one
+    thing that is printed twice, so it is the join.
+    """
+    if not table:
+        return 0
+    cols = list(table.get("columns") or [])
+    si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+    ti = next((i for i, c in enumerate(cols) if re.search(r"top\s*depth", str(c), re.I)), None)
+    if si is None or ti is None:
+        return 0
+    depth = []
+    for row in table.get("rows") or []:
+        if max(si, ti) < len(row):
+            try:
+                depth.append((float(str(row[ti]).replace(",", "")), str(row[si]).strip()))
+            except ValueError:
+                continue
+    if not depth:
+        return 0
+    took = 0
+    for r in results:
+        if r.get("type") != "series" or not str(r.get("source") or "").startswith("STEP"):
+            continue
+        md = r["meta"]
+        if str(md.get("stage") or "").strip() or md.get("top_m") is None:
+            continue
+        near = min(depth, key=lambda d: abs(d[0] - md["top_m"]))
+        if abs(near[0] - md["top_m"]) <= tol_m:
+            md["stage"] = near[1]
+            md["title"] = f"Interval {near[1]}"
+            md.setdefault("warnings", []).append(
+                f"stage number from the Daily Stage Summary: its Top Depth {near[0]:g} m "
+                f"is this chart's interval; the chart's own header did not read")
+            took += 1
+    return took
+
+
+def _step_stage_from_depth(doc, results, notes):
+    if step_summary is None or not any(
+            r.get("type") == "series" and str(r.get("source") or "").startswith("STEP")
+            and not str(r["meta"].get("stage") or "").strip() and r["meta"].get("top_m") is not None
+            for r in results):
+        return
+    try:
+        table = step_summary.parse_stage_summary(doc)
+    except Exception:
+        return
+    took = _stage_from_depth(results, table)
+    if took:
+        notes.append(f"{took} STEP chart(s) numbered from the Daily Stage Summary by "
+                     f"their interval's Top Depth — the header's own number did not read")
+
+
 def _step_clock(doc, results, notes):
     """Give a STEP chart that prints no clock the start time its own report
     files for that stage, and check the ones that do print one against it.
@@ -1462,6 +1523,18 @@ def _split_bj_windows(results, notes):
                      + ", ".join(f'"{stage}"' if i == 0 else f'"{stage} ({i + 1})"'
                                  for i in range(len(wins)))
                      + f" (time axes: {', '.join(tags[w] for w in wins)})")
+
+
+def _tile_key(page):
+    """The image xrefs a tiled STEP page is built from, when it is one
+    (three or more strips as wide as the page) — the identity of its plots.
+    None for any other page."""
+    try:
+        w = float(page.rect.width or 0)
+        xr = sorted(im[0] for im in page.get_images(full=True) if im[2] >= 0.3 * w)
+    except Exception:
+        return None
+    return tuple(xr) if len(xr) >= 3 else None
 
 
 def raster_available():
@@ -2095,6 +2168,16 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # STEP plots that could not be read, {reason: [pages]} — one line per
     # cause rather than one per page, the same shape as _trican_drops.
     _step_skips = {}
+    # STEP tiled pages that carry the SAME images as the page before them:
+    # 00180-1021 prints stages 13, 17 and 24 twice over (p108=p109,
+    # p114=p115, p123=p124 by image xref), and each pair came through as two
+    # charts of one stage with identical samples. {tile key: page}, [(page,
+    # page it reprints)].
+    _step_seen, _step_reprints = {}, []
+    # the zones a scanned MView Surface page named, for the Bottom Hole page
+    # behind it, which prints no caption (the same borrowing _split_progress
+    # does for the vector pages)
+    _scan_zones = [None]
     # Channels a Trican layout-B page traced and then had to drop. extract_
     # image_b has always built these and nothing ever read them, so a chart
     # that came back with three of its five channels said nothing about the
@@ -2292,7 +2375,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # scanned twin, so without this the whole file reports no data.
             try:
                 meta, samples, data, units = step_vec.extract_page(page, sample_sec)
-                results.append(_series(_md(meta), samples, data,
+                _mm = _md(meta)
+                if getattr(meta, "interval", ""):
+                    # the Interval Summary layout prints the stage's depths
+                    # in its header, as the tiled books do
+                    _set_depth(_mm, *_parse_interval(meta.interval))
+                results.append(_series(_mm, samples, data,
                                        "STEP chart", pno + 1, units,
                                        geom=getattr(meta, "geom", None),
                                        scales=getattr(meta, "axes", None),
@@ -2477,6 +2565,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             continue
 
         if raster and step1.detect(page):
+            _tk = _tile_key(page)
+            if _tk and _tk in _step_seen:
+                _step_reprints.append((pno + 1, _step_seen[_tk]))
+                continue
+            if _tk:
+                _step_seen[_tk] = pno + 1
             try:
                 md, charts = step1.extract_page(page, sample_sec)
                 # A plot step1 could not read is one the report HAS and we do
@@ -2532,6 +2626,25 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             frames=frames))
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
+            continue
+
+        if raster and cscan.detect(page):
+            try:
+                meta, samples, data, units, info = cscan.extract_page(page, sample_sec)
+            except Exception as e:
+                notes.append(f"p{pno + 1}: scanned CalFrac overview failed — {e}")
+                continue
+            if meta.get("zones"):
+                _scan_zones[0] = (meta["zones"], pno + 1)
+            elif _scan_zones[0] and _scan_zones[0][1] == pno:
+                # the Bottom Hole page right behind a captioned Surface page
+                meta["zones"] = _scan_zones[0][0]
+                meta["stage"] = f"{meta['zones']}{meta.get('mv', '')}"
+                meta["title"] = f"{meta['zones']}{meta.get('mv', '')} (scanned)"
+                meta["multi_zone"] = True
+            results.append(_series(meta, samples, data, "CalFrac overview (scanned)",
+                                   pno + 1, units, scales=info.get("frames"),
+                                   frames=info.get("frames")))
             continue
 
         if fc.page_kind(page) == "vector":
@@ -2610,6 +2723,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             f"{', …' if len(_pages) > 8 else ''}). The curve was traced; it is "
             f"the axis that could not be read, so there is nothing to scale it "
             f"against and it is left out rather than guessed at.")
+    if _step_reprints:
+        notes.append(
+            f"{len(_step_reprints)} STEP page(s) reprint the page before them — "
+            f"the same images, so the same plots — and are read once: "
+            + ", ".join(f"p{a} = p{b}" for a, b in _step_reprints[:8])
+            + (", …" if len(_step_reprints) > 8 else ""))
     for _msg, _pages in sorted(_step_skips.items()):
         notes.append(
             f"{_msg} — on {len(_pages)} page(s) "
@@ -2734,6 +2853,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
         _calfrac_days(results, notes)
 
+    _step_stage_from_depth(doc, results, notes)
     _step_clock(doc, results, notes)
     _trican_clock(doc, results, notes)
 
