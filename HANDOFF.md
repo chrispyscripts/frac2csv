@@ -137,6 +137,30 @@ Classes found and fixed in the pass (be76d56 and the commit after it):
   heading ("SURFACTANT, FraCare FBS 200 Interval #") and reads ISO
   starts. `alias_table`: WH Press, CMB SLR Rate*, SLR Rate*. 00575: 0 →
   46 charts, all numbered and dated; 00017 p101 reads all four series.
+- **Trican layout A photocopied (00006, 00007, 00008 — 2018 Spirit
+  River).** The page is one scanned image with an OCR layer; the reader's
+  "main image" is therefore the whole page and `step1._frame_bbox` finds
+  no frame (the copy thins the left edge below 60% of the height).
+  `trican_charts.scan_frames` takes the longest dark runs (R+G+B < 450
+  over 45% of the width) as edges, pairs them where their extents line up,
+  and `extract_page` reads the upper frame from a crop with room for the
+  ladders and the clock strip (`extract_image(box=)`). `page_meta` reads
+  stage and depths off the OCR layer. The clock strip and the elapsed
+  labels OCR well on most pages; a page whose strips do not read is noted
+  "time axis unreadable" and skipped, and the STAGE INFORMATION sheet's
+  "Start Time: - Mar 13, 12:33 PM" does not yet date the chart. 00006:
+  0 → 22 of 25 stages read, all clocked and at depth, none dated.
+- **SLB Zone Summary sheets filed as strips (00118, Husky 2019).** Each
+  zone's raster chart is twenty 1573x55 images edge to edge instead of
+  one 1572x1033, so `_chart_image` saw no chart-sized image and the book
+  read as tables only, with a note claiming "15 per-zone charts are read
+  instead". `slb._strip_stack` finds the column of equal-width strips and
+  `_page_image` renders their union at the strips' own scale. 00118: 0 →
+  15 zone charts, all clocked and dated. 00030 (the other tables-only SLB
+  book) really has only the whole-job PRC plots, which this template drops
+  by design.
+- **00590** is a second symbolic-font JobMaster book (Vesta, in the
+  "baker" list) and reads through the same span-OCR path as 00575.
 
 ## The website's well view (2026-09-15)
 
