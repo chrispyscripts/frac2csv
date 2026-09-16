@@ -78,6 +78,10 @@ class Title(unittest.TestCase):
                    Page("Date 2019-05-17")])
         self.assertEqual(bj1._doc_year_map(doc), {(8, 23): 2022, (8, 11): 2022, (5, 17): 2019})
 
+    def test_a_letter_in_the_well_prefix(self):
+        self.assertEqual(bj1.parse_title("1W0/12-27-062-19W5 - Well 2 - Stage 01"), ("1W0122706219W500", "1"))
+        self.assertIsNotNone(bj1._WELL_ID.search("1W0/12-27-062-19W5 - Well 2 - Stage 01"))
+
     def test_2019_additives_page_names_no_zone(self):
         self.assertIsNone(bj1.jm_title("Slickwater Additives"))
 

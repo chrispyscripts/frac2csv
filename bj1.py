@@ -39,7 +39,9 @@ TIME_RE = re.compile(r"([A-Z][a-z]{2})-(\d{1,2})\s+(\d{1,2}):(\d{2})")
 # file came back empty (#644). The UWI is padded back to three below.
 # the 2022 Chevron books (00440-00442) print the meridian in lower case,
 # "100/14-31-062-16w5 - Well 5 - Stage 01"; the id is the same id
-_WELL_ID = re.compile(r"\d{3}[-/]\d{2}-\d{2}-\d{2,3}-\d{2}[Ww]\d"
+# …and the 2021 Liberty-filed books (00435, 00436) carry an event-sequence
+# code in the well's prefix: "1W0/12-27-062-19W5 - Well 2 - Stage 01"
+_WELL_ID = re.compile(r"\d[A-Z0-9]\d[-/]\d{2}-\d{2}-\d{2,3}-\d{2}[Ww]\d"
                       r"|\d{3}[-/][A-Z]-\d{3}-[A-Z]-\d{3}-[A-Z]-\d{2}")
 
 
@@ -64,7 +66,7 @@ def unnumbered_title(page):
 def parse_title(text):
     """-> (uwi, stage) from the chart title's well id and stage number, or
     ("", "") when the text has neither shape."""
-    m = re.search(r"(\d{3})[-/](\d{2})-(\d{2})-(\d{2,3})-(\d{2})[Ww](\d)"
+    m = re.search(r"(\d[A-Z0-9]\d)[-/](\d{2})-(\d{2})-(\d{2,3})-(\d{2})[Ww](\d)"
                   r".*?Stage\s*(\d+)", text, re.S)
     if m:
         g = list(m.groups()[:6])

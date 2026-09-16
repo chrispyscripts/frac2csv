@@ -182,6 +182,22 @@ Classes found and fixed in the pass (be76d56 through 1925091):
   back "no such file", were dropped, and the pass resumed at 07:40 once
   it was back — a dropped drive shows as MuPDF "Input/output error" in
   the log.
+  Afternoon of the 16th, from the rest of the pass: 00435/00436 (in the
+  Liberty list, but BJ-1 charts) prefix the well "1W0/12-27-062-19W5" —
+  `_WELL_ID`/`parse_title` take a letter in the prefix. Still open, two
+  classes: (a) **Trican pasted screenshots** (00564, 00565, 00569 — 2018
+  Spirit River): the page says "INSERT PRESSURE, RATE, CONCENTRATION
+  GRAPH HERE" and carries a 1401x850 picture of a Black Bear web plot
+  (no frame, clock axis, kPa pressure, a scrollbar) — no reader for it;
+  (b) **SLB whole-job-only books** (00030, 00512, 00551, 00554, 00555,
+  00557-00559, 00570 — nine Halliburton-filed books): the only charts
+  are 5-12 PRC plot pages that name no interval, which the template
+  drops by design; each reads fine through `slb._extract_core` and the
+  book carries an "Interval summaries" table with per-interval times, so
+  the plots could be split per interval the way CalFrac Progress pages
+  are (`_split_progress`). Genuinely chart-less Trican/CalFrac filings
+  (daily reports and schedules only: 00206, 00336, 00383, 00161, 00224,
+  00265, 00305, 00306, 00633) read as tables or say why.
 - **Trican layout A photocopied (00006, 00007, 00008 — 2018 Spirit
   River).** The page is one scanned image with an OCR layer; the reader's
   "main image" is therefore the whole page and `step1._frame_bbox` finds
