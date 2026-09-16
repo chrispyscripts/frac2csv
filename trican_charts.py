@@ -865,8 +865,10 @@ def _attach_geom(page, im, img, info):
 # jpeg-soft: the left edge is not dark for 60% of the page's height, so
 # _frame_bbox finds nothing. The edges ARE the longest dark runs on the
 # page, and a frame is a pair of them one above the other.
-SCAN_ROW_FRAC = 0.5      # a frame edge spans at least this much of the width
-SCAN_DARK = 380          # R+G+B under this is the frame's ink on a scan
+# 00006 p48's top edge is only 0.47 of the width under 380 and 0.70 under
+# 450: the photocopy thins the rule. 450 still excludes the grey gridlines.
+SCAN_ROW_FRAC = 0.45     # a frame edge spans at least this much of the width
+SCAN_DARK = 450          # R+G+B under this is the frame's ink on a scan
 SCAN_MARGIN = (160, 100, 170, 90)   # left, top, right, bottom: room for the
                                     # tick ladders and the clock strip
 

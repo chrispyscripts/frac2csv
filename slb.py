@@ -75,6 +75,7 @@ is the defect sanjel.py still has live — task #67.)
 import re
 from datetime import datetime, timedelta
 
+import fitz
 import numpy as np
 
 from frac_core import PageMeta, _resample
@@ -213,6 +214,49 @@ def _chart_image(page):
     return (best[0], best[1]) if best else None
 
 
+# 00118 (Husky, 2019) files each Zone Summary chart as a stack of strips —
+# twenty images of 1573x55 laid edge to edge down the page — where every
+# other book places one 1572x1033 image. No single strip is chart-sized,
+# so _chart_image finds nothing and the sheet read as a table only.
+_STRIP_MIN = 5
+
+
+def _strip_stack(page):
+    """-> (union rect, pixels per point) when the page's chart is a stack
+    of equal-width image strips, else None."""
+    pw = page.rect.width
+    strips = []
+    try:
+        images = page.get_images(full=True)
+    except Exception:
+        return None
+    for im in images:
+        w, h = im[2], im[3]
+        if w < _CHART_IMG_PX[0] or h >= w:
+            continue
+        try:
+            rects = page.get_image_rects(im[0])
+        except Exception:
+            continue
+        for r in rects:
+            if r.width >= _CHART_IMG_FRAC[0] * pw and r.height < 0.1 * page.rect.height:
+                strips.append((r, w))
+    if len(strips) < _STRIP_MIN:
+        return None
+    x0 = min(r.x0 for r, _ in strips); x1 = max(r.x1 for r, _ in strips)
+    if any(abs(r.x0 - x0) > 2 or abs(r.x1 - x1) > 2 for r, _ in strips):
+        return None                          # not one column of strips
+    strips.sort(key=lambda t: t[0].y0)
+    for (a, _), (b, _) in zip(strips, strips[1:]):
+        if b.y0 - a.y1 > 2:
+            return None                      # a gap: two pictures, not one
+    y0, y1 = strips[0][0].y0, strips[-1][0].y1
+    if y1 - y0 < _CHART_IMG_FRAC[1] * page.rect.height:
+        return None
+    scale = max(w for _, w in strips) / float(x1 - x0)
+    return fitz.Rect(x0, y0, x1, y1), scale
+
+
 def zone_number(page):
     """The zone this Zone N Summary sheet reports, as an int, or None."""
     m = _ZONE_SHEET.search(page.get_text())
@@ -231,7 +275,7 @@ def page_chart_kind(page):
     if detect_prc(page):
         return "vector"
     if (zone_number(page) is not None and not _has_vector_plot(page)
-            and _chart_image(page) is not None):
+            and (_chart_image(page) is not None or _strip_stack(page) is not None)):
         return "raster"
     return None
 
@@ -1401,7 +1445,17 @@ def _page_image(page):
 
     found = _chart_image(page)
     if found is None:
-        raise ValueError("slb: no chart image on this zone sheet")
+        stack = _strip_stack(page)
+        if stack is None:
+            raise ValueError("slb: no chart image on this zone sheet")
+        rect, scale = stack
+        # the strips rendered together, at their own resolution
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect)
+        if pix.alpha or pix.n != 3:
+            pix = fitz.Pixmap(fitz.csRGB, pix) if pix.alpha else pix
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n)[..., :3].astype(int)
+        return img, rect
     xref, rect = found
     pix = fitz.Pixmap(page.parent, xref)
     if pix.colorspace is None:
