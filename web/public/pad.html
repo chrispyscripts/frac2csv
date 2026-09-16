@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratum — Pad view</title>
+<style>
+  :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
+          --mono:ui-monospace,Menlo,Consolas,monospace; --acc:#1d5bd8; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding-block:18px; padding-inline:16px; }
+  header h1 { margin:0 0 2px; font-size:22px; }
+  header .sub { color:var(--mut); font-family:var(--mono); font-size:12.5px; }
+  header a { color:var(--acc); }
+  .facts { display:flex; flex-wrap:wrap; gap:14px; margin:10px 0 16px; color:var(--mut); font-family:var(--mono); font-size:12.5px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:16px; overflow-x:auto; }
+  .card h2 { margin:0 0 8px; font-size:14px; color:var(--mut); font-weight:600; letter-spacing:.02em; text-transform:uppercase; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mut); font-weight:600; font-size:12px; }
+  td.num, th.num { text-align:right; font-family:var(--mono); }
+  td a { color:var(--acc); text-decoration:none; }
+  td a:hover { text-decoration:underline; }
+  .list a { display:block; padding:8px 10px; border:1px solid var(--line); border-radius:8px; margin-bottom:6px; color:var(--ink); text-decoration:none; background:var(--card); }
+  .list a span { color:var(--mut); font-family:var(--mono); font-size:12px; margin-left:10px; }
+  .empty { color:var(--mut); padding:20px 0; }
+  svg text { font-family:var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="name">Pad view</h1>
+    <div class="sub" id="ids"></div>
+  </header>
+  <div class="facts" id="facts"></div>
+  <div class="card" id="plan" hidden><h2>Plan view</h2><div id="planfig"></div></div>
+  <div class="card" id="wells" hidden><h2>Wells</h2><div id="table"></div></div>
+  <div id="landing"></div>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const SET = q.get("set"), PAD = q.get("pad");
+const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
+
+async function main() {
+  let idx = { sets: [] };
+  try { idx = await (await fetch("data/pads/index.json")).json(); } catch (e) {}
+  if (!SET) return landing(idx);
+  const entry = (idx.sets || []).find(s => s.set === SET);
+  let data = null;
+  try { data = await (await fetch("data/pads/" + (entry ? entry.file : SET + ".json"))).json(); } catch (e) {}
+  if (!data) { document.getElementById("landing").innerHTML = `<div class="empty">No pad set called "${SET}".</div>`; return; }
+  const pads = PAD ? data.pads.filter(p => p.id === PAD) : data.pads;
+  if (!pads.length) { document.getElementById("landing").innerHTML = `<div class="empty">No pad "${PAD}" in ${SET}.</div>`; return; }
+  const wells = pads.flatMap(p => p.wells.map(w => Object.assign({ pad: p }, w)));
+  document.getElementById("name").textContent = PAD ? pads[0].name : (entry && entry.name) || SET;
+  document.getElementById("ids").innerHTML = PAD
+    ? `<a href="pad.html?set=${encodeURIComponent(SET)}">${(entry && entry.name) || SET}</a> · ${pads[0].lat.toFixed(4)} N, ${Math.abs(pads[0].lon).toFixed(4)} W`
+    : `${data.pads.length} pads · ${wells.length} wells · <a href="map.html">map</a>`;
+  const withStages = wells.filter(w => w.stages).length, withLogs = wells.filter(w => w.logs).length;
+  const lat = wells.map(w => w.lateral).filter(Boolean);
+  document.getElementById("facts").innerHTML = [
+    `<span>${wells.length} wells</span>`, `<span>${wells.filter(w => w.stations).length} with a directional survey</span>`,
+    `<span>${withLogs} with logs</span>`, `<span>${withStages} with frac stages loaded</span>`,
+    lat.length ? `<span>laterals ${fmt(Math.min(...lat))}–${fmt(Math.max(...lat))} m</span>` : "",
+  ].join("");
+  drawPlan(pads, wells);
+  drawTable(pads, wells);
+}
+
+// every lateral of the pad(s) in plan view, metres from the first pad's
+// surface location: north up, east to the right
+function drawPlan(pads, wells) {
+  const paths = wells.filter(w => w.path && w.path.length > 1);
+  if (!paths.length) return;
+  const lat0 = pads[0].lat, lon0 = pads[0].lon, kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 111320;
+  const pts = w => w.path.map(([lo, la]) => [(lo - lon0) * kx, (la - lat0) * ky]);
+  const all = paths.flatMap(pts);
+  const xs = all.map(p => p[0]), ys = all.map(p => p[1]);
+  const x0 = Math.min(...xs) - 150, x1 = Math.max(...xs) + 150, y0 = Math.min(...ys) - 150, y1 = Math.max(...ys) + 150;
+  const box = document.getElementById("planfig");
+  const W = Math.max(600, box.clientWidth || 900), H = Math.max(320, Math.min(640, W * (y1 - y0) / (x1 - x0)));
+  const sc = Math.min(W / (x1 - x0), H / (y1 - y0));
+  const X = x => (x - x0) * sc + (W - (x1 - x0) * sc) / 2, Y = y => H - ((y - y0) * sc + (H - (y1 - y0) * sc) / 2);
+  const hue = i => `hsl(${(i * 47) % 360} 60% 42%)`;
+  let g = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-size="11">`;
+  const step = [100, 250, 500, 1000, 2000].find(s => (x1 - x0) / s <= 12) || 2000;
+  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) g += `<line x1="${X(x)}" y1="0" x2="${X(x)}" y2="${H}" stroke="#eef2f5"/>`;
+  for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) g += `<line x1="0" y1="${Y(y)}" x2="${W}" y2="${Y(y)}" stroke="#eef2f5"/>`;
+  g += `<text x="8" y="${H - 8}" fill="#9fb0c0">grid ${step} m · north up</text>`;
+  paths.forEach((w, i) => {
+    const p = pts(w);
+    const d = p.map((q, j) => (j ? "L" : "M") + X(q[0]).toFixed(1) + " " + Y(q[1]).toFixed(1)).join("");
+    const col = hue(pads.length > 1 ? pads.indexOf(w.pad) : i);
+    g += `<a href="well.html?wa=${encodeURIComponent(w.wa)}"><path d="${d}" fill="none" stroke="${col}" stroke-width="${w.stages ? 2.4 : 1.4}" stroke-linejoin="round" opacity="${w.stages ? 1 : .75}"><title>${w.name} · WA ${w.wa} · TD ${fmt(w.td)} m · lateral ${fmt(w.lateral)} m</title></path></a>`;
+    const e = p[p.length - 1];
+    g += `<circle cx="${X(e[0])}" cy="${Y(e[1])}" r="2.2" fill="${col}"/>`;
+  });
+  pads.forEach((p, i) => {
+    const sx = X((p.lon - lon0) * kx), sy = Y((p.lat - lat0) * ky);
+    g += `<circle cx="${sx}" cy="${sy}" r="5" fill="#17222e" stroke="#fff" stroke-width="1.5"/>`;
+    g += `<text x="${sx + 8}" y="${sy - 6}" fill="#17222e" font-weight="600">${p.name}</text>`;
+  });
+  g += `</svg>`;
+  box.innerHTML = g;
+  document.getElementById("plan").hidden = false;
+}
+
+function drawTable(pads, wells) {
+  const rows = wells.map(w => `<tr>
+    <td>${pads.length > 1 ? `<a href="pad.html?set=${encodeURIComponent(SET)}&pad=${encodeURIComponent(w.pad.id)}">${w.pad.name.replace(/^.*pad /, "pad ")}</a>` : ""}</td>
+    <td><a href="well.html?wa=${encodeURIComponent(w.wa)}">${w.name}</a></td>
+    <td class="num">${w.wa}</td><td>${w.uwi || ""}</td>
+    <td class="num">${fmt(w.td)}</td><td class="num">${fmt(w.tvd)}</td><td class="num">${fmt(w.lateral)}</td>
+    <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
+  </tr>`).join("");
+  document.getElementById("table").innerHTML = `<table><thead><tr><th>Pad</th><th>Well</th><th class="num">WA</th><th>UWI</th>
+    <th class="num">TD m</th><th class="num">TVD m</th><th class="num">Lateral m</th><th class="num">Survey</th><th class="num">Stages</th><th class="num">Logs</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById("wells").hidden = false;
+}
+
+function landing(idx) {
+  const el = document.getElementById("landing");
+  const sets = (idx && idx.sets) || [];
+  if (!sets.length) { el.innerHTML = `<div class="empty">No pads have been built yet.</div>`; return; }
+  el.innerHTML = `<div class="list">` + sets.map(s =>
+    `<a href="pad.html?set=${encodeURIComponent(s.set)}">${s.name || s.set}<span>${s.pads} pads · ${s.wells} wells · ${s.lat.toFixed(3)} N, ${Math.abs(s.lon).toFixed(3)} W</span></a>`).join("") + `</div>`;
+}
+main();
+</script>
+</body>
+</html>

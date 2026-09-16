@@ -3,187 +3,73 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frac2CSV — WCSB Well Map</title>
+<title>Stratum — Pad map</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <style>
-  :root { --bg:#0f1621; --panel:#18222f; --ink:#e6edf3; --mut:#8496a8; --line:#26333f;
-          --acc:#3d7dff; --good:#3fb950; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
-  * { box-sizing:border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
-               font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  :root { --panel:#10161d; --ink:#e8eef4; --mut:#93a3b3; --line:#243040; --acc:#4d8dff;
+          --mono:ui-monospace,Menlo,Consolas,monospace; }
+  html, body { margin:0; height:100%; background:#0b1015; color:var(--ink);
+               font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
   #map { position:absolute; inset:0; }
-  .overlay { position:absolute; z-index:2; }
-  .top { top:12px; left:12px; bottom:12px; display:flex; pointer-events:none; }
-  .card { background:rgba(24,34,47,.95); border:1px solid var(--line); border-radius:8px;
-          padding:12px 14px; pointer-events:auto; backdrop-filter:blur(6px); width:272px;
-          overflow-y:auto; max-height:100%; }
-  .title { font-size:15px; font-weight:600; }
-  .title a { color:var(--acc); text-decoration:none; }
-  .sub { color:var(--mut); font-size:12px; margin-top:2px; }
-  .sec { margin-top:10px; padding-top:9px; border-top:1px solid var(--line); }
-  .sechead { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--mut); margin-bottom:6px; }
-  .controls { display:flex; flex-direction:column; gap:7px; }
-  .controls label { display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--mut); cursor:pointer; }
-  .controls .slid { display:flex; flex-direction:column; gap:2px; }
-  .controls input[type=range] { width:100%; margin:0; }
-  select, input[type=text] { width:100%; background:var(--bg); border:1px solid var(--line);
-        border-radius:5px; color:var(--ink); font:inherit; font-size:12.5px; padding:5px 8px; }
-  .stat { font-family:var(--mono); font-size:11.5px; color:var(--mut); }
-  .stat b { color:var(--ink); }
-  .legend { margin-top:6px; display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--mut); }
-  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
-  .grad { height:8px; border-radius:4px; margin:3px 0 1px; }
-  .gradlbl { display:flex; justify-content:space-between; font-size:10.5px; font-family:var(--mono); }
-  .maplibregl-popup-content { background:var(--panel); color:var(--ink); border:1px solid var(--line);
-        border-radius:8px; padding:12px 14px; font:13px/1.5 -apple-system,system-ui,sans-serif; max-width:300px; }
+  .side { position:absolute; top:12px; left:12px; bottom:12px; width:320px; max-width:calc(100% - 24px);
+          background:rgba(16,22,29,.94); border:1px solid var(--line); border-radius:12px;
+          display:flex; flex-direction:column; overflow:hidden; z-index:5; }
+  .side header { padding:12px 14px 8px; border-bottom:1px solid var(--line); }
+  .side h1 { margin:0; font-size:17px; letter-spacing:.01em; }
+  .side .sub { color:var(--mut); font-family:var(--mono); font-size:12px; margin-top:2px; }
+  .side .body { overflow:auto; padding:8px 8px 12px; }
+  .pad { border:1px solid var(--line); border-radius:9px; margin:6px 0; overflow:hidden; }
+  .pad > button { width:100%; text-align:left; background:#151d26; color:var(--ink); border:none; padding:9px 11px;
+                  font:inherit; font-weight:600; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
+  .pad > button .n { color:var(--mut); font-family:var(--mono); font-weight:400; font-size:12px; }
+  .pad .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:8px; vertical-align:-1px; }
+  .pad ul { list-style:none; margin:0; padding:4px 0; display:none; }
+  .pad.open ul { display:block; }
+  .pad li { padding:0; }
+  .pad li a { display:flex; justify-content:space-between; gap:8px; padding:6px 12px 6px 30px; color:var(--ink); text-decoration:none; }
+  .pad li a:hover, .pad li a.on { background:#1c2632; }
+  .pad li .m { color:var(--mut); font-family:var(--mono); font-size:11.5px; white-space:nowrap; }
+  .pad li .m b { color:#9fd8a8; font-weight:600; }
+  .side footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--mut); font-size:12px; }
+  .side footer a { color:var(--acc); }
+  .maplibregl-popup-content { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:10px;
+                              padding:12px 14px; font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; min-width:220px; }
   .maplibregl-popup-tip { border-top-color:var(--panel) !important; border-bottom-color:var(--panel) !important; }
-  .maplibregl-popup-close-button { color:var(--mut); font-size:17px; }
-  .pop h3 { margin:0 0 6px; font-size:13.5px; }
-  .pop .row { font-family:var(--mono); font-size:12px; color:var(--mut); }
-  .pop .row b { color:var(--ink); }
-  .pop .uwi { font-family:var(--mono); font-size:11.5px; color:var(--acc); word-break:break-all; margin-top:4px; }
-  .pop .fracs { margin-top:7px; padding-top:7px; border-top:1px solid var(--line); }
-  .pop .fh { font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--good); margin-bottom:3px; }
+  .maplibregl-popup-close-button { color:var(--mut); font-size:18px; }
+  .pop b { font-size:14px; }
+  .pop .facts { color:var(--mut); font-family:var(--mono); font-size:12px; margin:6px 0 2px; }
   .pop a.btn { display:inline-block; margin-top:9px; background:var(--acc); color:#fff; text-decoration:none;
-        font-size:12px; font-weight:600; padding:5px 11px; border-radius:5px; }
-  .pop .actions { display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap; }
-  .pop .favbtn { background:none; border:1px solid var(--line); border-radius:5px; color:var(--mut);
-        font-size:13px; padding:3px 9px; cursor:pointer; }
-  .pop .favbtn.on { color:#f1c40f; border-color:#f1c40f; }
-  .pop .tagrow { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; align-items:center; }
-  .pop .tag { background:#233042; border:1px solid var(--line); border-radius:999px; font-size:11px;
-        font-family:var(--mono); padding:2px 8px; color:var(--ink); cursor:pointer; }
-  .pop .tag:hover { border-color:#b03a2e; text-decoration:line-through; }
-  .pop .taginput { background:var(--bg); border:1px solid var(--line); border-radius:5px; color:var(--ink);
-        font-size:11.5px; padding:3px 7px; width:110px; }
-  .mytabs { display:flex; gap:4px; margin-bottom:6px; }
-  .mytabs button { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:5px;
-        color:var(--mut); font-size:11.5px; padding:4px 2px; cursor:pointer; }
-  .mytabs button.on { color:var(--ink); border-color:var(--acc); }
-  .mylist { max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:3px; }
-  .myitem { display:flex; justify-content:space-between; gap:6px; font-size:12px; cursor:pointer;
-        padding:3px 6px; border-radius:5px; border:1px solid transparent; }
-  .myitem:hover { border-color:var(--line); background:var(--bg); }
-  .myitem .nm { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .myitem .mt { font-family:var(--mono); font-size:10.5px; color:var(--mut); flex-shrink:0; }
-  .myfoot { display:flex; gap:6px; margin-top:6px; }
-  .myfoot button, .myfoot label { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:5px;
-        color:var(--mut); font-size:11px; padding:3px 4px; cursor:pointer; text-align:center; }
-  .loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-        z-index:5; background:var(--bg); font-family:var(--mono); color:var(--mut); }
-  .spin { width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc);
-        border-radius:50%; animation:sp .8s linear infinite; margin-right:8px; }
-  @keyframes sp { to { transform:rotate(360deg); } }
+               padding:6px 11px; border-radius:7px; font-weight:600; }
+  .legend { position:absolute; right:12px; top:12px; background:rgba(16,22,29,.9); border:1px solid var(--line);
+            border-radius:10px; padding:8px 12px; font-size:12px; color:var(--mut); z-index:5; }
+  .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .legend .l { width:22px; height:0; border-top:3px solid #4d8dff; }
+  .legend .l.thin { border-top-width:1.5px; opacity:.7; }
+  .legend .d { width:10px; height:10px; border-radius:50%; background:#fff; }
+  .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
+  @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; } }
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div class="loading" id="loading"><span class="spin"></span>loading well data…</div>
-<div class="overlay top">
-  <div class="card">
-    <div class="title"><a href="/">Frac2CSV</a> · WCSB Well Map</div>
-    <div class="sub">Screen wells like a buyer: vintage, lateral, intensity</div>
-
-    <div class="sec">
-      <input type="text" id="search" placeholder="Find by UWI / name / operator…" autocomplete="off">
-    </div>
-
-    <div class="sec">
-      <div class="sechead">Color wells by</div>
-      <select id="colorby">
-        <option value="type">Well type (vertical / horizontal)</option>
-        <option value="yr">Completion vintage (refrac screening)</option>
-        <option value="ll">Lateral length</option>
-        <option value="pi">Proppant intensity t/m (BC)</option>
-        <option value="td">Total depth</option>
-      </select>
-      <div id="colorlegend" class="legend"></div>
-    </div>
-
-    <div class="sec controls">
-      <div class="sechead">Filters</div>
-      <label><input type="checkbox" id="horiz-only"> Horizontals only</label>
-      <div class="slid"><label>Completed / drilled ≥ <span class="stat" id="yr-val">any year</span></label>
-        <input type="range" id="yr-min" min="1950" max="2026" step="1" value="1950"></div>
-      <div class="slid"><label>Min lateral length <span class="stat" id="ll-val">0 m</span></label>
-        <input type="range" id="ll-min" min="0" max="4000" step="100" value="0"></div>
-      <div class="slid"><label>Min total depth <span class="stat" id="td-val">0 m</span></label>
-        <input type="range" id="td-min" min="0" max="6000" step="100" value="0"></div>
-      <div class="slid"><label>Min frac stages <span class="stat" id="st-val">0</span> <span class="stat">(BC data)</span></label>
-        <input type="range" id="st-min" min="0" max="40" step="1" value="0"></div>
-      <div class="slid"><label>Max proppant intensity <span class="stat" id="pi-val">any</span> <span class="stat">(BC)</span></label>
-        <input type="range" id="pi-max" min="0" max="30" step="1" value="30"></div>
-      <input type="text" id="op-filter" placeholder="Operator / name contains…" autocomplete="off">
-    </div>
-
-    <div class="sec">
-      <div class="sechead">My wells <span class="stat">(saved in this browser)</span></div>
-      <div class="mytabs">
-        <button id="tab-fav" class="on">★ Favs <span id="n-fav">0</span></button>
-        <button id="tab-tag">🏷 Tagged <span id="n-tag">0</span></button>
-        <button id="tab-rec">🕐 Recent <span id="n-rec">0</span></button>
-      </div>
-      <div class="mylist" id="mylist"><span class="stat">Nothing yet — click a well, then ★ or tag it.</span></div>
-      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--mut);margin-top:7px;cursor:pointer">
-        <input type="checkbox" id="mine-only"> Show my wells only</label>
-      <div class="myfoot">
-        <button id="my-export">Export</button>
-        <label for="my-import-file">Import<input type="file" id="my-import-file" accept=".json" hidden></label>
-        <button id="my-clear">Clear</button>
-      </div>
-    </div>
-
-    <div class="sec">
-      <div class="sechead">Provinces</div>
-      <div class="controls" id="prov"></div>
-    </div>
-
-    <div class="stat" id="count" style="margin-top:9px">—</div>
-    <div class="sub" style="margin-top:7px" id="sources">Sources: provincial energy regulators (open data)</div>
-  </div>
+<div class="side">
+  <header>
+    <h1>Stratum</h1>
+    <div class="sub" id="sub">loading pads…</div>
+  </header>
+  <div class="body" id="pads"></div>
+  <footer>Laterals are drawn from each well's directional survey. Click a lateral for the well; <a href="pad.html">pad views</a>.</footer>
 </div>
+<div class="legend">
+  <div class="row"><span class="l"></span> lateral with frac stages loaded</div>
+  <div class="row"><span class="l thin"></span> lateral, survey only</div>
+  <div class="row"><span class="d"></span> pad (surface location)</div>
+</div>
+
 <script>
-"use strict";
-const PROVINCES = [
-  { code: "bc", name: "British Columbia", file: "data/bc-wells.json" },
-  { code: "ab", name: "Alberta",         file: "data/ab-wells.json" },
-];
-
-const COLOR_MODES = {
-  type: { expr: ["case", ["==", ["get", "horiz"], 1], "#3d7dff", "#3fb950"],
-          legend: [["#3fb950", "vertical / surface point"], ["#3d7dff", "horizontal"]] },
-  yr:   { prop: "yr", stops: [[1990, "#c0392b"], [2008, "#e67e22"], [2015, "#f1c40f"], [2020, "#2ecc71"], [2026, "#00e5ff"]],
-          label: ["1990", "2026"], desc: "old = refrac candidates" },
-  ll:   { prop: "ll", stops: [[200, "#4a5f9e"], [1500, "#3d7dff"], [3000, "#00e5ff"], [4200, "#aef7ff"]],
-          label: ["0 m", "4,000+ m"], desc: "lateral length" },
-  pi:   { prop: "pi", stops: [[0.2, "#2ecc71"], [1, "#f1c40f"], [2, "#e67e22"], [3.5, "#e74c3c"]],
-          label: ["0 t/m", "3.5+ t/m"], desc: "proppant per lateral meter" },
-  td:   { prop: "td", stops: [[500, "#4a5f9e"], [2500, "#3d7dff"], [4500, "#00e5ff"], [6500, "#aef7ff"]],
-          label: ["0 m", "6,500+ m"], desc: "measured depth" },
-};
-
-function colorExpr(mode) {
-  const m = COLOR_MODES[mode];
-  if (m.expr) return m.expr;
-  const ramp = ["interpolate", ["linear"], ["coalesce", ["get", m.prop], -1]];
-  ramp.push(-1, "#5b6470", 0, m.stops[0][1]);
-  for (const [v, c] of m.stops) ramp.push(v, c);
-  return ["case", ["==", ["coalesce", ["get", m.prop], -1], -1], "#5b6470", ramp];
-}
-
-function renderLegend(mode) {
-  const el = document.getElementById("colorlegend");
-  const m = COLOR_MODES[mode];
-  if (m.legend) {
-    el.innerHTML = m.legend.map(([c, t]) => `<span><span class="dot" style="background:${c}"></span>${t}</span>`).join("");
-    return;
-  }
-  const grad = `linear-gradient(90deg, ${m.stops.map(s => s[1]).join(",")})`;
-  el.innerHTML = `<div class="grad" style="background:${grad}"></div>
-    <div class="gradlbl"><span>${m.label[0]}</span><span>${m.label[1]}</span></div>
-    <span>${m.desc} · <span class="dot" style="background:#5b6470"></span>no data</span>`;
-}
+const PAD_COLORS = ["#4d8dff", "#ff8a4d", "#3ecf8e", "#e35d9a", "#f2c94c", "#8f6bff", "#4dd0e1", "#ff6b6b", "#9ccc65", "#ba68c8"];
+const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
 const map = new maplibregl.Map({
   container: "map",
@@ -191,409 +77,140 @@ const map = new maplibregl.Map({
     sources: {
       base: { type: "raster",
         tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
-        tileSize: 256, maxzoom: 16,
-        attribution: "Esri · HERE · Garmin · © OpenStreetMap contributors · Wells: provincial energy regulators" },
-      labels: { type: "raster",
+        tileSize: 256, maxzoom: 16, attribution: "Esri" },
+      ref: { type: "raster",
         tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
         tileSize: 256, maxzoom: 16 }
     },
-    layers: [{ id: "bg", type: "raster", source: "base" },
-             { id: "bg-labels", type: "raster", source: "labels" }] },
-  center: [-118, 55.5], zoom: 5
+    layers: [{ id: "base", type: "raster", source: "base" }, { id: "ref", type: "raster", source: "ref" }] },
+  center: [-122.11, 56.80], zoom: 11
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 
-// The map can be built before its container has settled at full size (panes,
-// split views, late layout). Without this it keeps painting at the stale size.
-new ResizeObserver(() => map.resize()).observe(map.getContainer());
+const SETS = [];          // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
+const WELL_BY_WA = {};
 
-const loaded = [];
-
-// ---------- per-user well lists (localStorage) ----------
-const STORE_KEY = "frac2csv-mywells-v1";
-let MY = { items: {} };   // id -> {n, prov, la, lo, fav, tags:[], seen}
-try { MY = JSON.parse(localStorage.getItem(STORE_KEY)) || MY; } catch {}
-if (!MY.items) MY.items = {};
-const saveMY = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(MY)); } catch {} };
-const wellId = p => p.prov + ":" + (p.wa || (p.u || "").split(" ")[0] || p.n);
-function myRec(p) {
-  const id = wellId(p);
-  if (!MY.items[id]) MY.items[id] = { n: p.n || "(unnamed)", prov: p.prov,
-    la: p._la, lo: p._lo, fav: false, tags: [], seen: 0 };
-  return MY.items[id];
-}
-function prune(id) {   // drop untouched records so recents don't grow forever
-  const r = MY.items[id];
-  if (r && !r.fav && !r.tags.length && !r.seen) delete MY.items[id];
-}
-let myTab = "fav";
-function renderMy() {
-  const items = Object.entries(MY.items);
-  const favs = items.filter(([, r]) => r.fav);
-  const tagged = items.filter(([, r]) => r.tags.length);
-  const recent = items.filter(([, r]) => r.seen)
-    .sort((a, b) => b[1].seen - a[1].seen).slice(0, 50);
-  document.getElementById("n-fav").textContent = favs.length;
-  document.getElementById("n-tag").textContent = tagged.length;
-  document.getElementById("n-rec").textContent = recent.length;
-  for (const t of ["fav", "tag", "rec"])
-    document.getElementById("tab-" + t).classList.toggle("on", t === myTab);
-  const list = { fav: favs, tag: tagged, rec: recent }[myTab];
-  const el = document.getElementById("mylist");
-  if (!list.length) {
-    el.innerHTML = '<span class="stat">Nothing yet — click a well, then ★ or tag it.</span>';
-    return;
-  }
-  el.innerHTML = list.map(([id, r]) =>
-    `<div class="myitem" data-id="${id}">
-       <span class="nm">${r.fav ? "★ " : ""}${r.n}</span>
-       <span class="mt">${r.tags.slice(0, 2).join(",") || r.prov.toUpperCase()}</span></div>`).join("");
-  el.querySelectorAll(".myitem").forEach(item => item.addEventListener("click", () => {
-    const r = MY.items[item.dataset.id];
-    if (r && r.la !== undefined) {
-      map.flyTo({ center: [r.lo, r.la], zoom: 12 });
-      const prov = loaded.find(p => p.code === r.prov);
-      const w = prov && prov.wells.find(w => wellId({ prov: r.prov, wa: w.wa, u: (w.u||[]).join(" "), n: w.n }) === item.dataset.id);
-      if (w) {
-        const fc = toFeatures([w]);
-        openWellPopup([w.lo, w.la], fc.pts.features[0].properties);
-      }
-    }
-  }));
-}
-function isMine(w, code) {
-  const r = MY.items[code + ":" + (w.wa || (w.u || [])[0] || w.n)];
-  return r && (r.fav || r.tags.length);
-}
-
-function toFeatures(wells) {
-  const pts = [], lines = [];
-  for (const w of wells) {
-    const horiz = ("bla" in w);
-    const p = { wa: w.wa || "", n: w.n || "", td: w.td, tvd: w.tvd, yr: w.yr,
-                ll: w.ll, st: w.st, pt: w.pt, pi: w.pi, fl: w.fl, isip: w.isip,
-                bd: w.bd, fg: w.fg, op: w.op || "", u: (w.u || []).join(" "),
-                horiz: horiz ? 1 : 0, prov: w._p };
-    for (const k in p) if (p[k] === undefined) delete p[k];
-    pts.push({ type: "Feature", geometry: { type: "Point", coordinates: [w.lo, w.la] }, properties: p });
-    if (horiz) lines.push({ type: "Feature",
-      geometry: { type: "LineString", coordinates: [[w.lo, w.la], [w.blo, w.bla]] }, properties: {} });
-  }
-  return { pts: { type: "FeatureCollection", features: pts },
-           lines: { type: "FeatureCollection", features: lines } };
-}
-
-function provEnabled(code) {
-  const cb = document.getElementById("cb-" + code);
-  return cb ? cb.checked : true;
-}
-
-function passes(w, f, code) {
-  if (f.mine && !isMine(w, code)) return false;
-  if (f.horiz && !("bla" in w)) return false;
-  if (f.yr > 1950 && (w.yr || 0) < f.yr) return false;
-  if (f.ll > 0 && (w.ll || 0) < f.ll) return false;
-  if (f.td > 0 && (w.td || 0) < f.td) return false;
-  if (f.st > 0 && (w.st || 0) < f.st) return false;
-  if (f.pi < 30 && (w.pi === undefined || w.pi > f.pi)) return false;
-  if (f.op && !(((w.op || "") + " " + (w.n || "")).toLowerCase().includes(f.op))) return false;
-  return true;
-}
-
-function currentFilters() {
-  return {
-    horiz: document.getElementById("horiz-only").checked,
-    yr: +document.getElementById("yr-min").value,
-    ll: +document.getElementById("ll-min").value,
-    td: +document.getElementById("td-min").value,
-    st: +document.getElementById("st-min").value,
-    pi: +document.getElementById("pi-max").value,
-    op: document.getElementById("op-filter").value.trim().toLowerCase(),
-    mine: document.getElementById("mine-only").checked,
-  };
-}
-
-function applyFilter() {
-  const f = currentFilters();
-  let total = 0, shown = 0;
-  for (const p of loaded) {
-    total += p.wells.length;
-    if (!provEnabled(p.code)) {
-      map.getSource("wells-" + p.code).setData({ type: "FeatureCollection", features: [] });
-      map.getSource("lat-" + p.code).setData({ type: "FeatureCollection", features: [] });
-      continue;
-    }
-    const filt = p.wells.filter(w => passes(w, f, p.code));
-    shown += filt.length;
-    const fc = toFeatures(filt);
-    map.getSource("wells-" + p.code).setData(fc.pts);
-    map.getSource("lat-" + p.code).setData(fc.lines);
-  }
-  document.getElementById("count").innerHTML =
-    `<b>${shown.toLocaleString()}</b> of ${total.toLocaleString()} wells match`;
-}
-
-function applyColor() {
-  const mode = document.getElementById("colorby").value;
-  renderLegend(mode);
-  for (const p of loaded)
-    map.setPaintProperty("wells-" + p.code, "circle-color", colorExpr(mode));
-}
-
-// Wells that have a lateral view built from their frac report (well.html):
-// data/wells/index.json lists them. While the beta stands in, every well's
-// "Show Data" opens the same demo well (BETA_DEMO_WA); set it to "" and each
-// well opens its own view where one exists.
-const BETA_DEMO_WA = "0489324";
-const VIEWS = new Set();
-function showDataHref(p) {
-  if (BETA_DEMO_WA) return `/well.html?wa=${encodeURIComponent(BETA_DEMO_WA)}`;
-  const wa = String(p.wa || "").replace(/^0+/, "");
-  return VIEWS.has(wa) ? `/well.html?wa=${encodeURIComponent(p.wa)}` : `/well.html`;
-}
-fetch("data/wells/index.json").then(r => r.ok ? r.json() : null)
-  .then(d => { for (const w of (d && d.wells) || []) VIEWS.add(String(w.wa || "").replace(/^0+/, "")); })
-  .catch(() => {});
-
-function popupHTML(p) {
-  const fmt = (v, unit, dp) => v === undefined ? null :
-    `<b>${(+v).toLocaleString(undefined, {maximumFractionDigits: dp === undefined ? 1 : dp})}${unit}</b>`;
-  const rows = [];
-  const line1 = [p.wa ? `Lic <b>${p.wa}</b>` : null, p.horiz ? "<b>horizontal</b>" : "vertical",
-                 p.prov.toUpperCase()].filter(Boolean).join(" · ");
-  rows.push(`<div class="row">${line1}</div>`);
-  const depth = [p.td !== undefined ? "MD " + fmt(p.td, " m", 0) : null,
-                 p.tvd !== undefined ? "TVD " + fmt(p.tvd, " m", 0) : null,
-                 p.ll !== undefined ? "lateral ~" + fmt(p.ll, " m", 0) : null].filter(Boolean).join(" · ");
-  if (depth) rows.push(`<div class="row">${depth}</div>`);
-  const who = [p.op ? `op <b>${p.op}</b>` : null, p.yr ? `vintage <b>${p.yr}</b>` : null]
-    .filter(Boolean).join(" · ");
-  if (who) rows.push(`<div class="row">${who}</div>`);
-  let fracs = "";
-  if (p.st !== undefined) {
-    const items = [
-      `stages ${fmt(p.st, "", 0)}`,
-      p.pt !== undefined ? `proppant ${fmt(p.pt, " t", 0)}` : null,
-      p.pi !== undefined ? `intensity ${fmt(p.pi, " t/m", 2)}` : null,
-      p.fl !== undefined ? `fluid ${fmt(p.fl, " m³", 0)}` : null,
-      p.isip !== undefined ? `avg ISIP ${fmt(p.isip, " MPa")}` : null,
-      p.bd !== undefined ? `avg breakdown ${fmt(p.bd, " MPa")}` : null,
-      p.fg !== undefined ? `frac grad ${fmt(p.fg, " kPa/m", 0)}` : null,
-    ].filter(Boolean);
-    fracs = `<div class="fracs"><div class="fh">Completion record (BCER per-stage data)</div>
-      <div class="row">${items.join(" · ")}</div></div>`;
-  }
-  const uwis = (p.u || "").trim();
-  const r = MY.items[wellId(p)];
-  const isFav = r && r.fav;
-  const tags = (r && r.tags) || [];
-  return `<div class="pop"><h3>${p.n || "(unnamed well)"}</h3>${rows.join("")}
-    ${uwis ? `<div class="uwi">${uwis.split(" ").join("<br>")}</div>` : ""}${fracs}
-    <div class="actions">
-      <button class="favbtn${isFav ? " on" : ""}">${isFav ? "★ favourited" : "☆ favourite"}</button>
-      <a class="btn" href="${showDataHref(p)}">Show Data →</a>
-    </div>
-    <div class="tagrow">${tags.map(t => `<span class="tag" data-t="${t}" title="click to remove">${t}</span>`).join("")}
-      <input class="taginput" placeholder="+ tag, Enter" maxlength="24"></div></div>`;
-}
-
-function openWellPopup(lngLat, props) {
-  props._la = lngLat[1] !== undefined ? lngLat[1] : lngLat.lat;
-  props._lo = lngLat[0] !== undefined ? lngLat[0] : lngLat.lng;
-  const rec = myRec(props);
-  rec.seen = Date.now();
-  rec.la = props._la; rec.lo = props._lo;
-  saveMY(); renderMy();
-  const popup = new maplibregl.Popup({ closeButton: true })
-    .setLngLat(lngLat).setHTML(popupHTML(props)).addTo(map);
-  wirePopupActions(popup, props);
-  return popup;
-}
-
-function wirePopupActions(popup, props) {
-  const el = popup.getElement();
-  const id = wellId(props);
-  const fav = el.querySelector(".favbtn");
-  if (fav) fav.addEventListener("click", () => {
-    const r = myRec(props);
-    r.fav = !r.fav;
-    fav.classList.toggle("on", r.fav);
-    fav.textContent = r.fav ? "★ favourited" : "☆ favourite";
-    prune(id); saveMY(); renderMy();
-    if (document.getElementById("mine-only").checked) applyFilter();
-  });
-  const input = el.querySelector(".taginput");
-  if (input) input.addEventListener("keydown", ev => {
-    if (ev.key !== "Enter") return;
-    const t = input.value.trim().toLowerCase().slice(0, 24);
-    if (!t) return;
-    const r = myRec(props);
-    if (!r.tags.includes(t)) r.tags.push(t);
-    saveMY(); renderMy();
-    popup.setHTML(popupHTML(props)); wirePopupActions(popup, props);
-    if (document.getElementById("mine-only").checked) applyFilter();
-  });
-  el.querySelectorAll(".tag").forEach(tag => tag.addEventListener("click", () => {
-    const r = myRec(props);
-    r.tags = r.tags.filter(x => x !== tag.dataset.t);
-    prune(id); saveMY(); renderMy();
-    popup.setHTML(popupHTML(props)); wirePopupActions(popup, props);
-    if (document.getElementById("mine-only").checked) applyFilter();
-  }));
-}
-
-function wireWellLayer(code) {
-  map.on("click", "wells-" + code, e => {
-    openWellPopup(e.lngLat, e.features[0].properties);
-  });
-  map.on("mouseenter", "wells-" + code, () => map.getCanvas().style.cursor = "pointer");
-  map.on("mouseleave", "wells-" + code, () => map.getCanvas().style.cursor = "");
-}
-
-async function initWells() {
-  const provDiv = document.getElementById("prov");
-  const srcNames = [];
-  const failures = [];
-  const bounds = new maplibregl.LngLatBounds();
-  for (const P of PROVINCES) {
-    let data;
+async function load() {
+  let idx = { sets: [] };
+  try { idx = await (await fetch("data/pads/index.json")).json(); } catch (e) {}
+  for (const s of idx.sets || []) {
     try {
-      const r = await fetch(P.file);
-      if (!r.ok) { failures.push(`${P.name}: ${P.file} returned HTTP ${r.status}`); continue; }
-      data = await r.json();
-    } catch (e) {
-      failures.push(`${P.name}: ${P.file} — ${e.message}`);
-      continue;
+      const d = await (await fetch("data/pads/" + s.file)).json();
+      d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
+      SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
+    } catch (e) {}
+  }
+  render();
+}
+
+function features() {
+  const lines = [], toes = [], pads = [];
+  for (const S of SETS) for (const p of S.pads) {
+    pads.push({ type: "Feature", geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+                properties: { id: p.id, name: p.name, wells: p.wells.length, color: p.color } });
+    for (const w of p.wells) {
+      if (!w.path || w.path.length < 2) continue;
+      const props = { wa: w.wa, name: w.name, uwi: w.uwi || "", td: w.td, tvd: w.tvd, lateral: w.lateral,
+                      stages: w.stages || 0, logs: w.logs || 0, stations: w.stations || 0, color: p.color, pad: p.name };
+      lines.push({ type: "Feature", geometry: { type: "LineString", coordinates: w.path }, properties: props });
+      toes.push({ type: "Feature", geometry: { type: "Point", coordinates: w.path[w.path.length - 1] }, properties: props });
     }
-    const wells = data.wells.map(w => (w._p = P.code, w));
-    loaded.push({ code: P.code, name: P.name, wells });
-    if (data.source) srcNames.push(data.source);
-
-    const fc = toFeatures(wells);
-    map.addSource("lat-" + P.code, { type: "geojson", data: fc.lines });
-    map.addSource("wells-" + P.code, { type: "geojson", data: fc.pts });
-    map.addLayer({ id: "lat-" + P.code, type: "line", source: "lat-" + P.code,
-      paint: { "line-color": "#3d7dff", "line-width": 1.4, "line-opacity": 0.7 } });
-    map.addLayer({ id: "wells-" + P.code, type: "circle", source: "wells-" + P.code,
-      paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 1.3, 9, 3, 13, 5],
-        "circle-color": colorExpr("type"),
-        "circle-opacity": 0.88,
-        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 9, 0, 12, 0.6],
-        "circle-stroke-color": "#0f1621"
-      } });
-    wireWellLayer(P.code);
-
-    const lbl = document.createElement("label");
-    lbl.innerHTML = `<input type="checkbox" id="cb-${P.code}" checked> ${P.name} <span class="stat">(${wells.length.toLocaleString()})</span>`;
-    provDiv.appendChild(lbl);
-    lbl.querySelector("input").addEventListener("change", applyFilter);
-    for (const w of wells) bounds.extend([w.lo, w.la]);
   }
+  return { lines: fc(lines), toes: fc(toes), pads: fc(pads) };
+}
+const fc = f => ({ type: "FeatureCollection", features: f });
 
-  document.getElementById("loading").style.display = "none";
-  if (!loaded.length) {
-    const hint = location.protocol === "file:"
-      ? "Open this page over http:// — a file:// page cannot fetch the well JSON. From web/public run: python3 -m http.server 8899"
-      : "Check that data/ab-wells.json and data/bc-wells.json sit next to map.html in the served directory.";
-    document.getElementById("count").innerHTML =
-      `No well data available.<br><span style="color:var(--mut)">${failures.join("<br>") || "no fetch attempted"}<br>${hint}</span>`;
-    console.error("[well map] data load failed:", failures);
-    return;
-  }
-  document.getElementById("sources").textContent = "Sources: " + [...new Set(srcNames)].join(" · ");
-  document.getElementById("count").innerHTML =
-    `<b>${loaded.reduce((s, p) => s + p.wells.length, 0).toLocaleString()}</b> wells`;
-  if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60, maxZoom: 8, duration: 0 });
-  renderLegend("type");
-
-  // controls
-  document.getElementById("colorby").addEventListener("change", applyColor);
-  document.getElementById("horiz-only").addEventListener("change", applyFilter);
-  const bind = (id, lbl, fmt) => {
-    const el = document.getElementById(id);
-    el.addEventListener("input", () => {
-      document.getElementById(lbl).textContent = fmt(+el.value);
-      clearTimeout(el._t); el._t = setTimeout(applyFilter, 120);
+function render() {
+  const f = features();
+  const add = () => {
+    map.addSource("laterals", { type: "geojson", data: f.lines });
+    map.addSource("toes", { type: "geojson", data: f.toes });
+    map.addSource("pads", { type: "geojson", data: f.pads });
+    map.addLayer({ id: "laterals-halo", type: "line", source: "laterals",
+      paint: { "line-color": "#000", "line-width": ["case", [">", ["get", "stages"], 0], 5, 3.5], "line-opacity": .35 },
+      layout: { "line-cap": "round", "line-join": "round" } });
+    map.addLayer({ id: "laterals", type: "line", source: "laterals",
+      paint: { "line-color": ["get", "color"], "line-width": ["case", [">", ["get", "stages"], 0], 3, 1.6],
+               "line-opacity": ["case", [">", ["get", "stages"], 0], 1, .75] },
+      layout: { "line-cap": "round", "line-join": "round" } });
+    map.addLayer({ id: "toes", type: "circle", source: "toes",
+      paint: { "circle-radius": 3, "circle-color": ["get", "color"], "circle-stroke-color": "#0b1015", "circle-stroke-width": 1 } });
+    map.addLayer({ id: "pads", type: "circle", source: "pads",
+      paint: { "circle-radius": 7, "circle-color": "#ffffff", "circle-stroke-color": ["get", "color"], "circle-stroke-width": 3 } });
+    // pad names as HTML markers: the raster base style carries no glyphs,
+    // so a symbol layer cannot draw text here
+    for (const pf of f.pads.features) {
+      const el = document.createElement("div");
+      el.className = "padlabel"; el.textContent = pf.properties.name; el.style.color = pf.properties.color;
+      new maplibregl.Marker({ element: el, anchor: "top", offset: [0, 9] }).setLngLat(pf.geometry.coordinates).addTo(map);
+    }
+    const b = new maplibregl.LngLatBounds();
+    for (const l of f.lines.features) for (const c of l.geometry.coordinates) b.extend(c);
+    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 40, bottom: 40, left: 360, right: 60 }, duration: 0 });
+    for (const id of ["laterals", "toes"]) {
+      map.on("mouseenter", id, () => map.getCanvas().style.cursor = "pointer");
+      map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
+      map.on("click", id, e => openWell(e.features[0].properties, e.lngLat));
+    }
+    map.on("click", "pads", e => {
+      const p = e.features[0].properties;
+      const el = document.querySelector(`.pad[data-id="${p.id}"]`);
+      if (el) { el.classList.add("open"); el.scrollIntoView({ block: "nearest" }); }
     });
   };
-  bind("yr-min", "yr-val", v => v <= 1950 ? "any year" : "" + v);
-  bind("ll-min", "ll-val", v => v.toLocaleString() + " m");
-  bind("td-min", "td-val", v => v.toLocaleString() + " m");
-  bind("st-min", "st-val", v => "" + v);
-  bind("pi-max", "pi-val", v => v >= 30 ? "any" : v + " t/m");
-  const op = document.getElementById("op-filter");
-  op.addEventListener("input", () => { clearTimeout(op._t); op._t = setTimeout(applyFilter, 250); });
-
-  // my-wells panel
-  renderMy();
-  for (const t of ["fav", "tag", "rec"])
-    document.getElementById("tab-" + t).addEventListener("click", () => { myTab = t; renderMy(); });
-  document.getElementById("mine-only").addEventListener("change", applyFilter);
-  document.getElementById("my-export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(MY, null, 1)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "frac2csv-my-wells.json";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  });
-  document.getElementById("my-import-file").addEventListener("change", async ev => {
-    const f = ev.target.files[0];
-    if (!f) return;
-    try {
-      const inc = JSON.parse(await f.text());
-      let merged = 0;
-      for (const [id, r] of Object.entries(inc.items || {})) {
-        const cur = MY.items[id];
-        if (!cur) { MY.items[id] = r; merged++; }
-        else {
-          cur.fav = cur.fav || r.fav;
-          cur.tags = [...new Set([...(cur.tags || []), ...(r.tags || [])])];
-          merged++;
-        }
-      }
-      saveMY(); renderMy(); applyFilter();
-      alert(`Imported/merged ${merged} wells.`);
-    } catch (e) { alert("Import failed: " + e.message); }
-    ev.target.value = "";
-  });
-  document.getElementById("my-clear").addEventListener("click", () => {
-    if (!confirm("Clear all favourites, tags and recents saved in this browser?")) return;
-    MY = { items: {} };
-    saveMY(); renderMy(); applyFilter();
-  });
-
-  // search: zoom to first match
-  const search = document.getElementById("search");
-  search.addEventListener("keydown", ev => {
-    if (ev.key !== "Enter") return;
-    const q = search.value.trim().toLowerCase();
-    if (!q) return;
-    let hit = null;
-    for (const p of loaded) {
-      hit = p.wells.find(w =>
-        (w.n || "").toLowerCase().includes(q) ||
-        (w.op || "").toLowerCase().includes(q) ||
-        (w.u || []).some(u => u.toLowerCase().includes(q)) ||
-        (w.wa || "").toLowerCase() === q);
-      if (hit) break;
-    }
-    if (hit) {
-      map.flyTo({ center: [hit.lo, hit.la], zoom: 12 });
-      const fc = toFeatures([hit]);
-      openWellPopup([hit.lo, hit.la], fc.pts.features[0].properties);
-    } else {
-      search.style.borderColor = "#b03a2e";
-      setTimeout(() => search.style.borderColor = "", 1000);
-    }
-  });
+  if (map.isStyleLoaded()) add(); else map.once("load", add);
+  sidebar();
 }
 
-// race-proof init: the style may already be loaded by the time we get here
-if (map.isStyleLoaded()) initWells();
-else map.once("styledata", initWells);
+let popup = null;
+function openWell(p, lngLat) {
+  if (popup) popup.remove();
+  const facts = [
+    p.pad, p.td ? `TD ${fmt(p.td)} m` : null, p.tvd ? `TVD ${fmt(p.tvd)} m` : null,
+    p.lateral ? `lateral ${fmt(p.lateral)} m` : null,
+    p.stages ? `${p.stages} frac stages` : "no frac stages loaded yet",
+    p.logs ? `${p.logs} log tracks` : null, p.stations ? `${p.stations} survey stations` : null,
+  ].filter(Boolean);
+  popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
+    .setLngLat(lngLat)
+    .setHTML(`<div class="pop"><b>${p.name}</b><div class="facts">${p.uwi ? p.uwi + " · " : ""}WA ${p.wa}<br>${facts.join(" · ")}</div>
+              <a class="btn" href="/well.html?wa=${encodeURIComponent(p.wa)}">Show Data →</a></div>`)
+    .addTo(map);
+  document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
+  const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
+  if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }
+}
+
+function sidebar() {
+  const el = document.getElementById("pads");
+  const nWells = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.length, 0), 0);
+  const nStaged = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0), 0);
+  document.getElementById("sub").textContent = SETS.length
+    ? `${SETS.map(s => s.name).join(", ")} · ${SETS.reduce((n, s) => n + s.pads.length, 0)} pads · ${nWells} wells · ${nStaged} with frac stages`
+    : "no pads built yet";
+  el.innerHTML = SETS.map(S => S.pads.map(p => `
+    <div class="pad" data-id="${p.id}">
+      <button type="button"><span><span class="sw" style="background:${p.color}"></span>${p.name}</span>
+        <span class="n">${p.wells.length} wells · ${p.wells.filter(w => w.stages).length} staged</span></button>
+      <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^TOURMALINE\s+HZ\s+/i, "")}
+          <span class="m">${fmt(w.lateral)} m${w.stages ? ` · <b>${w.stages} stg</b>` : ""}${w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
+    </div>`).join("")).join("");
+  el.querySelectorAll(".pad > button").forEach(b => b.addEventListener("click", () => {
+    const pad = b.parentElement; pad.classList.toggle("open");
+    const p = SETS.flatMap(s => s.pads).find(x => x.id === pad.dataset.id);
+    if (p) map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 12.5) });
+  }));
+  el.querySelectorAll(".pad li a").forEach(a => a.addEventListener("click", ev => {
+    ev.preventDefault();
+    const w = WELL_BY_WA[a.dataset.wa]; if (!w || !w.path) return;
+    const mid = w.path[Math.floor(w.path.length / 2)];
+    map.flyTo({ center: mid, zoom: Math.max(map.getZoom(), 13) });
+    openWell({ wa: w.wa, name: w.name, uwi: w.uwi, td: w.td, tvd: w.tvd, lateral: w.lateral, stages: w.stages || 0,
+               logs: w.logs || 0, stations: w.stations || 0, pad: w.pad.name }, mid);
+  }));
+}
+load();
 </script>
 </body>
 </html>

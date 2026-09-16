@@ -235,6 +235,46 @@ Classes found and fixed in the pass (be76d56 through 1925091):
 - **00590** is a second symbolic-font JobMaster book (Vesta, in the
   "baker" list) and reads through the same span-OCR path as 00575.
 
+## Stratum: the pad-first site (2026-09-16)
+
+Chris's name for the consumer web product is **Stratum** (the map + pad +
+well pages in `web/public/`). Rebuilt from the ground up around one BC
+cluster instead of every well in two provinces: Tourmaline's Gundy /
+Gundy Creek pads, 8 pads, 76 wells within 2 km of 56.80 N 122.11 W.
+
+- `pad_json.py` builds `web/public/data/pads/<set>.json` (pads, each
+  well's surface location and a 60-point plan-view path) and per-well
+  `data/wells/<WA>.json` with `pad` and `trajectory` (the BCER IRIS
+  DIR_SURVEY stations: md, inc, az, tvd, ns, ew, and lat/lon from the
+  surface location and the offsets; `heel_md` = where inclination first
+  reaches 80°). Inputs are in `../exports/bc-gundy-cluster/` (the
+  survey CSV cut from the public bulk file, `surface.csv` cut from the
+  IRIS wells table) and `../batch-lists/bc-cluster-2026-09-16.tsv`.
+- `logs_from_las.py` reads the LAS files fetched from the BCER eLibrary
+  (files.bc-er.ca/WellData, credentials in ~/.netrc, one FTP session over
+  IPv4 — curl's login-per-file and IPv6 EPSV both get refused) into
+  `logs: [{name, mnemonic, unit, md, v}]`: GR in 38 of the 76 wells,
+  the full wireline suite in 7.
+- `stages_from_csv.py` turns the Lab's own `<report>-seconds.csv` (and
+  the stage table beside it, for depths) into `stages`, the shape
+  `well.html` draws — run it on the folder where Carmine's Lab wrote its
+  exports for the cluster's BCER filings. Not yet run: the CSVs were
+  being exported when this was written.
+- `map.html` (MapLibre on the Esri dark canvas) draws only the pad sets:
+  surveyed laterals coloured by pad, heavier once a well has stages, pad
+  markers with HTML labels (the raster style has no glyphs, so a symbol
+  layer cannot draw text), a sidebar of pads and wells, popups that open
+  `well.html?wa=`. The old two-province map is in git history (5876e06).
+- `pad.html?set=gundy[&pad=gundy-01]`: plan view of the laterals and a
+  wells table; `well.html` now draws the wellbore's side view from the
+  survey (reach across, TVD down), the gamma-ray track under the MD axis
+  clipped to the bar's span, and an empty-stages state.
+
+The seven Alberta demo wells were removed from `data/wells/` (still in git).
+The BC public bulk files worth knowing: `dir_survey_csv.zip` (every
+survey), `drill_csv.zip` (FORM_TOP and LOGS_RUN stop around WA 31k, so
+the 2019+ wells' tops and logs come only from the eLibrary).
+
 ## The website's well view (2026-09-15)
 
 The Lab gathers the data; the site (`web/`, Vercel project `frac2csv-web`)

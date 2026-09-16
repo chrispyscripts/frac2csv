@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frac2CSV — Well view</title>
+<title>Stratum — Well view</title>
 <style>
   :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
           --acc:#1d5bd8; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
@@ -120,6 +120,9 @@ function header() {
     `<b>${measured}</b> with a printed depth${measured < WELL.stages.length ? `, ${WELL.stages.length - measured} placed by order` : ""}`,
     WELL.file ? `<span style="font-family:var(--mono);font-size:12px">${WELL.file}</span>` : null,
   ].filter(Boolean);
+  if (WELL.pad && WELL.pad.id) facts.push(`pad <a href="pad.html?set=${encodeURIComponent(WELL.pad.id.replace(/-\d+$/, ""))}&pad=${encodeURIComponent(WELL.pad.id)}">${WELL.pad.name}</a>`);
+  if (WELL.trajectory && WELL.trajectory.md && WELL.trajectory.md.length) facts.push(`survey <b>${WELL.trajectory.md.length} stations</b>`);
+  if (WELL.logs && WELL.logs.length) facts.push(`logs <b>${WELL.logs.map(l => l.mnemonic || l.name).join(", ")}</b>`);
   document.getElementById("facts").innerHTML = facts.map(f => `<span>${f}</span>`).join("");
 }
 
@@ -157,13 +160,14 @@ function draw() {
   const fig = document.getElementById("figure");
   const avail = Math.max(320, fig.clientWidth - 2);
   // the vertical section is drawn only when the record says how deep the well is
-  const VERT = !!(WELL.well.td_m && (WELL.well.tvd_m || WELL.well.lateral_m));
+  const TRAJ = WELL.trajectory && WELL.trajectory.md && WELL.trajectory.md.length > 2 ? WELL.trajectory : null;
+  const VERT = !!TRAJ || !!(WELL.well.td_m && (WELL.well.tvd_m || WELL.well.lateral_m));
   const PADL = VERT ? 150 : 78, PADR = 34, PANEL_MIN = 26;
-  const W = Math.max(avail, PADL + PADR + PANEL_MIN * N);
+  const W = Math.max(avail, PADL + PADR + PANEL_MIN * Math.max(1, N));
   const PT = 34, PANEL_H = 250, BAR_Y = PT + PANEL_H + 44, BAR_H = 18, AXIS_Y = BAR_Y + BAR_H + 22;
   const LOG_H = WELL.logs && WELL.logs.length ? 90 : 0;          // the LAS track, when there is one
   const H = AXIS_Y + 24 + LOG_H;
-  const pw = (W - PADL - PADR) / N;
+  const pw = (W - PADL - PADR) / Math.max(1, N);
   const scaleWell = document.getElementById("scale").value === "well";
 
   // the value each channel is scaled against
@@ -186,8 +190,9 @@ function draw() {
       const heel = WELL.well.td_m - WELL.well.lateral_m;
       if (heel < md0 && md0 - heel < 600) md0 = heel;
     }
-  } else if (WELL.well.td_m && WELL.well.lateral_m) { md1 = WELL.well.td_m; md0 = md1 - WELL.well.lateral_m; }
-  else { md0 = 0; md1 = N; }
+  } else if (TRAJ && WELL.well.heel_md) { md1 = WELL.well.td_m || TRAJ.md[TRAJ.md.length - 1]; md0 = WELL.well.heel_md; }
+  else if (WELL.well.td_m && WELL.well.lateral_m) { md1 = WELL.well.td_m; md0 = md1 - WELL.well.lateral_m; }
+  else { md0 = 0; md1 = Math.max(1, N); }
   const xOfMd = md => PADL + (md - md0) / (md1 - md0) * (W - PADL - PADR);
   const yTop = PT, yBot = PT + PANEL_H;
 
@@ -197,7 +202,32 @@ function draw() {
 
   // the wellbore's vertical section: surface at the top, measured depth
   // down the hole to the heel, a curved build into the lateral
-  if (VERT) {
+  if (TRAJ) {
+    // the surveyed wellbore, seen from the side: horizontal reach from the
+    // surface location across, true vertical depth down, scaled into the
+    // left margin so the heel meets the bar
+    const xv = 30, yS = yTop - 12, yH = BAR_Y + BAR_H / 2;
+    const reach = TRAJ.ns.map((n, i) => Math.hypot(n, TRAJ.ew[i]));
+    const heelI = Math.max(1, TRAJ.md.findIndex(m => m >= md0));
+    const rMax = Math.max(1, ...reach.slice(0, heelI + 1)), tvdMax = Math.max(1, ...TRAJ.tvd.slice(0, heelI + 1).filter(v => v != null));
+    const sx = (PADL - 8 - xv) / rMax, sy = (yH - yS) / tvdMax;
+    let d = "";
+    for (let i = 0; i <= heelI && i < TRAJ.md.length; i++) {
+      if (TRAJ.tvd[i] == null) continue;
+      d += (d ? "L" : "M") + (xv + reach[i] * sx).toFixed(1) + " " + (yS + TRAJ.tvd[i] * sy).toFixed(1);
+    }
+    g += `<path d="${d}" fill="none" stroke="#c9d3dc" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`;
+    g += `<path d="${d}" fill="none" stroke="#7f93a5" stroke-width="1.2" stroke-linejoin="round"/>`;
+    g += `<text x="${xv + 10}" y="${yS + 4}" fill="#5b6b7b">surface</text>`;
+    const vstep = niceStep(tvdMax, 4);
+    for (let m = vstep; m < tvdMax - vstep * 0.3; m += vstep) {
+      const y = yS + m * sy;
+      g += `<line x1="${xv - 6}" y1="${y}" x2="${xv + 6}" y2="${y}" stroke="#7f93a5"/>`;
+      g += `<text x="${xv + 10}" y="${y + 3.5}" fill="#5b6b7b">${Math.round(m).toLocaleString()} m</text>`;
+    }
+    g += `<text x="${xv + 10}" y="${yH + 26}" fill="#5b6b7b">heel ${Math.round(md0).toLocaleString()} m MD</text>`;
+    g += `<text x="${xv + 10}" y="${yH + 40}" fill="#9fb0c0">TVD ${Math.round(tvdMax).toLocaleString()} m · surveyed</text>`;
+  } else if (VERT) {
     const xv = 34, R = 34, yS = yTop - 12, yH = BAR_Y + BAR_H / 2;
     const heelMd = md0, vspan = Math.max(1, yH - R - yS);
     g += `<path d="M${xv} ${yS} L${xv} ${yH - R} A${R} ${R} 0 0 0 ${xv + R} ${yH} L${PADL} ${yH}" fill="none" stroke="#c9d3dc" stroke-width="7" stroke-linecap="round"/>`;
@@ -213,12 +243,16 @@ function draw() {
     if (WELL.well.tvd_m) g += `<text x="${xv + R + 4}" y="${yH + 14}" fill="#9fb0c0">TVD ${Math.round(WELL.well.tvd_m).toLocaleString()} m</text>`;
   }
 
-  // y-axis labels for the two headline channels
-  g += `<text x="${PADL - 8}" y="${yTop + 4}" text-anchor="end" fill="var(--press)">${fmt(maxWell.press)} MPa</text>`;
-  g += `<text x="${PADL - 8}" y="${yTop + 18}" text-anchor="end" fill="var(--rate)">${fmt(maxWell.rate)} m³/min</text>`;
-  if (show.has("wh_conc") || show.has("bh_conc"))
-    g += `<text x="${PADL - 8}" y="${yTop + 32}" text-anchor="end" fill="var(--wh)">${fmt(Math.max(maxWell.wh_conc, maxWell.bh_conc))} kg/m³</text>`;
-  g += `<text x="${PADL - 8}" y="${yBot + 3}" text-anchor="end" fill="#5b6b7b">0</text>`;
+  // y-axis labels for the two headline channels (none until stages are loaded)
+  if (N) {
+    g += `<text x="${PADL - 8}" y="${yTop + 4}" text-anchor="end" fill="var(--press)">${fmt(maxWell.press)} MPa</text>`;
+    g += `<text x="${PADL - 8}" y="${yTop + 18}" text-anchor="end" fill="var(--rate)">${fmt(maxWell.rate)} m³/min</text>`;
+    if (show.has("wh_conc") || show.has("bh_conc"))
+      g += `<text x="${PADL - 8}" y="${yTop + 32}" text-anchor="end" fill="var(--wh)">${fmt(Math.max(maxWell.wh_conc, maxWell.bh_conc))} kg/m³</text>`;
+    g += `<text x="${PADL - 8}" y="${yBot + 3}" text-anchor="end" fill="#5b6b7b">0</text>`;
+  } else {
+    g += `<text x="${PADL + (W - PADL - PADR) / 2}" y="${yTop + PANEL_H / 2}" text-anchor="middle" fill="#9fb0c0" font-size="12">frac stages appear here once the Lab's export for this well is loaded</text>`;
+  }
   g += `<line x1="${PADL}" y1="${yBot + .5}" x2="${W - PADR}" y2="${yBot + .5}" stroke="#dfe6ec"/>`;
 
   // stage panels
@@ -274,7 +308,9 @@ function draw() {
   g += `</svg>`;
   fig.innerHTML = g;
   wireHover(fig, S);
-  document.getElementById("foot").innerHTML = meas.length
+  document.getElementById("foot").innerHTML = !N
+    ? `No frac stages are loaded for this well yet; the wellbore is drawn from its directional survey${WELL.logs && WELL.logs.length ? " and the gamma-ray log from its LAS file" : ""}. Stages appear once the Lab's export for its completion report is added.`
+    : meas.length
     ? `Panels are equal width and read left to right along the wellbore; the bar shows each stage at the depth its report printed${meas.length < N ? ", hatched where it printed none and the stage is placed by its number" : ""}. Traces are thinned to ${S[0].step_s ? S[0].step_s + " s" : "a few seconds"} per point; the full-rate samples are in the export.`
     : `This report prints no stage depths, so the stages stand in stage order with stage 1 at the toe; the bar is the well's filed lateral. Traces are thinned to a few seconds per point; the full-rate samples are in the export.`;
 }
@@ -290,11 +326,14 @@ function drawLogs(x0, y0, w, h, xOfMd) {
     let d = ""; let pen = false;
     for (let i = 0; i < L.md.length; i++) {
       if (L.v[i] == null) { pen = false; continue; }
-      const px = xOfMd(L.md[i]), py = y0 + h - (L.v[i] - vmin) / Math.max(1e-9, vmax - vmin) * (h - 4) - 2;
+      const px = xOfMd(L.md[i]);
+      if (px < x0 || px > x0 + w) { pen = false; continue; }     // beyond the bar's span
+      const py = y0 + h - (L.v[i] - vmin) / Math.max(1e-9, vmax - vmin) * (h - 4) - 2;
       d += (pen ? "L" : "M") + px.toFixed(1) + " " + py.toFixed(1); pen = true;
     }
     g += `<path d="${d}" fill="none" stroke="#2e8b57" stroke-width="1"/>`;
-    g += `<text x="${x0 + 6}" y="${y0 + 12}" fill="#5b6b7b">${L.name}${L.unit ? " (" + L.unit + ")" : ""}</text>`;
+    g += `<text x="${x0 + 6}" y="${y0 + 12}" fill="#5b6b7b">${L.name}${L.unit ? " (" + L.unit + ")" : ""} · ${fmt(vmin)}–${fmt(vmax)}${L.file ? " · " + L.file : ""}</text>`;
+    break;                                   // one track for now: the first (gamma ray)
   }
   return g;
 }
