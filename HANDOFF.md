@@ -137,6 +137,18 @@ Classes found and fixed in the pass (be76d56 and the commit after it):
   heading ("SURFACTANT, FraCare FBS 200 Interval #") and reads ISO
   starts. `alias_table`: WH Press, CMB SLR Rate*, SLR Rate*. 00575: 0 →
   46 charts, all numbered and dated; 00017 p101 reads all four series.
+  Two more in the same list: Husky's books (00054, 00061, 00062, 00068,
+  00106, 00028) title their pages "Husky 100/06-24-048-19W5 Frac #2" and
+  the aborted run "… Frac #2 Ball Seat Attempt" — `jm_title` takes
+  "Frac #N" as the stage word and keeps the qualifier in the stage key,
+  as "- Stage 06 Plug Slip" is kept; and 00030 embeds its chart font with
+  every character code 29 below the character it draws ("-RE0DVWHU" is
+  "JobMaster", "=RQH\x03\x14" is "Zone 1") AND draws the landscape chart
+  sideways inside an upright page with no /Rotate — `bj1._unshift` puts
+  the codes back span by span (the "Well Name:" line mixes fonts), and
+  `_upright` stands the content up from the "Elapsed Time" caption's own
+  line direction. The additives page there is "Additives" alone and
+  never detects.
 - **Trican layout A photocopied (00006, 00007, 00008 — 2018 Spirit
   River).** The page is one scanned image with an OCR layer; the reader's
   "main image" is therefore the whole page and `step1._frame_bbox` finds

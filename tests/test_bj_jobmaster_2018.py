@@ -47,6 +47,13 @@ class Title(unittest.TestCase):
         self.assertEqual(bj1.jm_title("Well A interval 1", word=True), ("Well A", 1, "Interval", ""))
         self.assertIsNone(bj1.jm_title("Additives"))
 
+    def test_the_shifted_font_reads_back(self):
+        # 00030: every code 29 below its character
+        self.assertEqual(bj1._unshift("-RE0DVWHU\x033URJUDP"), "JobMaster Program")
+        self.assertEqual(bj1._unshift("=RQH\x03\x14"), "Zone 1")
+        self.assertEqual(bj1._unshift("Job Number:  PRJ1001029"), "Job Number:  PRJ1001029")
+        self.assertEqual(bj1._unshift(""), "")
+
     def test_2019_additives_page_names_no_zone(self):
         self.assertIsNone(bj1.jm_title("Slickwater Additives"))
 

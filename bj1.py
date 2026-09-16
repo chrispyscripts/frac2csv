@@ -125,7 +125,51 @@ def _upright(page):
     span and drawing comes back in the stored frame, time running DOWN the
     page. Everything here is read in the frame the viewer shows.
     """
-    return page.rotation_matrix if page.rotation else None
+    if page.rotation:
+        return page.rotation_matrix
+    # 00030 (Husky, Spirit River) draws the landscape chart SIDEWAYS inside
+    # an upright page with no /Rotate at all: "Elapsed Time (min)" runs up
+    # the page and the tick ladders sit in rows. The caption's own line
+    # direction says which way the content is turned; the matrix stands it
+    # up exactly as rotation_matrix would.
+    d = _content_dir(page)
+    if d is None:
+        return None
+    W, H = page.rect.width, page.rect.height
+    if d[1] < 0:                                 # text runs upward
+        return fitz.Matrix(0, 1, -1, 0, H, 0)    # (x, y) -> (H - y, x)
+    return fitz.Matrix(0, -1, 1, 0, 0, W)        # (x, y) -> (y, W - x)
+
+
+def _content_dir(page):
+    """The direction of the "Elapsed Time" caption's line when it is not
+    horizontal — (0, -1) or (0, 1) — else None."""
+    try:
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                if any("Elapsed Time" in _unshift(sp["text"]) for sp in line["spans"]):
+                    d = line.get("dir", (1.0, 0.0))
+                    return None if abs(d[0]) >= 0.5 else (0.0, -1.0 if d[1] < 0 else 1.0)
+    except Exception:
+        return None
+    return None
+
+
+# 00030 (Husky, Spirit River) embeds its JobMaster font with every character
+# code 29 below the character it draws: "JobMaster" arrives as "-RE0DVWHU",
+# "Zone 1" as "=RQH\x03\x14". The page's OTHER fonts are normal, so the page
+# does not read as garbled and no OCR fires; the title, the tick labels and
+# the axis names are all in the shifted font. Adding 29 to every code puts
+# the text back, and only a span that holds control characters is touched.
+_SHIFT = 29
+
+
+def _unshift(t):
+    """A span's text with the +29 font offset undone, or the text itself."""
+    if not t or not any(ord(c) < 32 and c not in "\n\r\t" for c in t):
+        return t
+    out = "".join(chr(ord(c) + _SHIFT) for c in t)
+    return out if all(c.isprintable() for c in out) else t
 
 
 def _garbled(page):
@@ -147,7 +191,7 @@ def _spans(page):
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
-                t = span["text"].strip()
+                t = _unshift(span["text"]).strip()
                 if t and garbled:
                     # the box and colour are the page's; the text is read
                     # off the ink, because the font names no characters
@@ -240,7 +284,19 @@ def page_text(page, spans=None):
     """The page's text — its own, or the OCR of each span's box when the
     font names no characters (see _spans)."""
     if not _garbled(page):
-        return page.get_text()
+        # unshifted span by span: 00030's "Well Name:" line mixes a normal
+        # font with the shifted one, and shifting the whole line would turn
+        # the normal half into printable nonsense
+        try:
+            lines = []
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    t = "".join(_unshift(sp["text"]) for sp in line["spans"])
+                    if t.strip():
+                        lines.append(t)
+            return "\n".join(lines)
+        except Exception:
+            return page.get_text()
     if spans is None:
         spans = _spans(page)
     return "\n".join(s["t"] for s in spans)
