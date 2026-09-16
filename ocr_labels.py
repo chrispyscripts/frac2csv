@@ -261,6 +261,50 @@ def _lines(page, dpi=DPI, min_conf=TEXT_CONF):
 _EDGE_JUNK = re.compile(r"^[^0-9A-Za-z(]+|[^0-9A-Za-z)%³]+$")
 
 
+# ---- one span at a time: the page's own boxes, our reading of the ink ----
+#
+# A Type0 font with no ToUnicode map (00575, BJ JobMaster 2018) gives every
+# span its true box and colour and a text of control characters. The whole-
+# page OCR above misses those pages' tick digits and rotated axis titles,
+# but a crop of one span's box, rendered five times over and stood upright
+# when the line runs vertically, reads as a single line of text. Five
+# seconds a page for thirty spans.
+SPAN_SCALE = 5.0
+SPAN_PAD = 1.5
+
+
+def span_text(page, bbox, direction=(1.0, 0.0)):
+    """The text inside one PDF span's box, by OCR of its rendering.
+    `direction` is the line's `dir` from page.get_text("dict"); vertical
+    text is turned to read left to right. '' when nothing reads."""
+    if not available():
+        return ""
+    store = _cache(page)
+    key = ("span", getattr(page, "number", None),
+           tuple(round(v, 1) for v in bbox), tuple(round(v, 2) for v in direction))
+    if store is not None and key in store:
+        return store[key]
+    out = ""
+    try:
+        r = fitz.Rect(bbox) + (-SPAN_PAD, -SPAN_PAD, SPAN_PAD, SPAN_PAD)
+        pix = page.get_pixmap(matrix=fitz.Matrix(SPAN_SCALE, SPAN_SCALE), clip=r)
+        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+            pix.height, pix.width, pix.n)
+        img = img[..., :3] if pix.n >= 3 else np.repeat(img, 3, axis=2)
+        if abs(direction[0]) < 0.5:
+            # text running up the page (dir (0, -1)) is turned clockwise to
+            # read; running down, counter-clockwise
+            img = np.rot90(img, 3 if direction[1] < 0 else 1)
+        out = ar.ocr_line(np.ascontiguousarray(img).astype(int), psm=7).strip()
+        # the superscript in "m³/min" and "kg/m³" reads as *, ? or ³
+        out = re.sub(r"(?<=m)[*?\u00b3](?=/|\)|$)", "3", out)
+    except Exception:
+        out = ""
+    if store is not None:
+        store[key] = out
+    return out
+
+
 def text_spans(page):
     """[(bbox, text)] for every OCR'd line carrying a letter.
 

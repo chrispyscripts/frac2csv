@@ -99,7 +99,7 @@ def detect(page):
     yield BJ charts, all 878 detected pages carry the combined title line and
     none is lost. All five spreadsheet pages lose it.
     """
-    t = page.get_text()
+    t = page_text(page)
     if is_jobmaster(t):
         return True
     if TIME_RE.search(t) is None:
@@ -128,13 +128,30 @@ def _upright(page):
     return page.rotation_matrix if page.rotation else None
 
 
+def _garbled(page):
+    """A page whose text layer is not text (00575: a Type0 font with no
+    character map, every span control characters)."""
+    try:
+        import ocr_labels
+        return ocr_labels.garbled(page)
+    except Exception:
+        return False
+
+
 def _spans(page):
     out = []
     M = _upright(page)
+    garbled = _garbled(page)
+    if garbled:
+        import ocr_labels
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
                 t = span["text"].strip()
+                if t and garbled:
+                    # the box and colour are the page's; the text is read
+                    # off the ink, because the font names no characters
+                    t = ocr_labels.span_text(page, span["bbox"], line.get("dir", (1.0, 0.0)))
                 if t:
                     r = fitz.Rect(span["bbox"])
                     if M is not None:
@@ -176,13 +193,54 @@ def _drawings(page):
 # Zone 1" under a "Well Name: 102/05-26-062-21W5" header, plotted against
 # "Elapsed Time (min)" with no clock and no legend — each series is named
 # by its axis title, printed in the series' own colour.
-_JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+Zone\s+(\d+)\b")
-_JM_WELL = re.compile(r"Well Name:\s*(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
+# 2019: "Well 2 Zone 1" under "Well Name: 102/05-26-062-21W5". 2018 (00575,
+# Rife): "RIFE 100/01-24 Zone 6" under "UWI: 100/01-24-032-24W4" — the
+# well named by its operator and location, no "Well N".
+# Murphy's books (00017, 00018) say "Well A interval 1" / "Well B Interval
+# 3" for the same page; zone and interval are the same word here.
+_JM_ZONE = re.compile(r"\bWell\s+(\d+)\s+(Zone|Interval)\s+(\d+)\b", re.I)
+_JM_ZONE_2018 = re.compile(r"^\s*(\S.{0,40}?)\s+(Zone|Interval)\s+(\d+)\s*$", re.M | re.I)
+# "Well Name: 102/05-26-062-21W5" — or "Well Name: VESTA SYLAKE 100/10-20-
+# 037-01W5" (00009) and "Well Name: 16-14-064-21W5 100/10-22-064-21W5"
+# (00017): the UWI is somewhere on the line, not necessarily first
+_JM_WELL = re.compile(r"Well Name:[^\n]*?(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
+_JM_UWI = re.compile(r"UWI:\s*(\d{3})/(\d{2})-(\d{2})-(\d{3})-(\d{2})W(\d)")
+
+
+def jm_title(text, word=False):
+    """-> (well label, zone number) from a JobMaster page's title line, or
+    None: ("Well 2", 1) for the 2019 books, ("RIFE 100/01-24", 6) for 2018.
+    With `word`, the page's own word for the stage comes third — "Zone" or
+    "Interval" (Murphy's 00017/00018 say interval)."""
+    z = _JM_ZONE.search(text)
+    if z:
+        out = (f"Well {int(z.group(1))}", int(z.group(3)))
+        return out + (z.group(2).capitalize(),) if word else out
+    z = _JM_ZONE_2018.search(text)
+    if z:
+        # "Vesta 100/10-20  Well 1 - Zone 1" (00009), "102/04-26-062-21W5
+        # Well1 Zone 1" (00015): the label plain, the well's own number
+        # spaced and the dash before the zone dropped
+        well = re.sub(r"\s*-\s*$", "", " ".join(z.group(1).split()))
+        well = re.sub(r"\bWell(\d+)\b", r"Well \1", well)
+        out = (well, int(z.group(3)))
+        return out + (z.group(2).capitalize(),) if word else out
+    return None
+
+
+def page_text(page, spans=None):
+    """The page's text — its own, or the OCR of each span's box when the
+    font names no characters (see _spans)."""
+    if not _garbled(page):
+        return page.get_text()
+    if spans is None:
+        spans = _spans(page)
+    return "\n".join(s["t"] for s in spans)
 _JM_START = re.compile(r"Job Start:\s*(?:\w+,\s*)?([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})")
 
 
 def is_jobmaster(text):
-    return "JobMaster" in text and "Elapsed Time" in text and _JM_ZONE.search(text) is not None
+    return "JobMaste" in text and "Elapsed Time" in text and jm_title(text) is not None
 
 
 def _fit(pairs):
@@ -241,7 +299,7 @@ def _resolve_year(doc, mon, day):
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
-    text = page.get_text()
+    text = page_text(page, spans)
 
     meta = PageMeta()
     uwi, stage = parse_title(text)
@@ -251,10 +309,10 @@ def extract_page(page, sample_sec=1.0):
     meta.title = title[:60]
     jobmaster = is_jobmaster(text)
     if jobmaster:
-        z = _JM_ZONE.search(text)
-        w = _JM_WELL.search(text)
-        meta.stage = str(int(z.group(2)))
-        meta.title = f"Well {int(z.group(1))} Zone {int(z.group(2))}"
+        well, zone, word = jm_title(text, word=True)
+        w = _JM_WELL.search(text) or _JM_UWI.search(text)
+        meta.stage = str(zone)
+        meta.title = f"{well} {word} {zone}"
         if w:
             meta.uwi = "{}{}{}{}{}W{}00".format(*w.groups())
 
@@ -538,7 +596,21 @@ def extract_page(page, sample_sec=1.0):
             c = d.get("color")
             if c is None or d["type"] not in ("s", "fs"):
                 continue
-            if tuple(round(x, 2) for x in c) != color or len(d["items"]) < 5:
+            # The title's colour and the stroke's are the same ink and can
+            # still differ in the second decimal: 00017 titles its rate
+            # (1.0, 0.24, 0.15) and draws it (1.0, 0.23, 0.15), and an exact
+            # comparison lost the rate on every page. Nearest hundredths
+            # are the same colour; BJ's palette keeps its series 0.2 apart.
+            if max(abs(x - y) for x, y in zip(c, color)) > 0.03:
+                continue
+            # A curve is normally one long path, and a path under five items
+            # is a legend dash or a tick. The JobMaster books other than
+            # 00013 (00009, 00012, 00015, 00017, 00018, 00024) draw every
+            # segment of a curve as its own one-item path — 9,500 blue paths
+            # of one line each — and the filter threw the whole curve away
+            # ("no curves matched" on every page). Those pages print no
+            # legend, and the frame clip below keeps their ticks out.
+            if len(d["items"]) < 5 and not jobmaster:
                 continue
             for item in d["items"]:
                 if item[0] == "l":

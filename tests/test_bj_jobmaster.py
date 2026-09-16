@@ -36,9 +36,9 @@ class Detect(unittest.TestCase):
         self.assertFalse(bj1.detect(_Page(t)))
 
     def test_the_well_and_the_zone_read(self):
-        w = bj1._JM_WELL.search(JM); z = bj1._JM_ZONE.search(JM); s = bj1._JM_START.search(JM)
+        w = bj1._JM_WELL.search(JM); s = bj1._JM_START.search(JM)
         self.assertEqual("{}{}{}{}{}W{}00".format(*w.groups()), "102052606221W500")
-        self.assertEqual((z.group(1), z.group(2)), ("2", "1"))
+        self.assertEqual(bj1.jm_title(JM), ("Well 2", 1))
         self.assertEqual((s.group(1), s.group(2), s.group(3)), ("May", "31", "2019"))
 
 

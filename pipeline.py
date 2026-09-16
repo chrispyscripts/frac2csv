@@ -1224,6 +1224,23 @@ def _hand_over_tails(results, notes):
 
 
 _TOTALS_START = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{2,4})\s+(\d{1,2}):(\d{2})")
+_TOTALS_START_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})")
+
+
+def _totals_start(cell):
+    """A Totals row's Start time -> (date, HH:MM:SS) or None. "6/1/19 0:23"
+    as the 2019 sheets print it, or already ISO."""
+    m = _TOTALS_START.search(str(cell or ""))
+    if m:
+        mo, d, y, hh, mm = (int(x) for x in m.groups())
+        if y < 100:
+            y += 2000                            # "6/1/19"
+    else:
+        m = _TOTALS_START_ISO.search(str(cell or ""))
+        if not m:
+            return None
+        y, mo, d, hh, mm = (int(x) for x in m.groups())
+    return f"{y:04d}-{mo:02d}-{d:02d}", f"{hh:02d}:{mm:02d}:00"
 
 
 def _bj_clock(results, notes):
@@ -1241,6 +1258,11 @@ def _bj_clock(results, notes):
         return
     cols = list(tab.get("columns") or [])
     si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+    if si is None:
+        # 00575's sheet heads the column "SURFACTANT, FraCare FBS 200
+        # Interval #" — a heading from the row above spilt into the cell
+        si = next((i for i, c in enumerate(cols)
+                   if re.search(r"\bInterval\s*#", str(c), re.I)), None)
     ti = next((i for i, c in enumerate(cols) if re.search(r"start", str(c), re.I)), None)
     if si is None or ti is None:
         return
@@ -1249,12 +1271,9 @@ def _bj_clock(results, notes):
         if max(si, ti) >= len(row):
             continue
         n = pe.stage_num(row[si])
-        m = _TOTALS_START.search(str(row[ti] or ""))
-        if n < 10 ** 9 and m:
-            mo, d, y, hh, mm = (int(x) for x in m.groups())
-            if y < 100:
-                y += 2000                        # "6/1/19"
-            clocks[n] = (f"{y:04d}-{mo:02d}-{d:02d}", f"{hh:02d}:{mm:02d}:00")
+        got = _totals_start(row[ti])
+        if n < 10 ** 9 and got:
+            clocks[n] = got
     if not clocks:
         return
     took = 0
@@ -2361,6 +2380,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         if bj1.detect(page):
             try:
                 meta, samples, data, units = bj1.extract_page(page)
+                if re.search(r"\bAdditives\b", str(getattr(meta, "title", "") or "")):
+                    # JobMaster's second page per zone (00575): additive
+                    # ratios and the clean rate, the same footing as
+                    # CalFrac's chemicals page — noted, not exported as a
+                    # stage
+                    notes.append(f"p{pno + 1}: BJ additives chart (zone "
+                                 f"{getattr(meta, 'stage', '?')}) — additive "
+                                 f"ratios, not treatment channels")
+                    continue
                 results.append(_series(_md(meta), samples, data,
                                        "BJ chart", pno + 1, units,
                                        geom=getattr(meta, "geom", None),

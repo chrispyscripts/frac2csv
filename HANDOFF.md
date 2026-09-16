@@ -114,15 +114,29 @@ Classes found and fixed in the pass (be76d56 and the commit after it):
   from the MView footer where the OCR kept it (Tourmaline yes, TAQA no).
   00019/00031/00035: 0 → 3-4 overview charts each.
 
-Still open from the pass:
-
-- **00575 (BJ JobMaster 2018 with a symbolic font).** 88 scanned
-  daily-report pages with no text layer and 95 vector pages whose text
-  extracts as "!\" #$" — the chart pages ("Additives 100/01-24 Zone 9",
-  "Elapsed Time (min)") draw their curves as vector art but name nothing
-  readable. See the run result in the pass summary before deciding: the
-  bj1 JobMaster path needs the axis titles, so this is the "vector, no
-  text" class (HANDOFF, "The 'no text at all' class") on a BJ template.
+- **BJ JobMaster, the other books (00009, 00012, 00015, 00017, 00018,
+  00024; 00575).** 00013 was the easy one. The rest differ in four ways,
+  each of which alone produced "0 charts": (1) the title — "Well A
+  interval 1" (Murphy), "Vesta 100/10-20  Well 1 - Zone 1", "102/04-26-
+  062-21W5 Well1 Zone 1" (Chevron), "100/14-20 Zone 1", "RIFE 100/01-24
+  Zone 6" (2018) — `bj1.jm_title` reads any "<label> Zone|Interval N"
+  line and keeps the page's own word; the UWI is anywhere on the "Well
+  Name:" line or in a "UWI:" header; (2) every curve drawn as one-item
+  paths (9,500 blue paths of one segment), which the under-five-items
+  filter threw away — JobMaster pages keep them, the frame clip keeps
+  ticks out; (3) the title's colour and the stroke's differing in the
+  second decimal ((1.0, 0.24, 0.15) vs (1.0, 0.23, 0.15)) — matched
+  within 0.03; (4) 00575's Type0 fonts carry no character map, so every
+  span is control characters: `ocr_labels.span_text` renders one span's
+  box five times over (stood up when the line is vertical) and reads it,
+  and `bj1._spans`/`page_text` substitute that reading on a garbled page
+  — 5 s a page. The "Additives … Zone N" pages (additive ratios, clean
+  rate) are noted and skipped like CalFrac's chemicals page; 2019 books
+  title theirs "Slickwater Additives" with no zone and never detected.
+  The Totals join (`_bj_clock`) finds the interval column under a spilt
+  heading ("SURFACTANT, FraCare FBS 200 Interval #") and reads ISO
+  starts. `alias_table`: WH Press, CMB SLR Rate*, SLR Rate*. 00575: 0 →
+  46 charts, all numbered and dated; 00017 p101 reads all four series.
 
 ## The website's well view (2026-09-15)
 

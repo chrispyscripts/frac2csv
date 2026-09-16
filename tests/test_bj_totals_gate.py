@@ -45,3 +45,24 @@ class DetectDocument(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TotalsClockColumns(unittest.TestCase):
+    """The Totals join finds its columns on the 2018 sheet (00575)."""
+
+    def test_start_time_both_spellings(self):
+        import pipeline
+        self.assertEqual(pipeline._totals_start("5/9/18 10:37"), ("2018-05-09", "10:37:00"))
+        self.assertEqual(pipeline._totals_start("2018-05-09 10:37:00"), ("2018-05-09", "10:37:00"))
+        self.assertIsNone(pipeline._totals_start("10:37"))
+
+    def test_a_spilt_heading_still_names_the_interval_column(self):
+        import pipeline
+        tab = {"columns": ["UWI", "SURFACTANT, FraCare FBS 200 Interval #", "Start time", "Top Depth (m)"],
+               "rows": [["", "1", "5/9/18 10:37", "3856.53"], ["", "2", "5/9/18 12:10", "3823.33"]]}
+        results = [dict(tab, type="table", source="Totals — per-interval frac summary"),
+                   {"type": "series", "source": "BJ chart", "meta": {"stage": "2", "start_time": "00:00:00"}}]
+        notes = []
+        pipeline._bj_clock(results, notes)
+        md = results[1]["meta"]
+        self.assertEqual((md.get("date"), md.get("start_time")), ("2018-05-09", "12:10:00"))
