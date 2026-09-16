@@ -235,6 +235,18 @@ Classes found and fixed in the pass (be76d56 through 1925091):
 - **00590** is a second symbolic-font JobMaster book (Vesta, in the
   "baker" list) and reads through the same span-OCR path as 00575.
 
+## Open: CalFrac "Surface 2" pages are overview plots, not stages (2026-09-16)
+
+Found while answering the Stratum handoff checklist for ARC Anten (00089-00091):
+the CalFrac MView "Surface 2" page — a whole-job surface plot, 5 to 15 hours long
+— is read as a treatment chart, gets "stage/zone not found", and is filed under
+the LAST zone's number as "N Surface". The pipeline's notes then call it a
+repeat run ("N (2)") and report 244- and 424-minute overlaps against itself.
+`page_meta`/`_mview_variant` should mark a "Surface 2" title as continuous
+(the way layout A's CONTINUOUS pages are) so it is exported as an overview,
+not a stage. Three charts across the three books; the handoff package in
+`../exports/arc-anten/` classifies them by hand for now.
+
 ## Stratum: the pad-first site (2026-09-16)
 
 Chris's name for the consumer web product is **Stratum** (the map + pad +
