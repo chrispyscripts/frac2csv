@@ -87,6 +87,9 @@ const map = new maplibregl.Map({
 });
 map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 map.addControl(new maplibregl.ScaleControl(), "bottom-left");
+// resolved once the style has loaded — registered now, so the pads' fetch
+// can finish before or after the map is ready without missing the event
+const mapReady = new Promise(resolve => map.on("load", resolve));
 
 const SETS = [];          // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
 const WELL_BY_WA = {};
@@ -147,7 +150,9 @@ function render() {
     }
     const b = new maplibregl.LngLatBounds();
     for (const l of f.lines.features) for (const c of l.geometry.coordinates) b.extend(c);
-    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 40, bottom: 40, left: 360, right: 60 }, duration: 0 });
+    // leave room for the sidebar only when the map is wide enough to spare it
+    const wide = map.getContainer().clientWidth > 760;
+    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 40, left: wide ? 360 : 24, right: wide ? 60 : 24 }, duration: 0, maxZoom: 13.5 });
     for (const id of ["laterals", "toes"]) {
       map.on("mouseenter", id, () => map.getCanvas().style.cursor = "pointer");
       map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
@@ -159,7 +164,7 @@ function render() {
       if (el) { el.classList.add("open"); el.scrollIntoView({ block: "nearest" }); }
     });
   };
-  if (map.isStyleLoaded()) add(); else map.once("load", add);
+  mapReady.then(add);
   sidebar();
 }
 
