@@ -49,7 +49,16 @@ through the app's own call chain in parallel (`--summary` says what came
 out and why); `detectcensus.py` says which reader would fire on each file.
 Chris's standing goal: every file in those lists reads in the program.
 
-Classes found and fixed in the pass (be76d56 and the commit after it):
+**Where it stands (2026-09-15, end of day): all 227 read.** 225 produce
+charts (11,728 in all) and 282 tables; two produce tables only, for
+reasons the reader prints — Canyon 00553 is the old Canyon chart variant
+(the deferred class, see memory) and Halliburton 00030 carries only SLB
+whole-job PRC plots, which that template drops by design. Every result
+row is in `batch-lists/aer-new-2026-09-14/quickpass-2026-09-15.jsonl`
+(`quickpass.py --summary` reads it). Not yet shipped: everything below
+landed after v1.9.0 — a 1.9.1 would carry it.
+
+Classes found and fixed in the pass (be76d56 through 1925091):
 
 - **BJ JobMaster (2019 Duvernay; 29 of the 30 BJ books).** Landscape pages
   stored with /Rotate 90, one page per zone titled "Well 2 Zone 1", an
