@@ -166,6 +166,22 @@ Classes found and fixed in the pass (be76d56 through 1925091):
   both read now, and two-digit townships on the Well Name line ("-37-")
   are zero-filled. The pass's workers hold the code they started with,
   so a watcher re-runs every empty or tables-only row when it exits.
+  Morning of the 16th, from the BJ list: Chevron's JobMaster 5.00 books
+  (00232-00237) title "100/11-14-62-19W5 Well 6 Int 4" (`Int` = interval;
+  a page titled "Well 1" alone stays unnumbered), their 2022 books
+  (00440-00442) are the classic BJ-1 layout with a lower-case meridian
+  ("100/14-31-062-16w5 - Well 5 - Stage 01") and dates only as "8/23/2022"
+  and "August 11, 2022" — `_WELL_ID`/`parse_title` accept the w and
+  `_doc_year_map` harvests years from those spellings, else every chart
+  landed in 2000. 00584 (a character-less font on 108 chart pages) ran
+  out the 1,500 s budget because each span was a tesseract call;
+  `ocr_labels.span_texts` now reads a page's spans in ONE call (crops
+  stacked with gutters, words handed back by band) and `bj1._spans`
+  skips OCR on garbled pages with more than 120 spans (report pages,
+  not charts). The SSD dropped at ~03:00 on the 16th; 675 rows came
+  back "no such file", were dropped, and the pass resumed at 07:40 once
+  it was back — a dropped drive shows as MuPDF "Input/output error" in
+  the log.
 - **Trican layout A photocopied (00006, 00007, 00008 — 2018 Spirit
   River).** The page is one scanned image with an OCR layer; the reader's
   "main image" is therefore the whole page and `step1._frame_bbox` finds
