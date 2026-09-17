@@ -1298,6 +1298,7 @@ $("mrun").addEventListener("click", async () => {
           bits.push(`${out.written.length} file${out.written.length > 1 ? "s" : ""} saved `
                     + (q._outDir ? `→ ${baseName(q._outDir)} (PDF folder read-only)`
                                  : "beside PDF"));
+        if (out.cached) bits.push("reused earlier analysis");
         q.set(bits.length ? "✓ " + bits.join(" · ") : "no extractable data",
               bits.length ? "ok" : "err");
         if (!bits.length) q.offerReport();
@@ -6005,7 +6006,11 @@ async function emit(entry, name, content, binary) {
     const r = await fetch("/api/save", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body) });
-    if (!r.ok) throw new Error("save failed");
+    if (!r.ok) {
+      let why = "save failed";
+      try { why = (await r.json()).error || why; } catch (e) { /* no body */ }
+      throw new Error(why);
+    }
     return (await r.json()).written;
   }
   if (binary) saveBlob(name, content, XLSX_MIME); else saveText(name, content);
@@ -6109,17 +6114,61 @@ async function exportSummaryOne() {
   const files = await emitSummary(e);
   exportDone(files);
 }
+// A batch save is long — a 40-stage well is a 15 MB CSV and its XLSX takes
+// the browser ~20 s to build — and it used to run in silence: one line at
+// the very end, in a panel the pop-up's own click had just closed. Sixty-six
+// wells looked like a button that did nothing. Now every file's row shows
+// the save as it happens (the rows stay visible whatever the panel does),
+// every CSV lands before any XLSX is started, a failure is noted and the
+// batch goes on, and the failures are listed at the end.
+async function exportBatch(list, kinds, verb) {
+  const foot = $("exfoot");
+  const written = [], failed = [];
+  const total = list.length * kinds.length;
+  let i = 0;
+  for (const kind of kinds) {
+    for (const e of list) {
+      i += 1;
+      foot.textContent = `${verb} ${i}/${total}: ${e.name} (${kind.label})…`;
+      const st = e.head && e.head.querySelector(".st");
+      if (st && e._stBase === undefined) e._stBase = st.textContent;
+      if (e.set) e.set(`${e._stBase || ""} · saving ${kind.label}…`);
+      await new Promise(r => setTimeout(r, 0));      // let the page paint
+      try {
+        const out = await kind.run(e);
+        written.push(...out);
+        const where = out.length ? baseName(dirName(out[0])) || "its folder" : "";
+        e._stSaved = (e._stSaved ? e._stSaved + ", " : "") + kind.label;
+        if (e.set) e.set(`${e._stBase || ""} · saved ${e._stSaved} → ${where}`, "ok");
+      } catch (err) {
+        failed.push(`${e.name}: ${err.message}`);
+        if (e.set) e.set(`${e._stBase || ""} · ✗ ${err.message}`, "err");
+      }
+    }
+  }
+  exportDoneCount(written.length, written);
+  if (failed.length)
+    foot.textContent += ` — ${failed.length} failed: ${failed.slice(0, 3).join("; ")}`
+                        + (failed.length > 3 ? " …" : "");
+  return written;
+}
+const secondsKinds = () => {
+  const kinds = [];
+  if (settings.format !== "xlsx")
+    kinds.push({ label: "CSV", run: async e =>
+      [await emit(e, secondsBase(e, e.well) + ".csv", wellCSV(e.well.stages, e.name), false)] });
+  if (settings.format !== "csv")
+    kinds.push({ label: "XLSX", run: async e =>
+      [await emit(e, secondsBase(e, e.well) + ".xlsx", wellXLSX(e.well.stages, settings.xlsxTabs), true)] });
+  return kinds;
+};
+
 async function exportSecondsAll() {
   const list = entriesInScope().filter(e => e.well);
   if (!list.length) return;
   if (!(await askExportOptions(list[0]))) return;
   if (isLocal()) {
-    let n = 0; const written = [];
-    for (const e of list) {
-      const out = await emitSeconds(e, e.well);
-      n += out.length; written.push(...out);
-    }
-    exportDoneCount(n, written);
+    await exportBatch(list, secondsKinds(), "Saving seconds");
   } else {
     const pairs = [];
     for (const e of list) {
@@ -6136,12 +6185,7 @@ async function exportSummaryAll() {
   if (!list.length) return;
   if (!(await askExportOptions(list[0]))) return;
   if (isLocal()) {
-    let n = 0; const written = [];
-    for (const e of list) {
-      const out = await emitSummary(e);
-      n += out.length; written.push(...out);
-    }
-    exportDoneCount(n, written);
+    await exportBatch(list, [{ label: "tables", run: e => emitSummary(e) }], "Saving tables");
   } else {
     const pairs = [];
     for (const e of list)
@@ -6335,7 +6379,9 @@ $("exportbtn").addEventListener("click", () => {
   else pop.hidden = true;
 });
 document.addEventListener("click", e => {
-  if (!$("exportpop").hidden && !e.target.closest(".exportwrap"))
+  // the export-options pop-up sits outside the panel; a click in it used to
+  // close the panel, so a batch save ran with its progress line out of sight
+  if (!$("exportpop").hidden && !e.target.closest(".exportwrap, #exoptsback"))
     $("exportpop").hidden = true;
 });
 const wrapErr = fn => async () => {

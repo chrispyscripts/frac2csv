@@ -116,10 +116,13 @@ def build(cluster, surveys, surface, pad_set):
                 existing = json.load(open(path_w))
             except (OSError, ValueError):
                 existing = {}
-        doc = {"v": 2, "well": well, "pad": {k: pads[w["pad"]][k] for k in ("id", "name", "lat", "lon")},
-               "file": r.get("FILE", ""), "units": existing.get("units") or {k: u for k, (_l, u) in well_json.SERIES.items()},
-               "trajectory": traj, "stages": existing.get("stages", []), "logs": existing.get("logs", []),
-               "notes": existing.get("notes", [])}
+        # everything another builder put here (stages, logs, engineering
+        # tables) survives; this one owns the well record and the trajectory
+        doc = dict(existing)
+        doc.update({"v": 2, "well": well, "pad": {k: pads[w["pad"]][k] for k in ("id", "name", "lat", "lon")},
+                    "file": r.get("FILE", ""), "units": existing.get("units") or {k: u for k, (_l, u) in well_json.SERIES.items()},
+                    "trajectory": traj, "stages": existing.get("stages", []), "logs": existing.get("logs", []),
+                    "notes": existing.get("notes", [])})
         os.makedirs(os.path.dirname(path_w), exist_ok=True)
         json.dump(doc, open(path_w, "w"), separators=(",", ":"))
         pads[w["pad"]]["wells"].append({"wa": wa, "name": r["WELL"], "uwi": r.get("UWI", ""), "td": td,

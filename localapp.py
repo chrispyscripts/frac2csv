@@ -13,6 +13,8 @@ layout), backed by a 127.0.0.1-only server with direct disk access:
 This is the desktop entrypoint frozen into the Windows EXE.
 """
 import base64
+import gzip
+import hashlib
 import json
 import mimetypes
 import os
@@ -147,6 +149,107 @@ def dir_writable(folder):
             pass
     _WRITABLE[folder] = ok
     return ok
+
+
+# ---- results cache -------------------------------------------------------
+# One analysis per file, kept until the file or the code changes. Before this
+# a report's results lived only in the browser tab that ran it: close the tab
+# (or lose the drive mid-batch) and the only way back to an export was to
+# analyse the whole list again — for the Gundy cluster, an hour of OCR to get
+# at CSVs that had already been on screen. Now a list dropped a second time
+# comes straight back from here, and the Export button works from that.
+CACHE_MAX_BYTES = 2 * 1024 ** 3        # the newest ~2 GB of results stay
+_CODE_STAMP = None
+
+
+def data_dir(sub):
+    """A writable per-user folder for the app's own files (not the log)."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        d = os.path.join(base, "Frac2CSV", sub)
+    elif sys.platform == "darwin":
+        d = os.path.join(os.path.expanduser("~"), "Library",
+                         "Application Support", "Frac2CSV", sub)
+    else:
+        d = os.path.join(os.path.expanduser("~"), ".frac2csv", sub)
+    try:
+        os.makedirs(d, exist_ok=True)
+        return d
+    except OSError:
+        return None
+
+
+def code_stamp():
+    """Version plus the newest .py in the package: a reader fix retires
+    every result the old reader produced."""
+    global _CODE_STAMP
+    if _CODE_STAMP is None:
+        here = os.path.dirname(os.path.abspath(__file__))
+        newest = 0
+        for f in os.listdir(here):
+            if f.endswith(".py"):
+                try:
+                    newest = max(newest, int(os.path.getmtime(os.path.join(here, f))))
+                except OSError:
+                    pass
+        _CODE_STAMP = f"{VERSION}-{newest}"
+    return _CODE_STAMP
+
+
+def cache_key(path):
+    st = os.stat(path)
+    raw = f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}|{code_stamp()}"
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+
+def cache_get(path):
+    """The stored payload for this exact file and code, or None."""
+    d = data_dir("results")
+    if not d:
+        return None
+    try:
+        p = os.path.join(d, cache_key(path) + ".json.gz")
+        if not os.path.exists(p):
+            return None
+        with gzip.open(p, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def cache_put(path, payload):
+    d = data_dir("results")
+    if not d:
+        return
+    try:
+        p = os.path.join(d, cache_key(path) + ".json.gz")
+        with gzip.open(p + ".tmp", "wt", encoding="utf-8") as f:
+            json.dump(dict(payload, cached_at=datetime.now().isoformat(timespec="seconds"),
+                           file=os.path.basename(path)), f, separators=(",", ":"))
+        os.replace(p + ".tmp", p)
+        _cache_prune(d)
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def _cache_prune(d):
+    files = []
+    for f in os.listdir(d):
+        if f.endswith(".json.gz"):
+            fp = os.path.join(d, f)
+            try:
+                files.append((os.path.getmtime(fp), os.path.getsize(fp), fp))
+            except OSError:
+                pass
+    total = sum(sz for _, sz, _ in files)
+    for _, sz, fp in sorted(files):
+        if total <= CACHE_MAX_BYTES:
+            break
+        try:
+            os.remove(fp)
+            total -= sz
+        except OSError:
+            pass
 
 
 def export_folder(preferred, dest_folder=""):
@@ -536,16 +639,34 @@ class Handler(BaseHTTPRequestHandler):
                 path = req.get("path", "")
                 if path not in ALLOWED_FILES:
                     return self._json(403, {"error": "path not allowed"})
+                write = bool(req.get("write", True))
+                job = str(req.get("job", ""))
+                # a list dropped again comes back from the results cache
+                # (the Export button then works without re-analysing); a run
+                # that must WRITE files goes through the reader, which is
+                # where the export files are built
+                hit = None if write or req.get("reuse") is False else cache_get(path)
+                if hit is not None:
+                    _job_set(job, 1, 1)
+                    notes = list(hit.get("notes") or [])
+                    notes.append(f"Reused the analysis from {hit.get('cached_at', '')[:16]} "
+                                 "(drop the file again with 'reuse' off in Settings to re-read it).")
+                    return self._json(200, {"stages": hit.get("stages", []),
+                                            "tables": hit.get("tables", []),
+                                            "notes": notes, "written": [],
+                                            "summary": hit.get("summary", []),
+                                            "outDir": "", "cached": True})
                 stages, tables, notes, written, summary, out_dir = process_path(
                     path, req.get("format", "both"),
                     bool(req.get("xlsxTabs", True)),
                     req.get("stageLabel") == "seq",
-                    req.get("destFolder", ""),
-                    str(req.get("job", "")),
-                    bool(req.get("write", True)))
+                    req.get("destFolder", ""), job, write)
+                cache_put(path, {"stages": stages, "tables": tables,
+                                 "notes": notes, "summary": summary})
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "written": written,
-                                        "summary": summary, "outDir": out_dir})
+                                        "summary": summary, "outDir": out_dir,
+                                        "cached": False})
             return self._json(404, {"error": "unknown endpoint"})
         except Exception as e:
             # The client gets one line; the log gets the stack. Without this

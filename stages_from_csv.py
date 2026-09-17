@@ -119,6 +119,33 @@ def build_stages(seconds_path, folder, base, source_file):
     return stages
 
 
+def merge_bcer(doc, stages):
+    """The Lab's stages over the BCER port skeleton stages_from_bcer wrote.
+
+    A treatment chart rarely prints its interval (Trican's never does), so a
+    Lab stage without a depth takes the port depth BCER filed for the same
+    stage number; a port the Lab has no chart for stays as a depth-only row,
+    so the well's stage count is still the completion's. The skeleton is kept
+    under `bcer_stages` so a later run can merge again."""
+    bcer = doc.get("bcer_stages") or [s for s in doc.get("stages", [])
+                                      if str(s.get("source", "")).startswith("BCER")]
+    doc["bcer_stages"] = bcer
+    by_n = {s["n"]: s for s in bcer}
+    for s in stages:
+        b = by_n.get(s["n"])
+        if not b:
+            continue
+        if s["top_m"] is None and b.get("top_m") is not None:
+            s.update(top_m=b["top_m"], base_m=b.get("base_m"), placed=False)
+            s["notes"].append("interval from the BCER completion table, matched by stage number")
+        if not s["date"] and b.get("date"):
+            s["date"] = b["date"]
+    have = {s["n"] for s in stages}
+    out = stages + [dict(b) for n, b in by_n.items() if n not in have]
+    out.sort(key=lambda s: s["n"])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--folder", required=True, help="where the Lab wrote its CSVs")
@@ -136,7 +163,7 @@ def main():
         stages = build_stages(cands[0], folder, base, r["FILE"])
         path_w = os.path.join(_HERE, "web", "public", "data", "wells", f"{wa}.json")
         doc = json.load(open(path_w)) if os.path.exists(path_w) else {"v": 2, "well": {"wa": wa, "name": r["WELL"]}, "units": {}, "stages": [], "logs": [], "notes": []}
-        doc["stages"] = stages
+        doc["stages"] = merge_bcer(doc, stages)
         doc["units"] = {k: u for k, (_l, u) in well_json.SERIES.items()}
         doc["file"] = r["FILE"]
         json.dump(doc, open(path_w, "w"), separators=(",", ":"))
