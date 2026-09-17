@@ -55,6 +55,48 @@ def read_las(path):
     return curves, rows, null
 
 
+_STOP = re.compile(r"^\s*STOP\s*\.\s*\S*\s+(-?[\d.]+)", re.I)
+_DEPTH_CURVE = re.compile(r"^\s*(DEPT|DEPTH|MD)\b", re.I)
+
+
+def index_kind(path):
+    """(is_tvd, -stop) -- an MD-indexed log sorts before a TVD copy of the same
+    well, and the deeper of two MD logs first.  Phoenix writes one LAS over the
+    build section indexed on TRUE VERTICAL DEPTH and another over the whole
+    wellbore indexed on measured depth; the filename says which only by its
+    depth range, so the header has to be read."""
+    tvd, stop = "TVD" in path.upper(), 0.0
+    with open(path, errors="ignore") as f:
+        sec = ""
+        for line in f:
+            if line.startswith("~"):
+                sec = line[1:2].upper()
+                if sec == "A":
+                    break
+                continue
+            if sec == "W":
+                m = _STOP.match(line)
+                if m:
+                    try:
+                        stop = float(m.group(1))
+                    except ValueError:
+                        pass
+            elif sec == "C" and _DEPTH_CURVE.match(line) and "TRUE VERTICAL" in line.upper():
+                tvd = True
+    return (tvd, -stop)
+
+
+def curve_index(names, mn):
+    """The curve for a wanted mnemonic, allowing a tool suffix: BCER LAS files
+    from Phoenix write GR_HRM1 / ROP_HRM rather than a bare GR / ROP."""
+    if mn in names:
+        return names.index(mn)
+    for i, n in enumerate(names):
+        if re.fullmatch(mn + r"[_0-9].*", n):
+            return i
+    return None
+
+
 def thin(md, v, n):
     if len(md) <= n:
         return md, v
@@ -71,9 +113,9 @@ def tracks(path):
     di = next((i for i, n in enumerate(names) if n in ("DEPT", "DEPTH", "MD")), 0)
     out = []
     for mn in WANT:
-        if mn not in names:
+        ci = curve_index(names, mn)
+        if ci is None:
             continue
-        ci = names.index(mn)
         md, v = [], []
         for r in rows:
             if ci < len(r) and di < len(r) and r[di] is not None and r[ci] is not None:
@@ -99,7 +141,7 @@ def main():
                        + glob.glob(os.path.join(a.folder, f"pad-{int(r['PAD']):02d}", wa, "*.las")))
         logs, seen = [], set()
         # the main log first, repeat passes and TVD-indexed copies after
-        files.sort(key=lambda p: (("REPEAT" in p.upper()) or ("TVD" in p.upper()), p))
+        files.sort(key=lambda p: ("REPEAT" in p.upper(), index_kind(p), p))
         for p in files:
             for t in tracks(p):
                 if t["mnemonic"] in seen:

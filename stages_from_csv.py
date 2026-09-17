@@ -131,6 +131,27 @@ def merge_bcer(doc, stages):
                                       if str(s.get("source", "")).startswith("BCER")]
     doc["bcer_stages"] = bcer
     by_n = {s["n"]: s for s in bcer}
+
+    # Matching on the stage NUMBER breaks when the Lab labels a re-treatment
+    # "8A" or "10A HRF": those strip to the same number as stage 8 / 10, so
+    # several charts land on one port and the tail of the completion is left
+    # over as depth-only rows -- a 46-stage well reported as 57. When the Lab
+    # charted exactly as many stages as the operator filed, the k-th chart is
+    # the k-th interval instead: both run toe to heel, deepest first.
+    if bcer and len(stages) == len(bcer) and len({s["n"] for s in stages}) < len(stages):
+        for s, b in zip(stages, sorted(bcer, key=lambda b: b["n"])):
+            if s["n"] != b["n"]:
+                s["notes"].append(f"stage number {b['n']} from the completion's order "
+                                  f"(the Lab labelled this chart {s['label']})")
+            s["n"] = b["n"]
+            if s["top_m"] is None and b.get("top_m") is not None:
+                s.update(top_m=b["top_m"], base_m=b.get("base_m"), placed=False)
+                s["notes"].append("interval from the BCER completion table, matched by the completion's order")
+            if not s["date"] and b.get("date"):
+                s["date"] = b["date"]
+        stages.sort(key=lambda s: s["n"])
+        return stages
+
     for s in stages:
         b = by_n.get(s["n"])
         if not b:

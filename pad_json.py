@@ -57,13 +57,14 @@ def latlon(lat0, lon0, ns, ew):
             lon0 + ew / (111320.0 * math.cos(math.radians(lat0))))
 
 
-def build(cluster, surveys, surface, pad_set):
+def build(cluster, surveys, surface, pad_set, set_name=None):
+    label = set_name or pad_set.title()
     pads = {}
     wells = {}
     for r in cluster:
         wa = str(r["WA"]).zfill(5)
         pid = f"{pad_set}-{int(r['PAD']):02d}"
-        pads.setdefault(pid, {"id": pid, "name": f"{pad_set.title()} pad {int(r['PAD'])}",
+        pads.setdefault(pid, {"id": pid, "name": f"{label} pad {int(r['PAD'])}",
                               "lat": float(r["PAD_LAT"]), "lon": float(r["PAD_LON"]), "wells": []})
         wells[wa] = {"pad": pid, "row": r}
     stations = {}
@@ -153,13 +154,14 @@ def main():
     ap.add_argument("--surveys", required=True, help="the survey stations CSV (PAD, WA, ..., MD_M, INC_DEG, AZ_DEG, TVD_M, NS_M, EW_M)")
     ap.add_argument("--surface", help="CSV of WA, lat_raw, lon_raw, elev, loc (BCER wells table extract)")
     ap.add_argument("--pad-set", default="pads")
+    ap.add_argument("--set-name", help="how the set reads on the site (default: the pad-set, title-cased)")
     a = ap.parse_args()
     cluster = list(csv.DictReader(open(a.cluster), delimiter="\t"))
     surveys = list(csv.DictReader(open(a.surveys)))
     surface = {}
     if a.surface and os.path.exists(a.surface):
         surface = {str(r["WA"]).zfill(5): r for r in csv.DictReader(open(a.surface))}
-    doc, wells = build(cluster, surveys, surface, a.pad_set)
+    doc, wells = build(cluster, surveys, surface, a.pad_set, a.set_name)
     out = os.path.join(_HERE, "web", "public", "data", "pads", f"{a.pad_set}.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     json.dump(doc, open(out, "w"), separators=(",", ":"))
@@ -173,7 +175,7 @@ def main():
     idx.append({"set": a.pad_set, "file": f"{a.pad_set}.json", "pads": len(doc["pads"]), "wells": len(wells),
                 "lat": sum(p["lat"] for p in doc["pads"]) / len(doc["pads"]),
                 "lon": sum(p["lon"] for p in doc["pads"]) / len(doc["pads"]),
-                "name": f"{a.pad_set.title()} cluster"})
+                "name": f"{a.set_name or a.pad_set.title()} cluster"})
     json.dump({"v": 1, "sets": sorted(idx, key=lambda x: x["set"])}, open(idx_path, "w"), separators=(",", ":"))
     print(f"{out}: {len(doc['pads'])} pads, {len(wells)} wells; well files in web/public/data/wells/")
 
