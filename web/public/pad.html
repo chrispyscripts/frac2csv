@@ -62,7 +62,7 @@ async function main() {
   const lat = wells.map(w => w.lateral).filter(Boolean);
   document.getElementById("facts").innerHTML = [
     `<span>${wells.length} wells</span>`, `<span>${wells.filter(w => w.stations).length} with a directional survey</span>`,
-    `<span>${withLogs} with logs</span>`, `<span>${withStages} with frac stages loaded</span>`,
+    `<span>${withLogs} with logs</span>`, `<span>${wells.reduce((n, w) => n + (w.ports || 0), 0)} stages at BCER depths</span>`, `<span>${withStages} wells with treatment curves</span>`,
     lat.length ? `<span>laterals ${fmt(Math.min(...lat))}–${fmt(Math.max(...lat))} m</span>` : "",
   ].join("");
   drawPlan(pads, wells);
@@ -113,10 +113,10 @@ function drawTable(pads, wells) {
     <td><a href="well.html?wa=${encodeURIComponent(w.wa)}">${w.name}</a></td>
     <td class="num">${w.wa}</td><td>${w.uwi || ""}</td>
     <td class="num">${fmt(w.td)}</td><td class="num">${fmt(w.tvd)}</td><td class="num">${fmt(w.lateral)}</td>
-    <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
+    <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.ports ? fmt(w.ports) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
   </tr>`).join("");
   document.getElementById("table").innerHTML = `<table><thead><tr><th>Pad</th><th>Well</th><th class="num">WA</th><th>UWI</th>
-    <th class="num">TD m</th><th class="num">TVD m</th><th class="num">Lateral m</th><th class="num">Survey</th><th class="num">Stages</th><th class="num">Logs</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <th class="num">TD m</th><th class="num">TVD m</th><th class="num">Lateral m</th><th class="num">Survey</th><th class="num">Stages (BCER)</th><th class="num">With curves</th><th class="num">Logs</th></tr></thead><tbody>${rows}</tbody></table>`;
   document.getElementById("wells").hidden = false;
 }
 

@@ -118,7 +118,7 @@ function features() {
     for (const w of p.wells) {
       if (!w.path || w.path.length < 2) continue;
       const props = { wa: w.wa, name: w.name, uwi: w.uwi || "", td: w.td, tvd: w.tvd, lateral: w.lateral,
-                      stages: w.stages || 0, logs: w.logs || 0, stations: w.stations || 0, color: p.color, pad: p.name };
+                      stages: w.stages || 0, ports: w.ports || 0, logs: w.logs || 0, stations: w.stations || 0, color: p.color, pad: p.name };
       lines.push({ type: "Feature", geometry: { type: "LineString", coordinates: w.path }, properties: props });
       toes.push({ type: "Feature", geometry: { type: "Point", coordinates: w.path[w.path.length - 1] }, properties: props });
     }
@@ -189,7 +189,8 @@ function openWell(p, lngLat) {
   const facts = [
     p.pad, p.td ? `TD ${fmt(p.td)} m` : null, p.tvd ? `TVD ${fmt(p.tvd)} m` : null,
     p.lateral ? `lateral ${fmt(p.lateral)} m` : null,
-    p.stages ? `${p.stages} frac stages` : "no frac stages loaded yet",
+    p.ports ? `${p.ports} stages at BCER depths` : null,
+    p.stages ? `${p.stages} with treatment curves` : "no treatment curves loaded yet",
     p.logs ? `${p.logs} log tracks` : null, p.stations ? `${p.stations} survey stations` : null,
   ].filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
@@ -214,7 +215,7 @@ function sidebar() {
       <button type="button"><span><span class="sw" style="background:${p.color}"></span>${p.name}</span>
         <span class="n">${p.wells.length} wells · ${p.wells.filter(w => w.stages).length} staged</span></button>
       <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^TOURMALINE\s+HZ\s+/i, "")}
-          <span class="m">${fmt(w.lateral)} m${w.stages ? ` · <b>${w.stages} stg</b>` : ""}${w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
+          <span class="m">${fmt(w.lateral)} m${w.ports ? ` · ${w.ports} stg` : ""}${w.stages ? ` · <b>curves</b>` : ""}${w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
     </div>`).join("")).join("");
   el.querySelectorAll(".pad > button").forEach(b => b.addEventListener("click", () => {
     const pad = b.parentElement; pad.classList.toggle("open");
@@ -227,7 +228,7 @@ function sidebar() {
     const mid = w.path[Math.floor(w.path.length / 2)];
     map.flyTo({ center: mid, zoom: Math.max(map.getZoom(), 13) });
     openWell({ wa: w.wa, name: w.name, uwi: w.uwi, td: w.td, tvd: w.tvd, lateral: w.lateral, stages: w.stages || 0,
-               logs: w.logs || 0, stations: w.stations || 0, pad: w.pad.name }, mid);
+               ports: w.ports || 0, logs: w.logs || 0, stations: w.stations || 0, pad: w.pad.name }, mid);
   }));
 }
 load();

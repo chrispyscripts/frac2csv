@@ -125,12 +125,15 @@ def build(cluster, surveys, surface, pad_set):
         pads[w["pad"]]["wells"].append({"wa": wa, "name": r["WELL"], "uwi": r.get("UWI", ""), "td": td,
                                         "tvd": tvd_m, "lateral": lateral, "lat": lat0, "lon": lon0,
                                         "stations": len(traj["md"]), "path": path,
-                                        "stages": len(existing.get("stages", [])), "logs": len(existing.get("logs", [])),
+                                        # stages with treatment curves; the BCER skeleton (depths only) is counted apart
+                                        "stages": sum(1 for s in existing.get("stages", []) if s.get("series")),
+                                        "ports": len(existing.get("stages", [])), "logs": len(existing.get("logs", [])),
                                         "file": r.get("FILE", "")})
         out_wells.append(wa)
         well_json.update_index(os.path.join(_HERE, "web", "public", "data", "wells", "index.json"),
                                {"wa": wa, "name": r["WELL"], "uwi": r.get("UWI", ""), "prov": "BC",
-                                "stages": len(existing.get("stages", [])),
+                                "stages": sum(1 for s in existing.get("stages", []) if s.get("series")),
+                                "ports": len(existing.get("stages", [])),
                                 "measured": sum(1 for s in existing.get("stages", []) if not s.get("placed")),
                                 "year": rec.get("yr"), "file": r.get("FILE", ""), "pad": w["pad"], "trajectory": True})
     for p in pads.values():
