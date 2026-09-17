@@ -846,7 +846,10 @@ def start_logging():
 
 def main():
     log_path = start_logging()
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    # F2C_PORT pins the port (0/unset = let the OS pick, as before), so a
+    # second or third portal can be started on a known address.
+    want = int(os.environ.get("F2C_PORT") or 0)
+    srv = ThreadingHTTPServer(("127.0.0.1", want), Handler)
     port = srv.server_address[1]
     url = f"http://127.0.0.1:{port}/"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
