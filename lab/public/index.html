@@ -134,6 +134,11 @@
   .setlabel.row { display:flex; align-items:center; gap:6px; }
   .setlabel.row .sethint { margin-left:0; margin-right:auto; }
   .btn.tiny { padding:3px 8px; font-size:11px; border-radius:5px; }
+  .isotools { display:inline-flex; align-items:center; gap:6px; }
+  .isocount { color:var(--mut); font-size:11.5px; white-space:nowrap; }
+  .isotools .btn:disabled { opacity:.45; cursor:default; }
+  .btn.danger { border-color:#7a2a24; color:#c22a1e; }
+  .btn.danger:hover:not(:disabled) { background:#c22a1e; border-color:#c22a1e; color:#fff; }
   .destrow { display:flex; gap:8px; }
   .destrow input { flex:1; border:1px solid var(--line); border-radius:6px; background:var(--panel2);
                    color:var(--ink); font-family:var(--mono); font-size:11.5px; padding:6px 9px; }
@@ -686,6 +691,17 @@ where one stage stops and the next starts">FracView &#8599;</button>
           <button type="button" class="btn" id="flagbtn"
                   title="Report a problem with this chart — sends your notes plus
 a picture of these panels and the extraction diagnostics">Flag Error</button>
+          <button type="button" class="btn" id="isobtn" hidden
+                  title="Show only the stretches no curve was drawn for — the
+ones the reader recovered from under a curve painted over them">Isolate Interpolation</button>
+          <span class="isotools" id="isotools" hidden>
+            <span class="isocount" id="isocount"></span>
+            <button type="button" class="btn danger" id="isodel" disabled
+                    title="Drop the selected stretches from this stage's samples,
+so they are not exported">Delete</button>
+            <button type="button" class="btn" id="isoundo" hidden
+                    title="Put the last deleted stretches back">Undo</button>
+          </span>
           <div class="legend" id="pv-legend"></div>
         </div>
         <div class="timewarn" id="timewarn" hidden></div>
@@ -2813,7 +2829,13 @@ $("sumopen").addEventListener("click", () => {
 // ---------- interactive graph (zoom / pan / hover / isolate / labels) ----------
 const GP = { L: 50, R: 16, T: 14, B: 44 };            // plot padding
 const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
-                 hidden: new Set(), hover: null, axisHover: null };
+                 hidden: new Set(), hover: null, axisHover: null,
+                 // Isolate: the editing view over the deduced stretches.
+                 // `dedSel` holds "channelIndex:runIndex" keys; `dedUndo` is a
+                 // stack of deletes, each the samples and the run it removed,
+                 // so a delete is reversible for as long as the stage is open.
+                 isolate: false, dedSel: new Set(), dedUndo: [] };
+const DED_SEL = "#c22a1e";
 
 // curve name per the "Our terms / As extracted" toggle
 function chanName(c) {
@@ -2885,10 +2907,104 @@ function setGraph(channels, n, sampleSec, meta) {
     c._color = col || PALETTE[ci % PALETTE.length];
     taken.add(c._color);
   });
+  // A new stage means new channel arrays: a selection or an undo entry kept
+  // across the change would point into the previous stage's samples.
+  gState.dedSel.clear(); gState.dedUndo.length = 0;
+  syncIso();
   redrawGraph(); buildLegend();
 }
 
+// ---- Isolate: inspect, then remove, what nobody drew ---------------------
+//
+// The stretches drawn in pulsing black are readings the column forced but the
+// page never inked — recovered from under a curve painted over them. They are
+// the only samples in an export that no pen ever wrote, so they are the ones
+// worth being able to look at alone and throw away. Deleting nulls the
+// samples in the channel the export reads, so a dropped stretch leaves the
+// CSV and the workbook together.
+function dedAny() {
+  return gState.channels.some((c, ci) =>
+    chanVisible(c, ci) && c.deducedRuns && c.deducedRuns.length);
+}
+function dedHit(px, py, W, H) {
+  const { L, R, T, B } = GP;
+  const { t0, t1, dsec } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  let best = null, bestD = 14;                 // px, generous: these are thin
+  gState.channels.forEach((c, ci) => {
+    if (!chanVisible(c, ci)) return;
+    const runs = c.deducedRuns;
+    if (!runs) return;
+    for (let ri = 0; ri < runs.length; ri++) {
+      for (let i = runs[ri][0]; i < runs[ri][1]; i++) {
+        const v = c.values[i];
+        if (v == null || !isFinite(v)) continue;
+        const x = L + ((i * dsec) - t0) / span * plotW;
+        if (x < L - 4 || x > W - R + 4) continue;
+        const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+        const d = Math.hypot(x - px, y - py);
+        if (d < bestD) { bestD = d; best = ci + ":" + ri; }
+      }
+    }
+  });
+  return best;
+}
+function syncIso() {
+  const any = dedAny();
+  $("isobtn").hidden = !any;
+  if (!any && gState.isolate) { gState.isolate = false; gState.dedSel.clear(); }
+  $("isobtn").classList.toggle("on", gState.isolate);
+  $("isotools").hidden = !gState.isolate;
+  const n = gState.dedSel.size;
+  $("isocount").textContent = n ? n + " selected" : "click a stretch to select";
+  $("isodel").disabled = !n;
+  $("isoundo").hidden = !gState.dedUndo.length;
+}
+function setIso(on) {
+  gState.isolate = on;
+  if (!on) gState.dedSel.clear();
+  syncIso(); redrawGraph();
+}
+function dedDelete() {
+  if (!gState.dedSel.size) return;
+  const byChan = new Map();
+  for (const k of gState.dedSel) {
+    const [ci, ri] = k.split(":").map(Number);
+    if (!byChan.has(ci)) byChan.set(ci, []);
+    byChan.get(ci).push(ri);
+  }
+  const undo = [];
+  for (const [ci, ris] of byChan) {
+    const c = gState.channels[ci];
+    // Highest run index first, or removing one slides the next out from
+    // under the loop.
+    ris.sort((a, b) => b - a);
+    for (const ri of ris) {
+      const r = c.deducedRuns[ri];
+      const vals = [];
+      for (let i = r[0]; i < r[1]; i++) { vals.push(c.values[i]); c.values[i] = null; }
+      undo.push({ ci, ri, run: r.slice(), vals });
+      c.deducedRuns.splice(ri, 1);
+    }
+  }
+  gState.dedUndo.push(undo);
+  gState.dedSel.clear();
+  syncIso(); redrawGraph(); buildLegend();
+}
+function dedUndoLast() {
+  const undo = gState.dedUndo.pop();
+  if (!undo) return;
+  for (const u of undo.slice().reverse()) {      // mirror of the delete order
+    const c = gState.channels[u.ci];
+    for (let i = 0; i < u.vals.length; i++) c.values[u.run[0] + i] = u.vals[i];
+    c.deducedRuns.splice(u.ri, 0, u.run);
+  }
+  syncIso(); redrawGraph(); buildLegend();
+}
+
 function clearGraph() {
+  gState.isolate = false; gState.dedSel.clear(); gState.dedUndo.length = 0;
+  syncIso();
   gState.channels = []; gState.hover = null; gState.hidden = new Set();
   $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
@@ -3450,20 +3566,25 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     const i0 = Math.max(0, Math.floor(t0 / dsec));
     const i1 = Math.min(vals.length - 1, Math.ceil(t1 / dsec));
     const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
-    ctx.strokeStyle = ghostMono() ? GHOST_LINE : c._color;
-    ctx.lineWidth = hi === ci ? 2.4 : (gh ? 1.6 : 1.3);
-    ctx.globalAlpha = ((hi != null && hi !== ci) ? 0.4 : 1) * am;
-    ctx.beginPath();
-    let pen = false;
-    for (let i = i0; i <= i1; i += step) {
-      const v = vals[i];
-      if (v == null || !isFinite(v)) { pen = false; continue; }
-      const x = L + ((i * dsec) - t0) / span * plotW;
-      const y = T + (1 - chanFrac(c, v)) * (H - T - B);
-      if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    // Isolate leaves the axes and the grid standing and draws nothing but
+    // the deduced stretches below, so what was never on the page is the only
+    // thing on the chart.
+    if (!gState.isolate) {
+      ctx.strokeStyle = ghostMono() ? GHOST_LINE : c._color;
+      ctx.lineWidth = hi === ci ? 2.4 : (gh ? 1.6 : 1.3);
+      ctx.globalAlpha = ((hi != null && hi !== ci) ? 0.4 : 1) * am;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = i0; i <= i1; i += step) {
+        const v = vals[i];
+        if (v == null || !isFinite(v)) { pen = false; continue; }
+        const x = L + ((i * dsec) - t0) / span * plotW;
+        const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+        if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
     // Stretches this curve never drew: the reader recovered them from under
     // a curve painted over it. They are readings — the column forced them —
     // but the page shows no ink there, so they must not pass for the rest of
@@ -3472,14 +3593,19 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     const runs = c.deducedRuns;
     if (runs && runs.length) {
       const pulse = 0.30 + 0.70 * (0.5 + 0.5 * Math.sin(DED_T / 420));
-      for (const r of runs) {
+      for (let ri = 0; ri < runs.length; ri++) {
+        const r = runs[ri];
         const s0 = Math.max(r[0], i0), s1 = Math.min(r[1] - 1, i1);
         if (s1 < s0) continue;
         gState._dedSeen = true;
+        // A selected stretch stops pulsing and goes solid carmine: the thing
+        // about to be deleted must not also be the thing blinking.
+        const sel = gState.dedSel.has(ci + ":" + ri);
         for (let pass = 0; pass < 2; pass++) {
-          ctx.strokeStyle = pass ? "#000000" : "rgba(255,255,255,.65)";
-          ctx.lineWidth = pass ? 2.2 : 4.4;
-          ctx.globalAlpha = (pass ? pulse : pulse * 0.55) * am;
+          ctx.strokeStyle = pass ? (sel ? DED_SEL : "#000000")
+                                 : (sel ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.65)");
+          ctx.lineWidth = pass ? (sel ? 3.2 : 2.2) : (sel ? 6.0 : 4.4);
+          ctx.globalAlpha = (sel ? 1 : (pass ? pulse : pulse * 0.55)) * am;
           ctx.beginPath();
           let dpen = false;
           for (let i = s0; i <= s1; i += step) {
@@ -5505,6 +5631,9 @@ async function openFlag() {
   $("flagdesc").focus();
 }
 $("flagbtn").addEventListener("click", openFlag);
+$("isobtn").addEventListener("click", () => setIso(!gState.isolate));
+$("isodel").addEventListener("click", dedDelete);
+$("isoundo").addEventListener("click", dedUndoLast);
 $("flagcap").addEventListener("click", async () => {
   const seq = ++flagSeq;
   $("flagstatus").textContent = isLocal()
@@ -5711,6 +5840,18 @@ $("lblmode").addEventListener("click", e => {
   }, { passive: false });
   cv.addEventListener("mousedown", e => {
     if (!gState.channels.length) return;
+    // Isolate is an editing view: a press ON a stretch toggles it, a press
+    // anywhere else still starts a pan, so the chart stays navigable.
+    if (gState.isolate) {
+      const p = pos(e);
+      const hit = dedHit(p.x, p.y, cv.width, cv.height);
+      if (hit) {
+        if (gState.dedSel.has(hit)) gState.dedSel.delete(hit);
+        else gState.dedSel.add(hit);
+        syncIso(); redrawGraph();
+        return;
+      }
+    }
     pan = { x: pos(e).x, t0: gState.t0, t1: gState.t1 };
     cv.classList.add("panning");
   });

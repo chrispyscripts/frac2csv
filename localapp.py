@@ -294,9 +294,19 @@ def export_folder(preferred, dest_folder=""):
 
 
 def _true_runs(flags):
-    """[start, end) runs of True in a per-sample flag array."""
+    """[start, end) runs of True in a per-sample flag array.
+
+    Tested against None, not for truthiness. The readers hand this a numpy
+    bool array, and `flags or ()` raises "truth value of an array with more
+    than one element is ambiguous" on every channel that has more than one
+    sample — which is all of them. It took a real page to find, because the
+    commit that introduced it was written where fitz and pytest could not
+    run and was only parsed.
+    """
     out, start = [], None
-    for i, f in enumerate(flags or ()):
+    if flags is None:
+        return out
+    for i, f in enumerate(flags):
         if f and start is None:
             start = i
         elif not f and start is not None:
@@ -729,7 +739,25 @@ class Handler(BaseHTTPRequestHandler):
                                         "summary": summary, "outDir": out_dir,
                                         "cached": False})
             return self._json(404, {"error": "unknown endpoint"})
+        except (BrokenPipeError, ConnectionResetError):
+            # The client hung up before the response went out — a tab closed
+            # or navigated away mid-read. There is nobody left to send a
+            # status to, and writing one raises the same error again, so this
+            # gets one line and is not dressed up as a failure.
+            sys.stderr.write(f"[{self.path}] client disconnected before the "
+                             f"response was sent\n")
+            return
         except Exception as e:
+            # A dropped drive is not a bug report, it is an instruction: say
+            # which volume, because that is the part the user can act on.
+            # Checked before the stack is printed so the log stays readable
+            # when a whole batch fails for the one reason.
+            vol = _absent_volume(getattr(e, "filename", None) or str(e))
+            if vol:
+                msg = (f"{vol} is not mounted. Plug the drive back in and try "
+                       f"again — the file is on it, it is not missing.")
+                sys.stderr.write(f"[{self.path}] {msg}\n")
+                return self._json(404, {"error": msg})
             # The client gets one line; the log gets the stack. Without this
             # the traceback died here and a 500 was all anyone ever saw, which
             # is most of why "it did nothing" was unanswerable.
@@ -737,6 +765,30 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write(f"[{self.path}] unhandled {type(e).__name__}\n")
             traceback.print_exc(file=sys.stderr)
             return self._json(500, {"error": f"{type(e).__name__}: {e}"})
+
+
+def _absent_volume(text):
+    """The removable volume named in `text` that is not mounted, or None.
+
+    The corpus lives on external drives and one of them drops mid-run. What
+    comes back then is "no such file" about a file that is not missing at
+    all — it is on a disk nobody plugged in, and the ten in a row that landed
+    in the log on 2026-09-16 were every one of them present the next day.
+
+    Read out of the MESSAGE rather than off the exception, and asked of every
+    failure rather than of one class: pymupdf's FileNotFoundError is a
+    RuntimeError, is not the builtin, and carries no `filename`. Volume names
+    hold spaces, so a name runs to the next separator, not to whitespace.
+    """
+    if not text:
+        return None
+    for m in re.finditer(r"/Volumes/[^/'\"]+", str(text)):        # mac
+        if not os.path.isdir(m.group(0)):
+            return m.group(0)
+    for m in re.finditer(r"\b[A-Za-z]:(?=[\\/])", str(text)):     # windows
+        if not os.path.isdir(m.group(0) + os.sep):
+            return m.group(0)
+    return None
 
 
 def grab_screen(max_edge=1800):
@@ -849,8 +901,13 @@ def start_logging():
                 os.remove(os.path.join(d, f))
             except OSError:
                 pass
+        # The pid is what keeps two portals out of one file. The stamp is
+        # second-resolution and portals get launched in pairs, so 8801 and
+        # 8802 opened the same path "a" and their lines arrived spliced
+        # together mid-sentence (2026-09-17 00:56). A log two processes write
+        # at once is the one thing this cannot afford to be.
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = os.path.join(d, f"frac2csv-{stamp}.log")
+        path = os.path.join(d, f"frac2csv-{stamp}-{os.getpid()}.log")
         fh = open(path, "a", encoding="utf-8", errors="replace", buffering=1)
     except OSError:
         return None
