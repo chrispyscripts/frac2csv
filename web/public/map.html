@@ -62,9 +62,10 @@
   <footer>Laterals are drawn from each well's directional survey. Click a lateral for the well; <a href="pad.html">pad views</a>.</footer>
 </div>
 <div class="legend">
-  <div class="row"><span class="l"></span> lateral with frac stages loaded</div>
+  <div class="row"><span class="l"></span> lateral with stage data loaded</div>
   <div class="row"><span class="l thin"></span> lateral, survey only</div>
   <div class="row"><span class="d"></span> pad (surface location)</div>
+  <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:#c9d3dc"></span> permitted well-site area (BCER)</div>
 </div>
 
 <script>
@@ -92,6 +93,7 @@ map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 const mapReady = new Promise(resolve => map.on("load", resolve));
 
 const SETS = [];          // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
+let AREAS = { type: "FeatureCollection", features: [] };   // BCER well-site permit areas (pad footprints)
 const WELL_BY_WA = {};
 
 async function load() {
@@ -99,6 +101,7 @@ async function load() {
   try { idx = await (await fetch("data/pads/index.json")).json(); } catch (e) {}
   for (const s of idx.sets || []) {
     try {
+      try { const a = await fetch("data/pads/" + s.set + "-areas.geojson"); if (a.ok) AREAS.features.push(...(await a.json()).features); } catch (e) {}
       const d = await (await fetch("data/pads/" + s.file)).json();
       d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
       SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
@@ -127,6 +130,18 @@ const fc = f => ({ type: "FeatureCollection", features: f });
 function render() {
   const f = features();
   const add = () => {
+    map.addSource("areas", { type: "geojson", data: AREAS });
+    map.addLayer({ id: "areas-fill", type: "fill", source: "areas",
+      paint: { "fill-color": "#ffffff", "fill-opacity": .07 } });
+    map.addLayer({ id: "areas-line", type: "line", source: "areas",
+      paint: { "line-color": "#c9d3dc", "line-width": 1, "line-dasharray": [3, 2], "line-opacity": .8 } });
+    map.on("click", "areas-fill", e => {
+      if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
+      const p = e.features[0].properties;
+      if (popup) popup.remove();
+      popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(e.lngLat)
+        .setHTML(`<div class="pop"><b>${p.pad_name} · well site permit area</b><div class="facts">${p.proponent}<br>${p.stage} · ${p.construction} · ${p.area_ha} ha<br>BCER permit ${p.permit_id}</div></div>`).addTo(map);
+    });
     map.addSource("laterals", { type: "geojson", data: f.lines });
     map.addSource("toes", { type: "geojson", data: f.toes });
     map.addSource("pads", { type: "geojson", data: f.pads });
@@ -192,7 +207,7 @@ function sidebar() {
   const nWells = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.length, 0), 0);
   const nStaged = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0), 0);
   document.getElementById("sub").textContent = SETS.length
-    ? `${SETS.map(s => s.name).join(", ")} · ${SETS.reduce((n, s) => n + s.pads.length, 0)} pads · ${nWells} wells · ${nStaged} with frac stages`
+    ? `${SETS.map(s => s.name).join(", ")} · ${SETS.reduce((n, s) => n + s.pads.length, 0)} pads · ${nWells} wells · ${nStaged} with stage summaries`
     : "no pads built yet";
   el.innerHTML = SETS.map(S => S.pads.map(p => `
     <div class="pad" data-id="${p.id}">
@@ -217,5 +232,7 @@ function sidebar() {
 }
 load();
 </script>
+<link rel="stylesheet" href="cluster-underground.css">
+<script src="cluster-underground.js"></script>
 </body>
 </html>

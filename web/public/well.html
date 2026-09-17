@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stratum — Well view</title>
 <style>
+[hidden]{display:none!important;}
   :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
           --acc:#1d5bd8; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
           --press:#d62b2b; --rate:#1f6fd6; --wh:#2e8b57; --bh:#8a5cd6; --bhp:#7a3b2e; }
@@ -85,7 +86,8 @@ async function main() {
   }
   WELL = await r.json();
   header();
-  document.getElementById("controls").hidden = false;
+  engineeringSummary();
+  document.getElementById("controls").hidden = !WELL.stages.length;
   for (const cb of document.querySelectorAll("#controls input")) cb.addEventListener("change", () => {
     cb.checked ? show.add(cb.dataset.k) : show.delete(cb.dataset.k); draw();
   });
@@ -94,6 +96,17 @@ async function main() {
   window.addEventListener("resize", draw);
   draw();
   notes();
+}
+
+
+function engineeringSummary() {
+ const stages=WELL.engineering_stages||[]; if(!stages.length)return;
+ const box=document.createElement('section');box.style.cssText='margin:20px 0;padding:18px;border:1px solid #d5e0e6;border-radius:10px';
+ const heading=document.createElement('h2');heading.textContent=stages.length+' extracted stage summaries';heading.style.fontSize='16px';box.append(heading);
+ const note=document.createElement('p');note.textContent='Rates and proppant are reported stage summaries. Stage depths, pressures and treatment time-series were not supplied.';box.append(note);
+ const wrap=document.createElement('div');wrap.style.cssText='max-height:360px;overflow:auto';const table=document.createElement('table');table.style.cssText='width:100%;border-collapse:collapse;text-align:left;font-size:13px';
+ const head=document.createElement('tr');['Stage','Date','Average rate (m³/min)','Proppant (t)'].forEach(t=>{const th=document.createElement('th');th.textContent=t;head.append(th)});table.append(head);
+ stages.forEach(s=>{const row=document.createElement('tr');[s.label,s.date||'—',s.avg_rate_m3_min??'—',s.proppant_t??'—'].forEach(v=>{const td=document.createElement('td');td.textContent=v;td.style.cssText='padding:7px;border-bottom:1px solid #e5edf2';row.append(td)});table.append(row)});wrap.append(table);box.append(wrap);document.getElementById('figure').before(box);
 }
 
 async function landing() {
@@ -116,7 +129,7 @@ function header() {
     w.year ? `vintage <b>${w.year}</b>` : null,
     w.td_m ? `MD <b>${Math.round(w.td_m).toLocaleString()} m</b>` : null,
     w.lateral_m ? `lateral <b>~${Math.round(w.lateral_m).toLocaleString()} m</b>` : null,
-    `stages charted <b>${WELL.stages.length}</b>` + (w.stages_filed ? ` of ${w.stages_filed} filed` : ""),
+    `stage summaries <b>${(WELL.engineering_stages||[]).length}</b> · traces <b>${WELL.stages.length}</b>` + (w.stages_filed ? ` of ${w.stages_filed} filed` : ""),
     `<b>${measured}</b> with a printed depth${measured < WELL.stages.length ? `, ${WELL.stages.length - measured} placed by order` : ""}`,
     WELL.file ? `<span style="font-family:var(--mono);font-size:12px">${WELL.file}</span>` : null,
   ].filter(Boolean);
@@ -251,7 +264,7 @@ function draw() {
       g += `<text x="${PADL - 8}" y="${yTop + 32}" text-anchor="end" fill="var(--wh)">${fmt(Math.max(maxWell.wh_conc, maxWell.bh_conc))} kg/m³</text>`;
     g += `<text x="${PADL - 8}" y="${yBot + 3}" text-anchor="end" fill="#5b6b7b">0</text>`;
   } else {
-    g += `<text x="${PADL + (W - PADL - PADR) / 2}" y="${yTop + PANEL_H / 2}" text-anchor="middle" fill="#9fb0c0" font-size="12">frac stages appear here once the Lab's export for this well is loaded</text>`;
+    g += `<text x="${PADL + (W - PADL - PADR) / 2}" y="${yTop + PANEL_H / 2}" text-anchor="middle" fill="#9fb0c0" font-size="12">Treatment time-series not supplied — stage summaries are listed above</text>`;
   }
   g += `<line x1="${PADL}" y1="${yBot + .5}" x2="${W - PADR}" y2="${yBot + .5}" stroke="#dfe6ec"/>`;
 
@@ -309,7 +322,7 @@ function draw() {
   fig.innerHTML = g;
   wireHover(fig, S);
   document.getElementById("foot").innerHTML = !N
-    ? `No frac stages are loaded for this well yet; the wellbore is drawn from its directional survey${WELL.logs && WELL.logs.length ? " and the gamma-ray log from its LAS file" : ""}. Stages appear once the Lab's export for its completion report is added.`
+    ? (WELL.engineering_stages?.length ? `Stage summaries are loaded above. Stage locations and treatment traces await additional data.` : `No frac stages are loaded for this well yet; the wellbore is drawn from its directional survey${WELL.logs && WELL.logs.length ? " and the gamma-ray log from its LAS file" : ""}. Stages appear once the Lab's export for its completion report is added.`)
     : meas.length
     ? `Panels are equal width and read left to right along the wellbore; the bar shows each stage at the depth its report printed${meas.length < N ? ", hatched where it printed none and the stage is placed by its number" : ""}. Traces are thinned to ${S[0].step_s ? S[0].step_s + " s" : "a few seconds"} per point; the full-rate samples are in the export.`
     : `This report prints no stage depths, so the stages stand in stage order with stage 1 at the toe; the bar is the well's filed lateral. Traces are thinned to a few seconds per point; the full-rate samples are in the export.`;

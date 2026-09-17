@@ -1,0 +1,22 @@
+{
+  "files": 66,
+  "stages": 2736,
+  "missing_wells": [
+    "34739",
+    "34740",
+    "34741",
+    "34742",
+    "34744",
+    "34745",
+    "34746",
+    "34747",
+    "34749",
+    "34750"
+  ],
+  "missing_fields": [
+    "stage top/base measured depths",
+    "pressure summaries",
+    "treatment time series",
+    "stage geological notes and materials"
+  ]
+}
