@@ -257,7 +257,8 @@ function draw() {
   }
 
   // y-axis labels for the two headline channels (none until stages are loaded)
-  if (N) {
+  const hasCurves = S.some(s => s.series && Object.keys(s.series).length);
+  if (hasCurves) {
     g += `<text x="${PADL - 8}" y="${yTop + 4}" text-anchor="end" fill="var(--press)">${fmt(maxWell.press)} MPa</text>`;
     g += `<text x="${PADL - 8}" y="${yTop + 18}" text-anchor="end" fill="var(--rate)">${fmt(maxWell.rate)} m³/min</text>`;
     if (show.has("wh_conc") || show.has("bh_conc"))
