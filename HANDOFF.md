@@ -247,6 +247,32 @@ repeat run ("N (2)") and report 244- and 424-minute overlaps against itself.
 not a stage. Three charts across the three books; the handoff package in
 `../exports/arc-anten/` classifies them by hand for now.
 
+## The Lab keeps its results; batch exports report as they go (2026-09-16)
+
+"The export button for seconds data isn't working" on a tab holding 66
+analysed Gundy wells. It was working: a 40-stage well is a 15 MB CSV and
+its XLSX takes the browser ~20 s to build, so the batch ran for twenty-odd
+minutes in silence — one line at the end, in a panel the export-options
+pop-up's own click had just closed (the pop-up sits outside `.exportwrap`).
+On the NTFS SSD (read-only on a Mac) the files land in ~/Downloads, which
+is where pad 8's ten showed up.
+
+- `localapp.py`: every `/api/process-path` result is stored (gzip JSON in
+  `~/Library/Application Support/Frac2CSV/results/`, `%LOCALAPPDATA%` on
+  Windows, newest ~2 GB kept, keyed on path + size + mtime + the version and
+  newest .py mtime). A list dropped again comes straight back
+  (`cached: true`, row says "reused earlier analysis"), so the Export
+  button works without a re-read; `reuse: false` in the request forces one.
+- `index.html`: `exportBatch()` — per-file progress on each row and in the
+  panel, every CSV before any XLSX, failures noted and listed, the batch
+  goes on; `emit` throws the server's reason; the pop-up no longer closes
+  the panel.
+- `lab/tools/export-analyzed.js`: paste into the console of a tab analysed
+  BEFORE the cache existed to save every well's seconds CSV from memory.
+- `stages_from_csv.py` now merges the BCER port skeleton (depth by stage
+  number, kept under `bcer_stages`); `pad_json.py` preserves every key a
+  well file already carries. Pad 8's ten wells have curves on the site.
+
 ## Stratum: the pad-first site (2026-09-16)
 
 Chris's name for the consumer web product is **Stratum** (the map + pad +

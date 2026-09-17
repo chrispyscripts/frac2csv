@@ -187,7 +187,8 @@ def code_stamp():
         here = os.path.dirname(os.path.abspath(__file__))
         newest = 0
         for f in os.listdir(here):
-            if f.endswith(".py"):
+            # this file is server plumbing: a change here reads nothing differently
+            if f.endswith(".py") and f != os.path.basename(__file__):
                 try:
                     newest = max(newest, int(os.path.getmtime(os.path.join(here, f))))
                 except OSError:
@@ -649,8 +650,9 @@ class Handler(BaseHTTPRequestHandler):
                 if hit is not None:
                     _job_set(job, 1, 1)
                     notes = list(hit.get("notes") or [])
-                    notes.append(f"Reused the analysis from {hit.get('cached_at', '')[:16]} "
-                                 "(drop the file again with 'reuse' off in Settings to re-read it).")
+                    notes.append(f"Reused the analysis from {hit.get('cached_at', '')[:16]}. "
+                                 "To read the file again: Settings, Earlier analyses, "
+                                 "Re-read every file.")
                     return self._json(200, {"stages": hit.get("stages", []),
                                             "tables": hit.get("tables", []),
                                             "notes": notes, "written": [],

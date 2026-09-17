@@ -499,6 +499,15 @@
           </div>
         </div>
         <div class="setrow">
+          <div class="setlabel">Earlier analyses</div>
+          <div class="seg" id="reuse">
+            <button type="button" data-v="on" class="on">Reuse</button>
+            <button type="button" data-v="off">Re-read every file</button>
+          </div>
+          <div class="excolsnote">A file the Lab has already read comes straight back from its results cache
+            (the row says "reused earlier analysis"), so the Export button works without a re-read.</div>
+        </div>
+        <div class="setrow">
           <div class="setlabel">Your corrections
             <span class="sethint" id="mapscount">none yet</span></div>
           <button type="button" class="btn" id="mapsopen">Review…</button>
@@ -726,7 +735,7 @@ const $ = id => document.getElementById(id);
 const CHUNK_PAGES = 30;
 const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const settings = { format: "both", xlsxTabs: true,
+const settings = { format: "both", xlsxTabs: true, reuse: true,
                    chartLabels: "canon", ghost: true, destFolder: "",
                    ghostOurs: true, ghostRef: true, tipScale: 1,
                    // { provider: { column: true } } — a column listed here is
@@ -1275,7 +1284,7 @@ $("mrun").addEventListener("click", async () => {
             // Extract and show; the Export button decides when and where.
             body: JSON.stringify({ path: row.real, format: settings.format,
                                    xlsxTabs: settings.xlsxTabs, job,
-                                   write: false,
+                                   write: false, reuse: settings.reuse !== false,
                                    destFolder: settings.destFolder }),
           });
           out = await resp.json();
@@ -5083,6 +5092,7 @@ function loadSettings() {
   }
   setSeg($("fmt"), settings.format);
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
+  setSeg($("reuse"), settings.reuse === false ? "off" : "on");
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
   const ts = $("tipscale");
@@ -5093,6 +5103,7 @@ function loadSettings() {
 function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
+    reuse: settings.reuse !== false,
     destFolder: settings.destFolder || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
@@ -5966,6 +5977,12 @@ $("lay").addEventListener("click", e => {
   settings.xlsxTabs = b.dataset.v === "tabs";
   setSeg($("lay"), b.dataset.v);
   if (current && current.item && current.item.type === "stage") renderDlbar(current.well);
+  saveSettings();
+});
+$("reuse").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.reuse = b.dataset.v === "on";
+  setSeg($("reuse"), b.dataset.v);
   saveSettings();
 });
 // re-apply the graph title without losing the current selection
