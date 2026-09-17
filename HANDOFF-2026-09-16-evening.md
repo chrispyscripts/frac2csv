@@ -1,5 +1,14 @@
 # Handoff — 2026-09-16 evening
 
+> **Update 2026-09-16 ~20:50 — everything in §2 and §3 is done.** The export
+> pass finished (66/66, 0 failures; 76 seconds CSVs in
+> `exports/bc-gundy-cluster/lab-seconds/`, the 66 new ones also copied to
+> `~/Downloads`); the cache is re-keyed (76/76 under the current stamp); all
+> 76 Gundy wells carry their treatment curves on the site (3,200 stages) and
+> are committed and deployed; the Windows build succeeded and the v1.10.0
+> release carries the descriptions. The test portal 56157 is stopped. What
+> is left is only §5 (open reader items).
+
 Carry this into the next session. Repo: `frac-pdf-extract/frac2csv` (the git
 repo is that directory; `main`; remote `chrispyscripts/frac2csv`). The
 long-lived notes are `HANDOFF.md`; this file is only what is in flight tonight.
