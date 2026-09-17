@@ -11,7 +11,16 @@
 > restarted on the new code with pinned ports: **http://127.0.0.1:8801/ and
 > :8802/** (50903/50904 stopped; 50821/60066 from Sep 13–14 left alone). The
 > results cache was emptied: its 76 Gundy entries were pre-`f450260` reads.
-> Open: §5, the gap goal — start with the 40-file sample scoreboard.
+> §5 started: `validation-tools/gapboard.py` (20 STEP + 20 Trican, spread over
+> every batch) ran 8 STEP files before the 1 TB drive dropped again (folder
+> gone, MuPDF I/O errors) at ~02:20 MDT. Results so far in
+> `../exports/gapboard/gapboard.jsonl`; `--summary` prints the table. STEP so
+> far: 0 UNKNOWN anywhere (every STEP channel has an axis); MISSING sits in
+> three channels — Combined Clean Rate (41% of its samples, 3 files), Chem Conc
+> orange (20%), BH Prop Conc (5.5%); the rest under 1.5%. One file (00747,
+> 2024NOV11) produced no stages at all. **Resume after the drive is plugged
+> back in** (it skips finished files):
+> `python3 validation-tools/gapboard.py --lists '../batch-lists/by-type/step1__*.txt' '../batch-lists/by-type/trican1__*.txt' --sample 20 --workers 5 --out ../exports/gapboard`
 
 Continues `HANDOFF-2026-09-16-evening.md`. Repo `frac-pdf-extract/frac2csv`,
 `main`, remote `chrispyscripts/frac2csv`. Long-lived notes stay in `HANDOFF.md`.
