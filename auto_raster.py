@@ -1241,7 +1241,16 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
             continue
         py[cx] = np.median(ys)
         cuts = np.flatnonzero(np.diff(ys) > gap) + 1
-        cols.append(tuple((float(np.median(r)), int(r[-1] - r[0] + 1))
+        # The run's REAL first and last row travel with it. The envelope step
+        # below used to rebuild them as median ± height/2, which is only the
+        # true extent when the run is filled evenly. At a step down it is not:
+        # the ink is dense at the level the curve held and sparse through the
+        # fall, so the median sits high and the rebuilt end lands OUTSIDE the
+        # ink — on a 61 px run measured here, 11.5 px past it. That is a row
+        # the pen never touched, and it is the spike at the right-hand drop
+        # off that #656, #658 and #660 all report.
+        cols.append(tuple((float(np.median(r)), int(r[-1] - r[0] + 1),
+                           int(r[0]), int(r[-1]))
                           for r in np.split(ys, cuts)))
     k = win or (max(31, W // 20) | 1)
     for _ in range(iters):
@@ -1265,7 +1274,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
     for cx, rs in enumerate(cols):
         if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
             continue
-        hgt = next((h for m, h in rs if m == py[cx]), 1)
+        hgt = next((h for m, h, _lo, _hi in rs if m == py[cx]), 1)
         if hgt <= spike_run and abs(py[cx] - ref[cx]) > spike_tol * H:
             py[cx] = np.nan
 
@@ -1310,7 +1319,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
     # which traces the envelope of the excursion instead of its centre. The
     # pen's own width is measured from this trace's own runs rather than
     # assumed, so a heavy line does not turn into a spike generator.
-    heights = [h for rs in cols for _m, h in rs] if envelope else []
+    heights = [h for rs in cols for _m, h, _lo, _hi in rs] if envelope else []
     if heights:
         pen = float(np.median(heights))
         swept = max(3.0, (SWEPT_FACTOR if swept_factor is None
@@ -1321,8 +1330,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
             run = next((r for r in rs if r[0] == py[cx]), None)
             if run is None or run[1] < swept:
                 continue
-            half = run[1] / 2.0
-            lo, hi = py[cx] - half, py[cx] + half
+            lo, hi = float(run[2]), float(run[3])
             py[cx] = lo if abs(lo - ref[cx]) > abs(hi - ref[cx]) else hi
     return py
 
