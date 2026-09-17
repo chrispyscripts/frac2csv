@@ -666,7 +666,7 @@ def _conc_under(traced):
     return (a, b)
 
 
-def _deduce_under(traced, notes):
+def _deduce_under(traced, notes, pairs=_UNDER_PAIRS, labels=None):
     """Fill each hidden curve's trace from under its cover, in paint order.
 
     `traced` is {series key: (mask crop, traced rows)}; the rows are filled
@@ -674,10 +674,16 @@ def _deduce_under(traced, notes):
     -> {hidden: set of the columns that were deduced rather than traced},
     which the caller turns into a per-sample flag so a chart can show the
     deduced stretches as deduced instead of passing them off as read.
+
+    `pairs` and `labels` default to layout A's. Layout B paints a different
+    set of series in a different order and passes its own (B_UNDER_PAIRS);
+    the conc pair is read off the pixels either way, since _conc_under keys
+    on wh_conc/dh_conc and both layouts call those two by the same names.
     """
-    labels = {k: l for k, l, _u, _a, _f in SERIES}
+    if labels is None:
+        labels = {k: l for k, l, _u, _a, _f in SERIES}
     conc = _conc_under(traced)
-    pairs = ([conc] if conc else []) + list(_UNDER_PAIRS)
+    pairs = ([conc] if conc else []) + list(pairs)
     out, covers = {}, {}
     for hidden, cover in pairs:
         if hidden in traced and cover in traced:
@@ -1049,6 +1055,27 @@ B_SERIES = [
     ("wh_conc", (92, 97, 5), "WH Prop Conc", "kg/m3", "conc"),
     ("dh_conc", (199, 204, 51), "DH Prop Conc", "kg/m3", "conc"),
 ]
+# Layout B paints in B_SERIES order, each curve over the ones before it, so
+# one that coincides with a later curve is hidden under it — layout A's rule
+# over a different set of series.
+#
+# Measured over 27 chart pages in 9 filings, counting the columns inside each
+# curve's OWN drawn span where it has no ink and another curve does: DH Prop
+# Conc never goes blank at all; WH Prop Conc does on 19 of 26 pages, worst 41%
+# of its span, and that is the single pair this path already filled; Monitor
+# Pressure on 9 of 27, worst 45%; WH Slurry Rate on 4 of 27, worst 72%. The
+# last two were never recovered here at all. Mainline Pressure peaks at 4%,
+# which is ink noise, but it is the deepest curve and costs nothing to walk.
+#
+# Layout A leaves its rate curve out of _UNDER_PAIRS; this table keeps it,
+# because 00584 p28 draws WH Slurry Rate across 552 columns and leaves 395 of
+# them to whatever is on top. fill_under decides every column against the
+# cover's own trace, so a pair that never fires costs only the walk.
+B_UNDER_PAIRS = (("mainline", "monitor"), ("mainline", "wh_rate"),
+                 ("mainline", "wh_conc"), ("mainline", "dh_conc"),
+                 ("monitor", "wh_rate"), ("monitor", "wh_conc"),
+                 ("monitor", "dh_conc"),
+                 ("wh_rate", "wh_conc"), ("wh_rate", "dh_conc"))
 B_RADIUS = 42
 # how far toward white a series' fringe still counts as its ink (0 = the
 # colour itself, 1 = the page). (255,157,157) is 0.62 of the way; (255,201,201)
@@ -1611,49 +1638,73 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
 
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
+    # Trace every series that has ink, before any axis or coverage test. A
+    # curve that is mostly hidden has low coverage BECAUSE it is hidden, and
+    # dropping it here is half of why layout B never recovered one; it also
+    # has to survive to serve as another curve's cover. Layout A has always
+    # built its traced dict this way. The cal and coverage tests move below
+    # the deduction, where they can see what it recovered.
     traced = {}
     for key, _c, label, unit, axis in B_SERIES:
-        cal, mask = fits.get(axis), masks.get(key)
+        mask = masks.get(key)
         if mask is None or not mask.any():
             continue
         sub = mask[y0:y1, x0 + 1:x1]
-        cov = float(sub.any(axis=0).mean())
-        if cov < 0.05:
+        if not sub.any():
+            continue
+        traced[key] = {"label": label, "unit": unit, "axis": axis,
+                       "cal": fits.get(axis), "sub": sub,
+                       "cov": float(sub.any(axis=0).mean()),
+                       "py": ar.curve_positions(sub), "filled": 0}
+    # The other half: this path recovered exactly one pair of the nine, WH
+    # Prop Conc from under DH Prop Conc, hard-coded in that direction. Monitor
+    # Pressure and WH Slurry Rate were never recovered at all, and the conc
+    # direction was never read off the page — a report that lays the wellhead
+    # trace down last hides the DOWNHOLE curve instead, which is what
+    # _conc_under is for. Same walk as layout A now, over B_UNDER_PAIRS, so a
+    # chain is filled through a cover that has itself been filled.
+    #
+    # The tuples below share their `py` arrays with `traced`, which is how
+    # fill_under's in-place work lands back on it.
+    deduced_cols = _deduce_under(
+        {k: (v["sub"], v["py"]) for k, v in traced.items()}, notes,
+        pairs=B_UNDER_PAIRS,
+        labels={k: l for k, _c, l, _u, _a in B_SERIES})
+    for key, cols in deduced_cols.items():
+        traced[key]["filled"] = len(cols)
+    for key, tr in traced.items():
+        label, unit, axis, cal, sub, cov = (tr["label"], tr["unit"], tr["axis"],
+                                            tr["cal"], tr["sub"], tr["cov"])
+        # A curve that is nearly all cover is a reading now, so the coverage
+        # floor lets through whatever the deduction filled.
+        if cov < 0.05 and not tr["filled"]:
             continue
         if cal is None:
             notes.append(f"{label}: {axis} axis unreadable")
             continue
-        traced[key] = {"label": label, "unit": unit, "axis": axis, "cal": cal,
-                       "sub": sub, "cov": cov, "py": ar.curve_positions(sub),
-                       "filled": 0}
-    # WH Prop Conc is painted first and DH Prop Conc over it. Where they
-    # coincide — the floor through the pad and the flush, the rest of any
-    # hold the delayed DH catches up on — the page shows DH and no olive at
-    # all, and WH came back blank there. See curve_trace.fill_under.
-    if "wh_conc" in traced and "dh_conc" in traced:
-        w, d = traced["wh_conc"], traced["dh_conc"]
-        # islands=False: this tracer keeps every column it reads, and WH's
-        # short runs are readings, not flecks — see curve_trace.fill_under
-        w["filled"] = len(ct.fill_under(w["sub"], w["py"], d["sub"], d["py"], islands=False))
-        if w["filled"]:
-            notes.append("WH Prop Conc: read from under DH Prop Conc where the "
-                         "page paints the DH curve over it and the two coincide "
-                         "— deduced, not traced")
-    for key, tr in traced.items():
-        label, unit, axis, cal, sub, cov = (tr["label"], tr["unit"], tr["axis"],
-                                            tr["cal"], tr["sub"], tr["cov"])
         a, bb, ntick = cal
         py = tr["py"] + y0
         vals = a + bb * py
         t_cols = (ta + tb * (np.arange(sub.shape[1]) + x0 + 1)) - t_start
         if np.isfinite(vals).sum() < 30:
             continue
-        channels.append({"key": key, "label": label, "unit": unit, "color": "",
-                         "values": ct.resample(samples, t_cols, vals),
-                         "ticks": ntick, "coverage": cov,
-                         "axis_frame": (float(a + bb * y0),
-                                        float(a + bb * y1)),
-                         "filled_cols": tr["filled"]})
+        chan = {"key": key, "label": label, "unit": unit, "color": "",
+                "values": ct.resample(samples, t_cols, vals),
+                "ticks": ntick, "coverage": cov,
+                "axis_frame": (float(a + bb * y0), float(a + bb * y1)),
+                "filled_cols": tr["filled"]}
+        # Which samples were deduced from under a covering curve rather than
+        # traced from this curve's own ink, on the same grid as `values` and
+        # resampled with them so the two cannot drift apart. Layout A ships
+        # the same flag and the Lab draws these stretches as deduced rather
+        # than letting them pass for ink.
+        cols = deduced_cols.get(key)
+        if cols:
+            flag = np.zeros(sub.shape[1], dtype=float)
+            flag[np.fromiter(sorted(cols), dtype=int)] = 1.0
+            chan["deduced"] = np.nan_to_num(
+                ct.resample(samples, t_cols, flag)) >= 0.5
+        channels.append(chan)
         # A sparse channel is not necessarily a broken one, and on this
         # template it usually is not. Say where the absence is, because "WH
         # Prop Conc is 31% empty" reads as a fault and "it is not drawn until
@@ -1818,7 +1869,13 @@ def _crop_to_printed_window(meta, samples, channels, info, slack_s=60.0):
         return samples, channels, info, meta
     sel = (samples >= a) & (samples < b)
     out = samples[sel] - samples[sel][0]
-    chans = [dict(c, values=np.asarray(c["values"])[sel]) for c in channels]
+    # Cut every per-sample array, not just `values`: `deduced` is one flag per
+    # sample, and a crop that moved one and not the other would mark the wrong
+    # stretches as deduced. This window is layout B's alone, which is why it
+    # never had to carry the flag before.
+    chans = [dict(c, **{k: np.asarray(c[k])[sel]
+                        for k in ("values", "deduced") if k in c})
+             for c in channels]
     x0, y0, x1, y1 = info["plot"]
     pps = (x1 - x0) / n
     notes.append("chart window wider than the stage; trimmed to the Start "
