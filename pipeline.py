@@ -309,17 +309,23 @@ def vector_no_text(doc, sample=60):
 
 
 def _series(meta, samples, data, source, page=None, units=None, labels=None,
-            geom=None, scales=None, frames=None):
+            geom=None, scales=None, frames=None, deduced=None):
     # `scales` is each curve's PRINTED tick range — what the y-axis reads.
     # `frames` is that same axis read at the plot-frame edges (geom v0/v1),
     # which is where ghost mode stretches the page to. They differ by the
     # per-curve tick-fit error, so drawing against `scales` while the backdrop
     # is placed by the frame leaves the curve sitting a percent or two off the
     # ink. Ship both: labels come from `scales`, positions from `frames`.
+    #
+    # `deduced` is {label: per-sample bool}, on the same grid as `data`: true
+    # where the reader recovered the sample from under a curve painted over
+    # it rather than from the channel's own ink. A chart that draws those
+    # stretches like any other is claiming to have read something the page
+    # never showed, which is the whole of the client's "conc having issues".
     return {"type": "series", "meta": meta, "samples": samples, "data": data,
             "units": units or {}, "labels": labels or {}, "source": source,
             "page": page, "geom": geom, "scales": scales or {},
-            "frames": frames or {}}
+            "frames": frames or {}, "deduced": deduced or {}}
 
 
 def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
@@ -2468,6 +2474,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
                           if c.get("axis_frame")}
+                deduced = {c["label"]: c["deduced"] for c in chans
+                           if c.get("deduced") is not None}
                 # These plots print their date under the axis and their clock
                 # along it, and every one of them used to export dated
                 # 2000-01-01 at 00:00:00 (#368). hal1 reads both off the
@@ -2498,7 +2506,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                            "Halliburton treatment plot (raster)",
                                            pno + 1, units,
                                            geom=info.get("geom"),
-                                           frames=frames))
+                                           frames=frames,
+                                           deduced=deduced))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Halliburton plot failed — {e}")
             continue
@@ -2514,6 +2523,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
                           if c.get("axis_frame")}
+                deduced = {c["label"]: c["deduced"] for c in chans
+                           if c.get("deduced") is not None}
                 if data:
                     stage = md.get("stage")
                     title = ("Whole job (continuous)" if md.get("continuous")
@@ -2543,7 +2554,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             f"({na} of {nb} labels agree)")
                     results.append(_series(
                         meta, samples, data, "Trican treatment chart (raster)",
-                        pno + 1, units, geom=info.get("geom"), frames=frames))
+                        pno + 1, units, geom=info.get("geom"), frames=frames,
+                        deduced=deduced))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Trican chart failed — {e}")
             continue
@@ -2569,6 +2581,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
                           if c.get("axis_frame")}
+                deduced = {c["label"]: c["deduced"] for c in chans
+                           if c.get("deduced") is not None}
                 if data:
                     stage = md.get("stage")
                     # The page prints "Interval Date 02/26/25(m/d/y)" and
@@ -2593,7 +2607,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                         meta["printed_start"] = md.get("printed_start", "")
                     results.append(_series(
                         meta, samples, data, "Trican treatment chart (raster)",
-                        pno + 1, units, geom=info.get("geom"), frames=frames))
+                        pno + 1, units, geom=info.get("geom"), frames=frames,
+                        deduced=deduced))
             except Exception as e:
                 notes.append(f"p{pno + 1}: Trican chart failed — {e}")
             continue
@@ -2620,6 +2635,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                         units = {c["label"]: c["unit"] for c in chans}
                         frames = {c["label"]: c["axis_frame"] for c in chans
                                   if c.get("axis_frame")}
+                        deduced = {c["label"]: c["deduced"] for c in chans
+                                   if c.get("deduced") is not None}
                         if not data:
                             continue
                         kind = "surface" if tag == "t" else "chemical"
@@ -2657,7 +2674,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             meta, samples, data,
                             f"STEP {kind} chart (raster)", pno + 1, units,
                             geom=info.get("geom"), scales=frames,
-                            frames=frames))
+                            frames=frames,
+                            deduced=deduced))
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue

@@ -2921,6 +2921,7 @@ function redrawGraph() {
   const cv = $("graph"), ctx = cv.getContext("2d");
   const W = cv.width, H = cv.height, { L, R, T, B } = GP;
   ctx.clearRect(0, 0, W, H);
+  gState._dedSeen = false;
   if (!gState.channels.length) return;
   const { t0, t1, dsec } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
@@ -3090,6 +3091,19 @@ function ghostMeaningful() {
 // straight in — clipped to that rect so its footer can't cover our time axis.
 // The comparison panel below is left completely untouched.
 const GHOST_LINE = "#2e9bff";      // vibrant blue for our curves
+
+// The pulse on a deduced stretch. One clock for the whole chart so every
+// deduced span breathes together, and the loop only turns while one is
+// actually on screen — a chart with nothing deduced pays nothing for this.
+// Gated to ~16 fps: the pulse reads the same and a long stage is hundreds of
+// thousands of samples to walk.
+let DED_T = 0, dedRaf = null;
+function dedTick(ts) {
+  dedRaf = null;
+  if (ts - DED_T < 60) { dedRaf = requestAnimationFrame(dedTick); return; }
+  DED_T = ts;
+  redrawGraph();
+}
 const GHOST_INK = "#ffffff";       // the source chart, inverted to white
 
 // Which mode we're in, for styling. Deliberately NOT tied to the render being
@@ -3450,7 +3464,38 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
+    // Stretches this curve never drew: the reader recovered them from under
+    // a curve painted over it. They are readings — the column forced them —
+    // but the page shows no ink there, so they must not pass for the rest of
+    // the line. Pulsing black over the curve, with a pale under-stroke so
+    // they still read on the dark blueprint, where plain black vanishes.
+    const runs = c.deducedRuns;
+    if (runs && runs.length) {
+      const pulse = 0.30 + 0.70 * (0.5 + 0.5 * Math.sin(DED_T / 420));
+      for (const r of runs) {
+        const s0 = Math.max(r[0], i0), s1 = Math.min(r[1] - 1, i1);
+        if (s1 < s0) continue;
+        gState._dedSeen = true;
+        for (let pass = 0; pass < 2; pass++) {
+          ctx.strokeStyle = pass ? "#000000" : "rgba(255,255,255,.65)";
+          ctx.lineWidth = pass ? 2.2 : 4.4;
+          ctx.globalAlpha = (pass ? pulse : pulse * 0.55) * am;
+          ctx.beginPath();
+          let dpen = false;
+          for (let i = s0; i <= s1; i += step) {
+            const v = vals[i];
+            if (v == null || !isFinite(v)) { dpen = false; continue; }
+            const x = L + ((i * dsec) - t0) / span * plotW;
+            const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+            if (!dpen) { ctx.moveTo(x, y); dpen = true; } else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
   });
+  if (gState._dedSeen && dedRaf == null) dedRaf = requestAnimationFrame(dedTick);
 }
 
 function drawHover(ctx, W, H) {

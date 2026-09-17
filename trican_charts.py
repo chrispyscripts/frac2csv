@@ -621,31 +621,76 @@ def _axis_fit(pts, rows, y0, y1):
 # Walked in this order so a fill through a cover uses the cover's own
 # filled trace. Legend order on the page: BH Pressure, Surface Pressure,
 # Annulus Pressure, WH Rate, WH Conc, DH Conc.
-_UNDER_PAIRS = (("wh_conc", "dh_conc"),
-                ("surface", "rate"), ("surface", "wh_conc"), ("surface", "dh_conc"),
+#
+# The two conc curves are the exception. Legend order says DH is painted over
+# WH and on every template seen before this it is, but not on all of them: a
+# report can lay the wellhead trace down last, and then it is the DOWNHOLE
+# curve that disappears for most of the job and exports as a flat line. Both
+# directions cannot be registered statically — the pair would fill FROM EACH
+# OTHER's filled traces, and the walk order rather than the ink would decide
+# which. So the direction is read off this chart's own pixels; see _conc_under.
+_UNDER_PAIRS = (("surface", "rate"), ("surface", "wh_conc"), ("surface", "dh_conc"),
                 ("bh", "surface"), ("bh", "rate"), ("bh", "wh_conc"), ("bh", "dh_conc"))
+_CONC_PAIR = ("wh_conc", "dh_conc")
+
+
+def _conc_under(traced):
+    """Which conc curve is painted under the other on THIS chart.
+    -> (hidden, cover); legend order when neither is clearly hidden.
+
+    Rests on the same reasoning as fill_under: a curve with no ink in a
+    column inside its OWN drawn span is under something, and the only thing
+    it can be under is the other curve's stroke. So count, for each of the
+    pair, the columns inside its own span where it has no ink and the other
+    does. The curve that goes blank under the other far more often is the
+    hidden one. A clear margin is required — twice as many, and at least 20
+    columns — so a handful of stray columns cannot flip a chart that the
+    legend already describes correctly.
+    """
+    a, b = _CONC_PAIR
+    if a not in traced or b not in traced:
+        return None
+
+    def blanks(x, y):
+        ix = traced[x][0].any(axis=0)
+        iy = traced[y][0].any(axis=0)
+        if not ix.any():
+            return 0
+        lo = int(np.argmax(ix))
+        hi = int(len(ix) - np.argmax(ix[::-1]))
+        return int((~ix[lo:hi] & iy[lo:hi]).sum())
+
+    na, nb = blanks(a, b), blanks(b, a)
+    if nb > na * 2 and nb >= 20:
+        return (b, a)
+    return (a, b)
 
 
 def _deduce_under(traced, notes):
     """Fill each hidden curve's trace from under its cover, in paint order.
 
     `traced` is {series key: (mask crop, traced rows)}; the rows are filled
-    in place and a note per pair says how many columns. -> {hidden: count}.
+    in place and a note per pair says how many columns.
+    -> {hidden: set of the columns that were deduced rather than traced},
+    which the caller turns into a per-sample flag so a chart can show the
+    deduced stretches as deduced instead of passing them off as read.
     """
     labels = {k: l for k, l, _u, _a, _f in SERIES}
+    conc = _conc_under(traced)
+    pairs = ([conc] if conc else []) + list(_UNDER_PAIRS)
     out, covers = {}, {}
-    for hidden, cover in _UNDER_PAIRS:
+    for hidden, cover in pairs:
         if hidden in traced and cover in traced:
             (hs, hp), (cs, cp) = traced[hidden], traced[cover]
             got = ct.fill_under(hs, hp, cs, cp, islands=False)
             if got:
-                out[hidden] = out.get(hidden, 0) + len(got)
+                out.setdefault(hidden, set()).update(int(c) for c in got)
                 covers.setdefault(hidden, []).append(labels[cover])
-    for hidden, n in out.items():
+    for hidden, cols in out.items():
         over = " and ".join(covers[hidden])
-        notes.append(f"{labels[hidden]}: {n} columns read from under {over} "
-                     f"where the page paints {over} over it and the two "
-                     f"coincide — deduced, not traced")
+        notes.append(f"{labels[hidden]}: {len(cols)} columns read from under "
+                     f"{over} where the page paints {over} over it and the "
+                     f"two coincide — deduced, not traced")
     return out
 
 
@@ -717,7 +762,7 @@ def extract_image(img, sample_sec=1.0, box=None):
     # WH Rate the same way. Deduced in paint order so a chain (BH under
     # Surface under Rate) is walked through a cover that has itself been
     # filled. The names are the legend's, so the note reads like the page.
-    _deduce_under(traced, notes)
+    deduced_cols = _deduce_under(traced, notes)
     for key, label, unit, axis, factor in SERIES:
         scale = factor * (press_scale if axis == "press" else 1.0)
         cal = fits.get(axis)
@@ -766,11 +811,24 @@ def extract_image(img, sample_sec=1.0, box=None):
         # so a curve drawn against this pair lands on its own ink; drawn
         # against the tick range alone it sits a constant fraction of the plot
         # away, because the outermost tick is not the frame.
-        channels.append({"key": key, "label": label, "unit": unit,
-                         "color": "", "values": v, "ticks": ntick,
-                         "coverage": cov,
-                         "axis_frame": (float((a + bb * y0) * scale),
-                                        float((a + bb * y1) * scale))})
+        chan = {"key": key, "label": label, "unit": unit,
+                "color": "", "values": v, "ticks": ntick,
+                "coverage": cov,
+                "axis_frame": (float((a + bb * y0) * scale),
+                               float((a + bb * y1) * scale))}
+        # Which of this channel's samples were deduced from under a covering
+        # curve rather than traced from its own ink, on the same grid as
+        # `values`. A deduced stretch is a real reading in the sense that the
+        # column forced it, but it was never drawn, so it travels labelled
+        # and the Lab draws it differently rather than letting it pass for
+        # ink. Resampled with the values so the two cannot drift apart.
+        cols = deduced_cols.get(key)
+        if cols:
+            flag = np.zeros(n_cols, dtype=float)
+            flag[np.fromiter(sorted(cols), dtype=int)] = 1.0
+            chan["deduced"] = np.nan_to_num(
+                ct.resample(samples, t_cols, flag)) >= 0.5
+        channels.append(chan)
     if not channels:
         raise ValueError("trican: no channel calibrated; " + "; ".join(notes[:3]))
     # t0_seconds is the chart's own elapsed-time origin, kept because these

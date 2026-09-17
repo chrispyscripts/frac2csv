@@ -37,6 +37,7 @@ import fitz                     # noqa: E402
 import numpy as np              # noqa: E402
 
 import aliases                  # noqa: E402
+import gaps                     # noqa: E402
 from version import VERSION     # noqa: E402
 import pipeline                 # noqa: E402
 import pipeline_export as pe    # noqa: E402
@@ -292,8 +293,22 @@ def export_folder(preferred, dest_folder=""):
                   f"{dest_folder or '(no destination set)'}, {home}")
 
 
+def _true_runs(flags):
+    """[start, end) runs of True in a per-sample flag array."""
+    out, start = [], None
+    for i, f in enumerate(flags or ()):
+        if f and start is None:
+            start = i
+        elif not f and start is not None:
+            out.append([start, i])
+            start = None
+    if start is not None:
+        out.append([start, len(flags)])
+    return out
+
+
 def _channels_payload(data, units=None, labels=None, scales=None,
-                      frames=None):
+                      frames=None, deduced=None):
     out, seen = [], set()
     for i, (key, vals) in enumerate(data.items()):
         canonical = aliases.canon(key)
@@ -301,6 +316,28 @@ def _channels_payload(data, units=None, labels=None, scales=None,
         seen.add(col)
         unit = (units or {}).get(key) or \
             (aliases.canon_unit(canonical) if canonical else "") or ""
+        # The axis gaps.py needs to tell a resting pen from a lost trace:
+        # the frame reading when the template has one, the printed ticks
+        # otherwise. Without either every gap stays UNKNOWN, which is the
+        # honest answer rather than a guess.
+        _sc, _fr = (scales or {}).get(key), (frames or {}).get(key)
+        _axis = None
+        for _cand in (_fr, _sc):
+            if isinstance(_cand, (list, tuple)) and len(_cand) == 2:
+                try:
+                    _axis = (float(_cand[0]), float(_cand[1]))
+                except (TypeError, ValueError):
+                    _axis = None
+                break
+        if _axis is None and _sc and not isinstance(_sc, (list, tuple)):
+            try:
+                _axis = (0.0, float(_sc))
+            except (TypeError, ValueError):
+                _axis = None
+        _runs = gaps.find_gaps(vals, _axis)
+        _kinds = {}
+        for _g in _runs:
+            _kinds[_g["kind"]] = _kinds.get(_g["kind"], 0) + 1
         out.append({
             "key": col,
             "label": (labels or {}).get(key, key),
@@ -338,6 +375,20 @@ def _channels_payload(data, units=None, labels=None, scales=None,
             # only one of them was. Saying so per channel is what tells them
             # apart, and it costs one pass over values we already have.
             **_coverage(vals),
+            # _coverage counts the holes; it cannot say what they MEAN, and
+            # that is the question every one of those client reports was
+            # really asking. gaps.py has classified them since it was written
+            # — lead, trail, resting at zero, pinned at full scale, or a
+            # genuine loss mid-flight — but nothing on the Lab's own read path
+            # ever called it, so the answer existed and never reached the
+            # screen. It does now, per channel, in the page's own words.
+            "gapKinds": _kinds,
+            "gapNote": gaps.note((labels or {}).get(key, key), _runs),
+            # Stretches this channel did not draw and the reader deduced from
+            # under a curve painted over it. Runs, not a per-sample array:
+            # a long stage is hundreds of thousands of samples and this is a
+            # handful of spans.
+            "deducedRuns": _true_runs((deduced or {}).get(key)),
         })
     return out
 
@@ -390,7 +441,8 @@ def serialize(results, notes):
                 "n": int(len(r["samples"])), "sample_sec": 1.0,
                 "channels": _channels_payload(r["data"], r.get("units"),
                                               r.get("labels"), r.get("scales"),
-                                              r.get("frames")),
+                                              r.get("frames"),
+                                              r.get("deduced")),
                 "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
             })
         elif r["type"] == "summary":
