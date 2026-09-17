@@ -179,21 +179,28 @@ def data_dir(sub):
         return None
 
 
+# modules that read nothing: server plumbing, the version string, the GUI
+# shell, and the builders for the website. A change to one of these leaves
+# every stored result as good as it was.
+_NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
+                 "pad_json.py", "stages_from_csv.py", "stages_from_bcer.py",
+                 "logs_from_las.py"}
+
+
 def code_stamp():
-    """Version plus the newest .py in the package: a reader fix retires
-    every result the old reader produced."""
+    """The newest reader module in the package: a reader fix retires every
+    result the old reader produced, and nothing else does."""
     global _CODE_STAMP
     if _CODE_STAMP is None:
         here = os.path.dirname(os.path.abspath(__file__))
         newest = 0
         for f in os.listdir(here):
-            # this file is server plumbing: a change here reads nothing differently
-            if f.endswith(".py") and f != os.path.basename(__file__):
+            if f.endswith(".py") and f not in _NOT_A_READER:
                 try:
                     newest = max(newest, int(os.path.getmtime(os.path.join(here, f))))
                 except OSError:
                     pass
-        _CODE_STAMP = f"{VERSION}-{newest}"
+        _CODE_STAMP = str(newest)
     return _CODE_STAMP
 
 

@@ -39,6 +39,90 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.10.0</h2>
+    <ul>
+      <li><b>The 1,191 Alberta filings spudded 2019&ndash;2023 read.</b>
+        1,163 of them produce treatment charts; the 28 that do not each say
+        why (nine SLB books that print only the whole job, fourteen Trican
+        and CalFrac filings with no chart in them, three Trican reports whose
+        charts are pasted screenshots, and two single files). Nothing errors
+        out. The classes that pass found, and what changed for each, are
+        below</li>
+      <li><b>BJ JobMaster charts read, in every form the pass found.</b>
+        Titles written as &ldquo;Well 3 Zone 12&rdquo;, &ldquo;Zone #12&rdquo;,
+        &ldquo;Well 3 - Stage 12&rdquo;, &ldquo;Int 12&rdquo; and Husky&rsquo;s
+        &ldquo;Frac #12&rdquo; with a qualifier; a lower-case meridian; a
+        two-digit township; a well prefix with a letter in it. Pages set in a
+        font with no character map are read by OCR, and all of a page&rsquo;s
+        labels are read in one pass (fifteen seconds a page down to a few);
+        a font whose every code is shifted by 29 is put back; a chart drawn
+        sideways in an upright page is turned; a curve drawn as hundreds of
+        one-point paths is joined; colours that differ by a rounding error
+        are the same pen. The year comes from whichever date spelling the
+        book uses, and the UWI from the title when the header has none</li>
+      <li><b>STEP&rsquo;s 2019 books, tiled four charts to a page, read as
+        four stages.</b> The clock axis of each tile is read column by column
+        (the labels used to run together as one number), a chart that starts
+        before midnight keeps its day, a tile printed twice is read once,
+        and a STEP chart with no stage number takes it from the summary&rsquo;s
+        Top Depth. Vesta&rsquo;s vector STEP pages, titled
+        &ldquo;Treatment N&rdquo; with the interval in the header, read
+        too. The 2018 STEP summary reads, and a summary whose date column
+        was split across pages is one column again</li>
+      <li><b>Scanned CalFrac overview pages read.</b> The pressure, rate and
+        concentration ladders are read off the page image (rate at thirty and
+        under, concentration at fifty and over), the elapsed-time axis from
+        its five labels, and the curves by hue &mdash; with a second and
+        third colour tried where a book uses teal or maroon pens. A TAQA
+        page cut off at &ldquo;Time (min)&rdquo; is found from its rate
+        legend</li>
+      <li><b>Trican reports that are photocopies read.</b> The chart frames
+        are found on the page image and each chart is read from its own
+        crop. A Trican chart also now clocks itself from inside its
+        sheet&rsquo;s own envelope, and the reader&rsquo;s notes travel with
+        the stage rather than the file</li>
+      <li><b>SLB zone sheets filed as strips are composited and read.</b> A
+        page cut into five or more equal strips is put back together before
+        it is read</li>
+      <li><b>BJ&rsquo;s 2019 Totals read.</b> An &ldquo;Interval #&rdquo;
+        heading spilt over two lines is still the interval column, and the
+        Additives page is set aside with a note instead of being read as a
+        stage table. A stage&rsquo;s depth is joined from a table whose
+        heading is spilt the same way</li>
+      <li><b>Two of your Flag Error reports.</b> A Liberty re-frac stage with
+        a lower-case letter in its label keeps the letter (#649), and
+        Liberty&rsquo;s &ldquo;Proppant Conc&rdquo; is the wellhead
+        concentration it is (#650)</li>
+      <li><b>A picture the PDF library cannot decode is skipped, not
+        fatal.</b> One file died on a corrupt embedded image; it now
+        reads around it</li>
+      <li><b>Export names can carry the service provider and how the charts
+        were read.</b> Every Export button first asks, in a small pop-up
+        with two boxes you can tick: append the provider
+        (&ldquo;-CalFrac&rdquo;), and append &ldquo;-image&rdquo; or
+        &ldquo;-vector&rdquo; for whether the charts were pictures or
+        drawings. Your answer is remembered</li>
+      <li><b>The Lab remembers what it has read.</b> Every file&rsquo;s
+        results are kept on your machine (the newest two gigabytes or so),
+        so a list dropped a second time comes straight back &mdash; the row
+        says &ldquo;reused earlier analysis&rdquo; &mdash; and the Export
+        button works from it. Close the tab or lose the drive mid-batch and
+        you no longer read the whole list again to get at the CSVs. A file
+        that has changed, or a new build of the reader, is read afresh;
+        Settings &rarr; Earlier analyses &rarr; Re-read every file forces
+        it</li>
+      <li><b>A batch export shows its progress and finishes what it
+        can.</b> Saving the seconds data for sixty wells is a long job
+        &mdash; a forty-stage well is a fifteen-megabyte CSV, and its Excel
+        file takes the browser twenty seconds to build &mdash; and it used
+        to run in silence and stop at the first problem. Each file&rsquo;s
+        row now says when it has been saved and where, every CSV is written
+        before any Excel file is started, a file that fails is listed at the
+        end and the rest still go, and the reason for a failure is the
+        server&rsquo;s own. On a drive Windows or macOS will not write to,
+        the files land in Downloads and the row says so</li>
+    </ul>
+
     <h2>v1.9.0</h2>
     <ul>
       <li><b>A Trican chart from 2015 now carries the clock it prints
