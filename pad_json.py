@@ -131,6 +131,9 @@ def build(cluster, surveys, surface, pad_set):
                                         # stages with treatment curves; the BCER skeleton (depths only) is counted apart
                                         "stages": sum(1 for s in existing.get("stages", []) if s.get("series")),
                                         "ports": len(existing.get("stages", [])), "logs": len(existing.get("logs", [])),
+                                        # the BCER completion intervals the engineering import puts on the well
+                                        "depth_intervals": len(existing.get("depth_intervals") or []),
+                                        "summaries": len(existing.get("engineering_stages") or []),
                                         "file": r.get("FILE", "")})
         out_wells.append(wa)
         well_json.update_index(os.path.join(_HERE, "web", "public", "data", "wells", "index.json"),

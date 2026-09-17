@@ -32,7 +32,8 @@ class Under(unittest.TestCase):
         surf = stroke(list(range(0, 20)) + list(range(40, N)))     # hidden 20..39
         notes = []
         got = tc._deduce_under({"surface": surf, "rate": rate}, notes)
-        self.assertEqual(got, {"surface": 20})
+        # the deduced columns themselves, so the caller can flag each sample
+        self.assertEqual(got, {"surface": set(range(20, 40))})
         self.assertTrue(np.isfinite(surf[1]).all())
         self.assertTrue(np.allclose(surf[1][20:40], ROW + 0.5))
         self.assertEqual(notes, ["Surface Pressure: 20 columns read from under WH "
@@ -48,7 +49,7 @@ class Under(unittest.TestCase):
         bh = stroke(list(range(0, 10)) + list(range(50, N)))
         notes = []
         got = tc._deduce_under({"bh": bh, "surface": surf, "rate": rate}, notes)
-        self.assertEqual(got, {"surface": 20, "bh": 40})
+        self.assertEqual(got, {"surface": set(range(20, 40)), "bh": set(range(10, 50))})
         self.assertTrue(np.isfinite(bh[1]).all())
         self.assertEqual([n.split(":")[0] for n in notes], ["Surface Pressure", "BH Pressure"])
         # the cover's MASK is empty where Surface was itself deduced, so BH
