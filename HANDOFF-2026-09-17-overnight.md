@@ -1,5 +1,18 @@
 # Handoff — 2026-09-17 overnight
 
+> **Update 2026-09-17 01:20 MDT, from the Mac — §4 items 1–5 are done.**
+> Tests: `f450260` failed two `test_trican_under` cases because `_deduce_under`
+> now returns the deduced column sets, not counts — the tests were updated
+> (`8d1a74f`), 601 pass. All commits were already on `origin/main`. The v1.10.0
+> release carries `release-notes/v1.10.0.md` and the EXE. The pad page's
+> "Stages (BCER)" column read `w.depth_intervals`, which `pad_json.py` did not
+> write to the pad entries; it now writes `depth_intervals` and `summaries`
+> per well, and the site is redeployed. The two Claude-launched portals were
+> restarted on the new code with pinned ports: **http://127.0.0.1:8801/ and
+> :8802/** (50903/50904 stopped; 50821/60066 from Sep 13–14 left alone). The
+> results cache was emptied: its 76 Gundy entries were pre-`f450260` reads.
+> Open: §5, the gap goal — start with the 40-file sample scoreboard.
+
 Continues `HANDOFF-2026-09-16-evening.md`. Repo `frac-pdf-extract/frac2csv`,
 `main`, remote `chrispyscripts/frac2csv`. Long-lived notes stay in `HANDOFF.md`.
 
