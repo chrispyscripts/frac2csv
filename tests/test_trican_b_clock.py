@@ -53,6 +53,26 @@ class MisreadHours(unittest.TestCase):
         _start, dur2 = fit_span(labels)
         self.assertAlmostEqual(dur2 / 60, 34, delta=1.5)
 
+    def test_a_tie_between_the_two_swaps_is_decided_by_the_font(self):
+        # The ladder above with no printed start: "every 3 is really a 9" and
+        # "every 9 is really a 3" explain all seven labels equally, and scored
+        # bit-for-bit identically — same inliers, same recovered count, no
+        # hint, and a slope equal to the last bit. The winner was whichever
+        # the candidate list held first, which is not a decision: it came back
+        # 09:21 here and 03:21 on CI, where a different LAPACK rounds the
+        # slope the other way. The font only misreads 9 as 3, so 3 -> 9 is the
+        # recovery and 9 -> 3 is not; that is what settles it now.
+        labels = [("09:25", 136), ("03:30", 244), ("03:35", 352), ("03:40", 462),
+                  ("09:45", 569), ("03:50", 678), ("09:55", 785)]
+        start, _ = fit_span(labels)
+        self.assertAlmostEqual(start / 60, hm("09:21") / 60, delta=1.0)
+        # ...but a start the page actually prints still overrules the font,
+        # in either direction, or the hint would be decoration.
+        start, _ = fit_span(labels, hint="09:25")
+        self.assertAlmostEqual(start / 60, hm("09:21") / 60, delta=1.0)
+        start, _ = fit_span(labels, hint="03:30")
+        self.assertAlmostEqual(start / 60, hm("03:21") / 60, delta=1.0)
+
     def test_the_majority_can_be_the_misread(self):
         # 01433 p188: five of eight labels read 13:xx — the line through the
         # 19s still wins because the 13s land on it on the right minute

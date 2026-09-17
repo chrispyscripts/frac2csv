@@ -1343,11 +1343,28 @@ def _b_clock_fit(pts, x0, x1, start_hint=None):
         d = abs((a + b * x0 - start_hint + 43200) % 86400 - 43200)
         return -d
 
+    # `pref` ranks the hypotheses for the case where everything else ties.
+    # Without a printed start, "every 3 is really a 9" and "every 9 is really
+    # a 3" explain the same seven labels equally well and score IDENTICALLY —
+    # same inliers, same recovered count, hint_term 0.0, and a slope equal to
+    # the last bit. The winner was then whichever the list happened to hold
+    # first, which is not a decision, and it flipped on CI where a different
+    # LAPACK rounds the slope differently: 01350 p186's third ladder came back
+    # 03:21 instead of 09:21.
+    #
+    # The asymmetry is in the font, and is stated at the top of this
+    # docstring: a 9 reads as 3, never a 3 as a 9. So recovering 3 -> 9 is the
+    # documented direction and 9 -> 3 is only a hypothesis kept so the hint
+    # has something to choose. Ranked below hint_term, so a page that prints
+    # its start still overrules this, and below the inlier counts, so a true
+    # ladder still wins on the evidence (01350's own first ladder does).
     best = None
     cands = []
-    for swapped in (list(pts), _swap_hours(pts, 6 * 3600), _swap_hours(pts, -6 * 3600)):
-        cands += [unwrap(swapped), list(swapped)]
-    for cand in cands:
+    for pref, swapped in ((0, list(pts)),
+                          (1, _swap_hours(pts, 6 * 3600)),
+                          (-1, _swap_hours(pts, -6 * 3600))):
+        cands += [(pref, unwrap(swapped)), (pref, list(swapped))]
+    for pref, cand in cands:
         fit = _ransac(cand, x0, x1, tol_frac=0.02)
         if fit is None or fit[1] <= 0:
             continue
@@ -1377,7 +1394,7 @@ def _b_clock_fit(pts, x0, x1, start_hint=None):
         # rewriting them, and 12:50 only by dragging it to 18:50. Ranked on
         # raw inliers the true ladder wins 7 to 6 and the printed start is
         # never consulted. The hint decides only genuine ties.
-        score = (len(inl), len(keep), hint_term(a2, b2), -b2 * (x1 - x0))
+        score = (len(inl), len(keep), hint_term(a2, b2), pref, -b2 * (x1 - x0))
         if best is None or score > best[0]:
             best = (score, (float(a2), float(b2)))
     return None if best is None else best[1]
