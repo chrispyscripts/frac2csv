@@ -139,6 +139,8 @@
                          border-top:2px dashed currentColor; background:none !important;
                          vertical-align:middle; margin-right:5px; opacity:.85; }
   .handovernote { opacity:.9; }
+  .retracemsg { color:var(--mut); font-size:11.5px; white-space:nowrap; }
+  .retracemsg.bad { color:#c22a1e; }
   .isocount { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .isotools .btn:disabled { opacity:.45; cursor:default; }
   .btn.danger { border-color:#7a2a24; color:#c22a1e; }
@@ -689,6 +691,9 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
           <button type="button" class="btn" id="isobtn" hidden
                   title="Show only the stretches no curve was drawn for — the
 ones the reader recovered from under a curve painted over them">Isolate Interpolation</button>
+          <button type="button" class="btn" id="retracebtn" hidden
+                  title="Drag a box round a bad stretch and the curve inside it is
+read again off the page underneath">Fix in box</button>
           <span class="isotools" id="isotools" hidden>
             <span class="isocount" id="isocount"></span>
             <button type="button" class="btn danger" id="isodel" disabled
@@ -697,6 +702,7 @@ so they are not exported">Delete</button>
             <button type="button" class="btn" id="isoundo" hidden
                     title="Put the last deleted stretches back">Undo</button>
           </span>
+          <span class="retracemsg" id="retracemsg" hidden></span>
           <div class="legend" id="pv-legend"></div>
         </div>
         <div class="timewarn" id="timewarn" hidden></div>
@@ -2829,7 +2835,10 @@ const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
                  // `dedSel` holds "channelIndex:runIndex" keys; `dedUndo` is a
                  // stack of deletes, each the samples and the run it removed,
                  // so a delete is reversible for as long as the stage is open.
-                 isolate: false, dedSel: new Set(), dedUndo: [] };
+                 isolate: false, dedSel: new Set(), dedUndo: [],
+                 // Retrace: drag a box on the chart and the curve inside it is
+                 // re-read off the source page. See retraceBox.
+                 retrace: false, rbox: null, retraceUndo: [] };
 const DED_SEL = "#c22a1e";
 // the handed-over tail: on the page, not in the export
 const HANDOVER_INK = "#8d9aa8";
@@ -2918,7 +2927,7 @@ function setGraph(channels, n, sampleSec, meta, handover) {
   // A new stage means new channel arrays: a selection or an undo entry kept
   // across the change would point into the previous stage's samples.
   gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso();
+  syncIso(); syncRetrace();
   redrawGraph(); buildLegend();
 }
 
@@ -2957,6 +2966,21 @@ function dedHit(px, py, W, H) {
   });
   return best;
 }
+function syncRetrace() {
+  const b = $("retracebtn");
+  if (!b) return;
+  // Only meaningful with the page underneath: the box is read off that ink.
+  const can = gState.channels.length > 0 && ghostHasPage();
+  b.hidden = !can;
+  if (!can && gState.retrace) { gState.retrace = false; gState.rbox = null; }
+  b.classList.toggle("on", gState.retrace);
+  b.textContent = gState.retraceUndo.length ? "Fix in box \u00b7 undo" : "Fix in box";
+}
+function ghostHasPage() {
+  const cv = $("origgraph");
+  return !!(cv && !$("origwrap").hidden && cv.width > 0 && cv.height > 0);
+}
+
 function syncIso() {
   const any = dedAny();
   $("isobtn").hidden = !any;
@@ -2973,6 +2997,57 @@ function setIso(on) {
   if (!on) gState.dedSel.clear();
   syncIso(); redrawGraph();
 }
+function applyRetrace(i0, i1, yTop, yBot) {
+  const { L, R, T, B } = GP, cv = $("graph"), H = cv.height;
+  const fr = y => 1 - (y - T) / (H - T - B);
+  // Which curve did they mean? Judged OUTSIDE the box, not inside it.
+  //
+  // Scoring on the trace within the box picks whichever curve happens to sit
+  // there — and the reason for drawing a box is that this curve's trace is
+  // wrong there, so it scores badly against its own correction and some other
+  // channel wins. Measured: a box drawn round the true curve chose a channel
+  // 20 units away and then found none of its ink.
+  //
+  // The curve you mean is the one that ENTERS and LEAVES the box. Just
+  // outside, every trace is trusted, which is the same ground the pen colour
+  // is sampled from.
+  const mid = (yTop + yBot) / 2;
+  const near = [];
+  for (let k = 1; k <= 6; k++) { near.push(i0 - k); near.push(i1 + k); }
+  let pick = -1, best = Infinity;
+  gState.channels.forEach((c, ci) => {
+    if (!chanVisible(c, ci)) return;
+    let sum = 0, n = 0;
+    for (const i of near) {
+      if (i < 0 || i >= gState.n) continue;
+      const v = c.values[i];
+      if (v == null || !isFinite(v)) continue;
+      sum += Math.abs(T + (1 - chanFrac(c, v)) * (H - T - B) - mid); n++;
+    }
+    if (n && sum / n < best) { best = sum / n; pick = ci; }
+  });
+  if (pick < 0) return { ok: false, why: "no visible curve crosses that box" };
+  const c = gState.channels[pick];
+  const r = retraceBox(c, pick, i0, i1,
+                       chanUnfrac(c, fr(Math.min(yTop, yBot))),
+                       chanUnfrac(c, fr(Math.max(yTop, yBot))));
+  if (!r.ok) return r;
+  const before = [];
+  for (let i = i0; i <= i1; i++) before.push(c.values[i]);
+  gState.retraceUndo.push({ ci: pick, i0, before });
+  for (let k = 0; k < r.vals.length; k++) {
+    if (r.vals[k] != null) c.values[i0 + k] = r.vals[k];
+  }
+  return { ok: true, channel: chanName(c), found: r.found, span: i1 - i0 + 1 };
+}
+function retraceUndoLast() {
+  const u = gState.retraceUndo.pop();
+  if (!u) return;
+  const c = gState.channels[u.ci];
+  for (let k = 0; k < u.before.length; k++) c.values[u.i0 + k] = u.before[k];
+  syncRetrace(); redrawGraph(); buildLegend();
+}
+
 function dedDelete() {
   if (!gState.dedSel.size) return;
   const byChan = new Map();
@@ -3012,7 +3087,7 @@ function dedUndoLast() {
 
 function clearGraph() {
   gState.isolate = false; gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso();
+  syncIso(); syncRetrace();
   gState.channels = []; gState.hover = null; gState.hidden = new Set();
   $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
@@ -3202,6 +3277,98 @@ function chanFrac(c, v) {
   const r = axisRange(c);
   const span = r.hi - r.lo;
   return Math.abs(span) < 1e-12 ? 0 : (v - r.lo) / span;
+}
+
+// value <- fraction of the plot height. chanFrac's inverse; a retrace reads
+// rows off the page and has to turn them back into the channel's own units.
+function chanUnfrac(c, f) {
+  const r = axisRange(c);
+  return r.lo + f * (r.hi - r.lo);
+}
+
+// ---- Retrace a box against the source page -------------------------------
+//
+// Every sample the tracer reports already sits on ink — measured on 00028 p97,
+// 3,860 samples and not one of them off the ink by more than 2 px. So a spike
+// is not an invented row: it is the WRONG ink, a second run of the same colour
+// in that column (a gridline, a neighbour's anti-aliased fringe, a legend
+// swatch). No rule decides that reliably for every template, which is why
+// three attempts at automatic gap-filling were backed out of this project.
+//
+// A person looking at the ghost can decide it in one drag. The box says "the
+// curve is in here", and that is the reference the rolling median could not
+// supply.
+//
+// The pen's colour is not assumed. It is sampled from the trace just OUTSIDE
+// the box, where the reading is known good, and matched inside — so a second
+// curve crossing the same box is not mistaken for this one.
+const RETRACE_TOL = 60;         // RGB distance that still counts as the same pen
+
+function _pageCtx() {
+  const cv = $("origgraph");
+  return (cv && cv.width && cv.height) ? cv.getContext("2d", { willReadFrequently: true }) : null;
+}
+
+// chart x (graph canvas) -> the same x on the original canvas. renderSynced
+// lays the page out on the SAME time window and the same L/R gutters, so the
+// two share an x axis; only the height differs.
+function _origY(c, v) {
+  const ocv = $("origgraph");
+  const H = ocv.height - ORIG_FOOT;
+  return GP.T + (1 - chanFrac(c, v)) * (H - GP.T - GP.B);
+}
+
+function retraceBox(c, ci, i0, i1, vTop, vBot) {
+  const ctx = _pageCtx();
+  if (!ctx) return { ok: false, why: "the original page is not shown — turn Original on" };
+  const ocv = $("origgraph");
+  const { L, R, T, B } = GP, W = ocv.width;
+  const plotW = W - L - R, span = Math.max(1e-9, gState.t1 - gState.t0);
+  const xAt = i => L + ((i * gState.dsec) - gState.t0) / span * plotW;
+
+  // the pen, sampled where the trace is trusted: just outside the box
+  const seeds = [];
+  for (const i of [i0 - 6, i0 - 3, i1 + 3, i1 + 6]) {
+    const v = c.values[i];
+    if (v == null || !isFinite(v)) continue;
+    const x = Math.round(xAt(i)), y = Math.round(_origY(c, v));
+    if (x < 0 || x >= W || y < 0 || y >= ocv.height) continue;
+    const d = ctx.getImageData(x, Math.max(0, y - 2), 1, 5).data;
+    for (let p = 0; p < d.length; p += 4) {
+      if (d[p + 3] < 40) continue;
+      const mx = Math.max(d[p], d[p+1], d[p+2]), mn = Math.min(d[p], d[p+1], d[p+2]);
+      if (mx > 244 && mn > 244) continue;             // paper
+      seeds.push([d[p], d[p+1], d[p+2]]);
+    }
+  }
+  if (!seeds.length) return { ok: false, why: "no ink found beside the box to take the pen colour from" };
+  const pen = [0,1,2].map(k => seeds.reduce((a,s)=>a+s[k],0) / seeds.length);
+
+  const yTop = Math.round(_origY(c, vTop)), yBot = Math.round(_origY(c, vBot));
+  const lo = Math.max(0, Math.min(yTop, yBot)), hi = Math.min(ocv.height, Math.max(yTop, yBot));
+  if (hi - lo < 2) return { ok: false, why: "the box is too short to read" };
+
+  const out = [];
+  for (let i = i0; i <= i1; i++) {
+    const x = Math.round(xAt(i));
+    if (x < 0 || x >= W) { out.push(null); continue; }
+    const d = ctx.getImageData(x, lo, 1, hi - lo).data;
+    let sum = 0, n = 0;
+    for (let p = 0; p < d.length; p += 4) {
+      if (d[p + 3] < 40) continue;
+      const dist = Math.hypot(d[p]-pen[0], d[p+1]-pen[1], d[p+2]-pen[2]);
+      if (dist > RETRACE_TOL) continue;
+      const row = lo + p / 4;
+      sum += row; n++;
+    }
+    out.push(n ? sum / n : null);
+  }
+  const H = ocv.height - ORIG_FOOT;
+  const vals = out.map(row => row == null ? null
+    : chanUnfrac(c, 1 - (row - GP.T) / (H - GP.T - GP.B)));
+  const got = vals.filter(v => v != null).length;
+  if (!got) return { ok: false, why: "no ink of that colour inside the box" };
+  return { ok: true, i0, i1, vals, found: got, pen };
 }
 
 function ghostMeaningful() {
@@ -3653,6 +3820,17 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     }
   });
   if (gState._dedSeen && dedRaf == null) dedRaf = requestAnimationFrame(dedTick);
+  const b = gState.rbox;
+  if (b) {
+    const x = Math.min(b.x0, b.x1), y = Math.min(b.y0, b.y1);
+    const w = Math.abs(b.x1 - b.x0), h = Math.abs(b.y1 - b.y0);
+    ctx.save();
+    ctx.fillStyle = "rgba(29,91,216,.10)";
+    ctx.strokeStyle = "#1d5bd8"; ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    ctx.restore();
+  }
 }
 
 function drawHover(ctx, W, H) {
@@ -3890,6 +4068,7 @@ async function syncOrig() {
   const cv = $("origgraph"), ctx = cv.getContext("2d");
   const on = current && current.item && current.item.type === "stage";
   $("origwrap").hidden = !on;
+  syncRetrace();            // the box can only be read off a page that is shown
   if (!on) return;
   const item = current.item, entry = current.entry;
   const srcs = item.srcs || [];
@@ -5684,6 +5863,15 @@ async function openFlag() {
 }
 $("flagbtn").addEventListener("click", openFlag);
 $("isobtn").addEventListener("click", () => setIso(!gState.isolate));
+$("retracebtn").addEventListener("click", () => {
+  // A second press with something to undo puts the last box back, so the
+  // control is also its own escape hatch.
+  if (gState.retrace && gState.retraceUndo.length) { retraceUndoLast(); return; }
+  gState.retrace = !gState.retrace;
+  if (gState.retrace) { gState.isolate = false; gState.dedSel.clear(); }
+  gState.rbox = null;
+  syncIso(); syncRetrace(); redrawGraph();
+});
 $("isodel").addEventListener("click", dedDelete);
 $("isoundo").addEventListener("click", dedUndoLast);
 $("flagcap").addEventListener("click", async () => {
@@ -5894,6 +6082,14 @@ $("lblmode").addEventListener("click", e => {
     if (!gState.channels.length) return;
     // Isolate is an editing view: a press ON a stretch toggles it, a press
     // anywhere else still starts a pan, so the chart stays navigable.
+    if (gState.retrace) {
+      const p = pos(e);
+      if (p.x >= GP.L && p.x <= cv.width - GP.R && p.y >= GP.T && p.y <= cv.height - GP.B) {
+        gState.rbox = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, live: true };
+        redrawGraph();
+        return;
+      }
+    }
     if (gState.isolate) {
       const p = pos(e);
       const hit = dedHit(p.x, p.y, cv.width, cv.height);
@@ -5907,10 +6103,39 @@ $("lblmode").addEventListener("click", e => {
     pan = { x: pos(e).x, t0: gState.t0, t1: gState.t1 };
     cv.classList.add("panning");
   });
-  window.addEventListener("mouseup", () => { pan = null; cv.classList.remove("panning"); });
+  window.addEventListener("mouseup", () => {
+    pan = null; cv.classList.remove("panning");
+    const b = gState.rbox;
+    if (!b || !b.live) return;
+    b.live = false;
+    const { L, R } = GP, W = cv.width;
+    const plotW = W - L - R, span = Math.max(1e-9, gState.t1 - gState.t0);
+    const iAt = x => Math.round(((x - L) / plotW * span + gState.t0) / gState.dsec);
+    let i0 = iAt(Math.min(b.x0, b.x1)), i1 = iAt(Math.max(b.x0, b.x1));
+    i0 = Math.max(0, i0); i1 = Math.min(gState.n - 1, i1);
+    gState.rbox = null;
+    if (i1 - i0 < 1 || Math.abs(b.y1 - b.y0) < 4) { redrawGraph(); return; }
+    const r = applyRetrace(i0, i1, b.y0, b.y1);
+    const msg = $("retracemsg");
+    if (msg) {
+      msg.hidden = false;
+      msg.textContent = r.ok
+        ? `${r.channel}: ${r.found} of ${r.span} samples re-read off the page`
+        : `could not re-read: ${r.why}`;
+      msg.classList.toggle("bad", !r.ok);
+      clearTimeout(msg._t);
+      msg._t = setTimeout(() => { msg.hidden = true; }, 6000);
+    }
+    syncRetrace(); redrawGraph(); buildLegend();
+  });
   cv.addEventListener("mousemove", e => {
     if (!gState.channels.length) return;
     const p = pos(e);
+    if (gState.rbox && gState.rbox.live) {
+      gState.rbox.x1 = p.x; gState.rbox.y1 = p.y;
+      redrawGraph();
+      return;
+    }
     if (pan) {
       const dt = (pan.x - p.x) / (cv.width - GP.L - GP.R) * (pan.t1 - pan.t0);
       let t0 = pan.t0 + dt, t1 = pan.t1 + dt;
