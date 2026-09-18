@@ -1196,6 +1196,20 @@ def _hand_over_tails(results, notes):
                 moved.append((sb, lag))
                 prev = (tb, b)
                 ov = (end_a - tb).total_seconds()
+            # Keep what is being handed over, beside the stage rather than in
+            # it. The export still cuts here — those minutes belong to the next
+            # chart and must not be written twice — but the CHART was ending
+            # before the page it came from did, and against the printed page
+            # that reads as data loss. It is not; it is a handover. Carried as
+            # its own series so nothing downstream can mistake it for the
+            # stage's own samples, and drawn greyed with the stage it went to.
+            tail_s = a["samples"][off:]
+            if len(tail_s):
+                a["handover"] = {
+                    "to": sb,
+                    "samples": tail_s,
+                    "data": {l: v[off:] for l, v in a["data"].items()},
+                }
             a["samples"] = a["samples"][:off]
             a["data"] = {l: v[:off] for l, v in a["data"].items()}
             a["meta"]["duration_min"] = off * sec / 60.0

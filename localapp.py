@@ -465,6 +465,21 @@ def _coverage(vals):
             "gaps": runs, "gapSamples": miss}
 
 
+def _handover_payload(h):
+    """The handed-over tail as {to, n, channels}, or None."""
+    # `samples` is a numpy array: `or ()` raises "truth value of an array with
+    # more than one element is ambiguous", which is the same trap _true_runs
+    # shipped in v1.10.0 and which cost a release to find. Length, not truth.
+    if not h:
+        return None
+    sm = h.get("samples")
+    if sm is None or len(sm) == 0:
+        return None
+    return {"to": str(h.get("to") or "?"),
+            "n": int(len(h["samples"])),
+            "channels": _channels_payload(h["data"])}
+
+
 def serialize(results, notes):
     stages, tables, summary = [], [], []
     for r in results:
@@ -477,6 +492,13 @@ def serialize(results, notes):
                                               r.get("frames"),
                                               r.get("deduced")),
                 "source": r["source"], "page": r.get("page"), "geom": r.get("geom"),
+                # The minutes this chart handed to the next one. Not part of
+                # the stage — the export cuts them, they belong to the chart
+                # that re-plots them — but the chart draws them greyed so it
+                # ends where the printed page does. Without this the Lab looked
+                # like it had dropped the tail of every handed-over stage
+                # (#665, #668, #672, #676, #677).
+                "handover": _handover_payload(r.get("handover")),
             })
         elif r["type"] == "summary":
             summary.extend(r.get("groups", []))

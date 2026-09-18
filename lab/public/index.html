@@ -135,6 +135,10 @@
   .setlabel.row .sethint { margin-left:0; margin-right:auto; }
   .btn.tiny { padding:3px 8px; font-size:11px; border-radius:5px; }
   .isotools { display:inline-flex; align-items:center; gap:6px; }
+  .handovernote i.dash { display:inline-block; width:14px; height:0;
+                         border-top:2px dashed currentColor; background:none !important;
+                         vertical-align:middle; margin-right:5px; opacity:.85; }
+  .handovernote { opacity:.9; }
   .isocount { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .isotools .btn:disabled { opacity:.45; cursor:default; }
   .btn.danger { border-color:#7a2a24; color:#c22a1e; }
@@ -2133,7 +2137,7 @@ function showStage(entry, well, item) {
               + "drawing data — read by colour and OCR";
     sub.append("   ", tag);
   }
-  setGraph(item.channels, item.n, item.sample_sec, item.meta);
+  setGraph(item.channels, item.n, item.sample_sec, item.meta, item.handover);
   orig.pageIdx = 0;
   // Full page STAYS ON across stages. It used to reset on every stage change,
   // so checking the same thing on stage after stage meant clicking it back on
@@ -2827,6 +2831,8 @@ const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
                  // so a delete is reversible for as long as the stage is open.
                  isolate: false, dedSel: new Set(), dedUndo: [] };
 const DED_SEL = "#c22a1e";
+// the handed-over tail: on the page, not in the export
+const HANDOVER_INK = "#8d9aa8";
 
 // curve name per the "Our terms / As extracted" toggle
 function chanName(c) {
@@ -2864,14 +2870,25 @@ function toggleHidden(c, keys) {
   return keys;
 }
 
-function setGraph(channels, n, sampleSec, meta) {
+function setGraph(channels, n, sampleSec, meta, handover) {
   gState.clock0 = null;
   if (meta && meta.date) {
     const d = new Date(meta.date + "T" + (meta.start_time || "00:00:00"));
     if (!isNaN(d)) gState.clock0 = d;
   }
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
-  gState.tMax = Math.max(1, (n - 1) * gState.dsec);
+  // The minutes this chart handed to the next one are not the stage's — the
+  // export cuts them — but the PAGE draws them, so the chart has to reach
+  // that far or it looks like the tail was dropped. Held separately, keyed by
+  // channel name, and the axis is stretched to cover it.
+  gState.handover = null;
+  if (handover && handover.n > 0 && handover.channels) {
+    const by = {};
+    for (const hc of handover.channels) by[hc.key || hc.label] = hc.values;
+    gState.handover = { to: handover.to, n: handover.n, by };
+  }
+  const nTotal = n + (gState.handover ? gState.handover.n : 0);
+  gState.tMax = Math.max(1, (nTotal - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
   gState.hidden = applyHidden(channels, hiddenKeys); gState.hover = null;
   // Two curves must never share a colour. PALETTE's first five entries ARE
@@ -3581,6 +3598,29 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     // but the page shows no ink there, so they must not pass for the rest of
     // the line. Pulsing black over the curve, with a pale under-stroke so
     // they still read on the dark blueprint, where plain black vanishes.
+    // The handed-over tail: the same pen, in grey, past the stage's last
+    // sample. It is on the page and not in the export, and it must not read
+    // as either the curve or a deduced stretch.
+    const tail = gState.handover && gState.handover.by[c.key || c.label];
+    if (tail && tail.length && !gState.isolate) {
+      ctx.strokeStyle = HANDOVER_INK;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([5, 3]);
+      ctx.globalAlpha = 0.75 * am;
+      ctx.beginPath();
+      let tpen = false;
+      for (let j = 0; j < tail.length; j += step) {
+        const v = tail[j];
+        if (v == null || !isFinite(v)) { tpen = false; continue; }
+        const x = L + (((gState.n + j) * dsec) - t0) / span * plotW;
+        if (x < L - 2 || x > W - R + 2) { tpen = false; continue; }
+        const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+        if (!tpen) { ctx.moveTo(x, y); tpen = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
     const runs = c.deducedRuns;
     if (runs && runs.length) {
       const pulse = 0.30 + 0.70 * (0.5 + 0.5 * Math.sin(DED_T / 420));
@@ -3723,6 +3763,22 @@ function gapTitle(c) {
 
 function buildLegend() {
   const Lg = $("pv-legend"); Lg.innerHTML = "";
+  // Grey dashes on the right of the chart need to say what they are, or they
+  // are just a different question. This is the tail the chart handed to the
+  // next stage: drawn because the printed page draws it, not exported here
+  // because the next chart re-plots the same minutes.
+  if (gState.handover) {
+    const h = document.createElement("span");
+    h.className = "handovernote";
+    h.innerHTML = `<i class="dash" style="background:${HANDOVER_INK}"></i>` +
+      `handed to stage ${gState.handover.to}` +
+      ` <span style="color:var(--mut)">\u00b7 ${Math.round(gState.handover.n * gState.dsec / 60)} min` +
+      ` \u00b7 on the page, exported with stage ${gState.handover.to}</span>`;
+    h.title = "These minutes run on into the next stage's chart, which re-plots "
+            + "them with the same values. They are drawn here so this chart ends "
+            + "where the printed page does, and exported once, with that stage.";
+    Lg.appendChild(h);
+  }
   gState.channels.forEach((c, ci) => {
     if (!inMode(c)) return;             // hidden by "Our terms" filter
     const el = document.createElement("span");
