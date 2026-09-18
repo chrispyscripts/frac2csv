@@ -198,6 +198,22 @@ def code_stamp():
     result the old reader produced, and nothing else does."""
     global _CODE_STAMP
     if _CODE_STAMP is None:
+        # A frozen build has no .py files to look at. PyInstaller compiles the
+        # modules into the PYZ archive and loads them through its own importer;
+        # only data files are written to _MEIPASS, and the spec adds tesseract,
+        # alias_table.txt and lab/public — no source. So this loop found
+        # nothing, `newest` stayed 0, and the stamp was the string "0" on every
+        # build ever shipped. The cache key therefore never changed between
+        # versions: a result read by v1.9 was still being served by v1.11, and
+        # the v1.10.0 note promising "a new build of the reader is read afresh"
+        # was only ever true running from source. It is why the handover trim
+        # that shipped in v1.10.0 did not reach Carmine until reuse was removed
+        # in v1.11.2, and then arrived across five providers at once.
+        #
+        # Frozen, the release version IS the code: one build, one stamp.
+        if getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None):
+            _CODE_STAMP = "v" + VERSION
+            return _CODE_STAMP
         here = os.path.dirname(os.path.abspath(__file__))
         newest = 0
         for f in os.listdir(here):
@@ -206,7 +222,9 @@ def code_stamp():
                     newest = max(newest, int(os.path.getmtime(os.path.join(here, f))))
                 except OSError:
                     pass
-        _CODE_STAMP = str(newest)
+        # Running from source with no readers visible would stamp everything
+        # the same way the frozen build did; fall back rather than repeat it.
+        _CODE_STAMP = str(newest) if newest else "v" + VERSION
     return _CODE_STAMP
 
 
