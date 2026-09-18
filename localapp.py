@@ -183,9 +183,14 @@ def data_dir(sub):
 # modules that read nothing: server plumbing, the version string, the GUI
 # shell, and the builders for the website. A change to one of these leaves
 # every stored result as good as it was.
+# Stratum's builders live in this package but take no part in an extraction,
+# so a change to one must not retire results the readers produced. The list is
+# by name, so a builder added later is a reader until someone remembers to put
+# it here — pad_inputs_from_bcer.py was, and every Stratum commit was quietly
+# re-reading 441 wells because of it.
 _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "pad_json.py", "stages_from_csv.py", "stages_from_bcer.py",
-                 "logs_from_las.py"}
+                 "logs_from_las.py", "pad_inputs_from_bcer.py"}
 
 
 def code_stamp():
