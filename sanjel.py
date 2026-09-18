@@ -43,6 +43,7 @@ the identical drawing engine but plot additive concentrations, not treatment
 channels — detect() rejects them, the same call the MView template makes.
 """
 import re
+from datetime import date as _date
 
 import numpy as np
 
@@ -243,22 +244,44 @@ def _secs(t):
     return h * 3600 + mi * 60 + s
 
 
+def _real_date(y, mo, d):
+    """YYYY-MM-DD, or "" when those numbers are not a day on the calendar.
+
+    Sanjel's generator writes an empty date cell as Excel writes serial 0:
+    the page prints "January 0, 1900", and 00104 p37 does exactly that. Read
+    literally it became 1900-01-00 — a day that does not exist, which no
+    datetime will parse and which places the stage a century away from the
+    rest of the well. The handover then cut its neighbours by the largest
+    amounts on the page (8.7, 10.0, 7.0 min).
+    """
+    try:
+        return _date(int(y), int(mo), int(d)).isoformat()
+    except ValueError:
+        return ""
+
+
 def _page_date(spans, text):
-    """The date this interval was pumped, as YYYY-MM-DD."""
+    """The date this interval was pumped, as YYYY-MM-DD, or "" if unreadable."""
     # The 2015 layout prints it under the time axis, once per tick — that is
     # the interval's own date. The header "Date:" field is the job's, and on
     # a multi-day job it names a different day from the chart below it.
     for s in spans:
         m = _DATE.match(s["t"])
         if m:
-            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            got = _real_date(m.group(1), m.group(2), m.group(3))
+            if got:
+                return got
     m = re.search(r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", text)
     if m and m.group(1).lower() in _MONTHS:
         mo = _MONTHS.index(m.group(1).lower()) + 1
-        return f"{int(m.group(3))}-{mo:02d}-{int(m.group(2)):02d}"
+        got = _real_date(m.group(3), mo, m.group(2))
+        if got:
+            return got
     m = re.search(r"\b(\d{2})/(\d{2})/(\d{2})\b", text)
     if m:                                   # mm/dd/yy in the header block
-        return f"20{m.group(3)}-{m.group(1)}-{m.group(2)}"
+        got = _real_date("20" + m.group(3), m.group(1), m.group(2))
+        if got:
+            return got
     return ""
 
 
