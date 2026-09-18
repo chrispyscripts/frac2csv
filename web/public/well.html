@@ -103,7 +103,7 @@ function engineeringSummary() {
  const stages=WELL.engineering_stages||[]; if(!stages.length)return;
  const box=document.createElement('section');box.style.cssText='margin:20px 0;padding:18px;border:1px solid #d5e0e6;border-radius:10px';
  const heading=document.createElement('h2');heading.textContent=stages.length+' extracted stage summaries';heading.style.fontSize='16px';box.append(heading);
- const note=document.createElement('p');note.textContent='Rates and proppant are reported stage summaries. Stage depths, pressures and treatment time-series were not supplied.';box.append(note);
+ const note=document.createElement('p');note.textContent='Rates and proppant are reported stage summaries. Measured intervals are supplied separately by depth order; matching to treatment-stage numbers is unverified. Pressure traces were not supplied.';box.append(note);
  const wrap=document.createElement('div');wrap.style.cssText='max-height:360px;overflow:auto';const table=document.createElement('table');table.style.cssText='width:100%;border-collapse:collapse;text-align:left;font-size:13px';
  const head=document.createElement('tr');['Stage','Date','Average rate (m³/min)','Proppant (t)'].forEach(t=>{const th=document.createElement('th');th.textContent=t;head.append(th)});table.append(head);
  stages.forEach(s=>{const row=document.createElement('tr');[s.label,s.date||'—',s.avg_rate_m3_min??'—',s.proppant_t??'—'].forEach(v=>{const td=document.createElement('td');td.textContent=v;td.style.cssText='padding:7px;border-bottom:1px solid #e5edf2';row.append(td)});table.append(row)});wrap.append(table);box.append(wrap);document.getElementById('figure').before(box);
@@ -323,7 +323,7 @@ function draw() {
   fig.innerHTML = g;
   wireHover(fig, S);
   document.getElementById("foot").innerHTML = !N
-    ? (WELL.engineering_stages?.length ? `Stage summaries are loaded above. Stage locations and treatment traces await additional data.` : `No frac stages are loaded for this well yet; the wellbore is drawn from its directional survey${WELL.logs && WELL.logs.length ? " and the gamma-ray log from its LAS file" : ""}. Stages appear once the Lab's export for its completion report is added.`)
+    ? (WELL.engineering_stages?.length ? `Stage summaries are loaded above. Measured intervals are available in the underground view; matching to treatment summaries is unverified. Treatment traces await additional data.` : `No frac stages are loaded for this well yet; the wellbore is drawn from its directional survey${WELL.logs && WELL.logs.length ? " and the gamma-ray log from its LAS file" : ""}. Stages appear once the Lab's export for its completion report is added.`)
     : meas.length
     ? `Panels are equal width and read left to right along the wellbore; the bar shows each stage at the depth its report printed${meas.length < N ? ", hatched where it printed none and the stage is placed by its number" : ""}. Traces are thinned to ${S[0].step_s ? S[0].step_s + " s" : "a few seconds"} per point; the full-rate samples are in the export.`
     : `This report prints no stage depths, so the stages stand in stage order with stage 1 at the toe; the bar is the well's filed lateral. Traces are thinned to a few seconds per point; the full-rate samples are in the export.`;

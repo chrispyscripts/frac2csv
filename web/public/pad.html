@@ -25,6 +25,7 @@
   .list a span { color:var(--mut); font-family:var(--mono); font-size:12px; margin-left:10px; }
   .empty { color:var(--mut); padding:20px 0; }
   svg text { font-family:var(--mono); }
+html.embedded{--bg:#0e1b26;--card:#132330;--ink:#e3f3f7;--mut:#9db6c3;--line:#2b4250;--acc:#72e2cd}html.embedded #plan,html.embedded #ids{display:none!important}html.embedded .wrap{max-width:none;padding:12px 16px}html.embedded header h1{font-size:16px}html.embedded .facts{margin:6px 0 10px}html.embedded .card{margin:0;padding:0;border:0}html.embedded .card h2{display:none}
 </style>
 </head>
 <body>
@@ -41,6 +42,7 @@
 <script>
 const q = new URLSearchParams(location.search);
 const SET = q.get("set"), PAD = q.get("pad");
+if(q.get('embedded')==='1')document.documentElement.classList.add('embedded');
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
 async function main() {
@@ -62,7 +64,7 @@ async function main() {
   const lat = wells.map(w => w.lateral).filter(Boolean);
   document.getElementById("facts").innerHTML = [
     `<span>${wells.length} wells</span>`, `<span>${wells.filter(w => w.stations).length} with a directional survey</span>`,
-    `<span>${withLogs} with logs</span>`, `<span>${wells.reduce((n, w) => n + (w.ports || 0), 0)} stages at BCER depths</span>`, `<span>${withStages} wells with treatment curves</span>`,
+    `<span>${withLogs} with logs</span>`, `<span>${wells.reduce((n, w) => n + (w.depth_intervals || w.ports || 0), 0)} stages at BCER depths</span>`, `<span>${withStages} wells with stage summaries</span>`,
     lat.length ? `<span>laterals ${fmt(Math.min(...lat))}–${fmt(Math.max(...lat))} m</span>` : "",
   ].join("");
   drawPlan(pads, wells);
@@ -113,10 +115,10 @@ function drawTable(pads, wells) {
     <td><a href="well.html?wa=${encodeURIComponent(w.wa)}">${w.name}</a></td>
     <td class="num">${w.wa}</td><td>${w.uwi || ""}</td>
     <td class="num">${fmt(w.td)}</td><td class="num">${fmt(w.tvd)}</td><td class="num">${fmt(w.lateral)}</td>
-    <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.ports ? fmt(w.ports) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
+    <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.depth_intervals ? fmt(w.depth_intervals) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
   </tr>`).join("");
   document.getElementById("table").innerHTML = `<table><thead><tr><th>Pad</th><th>Well</th><th class="num">WA</th><th>UWI</th>
-    <th class="num">TD m</th><th class="num">TVD m</th><th class="num">Lateral m</th><th class="num">Survey</th><th class="num">Stages (BCER)</th><th class="num">With curves</th><th class="num">Logs</th></tr></thead><tbody>${rows}</tbody></table>`;
+    <th class="num">TD m</th><th class="num">TVD m</th><th class="num">Lateral m</th><th class="num">Survey</th><th class="num">Stages (BCER)</th><th class="num">Summaries</th><th class="num">Logs</th></tr></thead><tbody>${rows}</tbody></table>`;
   document.getElementById("wells").hidden = false;
 }
 
