@@ -427,6 +427,24 @@ $('wv-back').onclick = () => {
     ? `pad.html?set=${encodeURIComponent(String(W.pad.id).replace(/-\d+$/, ''))}&pad=${encodeURIComponent(W.pad.id)}`
     : 'map.html';
 };
+// the compare window: wells are handed over through localStorage, so the window
+// can be reloaded or opened cold, and announced on a BroadcastChannel so one
+// that is already open picks the well up straight away
+const CMP_KEY = 'stratum.compare';
+const cmpChan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-compare') : null;
+function openCompare() { return window.open('compare.html', 'stratum-compare', 'width=1180,height=860'); }
+$('wv-compare').onclick = () => { const w = openCompare(); if (w) w.focus(); };
+$('wv-add').onclick = e => {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(CMP_KEY) || '[]').map(String); } catch (err) {}
+  if (!list.includes(String(WA))) list.push(String(WA));
+  try { localStorage.setItem(CMP_KEY, JSON.stringify(list)); } catch (err) {}
+  if (cmpChan) cmpChan.postMessage({ type: 'add', wa: String(WA) });
+  const win = openCompare(); if (win) win.focus();
+  e.target.textContent = 'Added ✓';
+  setTimeout(() => { e.target.textContent = 'Add to compare'; }, 1600);
+};
+
 addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft') focusStage(sel - 1, true);
   if (e.key === 'ArrowRight') focusStage(sel + 1, true);

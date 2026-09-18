@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratum — Compare wells</title>
+<link rel="stylesheet" href="compare.css">
+</head>
+<body>
+<div class="cmp">
+  <aside class="cmp-side">
+    <section>
+      <h2>Channels</h2>
+      <div id="cmp-channels"></div>
+    </section>
+    <section>
+      <h2>Axis</h2>
+      <label class="tog"><input type="radio" name="axis" value="md" checked> Measured depth</label>
+      <label class="tog"><input type="radio" name="axis" value="stage"> Stage number</label>
+      <label class="tog" style="margin-top:6px"><input type="checkbox" id="cmp-shared" checked> Shared scale across wells</label>
+    </section>
+    <section>
+      <h2>Wells</h2>
+      <div id="cmp-wells"></div>
+      <button class="act" id="cmp-clear" type="button" style="margin-top:8px">Remove all</button>
+    </section>
+  </aside>
+  <div class="cmp-main">
+    <div class="cmp-head">
+      <div class="cmp-title">Compare wells</div>
+      <div class="cmp-sub" id="cmp-sub">no wells added</div>
+    </div>
+    <div class="cmp-rows" id="cmp-rows"></div>
+    <div class="cmp-foot" id="cmp-foot"></div>
+  </div>
+</div>
+<script src="compare.js"></script>
+</body>
+</html>
