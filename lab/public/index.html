@@ -2474,6 +2474,7 @@ function escHtml(v) {
       exported: new Date().toISOString().slice(0, 19).replace("T", " "),
       termMap: termMap,
       timeFix: timeFix,
+      boxFix: boxFix,
       fvEdits: Object.fromEntries(fvEdits),
     };
     saveBlob("frac2csv-corrections.json",
@@ -2497,7 +2498,7 @@ function escHtml(v) {
       // rather than reject it: someone who exported yesterday should not lose
       // the file to a format change made today.
       const bundle = inc.kind === "frac2csv-corrections"
-        ? inc : { termMap: inc, timeFix: {}, fvEdits: {} };
+        ? inc : { termMap: inc, timeFix: {}, boxFix: {}, fvEdits: {} };
       if (bundle.version && bundle.version > 1) {
         alert("That file was written by a newer version of the Lab — "
               + "nothing changed."); return;
@@ -2518,6 +2519,7 @@ function escHtml(v) {
         return add + chg;
       };
       merge(termMap, bundle.termMap, "mappings");
+      merge(boxFix, bundle.boxFix, "box fixes");
       merge(timeFix, bundle.timeFix, "clock corrections");
       const fvObj = Object.fromEntries(fvEdits);
       merge(fvObj, bundle.fvEdits, "FracView edits");
@@ -2526,6 +2528,7 @@ function escHtml(v) {
       try {
         localStorage.setItem("f2c.termMap", JSON.stringify(termMap));
         localStorage.setItem("f2c.timeFix", JSON.stringify(timeFix));
+        localStorage.setItem("f2c.boxFix", JSON.stringify(boxFix));
       } catch (e) {}
       fvEditsSave();
       renderMaps();
@@ -2880,11 +2883,15 @@ function toggleHidden(c, keys) {
 }
 
 function setGraph(channels, n, sampleSec, meta, handover) {
+  gState.meta = meta || null;
   gState.clock0 = null;
   if (meta && meta.date) {
     const d = new Date(meta.date + "T" + (meta.start_time || "00:00:00"));
     if (!isNaN(d)) gState.clock0 = d;
   }
+  // Saved Fix-in-box corrections go back on before the chart is measured or
+  // drawn, so _vmax, the legend and the export all see the corrected curve.
+  gState.boxFixApplied = boxFixApply(channels, meta);
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
   // The minutes this chart handed to the next one are not the stage's — the
   // export cuts them — but the PAGE draws them, so the chart has to reach
@@ -3038,13 +3045,16 @@ function applyRetrace(i0, i1, yTop, yBot) {
   for (let k = 0; k < r.vals.length; k++) {
     if (r.vals[k] != null) c.values[i0 + k] = r.vals[k];
   }
-  return { ok: true, channel: chanName(c), found: r.found, span: i1 - i0 + 1 };
+  boxFixAdd(gState.meta, c.key || c.label, i0, r.vals);
+  return { ok: true, channel: chanName(c), found: r.found, span: i1 - i0 + 1,
+           saved: true };
 }
 function retraceUndoLast() {
   const u = gState.retraceUndo.pop();
   if (!u) return;
   const c = gState.channels[u.ci];
   for (let k = 0; k < u.before.length; k++) c.values[u.i0 + k] = u.before[k];
+  boxFixDrop(gState.meta, c.key || c.label, u.i0);   // undo unsaves it too
   syncRetrace(); redrawGraph(); buildLegend();
 }
 
@@ -3945,6 +3955,15 @@ function buildLegend() {
   // are just a different question. This is the tail the chart handed to the
   // next stage: drawn because the printed page draws it, not exported here
   // because the next chart re-plots the same minutes.
+  if (gState.boxFixApplied) {
+    const f = document.createElement("span");
+    f.className = "handovernote";
+    f.innerHTML = `<i class="dash" style="background:#1d5bd8"></i>` +
+      `<span style="color:var(--mut)">${gState.boxFixApplied} sample(s) from a saved Fix in box</span>`;
+    f.title = "This chart carries corrections you made with Fix in box. They are "
+            + "re-applied after every read. Settings, Your corrections to review them.";
+    Lg.appendChild(f);
+  }
   if (gState.handover) {
     const h = document.createElement("span");
     h.className = "handovernote";
@@ -4549,6 +4568,67 @@ let timeFix = (() => {
   try { return JSON.parse(localStorage.getItem("f2c.timeFix") || "{}"); }
   catch (e) { return {}; }
 })();
+
+// A stretch re-read off the page with Fix in box, per file + stage + channel,
+// held the way timeFix is.
+//
+// Every drop is a fresh read now, so a correction that lived only in the tab
+// was gone the next time the file was opened — which is the next time anyone
+// would look at it. The corrected VALUES are stored rather than the box: a
+// box replayed against a page rendered at another zoom is not guaranteed to
+// read the same, and a correction has to mean the same thing every time.
+let boxFix = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.boxFix") || "{}"); }
+  catch (e) { return {}; }
+})();
+const boxFixKey = (meta, chanKey) =>
+  `${fileScope()}::${(meta && meta.stage) || "?"}::${chanKey}`;
+function boxFixSave() {
+  try { localStorage.setItem("f2c.boxFix", JSON.stringify(boxFix)); }
+  catch (e) { /* private mode — it just will not outlive the tab */ }
+}
+function boxFixAdd(meta, chanKey, i0, vals) {
+  const k = boxFixKey(meta, chanKey);
+  const list = boxFix[k] || (boxFix[k] = []);
+  // A later box over the same ground replaces the earlier one rather than
+  // stacking, or undo would have to walk a pile nobody can see.
+  const i1 = i0 + vals.length - 1;
+  for (let j = list.length - 1; j >= 0; j--) {
+    const e = list[j], e1 = e.i0 + e.vals.length - 1;
+    if (!(e1 < i0 || e.i0 > i1)) list.splice(j, 1);
+  }
+  list.push({ i0, vals });
+  boxFixSave();
+}
+function boxFixDrop(meta, chanKey, i0) {
+  const k = boxFixKey(meta, chanKey);
+  const list = boxFix[k];
+  if (!list) return;
+  const j = list.findIndex(e => e.i0 === i0);
+  if (j >= 0) list.splice(j, 1);
+  if (!list.length) delete boxFix[k];
+  boxFixSave();
+}
+// Put saved corrections back over a freshly read stage.
+function boxFixApply(channels, meta) {
+  let n = 0;
+  for (const c of channels) {
+    const list = boxFix[boxFixKey(meta, c.key || c.label)];
+    if (!list) continue;
+    for (const e of list) {
+      for (let k = 0; k < e.vals.length; k++) {
+        if (e.vals[k] != null && e.i0 + k < c.values.length) {
+          c.values[e.i0 + k] = e.vals[k];
+          n++;
+        }
+      }
+    }
+  }
+  return n;
+}
+function boxFixCount() {
+  return Object.values(boxFix).reduce((a, l) => a + l.length, 0);
+}
 
 // A stage NAME the user typed, per file + stage, held the same way.
 //
