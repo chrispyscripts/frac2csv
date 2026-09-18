@@ -39,6 +39,91 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.2</h2>
+    <ul>
+      <li><b>Every file is read fresh.</b> The Lab used to keep what it had
+        already read and hand it straight back, with the row saying
+        &ldquo;reused earlier analysis&rdquo;, and Settings carried a toggle
+        to turn that off. The toggle is gone and the reuse with it: drop a
+        file and it is read by the build you are running, every time. While
+        the readers are changing under active testing that is the only safe
+        behaviour &mdash; a reused result is yesterday&rsquo;s build answering
+        for today&rsquo;s, and the one chart where that matters is the one
+        nobody thinks to re-check. Anyone who had the toggle set to Reuse has
+        that setting cleared on first load rather than left to say something
+        the app no longer honours</li>
+    </ul>
+
+    <h2>v1.11.1</h2>
+    <ul>
+      <li><b>Trican&rsquo;s 2024&ndash;2025 reports give up the curves that were
+        hidden under other curves.</b> On those reports a curve running
+        underneath another is not drawn at all where the two meet, and until
+        now only one pair of the nine was ever recovered &mdash; wellhead
+        concentration from under downhole concentration, and only ever in that
+        direction. Monitor Pressure and WH Slurry Rate were never recovered at
+        all. Measured over 27 chart pages in nine filings, Monitor Pressure
+        goes blank on nine of them for up to 45% of the time it is drawn, and
+        WH Slurry Rate on four for up to 72%. All of it comes back now, every
+        pair is walked, and which of the two concentration curves is
+        underneath is read off that chart&rsquo;s own pixels rather than
+        assumed. On one page 348 seconds of Monitor Pressure and 574 of WH
+        Slurry Rate came back that the export used to leave empty. Every
+        recovered stretch is flagged as recovered, so Isolate Interpolation
+        shows them and they never pass for ink the page actually carries</li>
+      <li><b>A stage whose hour labels are misread now reads the same way
+        every time.</b> This report&rsquo;s font prints a 9 that reads as a 3,
+        so a chart&rsquo;s clock can come back six hours out. Where the
+        misread is the majority the ladder alone cannot say which hour is
+        true, and the app was settling it by an accident of ordering &mdash;
+        the same chart could read 09:21 on one machine and 03:21 on another.
+        It is settled on the font now: a 9 reads as 3 and never the other way
+        round, so that is the direction put back, and a Start Time the page
+        prints still overrules it</li>
+    </ul>
+
+    <h2>v1.11.0</h2>
+    <ul>
+      <li><b>Isolate Interpolation.</b> Some stretches of a curve were never
+        drawn on the page. The reader recovers them from underneath whichever
+        curve was painted over the top, and the chart has always shown them in
+        pulsing black &mdash; but on a busy chart they are hard to pick out,
+        and there was no way to do anything about one. There is now a button
+        that appears whenever a chart has any. It empties the graph of
+        everything else and leaves the axes, the grid and those stretches alone
+        on it. Click one to select it; it stops pulsing and turns red. Delete
+        drops it, and every sample in it leaves the CSV and the Excel file with
+        it. Undo puts it back. Clicking empty space still pans the chart, and
+        the selection clears when you open another stage</li>
+      <li><b>Those stretches are now drawn at all.</b> They were not. v1.10.0
+        shipped the pulsing black and it has never once appeared on a real
+        file: the step that turns the reader&rsquo;s per-sample marks into
+        spans for the chart failed on the very first channel it was given,
+        every time, and took the whole file&rsquo;s read down with it. Any
+        report with a curve hidden under another therefore failed to open in
+        the Lab rather than showing the stretch. The line was written in an
+        environment where it could not be run, so it was read and never
+        executed. It is fixed, and there is now a test that fails against the
+        old version, which is the part that was missing</li>
+      <li><b>A drive that is not plugged in says which drive.</b> Ten files in
+        a row failed on the 16th with a page of technical text that came down
+        to &ldquo;no such file&rdquo; &mdash; about files that were on a disk
+        nobody had plugged in at the time. Every one of them was present the
+        next day. The Lab now checks whether the volume itself is there and
+        says &ldquo;For-Chris-CnC-1TB is not mounted. Plug the drive back in
+        and try again &mdash; the file is on it, it is not missing.&rdquo;
+        Windows drive letters read the same way</li>
+      <li><b>Closing a tab in the middle of a read is no longer an error.</b>
+        It used to be recorded as a crash, with two pages of stack trace,
+        because the Lab tried to reply to a window that had already gone. It is
+        one line now</li>
+      <li><b>Two windows no longer write into one log file.</b> Opening two
+        Labs in the same second gave them the same log, and their lines arrived
+        spliced into each other mid-sentence &mdash; in exactly the file meant
+        to be readable when something goes wrong. Each window keeps its own
+        now</li>
+    </ul>
+
     <h2>v1.10.0</h2>
     <ul>
       <li><b>The 1,191 Alberta filings spudded 2019&ndash;2023 read.</b>

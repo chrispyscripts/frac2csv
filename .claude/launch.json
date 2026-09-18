@@ -1,6 +1,38 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "web-static", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8765", "--directory", "web/public"], "port": 8765 }
+    {
+      "name": "web-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "web/scripts/serve.py"
+      ],
+      "port": 8791,
+      "autoPort": false
+    },
+    {
+      "name": "stratum",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "web/scripts/serve.py",
+        "8899"
+      ],
+      "autoPort": false,
+      "port": 8899,
+      "_note": "alias of web-static; both serve web/public with Range support"
+    },
+    {
+      "name": "download-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8795",
+        "--directory",
+        "download"
+      ],
+      "port": 8795,
+      "autoPort": false
+    }
   ]
 }
