@@ -1,0 +1,50 @@
+:root{--wv-bg:#080f18;--wv-panel:#0d1924;--wv-line:#29404c;--wv-ink:#e7f4fa;--wv-mut:#93adb9;
+      --wv-accent:#5ee2d0;--wv-press:#ff6b6b;--wv-rate:#4d8dff;--wv-wh:#3ecf8e;--wv-bh:#c79bff;
+      --wv-mono:ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:radial-gradient(ellipse at 60% 40%,#122b36,#080f18 75%);
+  color:var(--wv-ink);font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--wv-accent)}
+.wv{display:grid;grid-template-rows:auto 1fr auto;height:100%;gap:0}
+.wv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:16px 22px 12px}
+.wv-title{font-size:22px;font-weight:650;letter-spacing:-.4px}
+.wv-sub{color:var(--wv-mut);font-size:12px;margin-top:5px;font-family:var(--wv-mono)}
+.wv-tools{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;justify-content:flex-end}
+button,select{background:#152936;border:1px solid #345260;border-radius:8px;color:var(--wv-ink);
+  padding:8px 11px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--wv-accent)}
+button:disabled{opacity:.4;cursor:default;border-color:#345260}
+button.on{background:#246358;border-color:#64e8ce}
+.wv-body{display:grid;grid-template-columns:1fr 310px;gap:14px;padding:0 22px;min-height:0}
+.wv-left{display:grid;grid-template-rows:minmax(260px,1fr) auto auto;gap:10px;min-height:0;min-width:0}
+.wv-stage3d{position:relative;border:1px solid var(--wv-line);border-radius:12px;background:#0b1620;overflow:hidden;min-height:0}
+.wv-stage3d canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+.wv-hint{position:absolute;left:12px;bottom:10px;color:#7f97a4;font-size:11px;pointer-events:none}
+.wv-badge{position:absolute;left:12px;top:10px;font-family:var(--wv-mono);font-size:11px;color:var(--wv-mut)}
+.wv-tip{position:fixed;display:none;z-index:9;background:#102733f5;border:1px solid var(--wv-accent);
+  border-radius:8px;padding:8px 11px;font-size:12px;max-width:260px;pointer-events:none}
+.wv-graphs{display:grid;gap:8px}
+.wv-graph{position:relative;border:1px solid var(--wv-line);border-radius:10px;background:#0b1620;height:118px}
+.wv-graph canvas{width:100%;height:100%;display:block;cursor:ew-resize}
+.wv-graph .lab{position:absolute;left:10px;top:7px;font-size:11px;color:var(--wv-mut);font-family:var(--wv-mono);pointer-events:none}
+.wv-graph .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:#7f97a4;font-size:12px;text-align:center;padding:0 18px}
+.wv-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:6px}
+.wv-steps{display:flex;gap:4px;flex-wrap:wrap;max-height:86px;overflow:auto}
+.wv-steps button{padding:4px 8px!important;font-size:12px!important;font-family:var(--wv-mono)}
+.wv-side{border:1px solid var(--wv-line);border-radius:12px;background:#0d1924eb;padding:14px;overflow:auto;min-height:0}
+.wv-side h2{font-size:13px;margin:0 0 8px;letter-spacing:.04em;text-transform:uppercase;color:var(--wv-mut)}
+.wv-side section+section{margin-top:16px;padding-top:14px;border-top:1px solid #1e3340}
+dl.wv-facts{display:grid;grid-template-columns:1fr auto;gap:6px 10px;margin:0;font-size:12.5px}
+dl.wv-facts dt{color:var(--wv-mut)}
+dl.wv-facts dd{margin:0;text-align:right;font-family:var(--wv-mono)}
+dl.wv-facts dd.na{color:#6d8794;font-style:italic;font-family:inherit}
+.wv-chip{display:inline-block;font-size:11px;font-family:var(--wv-mono);color:#0b1620;background:var(--wv-accent);
+  border-radius:5px;padding:1px 6px;margin-left:6px}
+.wv-note{color:var(--wv-mut);font-size:12px;line-height:1.6}
+.wv-warn{border-left:2px solid #d8a657;padding-left:9px;color:#d9c08a;font-size:12px;line-height:1.55;margin-top:8px}
+.wv-empty{color:#6d8794;font-size:12px;font-style:italic;line-height:1.6}
+.wv-foot{padding:8px 22px 14px;color:#7f97a4;font-size:11.5px;line-height:1.5}
+.wv-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--wv-mut);font-family:var(--wv-mono)}
+.wv-legend i{display:inline-block;width:10px;height:2px;vertical-align:3px;margin-right:4px}
+@media(max-width:900px){.wv-body{grid-template-columns:1fr}.wv-side{max-height:40vh}}

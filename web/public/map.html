@@ -198,7 +198,7 @@ function openWell(p, lngLat) {
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
     .setLngLat(lngLat)
     .setHTML(`<div class="pop"><b>${p.name}</b><div class="facts">${p.uwi ? p.uwi + " · " : ""}WA ${p.wa}<br>${facts.join(" · ")}</div>
-              <a class="btn" href="/well.html?wa=${encodeURIComponent(p.wa)}">Show Data →</a></div>`)
+              <a class="btn" href="wellview.html?wa=${encodeURIComponent(p.wa)}">Show Data →</a></div>`)
     .addTo(map);
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);

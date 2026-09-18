@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratum — Well view</title>
+<link rel="stylesheet" href="wellview.css">
+</head>
+<body>
+<div class="wv">
+  <header class="wv-head">
+    <div>
+      <div class="wv-title" id="wv-name">Loading…</div>
+      <div class="wv-sub" id="wv-ident"></div>
+    </div>
+    <div class="wv-tools">
+      <button id="wv-back" type="button">← Back</button>
+      <button id="wv-reset" type="button">Reset view</button>
+      <button id="wv-follow" type="button" aria-pressed="false">Follow stage</button>
+    </div>
+  </header>
+
+  <div class="wv-body">
+    <div class="wv-left">
+      <div class="wv-stage3d">
+        <canvas id="wv-canvas" tabindex="0"
+                aria-label="Surveyed well path in three dimensions. Use the stage navigator to move between stages."></canvas>
+        <div class="wv-badge" id="wv-badge"></div>
+        <div class="wv-hint">Drag to orbit · Shift-drag or right-drag to pan · Scroll to zoom · Click a stage marker to select</div>
+      </div>
+
+      <div class="wv-nav">
+        <button id="wv-prev" type="button">‹ Prev</button>
+        <button id="wv-next" type="button">Next ›</button>
+        <button id="wv-play" type="button" aria-pressed="false">Play</button>
+        <div class="wv-steps" id="wv-steps" role="group" aria-label="Stages for this well"></div>
+      </div>
+
+      <div class="wv-graphs">
+        <div class="wv-graph">
+          <canvas id="wv-g1"></canvas>
+          <div class="lab" id="wv-g1-lab">Treating pressure · slurry rate</div>
+          <div class="empty" id="wv-g1-empty" hidden></div>
+        </div>
+        <div class="wv-graph">
+          <canvas id="wv-g2"></canvas>
+          <div class="lab" id="wv-g2-lab">Proppant concentration</div>
+          <div class="empty" id="wv-g2-empty" hidden></div>
+        </div>
+        <div class="wv-nav">
+          <button id="wv-gzoom" type="button">Reset graph zoom</button>
+          <div class="wv-legend" id="wv-legend"></div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="wv-side" id="wv-side"></aside>
+  </div>
+
+  <div class="wv-foot" id="wv-foot"></div>
+</div>
+<div class="wv-tip" id="wv-tip"></div>
+<script src="wellview.js"></script>
+</body>
+</html>
