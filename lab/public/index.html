@@ -3399,12 +3399,27 @@ const GHOST_LINE = "#2e9bff";      // vibrant blue for our curves
 // Gated to ~16 fps: the pulse reads the same and a long stage is hundreds of
 // thousands of samples to walk.
 let DED_T = 0, dedRaf = null;
+// How often the deduced stretches re-pulse. Each tick is a FULL redrawGraph —
+// grid, every curve, and the source page bitmap — to animate the alpha on a
+// few short spans, measured at 1.29 ms a redraw with four channels over 5,000
+// samples. At 60 ms that was ~17 redraws a second per window, and Carmine
+// runs four. The pulse period is set by the timestamp, not by this, so a
+// longer gap makes it a little less smooth and not slower.
+const DED_MS = 110;
 function dedTick(ts) {
   dedRaf = null;
-  if (ts - DED_T < 60) { dedRaf = requestAnimationFrame(dedTick); return; }
+  // Nothing to animate for a window nobody is looking at.
+  if (document.hidden) return;
+  if (ts - DED_T < DED_MS) { dedRaf = requestAnimationFrame(dedTick); return; }
   DED_T = ts;
   redrawGraph();
 }
+// ...and pick it back up when the window is looked at again, or the stretches
+// would sit still until something else happened to redraw.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && gState._dedSeen && dedRaf == null)
+    dedRaf = requestAnimationFrame(dedTick);
+});
 const GHOST_INK = "#ffffff";       // the source chart, inverted to white
 
 // Which mode we're in, for styling. Deliberately NOT tied to the render being

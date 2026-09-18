@@ -188,6 +188,17 @@ def data_dir(sub):
 # by name, so a builder added later is a reader until someone remembers to put
 # it here — pad_inputs_from_bcer.py was, and every Stratum commit was quietly
 # re-reading 441 wells because of it.
+# How many whole-document reads may run at once. Half the cores, at least one
+# and never more than three.
+#
+# ThreadingHTTPServer spawns a thread per request, so four Lab windows each
+# dropping a file ran four whole-document reads at once — and fitz, numpy and
+# tesseract all release the GIL, so N reads really is N cores (Carmine: 70%
+# CPU on four tabs). The work is the same either way; queued, it leaves him a
+# usable machine while it happens.
+_READ_GATE = threading.BoundedSemaphore(
+    max(1, min(3, (os.cpu_count() or 4) // 2)))
+
 _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "pad_json.py", "stages_from_csv.py", "stages_from_bcer.py",
                  "logs_from_las.py", "pad_inputs_from_bcer.py"}
@@ -751,38 +762,39 @@ class Handler(BaseHTTPRequestHandler):
                     out.append({"uwi": uwi, "path": path, "real": real})
                 return self._json(200, {"rows": out})
             if self.path == "/api/process-path":
-                path = req.get("path", "")
-                if path not in ALLOWED_FILES:
-                    return self._json(403, {"error": "path not allowed"})
-                write = bool(req.get("write", True))
-                job = str(req.get("job", ""))
-                # a list dropped again comes back from the results cache
-                # (the Export button then works without re-analysing); a run
-                # that must WRITE files goes through the reader, which is
-                # where the export files are built
-                hit = None if write or req.get("reuse") is False else cache_get(path)
-                if hit is not None:
-                    _job_set(job, 1, 1)
-                    notes = list(hit.get("notes") or [])
-                    notes.append(f"Reused the analysis from {hit.get('cached_at', '')[:16]}. "
-                                 "To read the file again: Settings, Earlier analyses, "
-                                 "Re-read every file.")
-                    return self._json(200, {"stages": hit.get("stages", []),
-                                            "tables": hit.get("tables", []),
-                                            "notes": notes, "written": [],
-                                            "summary": hit.get("summary", []),
-                                            "outDir": "", "cached": True})
-                stages, tables, notes, written, summary, out_dir = process_path(
-                    path, req.get("format", "both"),
-                    bool(req.get("xlsxTabs", True)),
-                    req.get("stageLabel") == "seq",
-                    req.get("destFolder", ""), job, write)
-                cache_put(path, {"stages": stages, "tables": tables,
-                                 "notes": notes, "summary": summary})
-                return self._json(200, {"stages": stages, "tables": tables,
-                                        "notes": notes, "written": written,
-                                        "summary": summary, "outDir": out_dir,
-                                        "cached": False})
+                with _READ_GATE:
+                    path = req.get("path", "")
+                    if path not in ALLOWED_FILES:
+                        return self._json(403, {"error": "path not allowed"})
+                    write = bool(req.get("write", True))
+                    job = str(req.get("job", ""))
+                    # a list dropped again comes back from the results cache
+                    # (the Export button then works without re-analysing); a run
+                    # that must WRITE files goes through the reader, which is
+                    # where the export files are built
+                    hit = None if write or req.get("reuse") is False else cache_get(path)
+                    if hit is not None:
+                        _job_set(job, 1, 1)
+                        notes = list(hit.get("notes") or [])
+                        notes.append(f"Reused the analysis from {hit.get('cached_at', '')[:16]}. "
+                                     "To read the file again: Settings, Earlier analyses, "
+                                     "Re-read every file.")
+                        return self._json(200, {"stages": hit.get("stages", []),
+                                                "tables": hit.get("tables", []),
+                                                "notes": notes, "written": [],
+                                                "summary": hit.get("summary", []),
+                                                "outDir": "", "cached": True})
+                    stages, tables, notes, written, summary, out_dir = process_path(
+                        path, req.get("format", "both"),
+                        bool(req.get("xlsxTabs", True)),
+                        req.get("stageLabel") == "seq",
+                        req.get("destFolder", ""), job, write)
+                    cache_put(path, {"stages": stages, "tables": tables,
+                                     "notes": notes, "summary": summary})
+                    return self._json(200, {"stages": stages, "tables": tables,
+                                            "notes": notes, "written": written,
+                                            "summary": summary, "outDir": out_dir,
+                                            "cached": False})
             return self._json(404, {"error": "unknown endpoint"})
         except (BrokenPipeError, ConnectionResetError):
             # The client hung up before the response went out — a tab closed
