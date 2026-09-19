@@ -1210,6 +1210,33 @@ def _hand_over_tails(results, notes):
                     "samples": tail_s,
                     "data": {l: v[off:] for l, v in a["data"].items()},
                 }
+            # A stage cannot re-plot itself.
+            #
+            # The pairing walks charts in time order within a source group and
+            # names the handover after b's stage. When two charts carry the
+            # SAME stage label, a can hand its data to a chart that is its own
+            # stage: 00028 p29 was cut to 61 samples with "the chart runs on
+            # into stage 7, whose own chart re-plots those minutes" — and the
+            # chart it meant was p30, stage 7 as well. The export then holds a
+            # one-minute stub and a near-complete chart, both labelled 7, and
+            # the stub is the one that surfaces. Carmine read that as "not
+            # picking up stage 7" (#654), and stage 29 went the same way (#657,
+            # p73 cut to 88 samples handing 53.4 min to p74).
+            #
+            # This is an invariant, not a threshold: whatever else is true, a
+            # chart handing over to its own stage number is a mis-pairing. Only
+            # when BOTH labels are known — two unlabelled charts are not
+            # evidence of anything, and refusing those would suppress real
+            # handovers on files that print no stage numbers.
+            sa = a["meta"].get("stage") or ""
+            if sa and sb and str(sa) == str(sb):
+                a["meta"].setdefault("warnings", []).append(
+                    f"overlaps a second chart also labelled stage {sb} by "
+                    f"{ov / 60:.1f} min and the handover was refused: a stage "
+                    f"cannot re-plot itself, so these are two charts of the "
+                    f"same stage; both kept as printed")
+                differ.append((sa, sb, ov))
+                continue
             a["samples"] = a["samples"][:off]
             a["data"] = {l: v[:off] for l, v in a["data"].items()}
             a["meta"]["duration_min"] = off * sec / 60.0
