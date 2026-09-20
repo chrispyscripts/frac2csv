@@ -175,6 +175,57 @@ def _has_big_image(page):
         return False
 
 
+_DAILY = re.compile(r"\bdaily\b|\bday\s*#|\breport\s*date\b|"
+                    r"\bcompletions?\s+report\b|\bmorning\s+report\b", re.I)
+
+
+def _is_daily(title):
+    return bool(_DAILY.search(title or ""))
+
+
+def _scanned_kind(doc, npages):
+    """The title printed across the top of a scanned page, by OCR -> '' when
+    nothing readable is there.
+
+    A file whose every page is an image tells us nothing through the text
+    layer, and the reader's only honest answer used to be two guesses at
+    once. Tesseract ships inside the build, so read the banner and say.
+
+    A few pages, not one: a filing can open on a cover sheet or a blank.
+    """
+    if not ocr_labels.available():
+        return ""
+    seen = []
+    for i in _spread(npages, 4):
+        try:
+            txt = ocr_labels.page_text(doc[i]) or ""
+        except Exception:
+            continue
+        # the banner is the first line with real words in it
+        for line in txt.splitlines():
+            line = " ".join(line.split())
+            if len(line) >= 12 and sum(c.isalpha() for c in line) >= 8:
+                seen.append(line[:90])
+                break
+    if not seen:
+        return ""
+    # A filing opens on a cover sheet, so the first page's banner names the
+    # binder and an inside page names what the pages actually ARE: 00426's
+    # cover says "COMPLETION / WORKOVER" and its body says "Daily Initial
+    # Completions Report". The body is the useful answer.
+    for line in seen:
+        if _is_daily(line):
+            return line
+    return seen[-1] if len(seen) > 1 else seen[0]
+
+
+def _spread(n, k):
+    """k page indexes spread through a document, first one included."""
+    if n <= k:
+        return list(range(n))
+    return [round(i * (n - 1) / (k - 1)) for i in range(k)]
+
+
 def _why_nothing(doc, npages, raster):
     """Say WHY a file produced nothing, not just that it did.
 
@@ -226,10 +277,27 @@ def _why_nothing(doc, npages, raster):
     if not looked:
         return base + "."
     if not curve_pages and not any_readable:
+        # Every page is a picture, so ASK one what it says instead of offering
+        # the user two guesses. 00426/00428/00429 (#678) are 124-page runs of
+        # Petrosight "Daily Initial Completions Report" sheets — daily ops
+        # paperwork with no treatment chart anywhere in them. Told "it may be
+        # a daily report", there is nothing for Carmine to do but flag it
+        # again; told what it IS, he can stop.
+        kind = _scanned_kind(doc, npages)
+        if kind and _is_daily(kind):
+            return (base + f" — every page is a picture, and read by OCR its "
+                    f"pages are headed \"{kind}\". This is a daily operations "
+                    f"report, not a treatment chart, so there is nothing here "
+                    f"to extract. If this well should have charts, they are in "
+                    f"another file.")
+        if kind:
+            return (base + f" — every page is a picture. Read by OCR its pages "
+                    f"are headed \"{kind}\", and none of them draws a plotted "
+                    f"curve. If this well should have charts, they are in "
+                    f"another file.")
         return (base + " — this file draws no curves and carries no text layer "
-                "at all: every page is a picture. Reading it needs OCR, and it "
-                "may be a daily report that holds no treatment charts to begin "
-                "with.")
+                "at all: every page is a picture, so reading anything from it "
+                "needs OCR. Its first page could not be read even that way.")
     if not curve_pages:
         return (base + " — no page in it draws a plotted curve, so there are "
                 "no treatment charts here to miss. If this well should have "
