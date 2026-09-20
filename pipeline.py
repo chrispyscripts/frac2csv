@@ -1366,6 +1366,91 @@ def _lag_scores(a, b, offs, K):
     return compared, agreed, gapsum / np.maximum(compared, 1)
 
 
+# How far past the proposed cut a stage is still pumping, so the hand-over
+# does not take the stage's own ending away from it.
+STAGE_END_RATE = 0.5       # of the stage's working rate: below this it has stopped
+STAGE_END_TAIL_S = 90.0    # kept after it stops, so the shutdown itself stays
+
+
+def _still_pumping_after(a, off, sec):
+    """Where stage A actually ENDS, when the proposed cut lands while it is
+    still pumping -> a new cut index, or `off` unchanged.
+
+    `_hand_over_tails` assumes chart A runs on PAST the next stage's start, so
+    it cuts A where B's window opens. On Trican the relationship is the other
+    way round: chart B opens ~11 min BEFORE stage B starts and re-plots the
+    END of stage A as its lead-in. Both arrangements correlate identically
+    over the overlap — the samples are the same samples — so the correlation
+    cannot tell them apart. The DATA can.
+
+    Measured on 00218, all 27 trimmed stages: the handed-over region begins
+    at exactly the proppant concentration the stage was cut at (143, 243,
+    294, 344 kg/m3 …) and falls to 0, with pressure going ~60 -> ~27 MPa and
+    rate to 2. Stage 1 was cut at 96.0 min in the middle of 142 kg/m3 slurry;
+    its flush ran to 101, it pumped to 103, and it shut down at 104.1. All of
+    that was being filed under stage 2.
+
+    A stage never STARTS at 344 kg/m3 and ramps down to zero. That is a
+    tail-in, a flush and a shutdown, and it belongs to the stage being cut.
+
+    So: if A is still pumping at `off`, carry the cut forward to where it
+    stops, plus enough to keep the shutdown with it.
+    """
+    import numpy as np
+
+    def pick(*want):
+        for label, v in (a.get("data") or {}).items():
+            low = str(label).lower()
+            if all(w in low for w in want):
+                return np.asarray(v, float)
+        return None
+
+    rate = pick("rate")
+    if rate is None or not (0 < off < len(rate)):
+        return off
+    fin = rate[np.isfinite(rate)]
+    if fin.size < 60:
+        return off
+    work = float(np.quantile(fin, 0.85))
+    if work <= 0:
+        return off
+    live = np.isfinite(rate) & (rate > STAGE_END_RATE * work)
+
+    # Is the cut landing INSIDE a treatment, or between two of them?
+    #
+    # Pumping after the cut is not enough on its own: a chart that really
+    # does run past the next stage's start shows that stage pumping, and
+    # carrying the cut forward there would swallow the next stage whole.
+    # What separates the two is PROPPANT. A stage is cut mid-treatment at
+    # 143, 243, 344 kg/m3 and ramps DOWN to zero through its flush; a stage
+    # that is starting carries pad, at zero, and ramps UP. So the tail is
+    # only claimed back when the stage is still carrying proppant where the
+    # cut falls.
+    conc = pick("prop", "conc")
+    if conc is None:
+        return off                  # no evidence either way: leave the cut alone
+    cfin = conc[np.isfinite(conc)]
+    if cfin.size < 60 or float(cfin.max()) <= 0:
+        return off
+    here = conc[max(0, off - 30):off + 30]
+    here = here[np.isfinite(here)]
+    if here.size == 0 or float(here.max()) <= 0.1 * float(cfin.max()):
+        return off                  # pad, or already flushed: B really starts here
+
+    # The end of the run of pumping the cut falls in — not the last pumping
+    # anywhere in A, which on a chart carrying two treatments would be the
+    # wrong one.
+    if not live[off:].any():
+        return off
+    stop = off
+    while stop < len(live) and (live[stop] or
+                                live[stop:stop + int(round(60.0 / sec))].any()):
+        stop += 1
+    if stop <= off:
+        return off
+    return min(len(rate), stop + int(round(STAGE_END_TAIL_S / sec)))
+
+
 def _hand_over_tails(results, notes):
     """Where one chart runs on into the next and the next re-plots those
     minutes, cut the first at the second's start.
@@ -1403,7 +1488,7 @@ def _hand_over_tails(results, notes):
         if t0 is None or smp is None or len(smp) == 0:
             continue
         per.setdefault(str(r.get("source") or ""), []).append((t0, r))
-    trimmed, differ, moved = [], [], []
+    trimmed, differ, moved, kept = [], [], [], []
     for src, items in per.items():
         items.sort(key=lambda x: x[0])
         prev = None
@@ -1480,6 +1565,21 @@ def _hand_over_tails(results, notes):
                 moved.append((sb, lag))
                 prev = (tb, b)
                 ov = (end_a - tb).total_seconds()
+            # The cut may land while A is still pumping — chart B opening
+            # before stage B starts, not chart A running on. Carry it to
+            # where A actually stops (see _still_pumping_after).
+            moved_to = _still_pumping_after(a, off, sec)
+            if moved_to > off:
+                kept.append((a["meta"].get("stage") or "?",
+                             (moved_to - off) * sec / 60.0))
+                a["meta"].setdefault("warnings", []).append(
+                    f"the next chart opens {ov / 60:.1f} min before this stage "
+                    f"ends — it re-plots this stage's tail-in, flush and "
+                    f"shutdown as its own lead-in. Those "
+                    f"{(moved_to - off) * sec / 60:.1f} min are kept here, "
+                    f"where they were pumped")
+                off = moved_to
+                ov = (len(a["samples"]) - off) * sec
             # Keep what is being handed over, beside the stage rather than in
             # it. The export still cuts here — those minutes belong to the next
             # chart and must not be written twice — but the CHART was ending
@@ -1540,6 +1640,13 @@ def _hand_over_tails(results, notes):
                         "and the filed starts drift apart by a few percent; the "
                         "charts' own spacing is kept, anchored on the first "
                         "chart of the run at its filed start" if big > 600 else ""))
+    if kept:
+        notes.append(
+            f"{len(kept)} stage(s) kept their own ending: the next chart opens "
+            f"before the stage finishes and re-plots its tail-in, flush and "
+            f"shutdown as its own lead-in, so the hand-over was moved to where "
+            f"the stage actually stops pumping "
+            f"({sum(m for _s, m in kept):.0f} min in all)")
     if trimmed:
         total = sum(o for _s, o in trimmed) / 60.0
         notes.append(f"{len(trimmed)} chart(s) ran on into the next stage and "
