@@ -21,6 +21,7 @@ back.
 import os
 import sys
 import unittest
+from datetime import timedelta
 
 import numpy as np
 
@@ -103,6 +104,35 @@ class EndToEnd(unittest.TestCase):
                           "date": "2020-01-25", "clock_chart": True})
         b["page"] = 52
         return a, b
+
+    def test_the_next_stage_gives_those_minutes_up(self):
+        """A keeps its ending, so B must not export it as well.
+
+        Carrying A's cut forward without moving B's start writes the same
+        minutes under BOTH stages. Measured on 00218 before this: every
+        stage overlapped the next by ~9.5 min and 242 min of the job came
+        out twice — exactly the duplication #645 asked us to remove,
+        reintroduced at the other end of the chart. After: 28 stages, 0.0
+        min overlap, 0.0 min gap, each one ending where the next begins.
+        """
+        a, b = self.pair()
+        pipeline._hand_over_tails([a, b], [])
+        a_end = pipeline._abs_start(a) + timedelta(
+            seconds=len(a["samples"]) * pipeline._sample_sec(a))
+        b_start = pipeline._abs_start(b)
+        self.assertEqual(b_start, a_end,
+                         f"stage 2 starts {b_start:%H:%M:%S}, stage 1 ends "
+                         f"{a_end:%H:%M:%S} — the difference is exported twice")
+        self.assertTrue(any("re-plot the end of stage" in w
+                            for w in b["meta"]["warnings"]))
+
+    def test_b_keeps_its_own_treatment(self):
+        a, b = self.pair()
+        before = len(b["samples"])
+        pipeline._hand_over_tails([a, b], [])
+        # it gives up its lead-in, not its own 50 minutes of pumping
+        self.assertLess(len(b["samples"]), before)
+        self.assertGreaterEqual(len(b["samples"]) / 60.0, 49)
 
     def test_the_stage_keeps_its_flush_and_its_shutdown(self):
         a, b = self.pair()

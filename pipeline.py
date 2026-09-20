@@ -1609,6 +1609,36 @@ def _hand_over_tails(results, notes):
                     f"where they were pumped")
                 off = moved_to
                 ov = (len(a["samples"]) - off) * sec
+                # ...and B gives those minutes up, because they are A's.
+                #
+                # Carrying A's cut forward without moving B's start exports
+                # the same minutes under BOTH stages: measured on 00218,
+                # every stage overlapped the next by ~9.5 min and 242 min of
+                # the job came out twice. That is exactly the duplication
+                # #645 asked us to remove, reintroduced at the other end.
+                #
+                # B's chart opened early and re-plotted A's ending as its
+                # lead-in, so B drops that lead-in and starts where A stops.
+                # The filed start is to the minute; A's own samples say to
+                # the second where its treatment actually ended.
+                a_end = ta + timedelta(seconds=off * sec)
+                sec_b = _sample_sec(b)
+                drop = int(round((a_end - tb).total_seconds() / sec_b))
+                drop = max(0, min(drop, len(b["samples"]) - 1))
+                if drop > 0:
+                    b["samples"] = b["samples"][drop:] - b["samples"][drop]
+                    b["data"] = {l: v[drop:] for l, v in b["data"].items()}
+                    tb = tb + timedelta(seconds=drop * sec_b)
+                    b["meta"]["start_time"] = tb.strftime("%H:%M:%S")
+                    b["meta"]["date"] = tb.date().isoformat()
+                    b["meta"]["duration_min"] = len(b["samples"]) * sec_b / 60.0
+                    b["meta"].setdefault("warnings", []).append(
+                        f"the first {drop * sec_b / 60:.1f} min of "
+                        f"this chart re-plot the end of stage "
+                        f"{a['meta'].get('stage') or '?'} — its tail-in, flush "
+                        f"and shutdown — so they are exported there and this "
+                        f"stage starts where that one stops")
+                    prev = (tb, b)
             # Keep what is being handed over, beside the stage rather than in
             # it. The export still cuts here — those minutes belong to the next
             # chart and must not be written twice — but the CHART was ending
