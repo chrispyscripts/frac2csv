@@ -270,6 +270,37 @@ class Continuous(unittest.TestCase):
 
 
 
+class SpliceOff(unittest.TestCase):
+    """What ships: the lead-in is NOT moved onto the stage.
+
+    v1.11.7 moved it and v1.11.11 stopped. The measurement that justified it
+    still holds — 00218's stage 1 sheet reads 296.8 min against a page
+    plotting 107 — but a stage that opens 194 minutes before it does anything
+    is not the stage an operator means by "stage 1", and moving the cutoff
+    there read as a regression against a chart already agreed to be right
+    (Chris, 2026-09-20). The phantom last stage it also solved is handled in
+    the Lab instead, which does not move anyone's cutoff.
+    """
+
+    def test_off_by_default(self):
+        self.assertFalse(pipeline.CONTINUOUS_SPLICE)
+
+    def test_the_stage_keeps_the_window_its_own_page_plots(self):
+        job = 40.0 + 20.0 * np.sin(np.arange(400 * 60) / 300.0)
+        s1 = series(1, "2015-11-12", "07:17:00", 70, job[0:70 * 60],
+                    clock_chart=True)
+        s1["meta"]["sheet_start"] = "04:17:00"      # the sheet says 3 h earlier
+        s2 = series(2, "2015-11-12", "08:23:00", 60, job[66 * 60:126 * 60],
+                    clock_chart=True)
+        c = series("", "", "04:17:00", 306, np.arange(306 * 60, dtype=float),
+                   clock_chart=True, continuous=True)
+        c["page"] = 119
+        pipeline._trican_continuous([s1, s2, c], [])
+        self.assertEqual(len(s1["samples"]), 70 * 60)
+        self.assertEqual(s1["meta"]["start_time"], "07:17:00")
+        self.assertNotIn("spliced_n", s1["meta"])
+
+
 class ContinuousSplice(unittest.TestCase):
     """A stage whose own chart opens partway through it.
 
@@ -289,7 +320,19 @@ class ContinuousSplice(unittest.TestCase):
 
     LEAD = 180          # min of the overview that precede the first stage
 
+    # The splice is OFF in shipped builds (see CONTINUOUS_SPLICE). These
+    # exercise it anyway so the path stays covered and turning it back on is
+    # a one-line change rather than a rewrite; test_off_by_default below is
+    # what pins the shipped behaviour.
     def setUp(self):
+        self._was = pipeline.CONTINUOUS_SPLICE
+        pipeline.CONTINUOUS_SPLICE = True
+        self._build()
+
+    def tearDown(self):
+        pipeline.CONTINUOUS_SPLICE = self._was
+
+    def _build(self):
         job = 40.0 + 20.0 * np.sin(np.arange(400 * 60) / 300.0)
         self.s1 = series(1, "2015-11-12", "07:17:00", 70, job[0:70 * 60],
                          clock_chart=True)

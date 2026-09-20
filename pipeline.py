@@ -1243,7 +1243,8 @@ def _trican_continuous(results, notes):
                 # the LAST stage have no such evidence — that is the job
                 # winding down and belongs to no stage — so they keep the
                 # overview instead, which is what they did before.
-                secs = _sheet_head_gap(t0, first_of(stages))
+                secs = (_sheet_head_gap(t0, first_of(stages))
+                        if CONTINUOUS_SPLICE else 0.0)
                 target = first_of(stages)
                 if secs > CONTINUOUS_JOIN_S and target is not None:
                     got = _splice_continuous_edge(r, target, True, secs, notes)
@@ -1297,6 +1298,22 @@ CONTINUOUS_DATE_S = 6 * 3600.0
 # run into. Wider than a stage's own slack and far narrower than idle time
 # between stages, which belongs to no stage and must not be handed to one.
 CONTINUOUS_JOIN_S = 120.0
+# ...and whether to do it at all. OFF.
+#
+# Shipped in v1.11.7 and pulled in v1.11.11 at Chris's call. The reasoning
+# was sound and the measurement held — 00218's stage 1 sheet reads 20:31 ->
+# 01:28, 296.8 min, and its chart page plots elapsed 195 -> 302, so 194
+# minutes of that stage are printed on no stage page. But a stage that opens
+# 194 minutes before it does anything is not the stage an operator means when
+# he says "stage 1", and moving the cutoff there read as a regression against
+# a chart he had already agreed was right.
+#
+# The phantom last stage this was also solving is handled in the Lab instead
+# (v1.11.8): a CONTINUOUS chart is held out of the stage list and the CSV
+# whether or not the pipeline can prove coverage, which does not need the
+# splice and does not move anyone's cutoff. Flip this True to get it back;
+# the tests cover both paths.
+CONTINUOUS_SPLICE = False
 
 HANDOVER_MIN_S = 30.0      # shorter than this is clock rounding, not a tail
 HANDOVER_TOL = 0.05        # of the channel's own range over the stage
