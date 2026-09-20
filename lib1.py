@@ -747,6 +747,67 @@ def _stamp(t):
             f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d}")
 
 
+def _value_panels(page, horizontal):
+    """The plot frames stacked on one page, as (lo, hi) bands along the VALUE
+    axis -> [] when the page holds a single plot.
+
+    Liberty prints TWO plots per stage page: the Treatment Plot on top and a
+    Chemicals Plot under it. Both draw a curve in pure red — Treating Pressure
+    above, J475 Conc below — and a page's series are grouped by COLOUR, over
+    every drawing on the page. So the chemical curve was being concatenated
+    into the pressure: 36 red paths where every other colour has exactly 18.
+
+    The chemical curve sits far below the pressure frame, so it clips to the
+    bottom of the pressure axis, and the series alternates between a real
+    pressure and ~0 once per x-slice. That is the red comb Carmine reported
+    on seven files (#682-#687, 00949/00950/00951/00748/00749/00750), and it
+    is on EVERY stage of them, not just stage 1 — stage 2 of 00949 is worse
+    than stage 1 (83.5% of samples jumping a quarter of the range, against
+    56.7%). Stage 1 is simply the one you look at first.
+
+    Found from the value gridlines, which run the full time width of their own
+    plot and nothing else: their positions cluster tightly inside a frame
+    (~20 units apart here) and jump the frame gap between plots (~140).
+    """
+    pos = []
+    for d in page.get_drawings():
+        if d.get("color") is None or d["type"] not in ("s", "fs"):
+            continue
+        r = d["rect"]
+        v0, v1, t0, t1 = (r.y0, r.y1, r.x0, r.x1) if horizontal \
+            else (r.x0, r.x1, r.y0, r.y1)
+        if abs(v1 - v0) < 0.5 and (t1 - t0) > 100:
+            pos.append(round(v0, 1))
+    pos = sorted(set(pos))
+    if len(pos) < 4:
+        return []
+    steps = sorted(pos[i] - pos[i - 1] for i in range(1, len(pos)))
+    within = steps[len(steps) // 2]          # the usual gridline spacing
+    # A frame gap is several gridlines wide. Taken off the page's own spacing
+    # rather than fixed, because a plot with four gridlines and one with
+    # twenty are both ordinary.
+    gap = max(40.0, within * 3.0)
+    bands, cur = [], [pos[0]]
+    for v in pos[1:]:
+        if v - cur[-1] > gap:
+            bands.append(cur)
+            cur = []
+        cur.append(v)
+    bands.append(cur)
+    bands = [(b[0], b[-1]) for b in bands if len(b) >= 2]
+    return bands if len(bands) > 1 else []
+
+
+def _panel_of(v, panels):
+    """Which panel a value-axis position belongs to — the nearest one, so ink
+    running past the outermost gridline to the frame edge still counts."""
+    if not panels:
+        return None
+    return min(range(len(panels)),
+               key=lambda i: 0.0 if panels[i][0] <= v <= panels[i][1]
+               else min(abs(v - panels[i][0]), abs(v - panels[i][1])))
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -804,8 +865,12 @@ def extract_page(page, sample_sec=1.0):
             _nm = _clean_name(m.group(1).strip())
             if s.get("ocr"):
                 _nm = _snap_name(_nm)
+            # cx is the VALUE-axis position of the legend entry (the spans
+            # are already swapped on a landscape page), which is what says
+            # WHICH plot on the page this series belongs to.
             named.setdefault(s["color"], {"name": _nm,
-                                          "unit": m.group(2).strip()})
+                                          "unit": m.group(2).strip(),
+                                          "at": s.get("cx")})
     # a black series (e.g. a chemical CONC drawn in black) shares ink with
     # axes/grid, so all black curves are indistinguishable — accept one only
     # when the page has EXACTLY one black-named series (else they'd merge into
@@ -1013,11 +1078,17 @@ def extract_page(page, sample_sec=1.0):
     units = {}
     axes = {}          # name -> (axis_min, axis_max) from the printed ticks
     axis_fit = {}      # name -> (a, b) so the axis can be read AT the frame
+    # Two plots on one page share the red pen, so colour alone does not say
+    # which curve a path is (see _value_panels). Nothing changes on a page
+    # holding a single plot, which is every other template we read.
+    panels = _value_panels(page, horizontal)
     for color_int, info in named.items():
         fit = fits.get(color_int) or unit_fit.get(info["unit"])
         if fit is None:
             continue
         a, b, v_lo_ax, v_hi_ax = fit
+        my_panel = (_panel_of(info["at"], panels)
+                    if panels and info.get("at") is not None else None)
         pts = []
         for d in page.get_drawings():
             c = d.get("color")
@@ -1033,6 +1104,11 @@ def extract_page(page, sample_sec=1.0):
                 continue
             if not _close(c, color_int):
                 continue
+            if my_panel is not None:
+                r = d["rect"]
+                mid = ((r.y0 + r.y1) / 2) if horizontal else ((r.x0 + r.x1) / 2)
+                if _panel_of(mid, panels) != my_panel:
+                    continue          # another plot's curve in the same ink
             # curves are dense polylines (hundreds of items per drawing); an
             # isolated 1-2 item drawing that is one long axis-aligned line is
             # axis/marker ink in the series color — it puts phantom spikes on
