@@ -836,6 +836,13 @@ def _trican_clock(doc, results, notes):
             chart += 1
             cs = _secs(md["start_time"])
             ts = _secs(entry["start"]) if entry["start"] else None
+            # What the SHEET says about this stage, kept beside what the
+            # chart says. _trican_continuous needs it: the sheet is the only
+            # statement of how long the stage actually ran, and a chart that
+            # opens partway through one (stage 1, every time — see
+            # trican2.stage_clock) cannot say so itself.
+            if entry["start"]:
+                md["sheet_start"] = entry["start"]
             if entry["date"]:
                 md["date"] = _nearest_date(entry["date"], ts, cs)
                 dated += 1
@@ -957,6 +964,142 @@ def _sample_sec(r):
         return 1.0
 
 
+def _sheet_head_gap(cont_t0, stage_r):
+    """Seconds of a CONTINUOUS chart's lead-in that belong to the first
+    stage, by that stage's OWN sheet. 0.0 when the sheet says nothing, or
+    says the stage began where its chart does.
+
+    00218's stage 1: the sheet reads 20:31 -> 01:28, 296.8 min, and the
+    chart page plots elapsed 195 -> 302 with a clock axis opening at 23:46.
+    Those 195 minutes are stage 1 and are printed on no stage page. Capped
+    at the lead-in the overview actually has, and never run past the
+    chart's own start.
+    """
+    if stage_r is None:
+        return 0.0
+    st = _abs_start(stage_r)
+    sheet = stage_r["meta"].get("sheet_start")
+    if st is None or cont_t0 is None or not sheet:
+        return 0.0
+    # The sheet prints a time and no day; the stage's date is the chart's.
+    want = _nearest_date(st.date().isoformat(), _secs(st.strftime("%H:%M:%S")),
+                         _secs(sheet))
+    try:
+        sheet_t = datetime.fromisoformat(want) + timedelta(seconds=_secs(sheet))
+    except ValueError:
+        return 0.0
+    if sheet_t >= st:
+        return 0.0                      # the sheet agrees, or starts later
+    return max(0.0, (st - max(sheet_t, cont_t0)).total_seconds())
+
+
+def _stage_windows(tri):
+    """(start, end, meta, series) for every non-continuous chart that has a
+    clock, in time order. Rebuilt rather than patched after a splice, so the
+    windows and the samples can never drift apart."""
+    out = []
+    for r in tri:
+        if r["meta"].get("continuous"):
+            continue
+        t0 = _abs_start(r)
+        if t0 is None:
+            continue
+        out.append((t0, t0 + timedelta(
+            seconds=len(r["samples"]) * _sample_sec(r)), r["meta"], r))
+    out.sort(key=lambda s: s[0])
+    return out
+
+
+def first_of(stages):
+    return stages[0][3] if stages else None
+
+
+def last_of(stages):
+    return stages[-1][3] if stages else None
+
+
+def _splice_continuous_edge(c, stage_r, at_front, secs, notes):
+    """Move `secs` seconds off the edge of a CONTINUOUS chart onto the stage
+    chart it runs into. Returns the minutes moved, or 0.0.
+
+    The minutes are the only copy of themselves: 00218's stage 1 ran 296.8
+    min by its own sheet (20:31 -> 01:28) and its chart page plots elapsed
+    195 -> 302, the last 107 of them. The first 195 minutes of that stage
+    are printed nowhere but on the CONTINUOUS page. Read from the stage
+    chart alone, stage 1 exports 96 min and 200 minutes of a real stage are
+    simply gone — which is what Carmine has been reporting as truncation.
+
+    They arrive coarser: the CONTINUOUS page draws 19.7 h across the same
+    width the stage page gives 107 min, so a pixel is about a minute rather
+    than a second. That is a real difference and the stage says so in its
+    warnings rather than presenting the join as seamless.
+    """
+    import numpy as np
+    sec_a = _sample_sec(stage_r)
+    sec_c = _sample_sec(c)
+    cs = np.asarray(c["samples"], float)
+    if secs <= 0 or not len(cs):
+        return 0.0
+    # The window being taken, in the CONTINUOUS chart's own elapsed seconds.
+    lo, hi = (0.0, secs) if at_front else (len(cs) * sec_c - secs, len(cs) * sec_c)
+    grid = np.arange(0.0, secs, sec_a)
+    if not len(grid):
+        return 0.0
+    src = grid + lo
+    lead = {}
+    for label in stage_r["data"]:
+        v = c["data"].get(label)
+        if v is None:
+            # A channel the stage plots and the overview does not. Blank, not
+            # zero: a concentration that reads 0 for three hours is a claim.
+            lead[label] = np.full(len(grid), np.nan)
+            continue
+        vv = np.asarray(v, float)
+        n = min(len(cs), len(vv))
+        fin = np.isfinite(vv[:n])
+        lead[label] = (np.interp(src, cs[:n][fin], vv[:n][fin],
+                                 left=np.nan, right=np.nan)
+                       if fin.any() else np.full(len(grid), np.nan))
+    sa = np.asarray(stage_r["samples"], float)
+    if at_front:
+        stage_r["samples"] = np.concatenate([grid, sa + secs])
+        stage_r["data"] = {l: np.concatenate([lead[l], np.asarray(v, float)])
+                           for l, v in stage_r["data"].items()}
+        t0 = _abs_start(stage_r) - timedelta(seconds=secs)
+        stage_r["meta"]["start_time"] = t0.strftime("%H:%M:%S")
+        stage_r["meta"]["date"] = t0.date().isoformat()
+        # The stage now starts where its SHEET says it does, so the warning
+        # that its chart's axis disagreed with the sheet is stale — and a
+        # stale warning is worse than none, because it says the start is
+        # wrong when the splice is exactly what made it right. Cleared only
+        # when the new start actually agrees; if it still does not, the
+        # warning is still true and stays.
+        keep = []
+        for w in stage_r["meta"].get("warnings", []):
+            m = re.search(r"STAGE INFORMATION sheet's Start Time (\d{2}:\d{2})", str(w))
+            if m:
+                off = abs((_secs(m.group(1) + ":00") - _secs(
+                    stage_r["meta"]["start_time"]) + 43200) % 86400 - 43200)
+                if off <= 300:
+                    continue
+            keep.append(w)
+        stage_r["meta"]["warnings"] = keep
+    else:
+        end = (sa[-1] + sec_a) if len(sa) else 0.0
+        stage_r["samples"] = np.concatenate([sa, grid + end])
+        stage_r["data"] = {l: np.concatenate([np.asarray(v, float), lead[l]])
+                           for l, v in stage_r["data"].items()}
+    stage_r["meta"]["duration_min"] = len(stage_r["samples"]) * sec_a / 60.0
+    mins = secs / 60.0
+    stage_r["meta"].setdefault("warnings", []).append(
+        f"the {'first' if at_front else 'last'} {mins:.0f} min of this stage "
+        f"are not on its own chart — they are taken from the CONTINUOUS page "
+        f"(p{c['page']}), which is the only page that plots them. That page "
+        f"draws the whole job at about a minute per pixel, so these minutes "
+        f"are coarser than the rest of the stage")
+    return mins
+
+
 def _trican_continuous(results, notes):
     """Drop a Trican CONTINUOUS chart when the stage charts already carry
     every minute of it.
@@ -978,17 +1121,8 @@ def _trican_continuous(results, notes):
     cont = [r for r in tri if r["meta"].get("continuous")]
     if not cont:
         return
-    stages = []
-    for r in tri:
-        if r["meta"].get("continuous"):
-            continue
-        t0 = _abs_start(r)
-        if t0 is None:
-            continue
-        stages.append((t0, t0 + timedelta(
-            seconds=len(r["samples"]) * _sample_sec(r)), r["meta"]))
-    stages.sort(key=lambda s: s[0])
-    dropped, kept = [], []
+    stages = _stage_windows(tri)
+    dropped, kept, spliced = [], [], []
     for r in cont:
         md = r["meta"]
         why = None
@@ -999,15 +1133,53 @@ def _trican_continuous(results, notes):
             near = min(stages, key=lambda s: abs(
                 (cs - _secs(s[2]["start_time"]) + 43200) % 86400 - 43200))
             gap = abs((cs - _secs(near[2]["start_time"]) + 43200) % 86400 - 43200)
-            if gap > 1800 or not near[2].get("date"):
-                why = "no stage chart opens within half an hour of it, so it has no day"
+            # Half an hour was far too tight, and it is the wrong quantity.
+            #
+            # What this bound protects is _nearest_date, which picks between
+            # yesterday, today and tomorrow — so it only becomes ambiguous
+            # as the gap approaches TWELVE hours, not thirty minutes. And a
+            # whole-job re-plot legitimately opens hours before stage 1:
+            # 00218's CONTINUOUS page starts at 20:32 and its first stage
+            # chart opens at 23:46, 3.2 h later. Under the old bound it could
+            # not be dated, so it could not be measured against the stages,
+            # so it was kept — and it arrived in the list as a nameless last
+            # stage carrying the entire 19.7 h job, 70,800 rows of it.
+            if gap > CONTINUOUS_DATE_S or not near[2].get("date"):
+                why = (f"no stage chart opens within "
+                       f"{CONTINUOUS_DATE_S / 3600:.0f} h of it, so it has no day")
             else:
                 md["date"] = _nearest_date(near[2]["date"],
                                            _secs(near[2]["start_time"]), cs)
                 t0 = _abs_start(r)
                 t1 = t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+                # The minutes at either END of this chart that no stage
+                # chart carries belong to the stage they run into: give them
+                # to it rather than keeping the whole overview for their
+                # sake. Done before the coverage test, because doing it is
+                # what makes the overview droppable — and it is the only way
+                # those minutes reach the CSV at all, since the stage's own
+                # page does not plot them (see _splice_continuous_edge).
+                # The FRONT of the chart only, and only as far back as the
+                # stage's own sheet says the stage began.
+                #
+                # The sheet is the only statement of a stage's real extent,
+                # and without it a splice is a guess. Minutes running past
+                # the LAST stage have no such evidence — that is the job
+                # winding down and belongs to no stage — so they keep the
+                # overview instead, which is what they did before.
+                secs = _sheet_head_gap(t0, first_of(stages))
+                target = first_of(stages)
+                if secs > CONTINUOUS_JOIN_S and target is not None:
+                    got = _splice_continuous_edge(r, target, True, secs, notes)
+                    if got:
+                        spliced.append((r["page"],
+                                        target["meta"].get("stage") or "?",
+                                        got, True))
+                if spliced:
+                    stages = _stage_windows(tri)
+                    t0 = _abs_start(r)
                 covered, cursor = 0.0, t0
-                for a, b, _m in stages:
+                for a, b, _m, _r in stages:
                     a, b = max(a, cursor), min(b, t1)
                     if b > a:
                         covered += (b - a).total_seconds()
@@ -1020,6 +1192,14 @@ def _trican_continuous(results, notes):
                     why = f"{miss:.0f} min of it are on no stage chart"
         if why:
             kept.append((r["page"], why))
+    for pg, st, mins, at_front in spliced:
+        notes.append(
+            f"stage {st}: {mins:.0f} min added to its "
+            f"{'start' if at_front else 'end'} from the CONTINUOUS chart on "
+            f"p{pg} — the stage ran longer than its own chart plots, and that "
+            f"page is the only one carrying those minutes. They are drawn at "
+            f"about a minute per pixel there, so they are coarser than the "
+            f"rest of the stage")
     if dropped:
         for r in dropped:
             results.remove(r)
@@ -1030,6 +1210,17 @@ def _trican_continuous(results, notes):
     for pg, why in kept:
         notes.append(f"p{pg}: CONTINUOUS chart kept as a stage of its own — {why}")
 
+
+# How far a CONTINUOUS chart's clock may sit from the nearest stage chart's
+# and still be dated from it. The real limit is the 12-hour fold _nearest_date
+# resolves; six hours is comfortably inside it and covers a whole-job re-plot
+# that opens before the first stage.
+CONTINUOUS_DATE_S = 6 * 3600.0
+# Minutes of a CONTINUOUS chart that sit outside every stage window, and are
+# therefore the only copy of themselves, may be spliced onto the stage they
+# run into. Wider than a stage's own slack and far narrower than idle time
+# between stages, which belongs to no stage and must not be handed to one.
+CONTINUOUS_JOIN_S = 120.0
 
 HANDOVER_MIN_S = 30.0      # shorter than this is clock rounding, not a tail
 HANDOVER_TOL = 0.05        # of the channel's own range over the stage

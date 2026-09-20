@@ -269,5 +269,126 @@ class Continuous(unittest.TestCase):
         self.assertEqual(len(c["samples"]), 126 * 60)
 
 
+
+class ContinuousSplice(unittest.TestCase):
+    """A stage whose own chart opens partway through it.
+
+    00218 stage 1: the STAGE INFORMATION sheet reads 20:31 -> 01:28, 296.8
+    min, and the chart page plots elapsed 195 -> 302 with a clock axis
+    opening at 23:46. The first 195 minutes of a real stage are printed on
+    no stage page at all — only on the CONTINUOUS overview — so reading the
+    stage chart alone exported 96 min of a 296.8 min stage and silently
+    dropped 200 minutes. That is the "truncation" reported against Trican
+    (#665, #668, #669, #679, #680, #681).
+
+    Keeping the overview for those minutes' sake is not an answer either:
+    it arrives as a nameless last stage carrying the whole 19.7 h job,
+    70,800 rows of it, on top of the stages that already carry the same
+    minutes.
+    """
+
+    LEAD = 180          # min of the overview that precede the first stage
+
+    def setUp(self):
+        job = 40.0 + 20.0 * np.sin(np.arange(400 * 60) / 300.0)
+        self.s1 = series(1, "2015-11-12", "07:17:00", 70, job[0:70 * 60],
+                         clock_chart=True)
+        self.s2 = series(2, "2015-11-12", "08:23:00", 60, job[66 * 60:126 * 60],
+                         clock_chart=True)
+        # 04:17 -> 09:23: the lead-in, then every minute both stages hold
+        self.c = series("", "", "04:17:00", self.LEAD + 126,
+                        np.arange((self.LEAD + 126) * 60, dtype=float),
+                        clock_chart=True, continuous=True)
+        self.c["meta"]["title"] = "Whole job (continuous)"
+        self.c["page"] = 119
+
+    def run_it(self, sheet_start="04:17:00"):
+        if sheet_start is not None:
+            self.s1["meta"]["sheet_start"] = sheet_start
+        results, notes = [self.s1, self.s2, self.c], []
+        pipeline._trican_continuous(results, notes)
+        return results, notes
+
+    def test_the_lead_in_lands_on_the_stage_and_the_overview_goes(self):
+        results, notes = self.run_it()
+        self.assertEqual(len(self.s1["samples"]), (self.LEAD + 70) * 60,
+                         "stage 1 should now carry its own lead-in")
+        self.assertEqual(self.s1["meta"]["start_time"], "04:17:00")
+        self.assertEqual(self.s1["meta"]["date"], "2015-11-12")
+        self.assertNotIn(self.c, results, "the overview is now fully covered")
+        self.assertTrue(any("180 min added to its start" in n for n in notes))
+
+    def test_the_samples_are_the_overview_s_own(self):
+        self.run_it()
+        # the overview's Tr Press is its elapsed second, so the spliced head
+        # must read 0, 1, 2 ... and the stage's own samples must survive
+        head = self.s1["data"]["Tr Press"][:self.LEAD * 60]
+        self.assertEqual(list(head[:3]), [0.0, 1.0, 2.0])
+        self.assertAlmostEqual(head[-1], self.LEAD * 60 - 1, places=6)
+        tail = self.s1["data"]["Tr Press"][self.LEAD * 60:]
+        self.assertAlmostEqual(tail[0], 40.0, places=6)
+        self.assertEqual(list(self.s1["samples"][:3]), [0.0, 1.0, 2.0])
+        self.assertEqual(self.s1["samples"][-1], (self.LEAD + 70) * 60 - 1)
+
+    def test_a_channel_the_overview_does_not_plot_is_blank_not_zero(self):
+        self.s1["data"]["Slurry Rate"] = np.full(70 * 60, 8.0)
+        self.run_it()
+        head = self.s1["data"]["Slurry Rate"][:self.LEAD * 60]
+        self.assertTrue(np.isnan(head).all(),
+                        "a rate of 0 for three hours is a claim; blank is not")
+
+    def test_without_the_sheet_nothing_is_spliced(self):
+        results, _ = self.run_it(sheet_start=None)
+        self.assertEqual(len(self.s1["samples"]), 70 * 60)
+        self.assertIn(self.c, results, "no evidence, so the overview is the only copy")
+
+    def test_a_sheet_that_agrees_splices_nothing(self):
+        results, _ = self.run_it(sheet_start="07:17:00")
+        self.assertEqual(len(self.s1["samples"]), 70 * 60)
+        self.assertIn(self.c, results)
+
+    def test_the_splice_stops_where_the_sheet_says_not_where_the_page_does(self):
+        # the sheet says the stage began at 05:17, an hour after the overview
+        self.run_it(sheet_start="05:17:00")
+        self.assertEqual(len(self.s1["samples"]), (120 + 70) * 60)
+        self.assertEqual(self.s1["meta"]["start_time"], "05:17:00")
+
+    def test_minutes_past_the_last_stage_are_never_spliced(self):
+        # the job winding down belongs to no stage, and no sheet says it does
+        self.c = series("", "", "07:17:00", 200,
+                        np.zeros(200 * 60), clock_chart=True, continuous=True)
+        self.c["page"] = 119
+        results, notes = self.run_it()
+        self.assertEqual(len(self.s2["samples"]), 60 * 60)
+        self.assertIn(self.c, results)
+        self.assertTrue(any("74 min" in n for n in notes))
+
+    def test_the_stale_disagreement_warning_goes(self):
+        self.s1["meta"]["warnings"].append(
+            "the STAGE INFORMATION sheet's Start Time 04:17 is 3.0 h off the "
+            "chart's own axis; the chart is kept")
+        self.run_it()
+        self.assertFalse(any("Start Time 04:17" in w
+                             for w in self.s1["meta"]["warnings"]),
+                         "the splice is what made the start right; saying it is "
+                         "still wrong would be worse than saying nothing")
+        self.assertTrue(any("not on its own chart" in w
+                            for w in self.s1["meta"]["warnings"]))
+
+    def test_a_warning_the_splice_does_not_settle_stays(self):
+        self.s1["meta"]["warnings"].append(
+            "the STAGE INFORMATION sheet's Start Time 23:00 is 8.0 h off the "
+            "chart's own axis; the chart is kept")
+        self.run_it()
+        self.assertTrue(any("Start Time 23:00" in w
+                            for w in self.s1["meta"]["warnings"]))
+
+    def test_an_overview_hours_ahead_of_the_first_stage_can_still_be_dated(self):
+        # the old bound was half an hour, which no whole-job re-plot meets:
+        # 00218's opens 3.2 h before its first stage chart
+        self.run_it(sheet_start=None)
+        self.assertEqual(self.c["meta"]["date"], "2015-11-12")
+
+
 if __name__ == "__main__":
     unittest.main()
