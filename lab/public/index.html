@@ -2003,7 +2003,11 @@ function selectFile(entry) {
   // the well rather than per row, and only for the seconds view — a table has
   // no clock to be wrong about.
   applyTimeFixes(entry.well);
-  const issues = entry.well ? stageTimeIssues(entry.well.stages) : [];
+  // Held-back charts cannot make the clock run backwards: a job-length
+  // re-plot opens before stage 1 by construction, and warning about it is
+  // warning about something the user cannot see and did not ask for.
+  const issues = entry.well
+    ? stageTimeIssues(liveStages(entry.well.stages, entry.name)) : [];
   const badTimes = new Set(issues.map(x => String(x.st.meta.stage || "")));
   // Say it out loud. A clock that runs backwards is not something to leave
   // for someone to notice: it is one stage in sixty on a well that otherwise
@@ -5317,7 +5321,16 @@ function fvLayout(stages) {
 function fvPayload(entry) {
   const w = entry && entry.well;
   if (!w || !w.stages.length) return { type: "fv:none" };
-  const L = fvLayout(w.stagesRaw || w.stages);
+  // The same set the stage list and the CSV see, not the raw read.
+  //
+  // This was the raw array, so everything the Lab holds back still reached
+  // FracView: a CONTINUOUS re-plot arrived as a 29th nameless stage, opened
+  // 3.2 h before stage 1, and dragged the whole axis with it — "29 stages
+  // extracted" against the Lab's 28, a band captioned "?", and a banner
+  // saying the clock turns back, all for a chart the Lab had already
+  // decided was not a stage (Carmine, #690). Three windows onto one well
+  // have to agree about which stages exist.
+  const L = fvLayout(liveStages(w.stagesRaw || w.stages, entry.name));
   const raw = L.stages, starts = L.starts, synthetic = L.synthetic;
   const stages = raw.map((st, i) => ({
     key: st.meta.stage || "?",
