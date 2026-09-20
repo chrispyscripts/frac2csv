@@ -1366,7 +1366,11 @@ $("mrun").addEventListener("click", async () => {
         if (out.outDir && out.outDir !== srcDir) q._outDir = out.outDir;
         render(q, base, out.stages || [], out.tables || [], out.notes || [], out.summary || []);
         const bits = [];
-        if (out.stages && out.stages.length) bits.push(`${out.stages.length} stages`);
+        // What the LIST holds, not what the reader returned: a CONTINUOUS
+        // re-plot is read and then held back, and a row saying 29 over a
+        // list of 28 reads as a stage having gone missing.
+        const nShown = liveStages(out.stages || [], base).length;
+        if (nShown) bits.push(`${nShown} stages`);
         const nTab = (out.tables || []).length;
         if (nTab) bits.push(`${nTab} table${nTab > 1 ? "s" : ""}`);
         if (out.written && out.written.length)
@@ -4741,6 +4745,16 @@ function stageTimeIssues(stages) {
   const out = [];
   let prev = null, prevEnd = NaN, prevKey = null;
   for (let i = 0; i < stages.length; i++) {
+    // A CONTINUOUS chart is the whole job re-plotted end to end. It opens
+    // before the first stage and closes after the last one BY CONSTRUCTION,
+    // so it will always look like a clock running backwards — and telling
+    // someone the printed time is wrong, on a chart that has no stage number
+    // and nothing to fix, sends them looking for a fault that is not there
+    // (#690, "1 stage starts before the stage before it finished — ?").
+    //
+    // Skipped here rather than by the caller, so it holds even when the
+    // re-plot has been brought back with Show.
+    if (isContinuous(stages[i])) continue;
     const a = stageStartMs(stages[i]);
     if (!isFinite(a)) continue;
     // This list is one entry per CHART, not per stage — serialize() appends
