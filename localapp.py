@@ -698,6 +698,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         data = open(full, "rb").read()
         self.send_response(200)
+        # The Lab is one HTML file and it changes every release. With no
+        # cache header at all a browser caches it heuristically, so a fix can
+        # ship, the version badge can read the new number — that comes from
+        # /api/local-info, a live fetch — and the page still be running last
+        # week's script. That combination cost three releases chasing a bug
+        # that was already fixed (#690).
+        if full.lower().endswith((".html", ".htm")):
+            self.send_header("Cache-Control", "no-store, must-revalidate")
         self.send_header("Content-Type", mimetypes.guess_type(full)[0]
                          or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))

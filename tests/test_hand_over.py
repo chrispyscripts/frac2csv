@@ -231,36 +231,54 @@ class Continuous(unittest.TestCase):
         r["page"] = 119
         return r
 
-    def test_covered_replot_is_dropped_and_said(self):
+    # A CONTINUOUS chart is the whole job re-plotted end to end with no stage
+    # number. It used to be KEPT whenever its coverage could not be proven —
+    # unclocked, or holding minutes no stage chart has — on the reasoning that
+    # it might then be the only copy. In practice it arrives as a nameless
+    # stage carrying the whole job (1,180 min and 70,800 rows on 00218,
+    # against real stages of 25-105 min) and its trace is the coarse one: a
+    # pixel is about a minute, so its proppant peaks at 1240 kg/m3 where the
+    # stage charts say 170. Three releases tried to hold it back in the client
+    # and it kept coming through (#690). It is now dropped here, once, and
+    # what it covered that no stage chart does is said in the notes.
+
+    def test_a_covered_replot_goes(self):
         c = self.cont("07:17:00", 126)
         results, notes = [self.s1, self.s2, c], []
         pipeline._trican_continuous(results, notes)
         self.assertEqual(results, [self.s1, self.s2])
         self.assertTrue(any("CONTINUOUS chart(s) not exported (p119)" in n for n in notes))
 
-    def test_minutes_no_stage_has_keep_it_and_date_it(self):
+    def test_minutes_no_stage_has_go_too_but_are_said(self):
         c = self.cont("07:17:00", 200)                    # 74 min past stage 2
         results, notes = [self.s1, self.s2, c], []
         pipeline._trican_continuous(results, notes)
-        self.assertIn(c, results)
-        self.assertEqual(c["meta"]["date"], "2015-11-12")
-        self.assertTrue(any("kept as a stage of its own" in n and "74 min" in n
-                            for n in notes))
+        self.assertNotIn(c, results)
+        self.assertTrue(any("not exported" in n and "74 min" in n for n in notes),
+                        "minutes on no stage chart must still be reported")
 
-    def test_unclocked_is_kept(self):
+    def test_an_unclocked_one_goes_and_says_why(self):
         c = self.cont("00:00:00", 126)
         del c["meta"]["clock_chart"]
         results, notes = [self.s1, self.s2, c], []
         pipeline._trican_continuous(results, notes)
-        self.assertIn(c, results)
+        self.assertNotIn(c, results)
         self.assertTrue(any("no clock" in n for n in notes))
 
-    def test_no_stage_nearby_is_kept(self):
+    def test_one_with_no_stage_near_it_goes(self):
         c = self.cont("15:00:00", 60)
         results, notes = [self.s1, self.s2, c], []
         pipeline._trican_continuous(results, notes)
-        self.assertIn(c, results)
-        self.assertEqual(c["meta"]["date"], "")
+        self.assertNotIn(c, results)
+
+    def test_it_is_never_left_in_the_results(self):
+        # whatever shape it arrives in, it is not a stage
+        for c in (self.cont("07:17:00", 126), self.cont("07:17:00", 200),
+                  self.cont("15:00:00", 60)):
+            results, notes = [self.s1, self.s2, c], []
+            pipeline._trican_continuous(results, notes)
+            self.assertNotIn(c, results)
+            self.assertFalse([r for r in results if r["meta"].get("continuous")])
 
     def test_hand_over_ignores_continuous(self):
         c = self.cont("07:17:00", 126)
@@ -394,13 +412,15 @@ class ContinuousSplice(unittest.TestCase):
 
     def test_without_the_sheet_nothing_is_spliced(self):
         results, _ = self.run_it(sheet_start=None)
-        self.assertEqual(len(self.s1["samples"]), 70 * 60)
-        self.assertIn(self.c, results, "no evidence, so the overview is the only copy")
+        self.assertEqual(len(self.s1["samples"]), 70 * 60,
+                         "no evidence, so the stage keeps its own window")
+        # and the overview still goes: it is a re-plot either way, never a stage
+        self.assertNotIn(self.c, results)
 
     def test_a_sheet_that_agrees_splices_nothing(self):
         results, _ = self.run_it(sheet_start="07:17:00")
         self.assertEqual(len(self.s1["samples"]), 70 * 60)
-        self.assertIn(self.c, results)
+        self.assertNotIn(self.c, results)
 
     def test_the_splice_stops_where_the_sheet_says_not_where_the_page_does(self):
         # the sheet says the stage began at 05:17, an hour after the overview
@@ -414,9 +434,11 @@ class ContinuousSplice(unittest.TestCase):
                         np.zeros(200 * 60), clock_chart=True, continuous=True)
         self.c["page"] = 119
         results, notes = self.run_it()
-        self.assertEqual(len(self.s2["samples"]), 60 * 60)
-        self.assertIn(self.c, results)
-        self.assertTrue(any("74 min" in n for n in notes))
+        self.assertEqual(len(self.s2["samples"]), 60 * 60,
+                         "the job winding down belongs to no stage")
+        self.assertNotIn(self.c, results)
+        self.assertTrue(any("74 min" in n for n in notes),
+                        "and the minutes it alone covered are still reported")
 
     def test_the_stale_disagreement_warning_goes(self):
         self.s1["meta"]["warnings"].append(

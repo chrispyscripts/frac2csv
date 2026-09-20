@@ -1267,6 +1267,24 @@ def _trican_continuous(results, notes):
                 else:
                     miss = ((t1 - t0).total_seconds() - covered) / 60.0
                     why = f"{miss:.0f} min of it are on no stage chart"
+        # Kept or not, it is NEVER a stage.
+        #
+        # This used to stay in the results when its coverage could not be
+        # PROVEN — no clock on it, or minutes on no stage chart — on the
+        # reasoning that it might be the only copy. In practice it arrives as
+        # a nameless stage carrying the whole job: 1,180 min and 70,800 rows
+        # on 00218, against real stages of 25-105 min, and its trace is the
+        # coarse one (a pixel is about a minute there, so its proppant peaks
+        # at 1240 kg/m3 where the stage charts say 170). Three releases tried
+        # to hold it back in the client and it kept coming through, because a
+        # client-side rule has to be right in four places and stay unstale in
+        # the browser (#690).
+        #
+        # So it is dropped here, once, where nothing downstream can miss it.
+        # What it covered that no stage chart does is said in the notes rather
+        # than shipped as a stage nobody asked for.
+        if r not in dropped:
+            dropped.append(r)
         if why:
             kept.append((r["page"], why))
     for pg, st, mins, at_front in spliced:
@@ -1280,12 +1298,23 @@ def _trican_continuous(results, notes):
     if dropped:
         for r in dropped:
             results.remove(r)
-        pages = ", ".join(f"p{r['page']}" for r in dropped)
-        notes.append(f"{len(dropped)} CONTINUOUS chart(s) not exported ({pages}): "
-                     f"the same job re-plotted end to end, and every minute of "
-                     f"them is on a stage chart at higher resolution")
+        # The ones whose coverage we could prove. The rest get a line of their
+        # own below saying what they alone carried, so saying "every minute is
+        # on a stage chart" for those too would be false.
+        said = {pg for pg, _why in kept}
+        plain = [r for r in dropped if r["page"] not in said]
+        if plain:
+            pages = ", ".join(f"p{r['page']}" for r in plain)
+            notes.append(f"{len(plain)} CONTINUOUS chart(s) not exported ({pages}): "
+                         f"the same job re-plotted end to end, and every minute of "
+                         f"them is on a stage chart at higher resolution")
     for pg, why in kept:
-        notes.append(f"p{pg}: CONTINUOUS chart kept as a stage of its own — {why}")
+        notes.append(
+            f"p{pg}: CONTINUOUS chart not exported — the whole job re-plotted "
+            f"end to end with no stage number, drawn at about a minute per "
+            f"pixel. It is not a stage, so it is not in the list or the CSV "
+            f"({why}; the stage charts carry those minutes at far higher "
+            f"resolution, where they carry them at all)")
 
 
 # How far a CONTINUOUS chart's clock may sit from the nearest stage chart's
