@@ -1785,10 +1785,26 @@ function stageItems(stages) {
     const channels = [], seen = new Set();
     for (const st of grp) for (const c of st.channels)
       if (!seen.has(c.key)) { seen.add(c.key); channels.push(c); }
+    // The minutes this stage handed to the next one, carried through with it.
+    //
+    // This list is what the UI actually opens, and it names every field it
+    // keeps — so a field missing here is a field the chart never sees, however
+    // faithfully the server sends it. `handover` was missing, and the result
+    // was that the tail drew perfectly when a stage was handed straight to
+    // setGraph and never once when a file was opened the normal way: drop,
+    // Extract, click a stage. That is the only way anyone opens a file.
+    //
+    // Three releases went out insisting the feature worked, tested through a
+    // path no user takes (#665, #668, #669, #679, #680, #681).
+    //
+    // Taken from whichever chart of this stage carries one — a stage can be
+    // several charts and only the one that runs on hands anything over.
+    const handover = (grp.find(s => s.handover) || {}).handover || null;
     return { type: "stage", key: k, meta: grp[0].meta, source: grp[0].source, channels,
              srcs: grp.filter(s => s.page)
                        .map(s => ({ page: s.page, geom: s.geom || null })),
              pages: grp.map(s => s.page).filter(Boolean),   // source PDF pages
+             handover,
              n: Math.max(...grp.map(s => s.n)), sample_sec: grp[0].sample_sec || 1 };
   }).map((it, i) => ({ ...it, seq: i + 1 }));   // 1..N position for sequential labels
 }
