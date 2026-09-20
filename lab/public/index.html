@@ -2041,7 +2041,30 @@ function selectFile(entry) {
     list.appendChild(row);
     it._row = row;
   }
-  if (entry.items.length) selectItem(entry, entry.well, entry.items[0], entry.items[0]._row);
+  // Land on the first item when this is a NEW file, and stay put when the same
+  // file is merely being rebuilt.
+  //
+  // selectFile both draws the stage list and picks a stage, and picking the
+  // first one is right when you click a file. It is wrong when the list is
+  // rebuilt underneath you, which is what a FracView edit, a Fix time and a
+  // rename all do — every one of them threw the selection back to stage 1.
+  //
+  // Worst on a trim: the cut lands correctly, then the Lab tells FracView it
+  // is now on stage 1, FracView zooms there, and the span you just cut is
+  // hours off screen. Measured on 00218 stage 14 — the cut applied (3 -> 280
+  // blank samples) while the view jumped 8.4 hours back to stage 1, so the
+  // trim looked like it had done nothing at all.
+  //
+  // Matched on type+key rather than on the object, because the rebuild makes
+  // new ones. A stage that no longer exists — split, or the Seconds/Summary
+  // toggle swapping the whole list for a different kind — finds nothing and
+  // falls back to the first item, which is what should happen there.
+  if (!entry.items.length) return;
+  const was = (current && current.entry === entry && current.item) || null;
+  const same = was && entry.items.find(it => it.type === was.type &&
+                                             String(it.key) === String(was.key));
+  const pick = same || entry.items[0];
+  selectItem(entry, entry.well, pick, pick._row);
 }
 
 // Seconds / Summary toggle above the stages list
