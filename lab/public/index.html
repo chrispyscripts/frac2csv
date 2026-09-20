@@ -1523,7 +1523,11 @@ async function handleFile(f, q, saveDir) {
     }
     render(q, f.name, stages, tables, notes, summary);
     const bits = [];
-    if (stages.length) bits.push(`${stages.length} stage${stages.length > 1 ? "s" : ""}`);
+    // What the list holds, not what the reader returned — the manifest path
+    // already counted it this way and the file path did not, so a dropped
+    // file said "29 stages" over a list of 28.
+    const nShown = liveStages(stages, f.name).length;
+    if (nShown) bits.push(`${nShown} stage${nShown > 1 ? "s" : ""}`);
     if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
     if (bits.length && saveDir) {
       q.set("saving exports…"); q.progress(0.93);
@@ -1829,9 +1833,15 @@ const round2 = v => Math.round(v * 100) / 100;
 let current = null;   // { entry, well, item }
 
 // group a well's charts into one selectable item per stage number
-function stageItems(stages) {
+function stageItems(stages, keepContinuous) {
   const order = [], groups = new Map();
   for (const st of stages) {
+    // A CONTINUOUS chart is the whole job re-plotted and is not a stage.
+    // Filtered HERE, not only by the callers: every list in the app is built
+    // by this one function, and relying on four call sites to remember meant
+    // one of them shipped it anyway (#690). Read off the meta directly —
+    // tests/test_stage_handover.js lifts this function out on its own.
+    if (!keepContinuous && st.meta && st.meta.continuous) continue;
     const k = st.meta.stage || "?";
     if (!groups.has(k)) { groups.set(k, []); order.push(k); }
     groups.get(k).push(st);
@@ -1933,7 +1943,7 @@ function render(entry, fname, stages, tables, notes, summary) {
   summary = summary || [];
   // Seconds view = the stage graphs; Summary view = the document's summary
   // pages (rendered) plus any parsed table (the BJ Totals grid)
-  const secItems = stages.length ? stageItems(liveStages(stages, fname)) : [];
+  const secItems = stages.length ? stageItems(liveStages(stages, fname), contShown(fname)) : [];
   const sumItems = [];
   // Parsed tables FIRST, the rendered source pages after them. The tables are
   // the extracted data — the thing being looked for — and they used to sit
@@ -5120,7 +5130,7 @@ $("stgname").addEventListener("keydown", e => {
 // stage list (its ordering and its warning), the graph, and FracView.
 function reRender(entry) {
   applyTimeFixes(entry.well);
-  entry.secItems = stageItems(liveStages(entry.well.stages, entry.name));
+  entry.secItems = stageItems(liveStages(entry.well.stages, entry.name), contShown(entry.name));
   if (entry.viewMode !== "summary") entry.items = entry.secItems;
   selectFile(entry);
   if (fvAlive()) fvPush();
@@ -5459,7 +5469,7 @@ function fvApplyToEntry(entry, ed) {
   ed ? fvEdits.set(entry.name, ed) : fvEdits.delete(entry.name);
   fvEditsSave();
   w.stages = ed ? applyFvEdits(w.stagesRaw, ed) : w.stagesRaw;
-  entry.secItems = stageItems(liveStages(w.stages, entry.name));
+  entry.secItems = stageItems(liveStages(w.stages, entry.name), contShown(entry.name));
   if (entry.viewMode !== "summary") entry.items = entry.secItems;
   if (current && current.entry === entry) selectFile(entry);
   updateCount();
