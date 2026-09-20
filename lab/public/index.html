@@ -2974,6 +2974,15 @@ const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
 const DED_SEL = "#c22a1e";
 // the handed-over tail: on the page, not in the export
 const HANDOVER_INK = "#8d9aa8";
+// Minutes this stage ran that its OWN page does not plot, taken off the
+// job-length CONTINUOUS overview because that is the only page carrying
+// them. They are real stage data — the stage's sheet says the stage ran
+// that long — but the overview draws the whole job in the width a stage
+// page gives one stage, so a pixel there is about a minute rather than a
+// second. Shaded, and named in the legend, because presenting borrowed
+// coarse minutes as if they were read off this page would be a lie of
+// exactly the kind the hand-over band exists to prevent.
+const SPLICED_INK = "#b98a2e";
 
 // curve name per the "Our terms / As extracted" toggle
 function chanName(c) {
@@ -3261,6 +3270,7 @@ function redrawGraph() {
   ctx.clearRect(0, 0, W, H);
   gState._dedSeen = false;
   gState._tailShaded = false;
+  gState._splShaded = false;
   gState._tailPainted = 0;
   if (!gState.channels.length) return;
   const { t0, t1, dsec } = gState;
@@ -3924,6 +3934,20 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     // The handed-over tail: the same pen, in grey, past the stage's last
     // sample. It is on the page and not in the export, and it must not read
     // as either the curve or a deduced stretch.
+    // The borrowed head, shaded once behind every curve.
+    const spl = (gState.meta && +gState.meta.spliced_n) || 0;
+    if (spl > 0 && !gState.isolate && !gState._splShaded) {
+      const xa = L + (0 - t0) / span * plotW;
+      const xb = L + (((spl - 1) * dsec) - t0) / span * plotW;
+      if (xb > L && xa < W - R) {
+        ctx.save();
+        ctx.fillStyle = "rgba(185,138,46,.12)";
+        ctx.fillRect(Math.max(L, xa), T,
+                     Math.min(W - R, xb) - Math.max(L, xa), H - T - B);
+        ctx.restore();
+      }
+      gState._splShaded = true;
+    }
     const tail = gState.handover && gState.handover.by[c.key || c.label];
     if (tail && tail.length && !gState.isolate) {
       // Shade the handed-over span before drawing it. Dashes alone are ~60 px
@@ -4125,6 +4149,22 @@ function buildLegend() {
     f.title = "This chart carries corrections you made with Fix in box. They are "
             + "re-applied after every read. Settings, Your corrections to review them.";
     Lg.appendChild(f);
+  }
+  const splN = (gState.meta && +gState.meta.spliced_n) || 0;
+  if (splN > 0) {
+    const sp = document.createElement("span");
+    sp.className = "handovernote";
+    const pg = gState.meta.spliced_from;
+    sp.innerHTML = `<i class="dash" style="background:${SPLICED_INK}"></i>` +
+      `first ${Math.round(splN * gState.dsec / 60)} min from the continuous chart` +
+      (pg ? ` <span style="color:var(--mut)">\u00b7 p${pg}` : ` <span style="color:var(--mut)">`) +
+      ` \u00b7 this stage ran longer than its own page plots</span>`;
+    sp.title = "This stage's own chart page does not plot its first minutes — "
+             + "the sheet says the stage ran longer than the page draws. They "
+             + "are taken from the job-length CONTINUOUS chart, the only page "
+             + "carrying them, which draws at about a minute per pixel instead "
+             + "of a second. Real stage data, coarser than the rest.";
+    Lg.appendChild(sp);
   }
   if (gState.handover) {
     const h = document.createElement("span");
@@ -6155,6 +6195,8 @@ function flagDiagnostics() {
     // What the chart was actually showing when the report was sent. A
     // screenshot of a 600 px panel cannot answer whether 11 min of grey was
     // drawn at its right-hand edge; this can.
+    spliced: (gState.meta && +gState.meta.spliced_n)
+      ? `${gState.meta.spliced_n} samples from p${gState.meta.spliced_from}` : "none",
     handover: gState.handover
       ? `${gState.handover.n} samples to stage ${gState.handover.to}` : "none",
     tailCurvesPainted: gState.handover ? (gState._tailPainted || 0) : 0,

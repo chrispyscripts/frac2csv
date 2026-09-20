@@ -1158,6 +1158,14 @@ def _splice_continuous_edge(c, stage_r, at_front, secs, notes):
         stage_r["data"] = {l: np.concatenate([np.asarray(v, float), lead[l]])
                            for l, v in stage_r["data"].items()}
     stage_r["meta"]["duration_min"] = len(stage_r["samples"]) * sec_a / 60.0
+    # How many leading samples came off the overview, so the chart can shade
+    # them. The same run on every channel — the whole window moved at once —
+    # so a count says it; a per-sample flag per channel would say it four
+    # times. The chart must not present borrowed, coarser minutes as if they
+    # were read off this stage's own page.
+    if at_front:
+        stage_r["meta"]["spliced_n"] = int(len(grid))
+        stage_r["meta"]["spliced_from"] = int(c["page"])
     mins = secs / 60.0
     stage_r["meta"].setdefault("warnings", []).append(
         f"the {'first' if at_front else 'last'} {mins:.0f} min of this stage "

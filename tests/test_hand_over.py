@@ -330,6 +330,18 @@ class ContinuousSplice(unittest.TestCase):
         self.assertEqual(list(self.s1["samples"][:3]), [0.0, 1.0, 2.0])
         self.assertEqual(self.s1["samples"][-1], (self.LEAD + 70) * 60 - 1)
 
+    def test_the_stage_says_how_much_of_it_was_borrowed(self):
+        # the chart shades these, and a legend entry names the page they came
+        # from: borrowed minutes are coarser than the rest of the stage and
+        # must not pass for ink read off this stage's own page
+        self.run_it()
+        self.assertEqual(self.s1["meta"]["spliced_n"], self.LEAD * 60)
+        self.assertEqual(self.s1["meta"]["spliced_from"], 119)
+
+    def test_a_stage_that_borrowed_nothing_claims_nothing(self):
+        self.run_it(sheet_start="07:17:00")
+        self.assertNotIn("spliced_n", self.s1["meta"])
+
     def test_a_channel_the_overview_does_not_plot_is_blank_not_zero(self):
         self.s1["data"]["Slurry Rate"] = np.full(70 * 60, 8.0)
         self.run_it()
