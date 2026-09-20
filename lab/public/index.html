@@ -4753,8 +4753,11 @@ function stageTimeIssues(stages) {
     // (#690, "1 stage starts before the stage before it finished — ?").
     //
     // Skipped here rather than by the caller, so it holds even when the
-    // re-plot has been brought back with Show.
-    if (isContinuous(stages[i])) continue;
+    // re-plot has been brought back with Show. Read off the meta directly
+    // rather than through isContinuous(): this function is lifted out and
+    // eval'd on its own by tests/test_time_guard.js, so it has to stand up
+    // without the rest of the page around it.
+    if (stages[i] && stages[i].meta && stages[i].meta.continuous) continue;
     const a = stageStartMs(stages[i]);
     if (!isFinite(a)) continue;
     // This list is one entry per CHART, not per stage — serialize() appends
