@@ -3131,6 +3131,8 @@ function redrawGraph() {
   const W = cv.width, H = cv.height, { L, R, T, B } = GP;
   ctx.clearRect(0, 0, W, H);
   gState._dedSeen = false;
+  gState._tailShaded = false;
+  gState._tailPainted = 0;
   if (!gState.channels.length) return;
   const { t0, t1, dsec } = gState;
   const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
@@ -3795,6 +3797,22 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     // as either the curve or a deduced stretch.
     const tail = gState.handover && gState.handover.by[c.key || c.label];
     if (tail && tail.length && !gState.isolate) {
+      // Shade the handed-over span before drawing it. Dashes alone are ~60 px
+      // of light grey on Carmine's panel and he has reported the same chart as
+      // truncated across three builds; a band says "this part is different"
+      // at any zoom, which is what made it legible when I drew it by hand.
+      if (!gState._tailShaded) {
+        const xa = L + ((gState.n * dsec) - t0) / span * plotW;
+        const xb = L + (((gState.n + gState.handover.n - 1) * dsec) - t0) / span * plotW;
+        if (xb > L && xa < W - R) {
+          ctx.save();
+          ctx.fillStyle = "rgba(141,154,168,.13)";
+          ctx.fillRect(Math.max(L, xa), T, Math.min(W - R, xb) - Math.max(L, xa), H - T - B);
+          ctx.restore();
+        }
+        gState._tailShaded = true;
+      }
+      gState._tailPainted = (gState._tailPainted || 0) + 1;
       ctx.strokeStyle = HANDOVER_INK;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([5, 3]);
@@ -5880,6 +5898,15 @@ function flagDiagnostics() {
     duration: m.duration_min ? Math.round(m.duration_min) + " min" : "",
     samples: it && it.n, ghost: !!settings.ghost,
     labelMode: settings.chartLabels,
+    // What the chart was actually showing when the report was sent. A
+    // screenshot of a 600 px panel cannot answer whether 11 min of grey was
+    // drawn at its right-hand edge; this can.
+    handover: gState.handover
+      ? `${gState.handover.n} samples to stage ${gState.handover.to}` : "none",
+    tailCurvesPainted: gState.handover ? (gState._tailPainted || 0) : 0,
+    axisMinutes: gState.tMax ? Math.round(gState.tMax / 60) : 0,
+    exportedMinutes: (it && it.n && it.sample_sec)
+      ? Math.round(it.n * it.sample_sec / 60) : 0,
     userAgent: navigator.userAgent, platform: navigator.platform,
   };
   // The column mappings this profile has taught the Lab. A table report is
