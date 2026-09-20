@@ -382,6 +382,36 @@ def _channels_payload(data, units=None, labels=None, scales=None,
         _kinds = {}
         for _g in _runs:
             _kinds[_g["kind"]] = _kinds.get(_g["kind"], 0) + 1
+        # A pen resting on the axis floor is a reading of zero, not a hole.
+        #
+        # Where a rate sits shut in, the trace coincides with the frame's
+        # bottom rule and the tracer finds no ink, so the channel came out
+        # blank — and blank is what reached the CSV while the chart drew a
+        # line along the floor. 00218 stage 1: Slurry Rate 46% empty, the
+        # longest run 33.7 min, and it decays to 0.089 m3/min going in and
+        # resumes at 0.107 coming out on a 0..12.5 axis. It did not go
+        # anywhere; it was off. Read into another program those blanks look
+        # exactly like the data loss we have spent this week chasing.
+        #
+        # ONLY at-floor, and only with an axis to measure the floor against.
+        # gaps.py already separates a resting pen (both ends within 2% of the
+        # floor) from a trace that was lost mid-flight, and MISSING is still
+        # left alone — filling that would be inventing a treatment.
+        #
+        # Filled samples are marked, so they carry the same pulsing-black
+        # stretch and the same Isolate Interpolation / delete as anything
+        # else the reader supplied rather than read.
+        _filled = []
+        if _axis:
+            vals, _filled = gaps.interpolate(vals, _runs, kinds=(gaps.AT_FLOOR,))
+        _ded = (deduced or {}).get(key)
+        if _filled:
+            _mask = (np.zeros(len(vals), bool) if _ded is None
+                     else np.asarray(_ded, bool).copy())
+            if len(_mask) < len(vals):
+                _mask = np.resize(_mask, len(vals))
+            _mask[_filled] = True
+            _ded = _mask
         out.append({
             "key": col,
             "label": (labels or {}).get(key, key),
@@ -432,7 +462,7 @@ def _channels_payload(data, units=None, labels=None, scales=None,
             # under a curve painted over it. Runs, not a per-sample array:
             # a long stage is hundreds of thousands of samples and this is a
             # handful of spans.
-            "deducedRuns": _true_runs((deduced or {}).get(key)),
+            "deducedRuns": _true_runs(_ded),
         })
     return out
 
