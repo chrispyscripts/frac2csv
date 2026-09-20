@@ -1574,9 +1574,11 @@ function wellModel(stages, file) {
   // A stage deleted in the Lab is deleted from the deliverable too. An edit
   // that only changed the screen would be the worst of both: the CSV would
   // still carry the page the user just said was not a stage.
+  const showCont = contShown(file);
   for (const st of stages) {
     const key = st.meta.stage || "?";
     if (stageDropped(key, file)) continue;
+    if (!showCont && isContinuous(st)) continue;
     if (!groups.has(key)) { groups.set(key, []); order.push(key); }
     groups.get(key).push(st);
   }
@@ -2094,22 +2096,32 @@ function selectFile(entry) {
     list.appendChild(row);
     it._row = row;
   }
-  // Say how many stages are hidden, and offer them all back in one click.
+  // Say what is being held back, and offer it in one click. Both kinds are
+  // reversible and neither is ever silent: a block missing from a deliverable
+  // with nothing on screen to say so is worse than one that is obviously
+  // there and wrong.
   const dn = $("dropnote");
-  const nDropped = entry.well
-    ? stageDropCount(entry.well.stagesRaw || entry.well.stages, entry.name) : 0;
-  if (nDropped && entry.viewMode !== "summary") {
+  const rawAll = entry.well ? (entry.well.stagesRaw || entry.well.stages) : [];
+  const nDropped = entry.well ? stageDropCount(rawAll, entry.name) : 0;
+  const nCont = contShown(entry.name) ? 0 : contCount(rawAll, entry.name);
+  if ((nDropped || nCont) && entry.viewMode !== "summary") {
     dn.innerHTML = "";
+    const bits = [];
+    if (nCont) bits.push(`${nCont} continuous re-plot${nCont > 1 ? "s" : ""}`);
+    if (nDropped) bits.push(`${nDropped} deleted stage${nDropped > 1 ? "s" : ""}`);
     dn.appendChild(document.createTextNode(
-      `${nDropped} stage${nDropped > 1 ? "s" : ""} deleted — not in the list, `
-      + `not in the CSV`));
+      bits.join(" and ") + " — not in the list, not in the CSV"));
     const b = document.createElement("button");
     b.type = "button";
-    b.textContent = nDropped > 1 ? "Restore all" : "Restore";
-    b.title = "Put them back. Nothing was removed from the extraction.";
+    b.textContent = "Show";
+    b.title = nCont
+      ? "A continuous chart is the whole job re-plotted end to end and carries "
+        + "no stage number; the stage charts hold the same minutes at higher "
+        + "resolution. Nothing was removed from the extraction."
+      : "Put them back. Nothing was removed from the extraction.";
     b.addEventListener("click", () => {
-      const raw = entry.well.stagesRaw || entry.well.stages;
-      for (const st of raw) stageDropSet(st.meta.stage || "?", false);
+      if (nCont) contShowSet(entry.name, true);
+      for (const st of rawAll) stageDropSet(st.meta.stage || "?", false);
       reRender(entry);
       if (fvAlive()) fvPush();
     });
@@ -4846,11 +4858,41 @@ function stageDropCount(stages, file) {
   }
   return seen.size;
 }
+// A CONTINUOUS chart is not a stage and is held out of the list by default.
+//
+// The reader marks these: they are the whole job re-plotted end to end, they
+// carry no stage number, and the stage charts hold the same minutes at far
+// higher resolution. The pipeline drops one whose coverage it can PROVE —
+// which needs a clock, and these print none. 00001 keeps fifteen of them,
+// 9 to 20 hours each, about 13,000 minutes of re-plot arriving as fifteen
+// nameless stages in a file whose real stages run about 130 minutes.
+//
+// Held out rather than discarded: an unclocked one is the only copy of
+// itself, so the notice under the list says how many there are and Show puts
+// them back. What is not acceptable is them being numbered as stages and
+// written into the CSV as if they were.
+let contShow = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.contShow") || "{}"); }
+  catch (e) { return {}; }
+})();
+const isContinuous = st => !!(st && st.meta && st.meta.continuous);
+function contShown(file) { return !!contShow[file || fileScope()]; }
+function contShowSet(file, on) {
+  if (on) contShow[file] = true; else delete contShow[file];
+  try { localStorage.setItem("f2c.contShow", JSON.stringify(contShow)); }
+  catch (e) { /* private mode */ }
+}
+function contCount(stages, file) {
+  return (stages || []).filter(isContinuous).length;
+}
+
 // The stages a view or an export should see. Charts of a dropped stage are
 // removed whole — a stage is several charts and half of one is not a thing.
 function liveStages(stages, file) {
   if (!stages || !stages.length) return stages || [];
-  return stages.filter(st => !stageDropped(st.meta.stage || "?", file));
+  const showCont = contShown(file);
+  return stages.filter(st => !stageDropped(st.meta.stage || "?", file)
+                             && (showCont || !isContinuous(st)));
 }
 
 // Which file the corrections on screen belong to.
