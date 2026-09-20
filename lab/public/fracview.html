@@ -50,7 +50,18 @@
   .chankey .gain b { font:600 10px var(--mono); color:var(--mut);
                      min-width:30px; text-align:right; font-variant-numeric:
                      tabular-nums; cursor:pointer; }
-  .chankey .ck.off .gain { opacity:.3; pointer-events:none; }
+  /* The typed axis max, under the slider that does the same job by hand. */
+  .chankey .axis { display:flex; align-items:center; gap:4px; padding:1px 3px 0; }
+  .chankey .axis input { flex:1; width:100%; min-width:0; height:16px; margin:0;
+                         font:600 10px var(--mono); color:var(--ink);
+                         text-align:right; border:1px solid var(--line);
+                         border-radius:4px; background:var(--panel2);
+                         padding:0 4px; font-variant-numeric:tabular-nums; }
+  .chankey .axis input:focus { outline:none; border-color:var(--carmine); }
+  .chankey .axis input.custom { border-color:var(--carmine); color:var(--carmine); }
+  .chankey .axis span { font:600 9px var(--mono); color:var(--mut); }
+  .chankey .ck.off .gain,
+  .chankey .ck.off .axis { opacity:.3; pointer-events:none; }
   .chankey button { display:inline-flex; align-items:center; gap:6px;
                     font:inherit; font-size:11.5px; font-weight:600;
                     cursor:pointer; border:1px solid var(--line);
@@ -273,6 +284,16 @@ function posToGain(p) {
   // below 1x. The readout still prints two.
   return Math.abs(g - 1) < 0.04 ? 1 : Math.round(g * 1000) / 1000;
 }
+// The number the slider is really setting: a channel is drawn against its own
+// max divided by the gain (see the draw, `MAXES.get(name) / gainOf(name)`), so
+// the axis top IS that quotient. Typing 80 for a pressure is the same gesture
+// as hunting for 1.25x on the handle, and it is the one an engineer already
+// has in mind — the slider stays for sweeping, the box for saying exactly.
+const axisMaxOf = nm => (MAXES.get(nm) || 1) / gainOf(nm);
+const fmtAxis = v => !isFinite(v) || v <= 0 ? ""
+  : v >= 100 ? String(Math.round(v))
+  : v >= 10 ? (Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, "")
+  : String(Math.round(v * 100) / 100);
 const fmtGain = g => (g === 1 ? "1\u00d7"
   : (g < 10 ? g.toFixed(2).replace(/\.?0+$/, "") : String(Math.round(g))) + "\u00d7");
 
@@ -319,10 +340,28 @@ function renderKey(names) {
     // The key is NOT rebuilt here — rebuilding it mid-drag would replace the
     // slider under the mouse and drop the gesture — so keySig is left alone
     // and only the readout and the canvas are touched.
+    // The same setting, typed. Declared before the slider's handler so both
+    // can keep the other honest: drag the handle and the number follows,
+    // type a number and the handle moves to it.
+    const axRow = document.createElement("div");
+    axRow.className = "axis";
+    const ax = document.createElement("input");
+    ax.type = "text";
+    ax.inputMode = "decimal";
+    ax.spellcheck = false;
+    ax.title = "Top of " + nm + "'s axis, in this window only. Type a value "
+             + "and press Enter; empty it to go back to the channel's own max.";
+    const syncAx = () => {
+      ax.value = fmtAxis(axisMaxOf(nm));
+      ax.classList.toggle("custom", gainOf(nm) !== 1);
+    };
+    syncAx();
+
     sl.addEventListener("input", () => {
       const g = posToGain(+sl.value);
       if (g === 1) chanGain.delete(nm); else chanGain.set(nm, g);
       out.textContent = fmtGain(g);
+      syncAx();
       saveGain();
       draw();
     });
@@ -330,13 +369,44 @@ function renderKey(names) {
       chanGain.delete(nm);
       sl.value = String(gainToPos(1));
       out.textContent = fmtGain(1);
+      syncAx();
       saveGain();
       draw();
     };
+    // An axis top is only reachable as far as the gain travels: the handle
+    // spans 0.125x..8x, so a channel peaking at 60 can be asked for a top
+    // between 7.5 and 480. A value outside that is clamped rather than
+    // refused, and the box shows what it actually got — a silent no-op would
+    // read as the box not working.
+    const commit = () => {
+      const raw = ax.value.trim().replace(/,/g, "");
+      if (raw === "") { reset(); return; }
+      const want = parseFloat(raw);
+      if (!isFinite(want) || want <= 0) { syncAx(); return; }
+      const base = MAXES.get(nm) || 1;
+      const g = Math.min(GAIN_MAX, Math.max(GAIN_MIN, base / want));
+      if (Math.abs(g - 1) < 1e-9) chanGain.delete(nm); else chanGain.set(nm, g);
+      sl.value = String(gainToPos(gainOf(nm)));
+      out.textContent = fmtGain(gainOf(nm));
+      syncAx();
+      saveGain();
+      draw();
+    };
+    ax.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); ax.blur(); }
+      else if (e.key === "Escape") { syncAx(); ax.blur(); }
+      // The window listens for keys to step stages; typing 2 in here must not
+      // also move the chart.
+      e.stopPropagation();
+    });
+    ax.addEventListener("change", commit);
+    ax.addEventListener("blur", commit);
     out.addEventListener("click", reset);
     sl.addEventListener("dblclick", reset);
     row.appendChild(sl); row.appendChild(out);
     cell.appendChild(row);
+    axRow.appendChild(ax);
+    cell.appendChild(axRow);
     host.appendChild(cell);
   });
 }
@@ -349,7 +419,15 @@ const CH_COLORS = { "Tr Press": "#a31631", "Slurry Rate": "#1f6feb",
                     "WH Prop Conc": "#1e7a34", "BH Prop Conc": "#7a4fd6" };
 const FALLBACK = ["#a31631", "#1f6feb", "#1e7a34", "#7a4fd6", "#b45309"];
 
-const PAD = { l: 54, r: 14, t: 26, b: 34 };
+// The hover readout gets a band of its own above the plot.
+//
+// It used to be drawn at PAD.t + 2, which is INSIDE the plot: a 30px white
+// box sitting on top of the first 30px of every curve, right where the
+// pressure peaks are. Reading the row number cost you the data underneath
+// it. The band is reserved whether or not the box is showing, so the plot
+// does not resize as the pointer comes and goes.
+const HOVER_H = 34;
+const PAD = { l: 54, r: 14, t: 26 + HOVER_H, b: 34 };
 
 // ---------- two ways to lay the stages along x ----------
 // Everything — bounds, cuts, every sample — is held in REAL absolute
@@ -713,7 +791,9 @@ function draw() {
     // band is wide enough to hold it.
     if (x1 - x0 > 13) {
       ctx.save();
-      ctx.beginPath(); ctx.rect(x0, 0, x1 - x0, PAD.t); ctx.clip();
+      // Clipped to BELOW the readout band, so a long caption can never
+      // bleed up into it.
+      ctx.beginPath(); ctx.rect(x0, HOVER_H, x1 - x0, PAD.t - HOVER_H); ctx.clip();
       ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
       const printedName = String(edits.labels[i] || "");
       const pos = captionMode === "label" && printedName
@@ -1199,12 +1279,15 @@ function drawHover(ctx, w, h, plotH) {
     const tw = Math.min(avail, ctx.measureText(label).width + 18);
     const bx = Math.min(Math.max(PAD.l, x - tw / 2), w - PAD.r - tw);
     const bh = fpx + 8;
+    // In the reserved band, top-aligned so a smaller font does not make the
+    // box wander vertically as the label grows and shrinks.
+    const by = Math.max(2, (HOVER_H - bh) / 2);
     ctx.fillStyle = "rgba(255,255,255,0.94)";
-    ctx.fillRect(bx, PAD.t + 2, tw, bh);
+    ctx.fillRect(bx, by, tw, bh);
     ctx.strokeStyle = "rgba(20,24,29,0.10)"; ctx.lineWidth = 1;
-    ctx.strokeRect(bx + 0.5, PAD.t + 2.5, tw - 1, bh - 1);
+    ctx.strokeRect(bx + 0.5, by + 0.5, tw - 1, bh - 1);
     ctx.fillStyle = "#14181d";
-    ctx.fillText(label, bx + 9, PAD.t + 2 + bh - 8);
+    ctx.fillText(label, bx + 9, by + bh - 8);
   }
 }
 function niceStep(ms) {
