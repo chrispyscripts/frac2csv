@@ -133,6 +133,11 @@ def _fix_unit(txt):
     low = txt.lower()
     if "kg" in low:
         return "kg/m3"
+    # A rate, before the L/m3 test — "m?/min" contains an m and no l, but
+    # "(m?/min" from OCR is the same lost superscript that "kg/m?" has, and
+    # it was reaching the legend verbatim.
+    if "/min" in low:
+        return "m3/min"
     if "l" in low and "m" in low:
         return "L/m3"
     return txt.strip("()[]{} ")
@@ -776,6 +781,59 @@ def _clean_name(name):
     return re.sub(r"^[A-Za-z]\s*:\s*", "", name).strip()
 
 
+def _grid_step(ticks):
+    """The spacing the page's tick ladders share, or None.
+
+    Every value axis on a Liberty chart is printed against the same
+    gridlines, so a ladder's POSITION step is a property of the page, not of
+    the channel. Taken from the colours that have enough labels to be certain
+    of, it is evidence a short ladder can be checked against — evidence that
+    does not come from the short ladder's own labels.
+    """
+    steps = []
+    for pts in ticks.values():
+        if len(pts) < 3:
+            continue
+        xs = sorted(p[1] for p in pts)
+        d = [b - a for a, b in zip(xs, xs[1:])]
+        if d:
+            steps.append(sorted(d)[len(d) // 2])
+    if not steps:
+        return None
+    return sorted(steps)[len(steps) // 2]
+
+
+def _pair_on_the_grid(pts, grid):
+    """Is a TWO-label ladder corroborated by the page's own gridlines?
+
+    Two points determine a line and prove nothing on their own — any two
+    same-coloured numbers would pass, which is why four was the bar and three
+    the OCR exception. But the page offers a second opinion: 00914 p185 reads
+    the rate axis as [16, 12] alone and every other axis on the sheet steps
+    65.0 points, which is exactly what those two are apart. OCR does not
+    invent two numbers that land on the page's grid with an even value step
+    between them.
+
+    Without that corroboration this returns False and the channel is dropped,
+    which is what happened to Slurry Rate on every treatment chart of that
+    file (#692).
+    """
+    if len(pts) != 2 or not grid or grid <= 0:
+        return False
+    q = sorted(pts, key=lambda p: p[1])
+    dv = q[1][0] - q[0][0]
+    dx = q[1][1] - q[0][1]
+    if abs(dv) < 1e-9 or abs(dx) < 1e-9:
+        return False
+    # one gridline apart, or a whole number of them
+    n = dx / grid
+    if abs(n - round(n)) > 0.08 or not 1 <= round(n) <= 4:
+        return False
+    # and the value step must divide evenly across those gridlines
+    per = dv / round(n)
+    return abs(per) > 1e-9 and abs(per - round(per, 6)) < 1e-9
+
+
 def _arith_ladder(pts):
     """Is a THREE-label tick row a real ladder, or three OCR misreads?
 
@@ -971,6 +1029,34 @@ def extract_page(page, sample_sec=1.0):
                 black.append(cand)
     if len(black) == 1:
         named[0] = black[0]
+    # Which colours print only TWO ticks that the page's own grid vouches for.
+    #
+    # The kin>=2 rule below is what stops a stray legend word being collected
+    # as a tick, and it costs a channel whenever OCR reads only two labels off
+    # an axis: 00914 p185 gets [16, 12] for the rate and nothing else, each
+    # with one sibling instead of two, so both are dropped, the axis has no
+    # fit, and Slurry Rate is gone from the page. 35 of that file's 45
+    # treatment charts lose it the same way (#692).
+    #
+    # A pair is exempted only when the page corroborates it: the two sit on
+    # one line, a whole number of the page's gridlines apart, stepping evenly
+    # in value. That evidence comes from the OTHER axes, not from the pair.
+    _raw = defaultdict(list)
+    for s in spans:
+        if s["color"] != 0 and s.get("ocr") and \
+                re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
+            _raw[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
+                                     s["cx"], s["cy"]))
+    _grid0 = _grid_step({c: v for c, v in _raw.items() if len(v) >= 3})
+    _pair_ok = set()
+    for _c, _v in _raw.items():
+        if len(_v) != 2:
+            continue
+        if abs(_v[0][2] - _v[1][2]) > 12 and abs(_v[0][1] - _v[1][1]) > 12:
+            continue                      # not on one line: not a ladder
+        if _pair_on_the_grid(_v, _grid0):
+            _pair_ok.add(_c)
+
     ticks = defaultdict(list)
     for s in spans:
         # Liberty prints the zero tick of several axes as '-0' (the charting
@@ -986,7 +1072,7 @@ def extract_page(page, sample_sec=1.0):
             # destroys the fit and left the page with no axes at all. A
             # printed tick always has a ladder around it; a legend word does
             # not.
-            if s.get("ocr"):
+            if s.get("ocr") and s["color"] not in _pair_ok:
                 kin = sum(1 for o in spans
                           if o is not s and o["color"] == s["color"]
                           and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
@@ -1034,8 +1120,10 @@ def extract_page(page, sample_sec=1.0):
     # never needs this — and the v1.5.0 release was gated on those files
     # coming back bit-identical.
     _ocr_page = any(x.get("ocr") for x in spans)
+    _grid = _grid_step(ticks) if _ocr_page else None
     for color, pts in ticks.items():
-        if len(pts) < 4 and not (_ocr_page and _arith_ladder(pts)):
+        if len(pts) < 4 and not (_ocr_page and (_arith_ladder(pts)
+                                                or _pair_on_the_grid(pts, _grid))):
             continue
         cys = sorted(p[2] for p in pts)
         split = (cys[0] + cys[-1]) / 2

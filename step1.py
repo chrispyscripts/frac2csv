@@ -380,14 +380,50 @@ def page_meta(img):
 
 def _frame_bbox(img):
     """Plot box = bounding box of long strict-dark line runs (frame and
-    gridlines are black in the new format)."""
+    gridlines are black in the new format).
+
+    The BOTTOM cannot be found that way alone, because the frame's own bottom
+    rule can be ANTI-ALIASED across two pixel rows and neither is dark enough
+    to count. On 00344's surface chart:
+
+        row 321, an interior gridline   (103,103,103)  sum 309   dark
+        row 426, the frame's bottom     (170,170,170)  sum 510   not dark
+        row 427, the rest of it         (143,143,143)  sum 429   not dark
+
+    The rule is about 1.5 px tall, so it renders as two pale rows while a
+    gridline that lands on one row renders darker than either. The lowest
+    "dark" row was therefore the GRIDLINE. The box came back ending there,
+    the clock strip was read from a band inside the plot, and all 32 surface
+    charts died with "time axis unreadable" — the file exported its chemical
+    traces and none of the four channels anyone wants (#693). The chemical
+    chart on the same page has a crisply rendered floor and read fine, which
+    is why the file looked half-alive rather than broken.
+
+    The side rules do not have that problem: they are vertical, so a
+    half-pixel of width darkens one column rather than splitting across two.
+    The bottom is where they stop, taken as the contiguous run down from the
+    top rule — contiguous because the rotated axis title ("Pressure (MPa)")
+    puts more dark pixels in the same column well below the frame, and a
+    plain min/max would swallow it.
+
+    Only ever EXTENDS the row-based answer, so a page it already read
+    correctly does not move.
+    """
     H, W = img.shape[:2]
     dark = img.sum(axis=2) < 400
     col_ok = np.where(dark.sum(axis=0) > H * 0.6)[0]
     row_ok = np.where(dark.sum(axis=1) > W * 0.6)[0]
     if not len(col_ok) or not len(row_ok):
         return None
-    return int(col_ok[0]), int(row_ok[0]), int(col_ok[-1]), int(row_ok[-1])
+    x0, y0, x1, y1 = (int(col_ok[0]), int(row_ok[0]),
+                      int(col_ok[-1]), int(row_ok[-1]))
+    for x in (x1, x0):
+        y = y0
+        while y + 1 < H and dark[y + 1, x]:
+            y += 1
+        if y > y1:
+            y1 = y
+    return x0, y0, x1, y1
 
 
 # colour family -> (series, unit, the QUANTITY its value axis measures).
