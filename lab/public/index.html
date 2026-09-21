@@ -4,8 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Carmine's Lab — frac report data extraction</title>
-<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-<script src="https://unpkg.com/fflate@0.8.2/umd/index.js"></script>
+<!-- Served by the app, not by a CDN.
+     The desktop build ships every reader, tesseract and the whole UI, and
+     then fetched three libraries off unpkg.com at runtime — so the Original
+     chart view, the ghost overlay and PDF splitting all quietly needed the
+     internet on a machine that needs it for nothing else. On a rig office
+     connection that is a chart panel that will not draw and no obvious
+     reason why (#694). The CDN stays as a fallback for the hosted Lab, and
+     only if the local copy is not there. -->
+<script src="vendor/pdf-lib.min.js"></script>
+<script>window.PDFLib || document.write(
+  '<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"><\/script>');</script>
+<script src="vendor/fflate.min.js"></script>
+<script>window.fflate || document.write(
+  '<script src="https://unpkg.com/fflate@0.8.2/umd/index.js"><\/script>');</script>
 <style>
   :root {
     /* light (default) */
@@ -4246,13 +4258,26 @@ function loadPdfjs() {
   if (window.pdfjsLib) return Promise.resolve();
   return new Promise((res, rej) => {
     const s = document.createElement("script");
-    s.src = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js";
+    s.src = "vendor/pdf.min.js";
     s.onload = () => {
       pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+        "vendor/pdf.worker.min.js";
       res();
     };
-    s.onerror = () => rej(new Error("pdf.js failed to load"));
+    s.onerror = () => {
+      // no local copy — the hosted Lab, or a build without the vendor folder
+      const cdn = document.createElement("script");
+      cdn.src = "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js";
+      cdn.onload = () => {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+        res();
+      };
+      cdn.onerror = () => rej(new Error(
+        "pdf.js failed to load — the Original chart view needs it, and "
+        + "neither the copy shipped with the app nor unpkg.com answered"));
+      document.head.appendChild(cdn);
+    };
     document.head.appendChild(s);
   });
 }
