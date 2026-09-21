@@ -231,9 +231,53 @@ def visible_plot_box(page):
     return cut, box
 
 
+def _axis_letter(text):
+    """The axis letter a short black span names, tolerating OCR noise -> None.
+
+    IFS prints the letter alone above its own tick column, and OCR returns it
+    with a speck attached: 00973 p117 reads the rate ladder's "B" as "cB" and
+    the concentration ladder's "C" as "c". A strict [A-F] match placed only
+    the pressure ladder, the rest fell through to left-to-right order, and
+    Slurry Proppant Conc was mapped onto the RATE axis — a 0..20 scale for a
+    0..1000 reading, which the sanity check then threw away, so the channel
+    vanished from the chart (#709, #711).
+
+    Two characters at most, so a word like "INC" — which also ends in a
+    letter in the range — cannot be taken for an axis.
+    """
+    t = (text or "").strip()
+    if not 1 <= len(t) <= 2:
+        return None
+    alpha = [ch for ch in t if ch.isalpha()]
+    if not alpha:
+        return None
+    last = alpha[-1].upper()
+    return last if "A" <= last <= "F" else None
+
+
 def _axis_columns(spans, box=None):
     """Cluster numeric black tick labels into vertical columns."""
     ocr = any(s.get("ocr") for s in spans)
+    if ocr:
+        # OCR glues the tick MARK, or a speck of the gridline, onto the front
+        # of a label: 00973 p117's rate ladder comes back "20", "+18", and its
+        # concentration ladder "1000", "~900". A label that fails the numeric
+        # test is not read at all, the column falls below the three it needs,
+        # and the whole axis vanishes — that page found the pressure and
+        # concentration ladders and no rate ladder, so Slurry Rate had nothing
+        # to be scaled against and was dropped from the chart (#709, #711).
+        #
+        # Only a leading NON-numeric is removed, so a real minus survives and
+        # the tick-mark-as-minus rule below still decides that case.
+        for s in spans:
+            if s["color"] != 0:
+                continue
+            t = s["t"].strip().replace(",", "")
+            if re.fullmatch(r"-?\d+(\.\d+)?", t):
+                continue
+            m = re.fullmatch(r"[^\d\-]{1,2}(-?\d+(?:\.\d+)?)", t)
+            if m:
+                s["t"] = m.group(1)
     nums = [s for s in spans if s["color"] == 0 and
             re.fullmatch(r"-?\d+(\.\d+)?", s["t"].replace(",", ""))]
     if ocr:
@@ -558,6 +602,8 @@ def _legend(spans):
     """[(series_name, unit, color_int, axis_letter)] from legend rows."""
     out = []
 
+    orphans = []                      # entries whose axis letter OCR lost
+
     def add(s, letters):
         m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", s["t"])
         if not m or len(m.group(1).strip()) < 3:
@@ -573,6 +619,8 @@ def _legend(spans):
                 best, bestd = l["t"], l["cx"] - s["cx"]
         if best:
             out.append((name, unit, s["color"], best))
+        else:
+            orphans.append((name, unit, s["color"]))
 
     named = [s for s in spans if s["color"] != 0 and
              re.search(r"\(([^)]+)\)\s*$", s["t"]) and len(s["t"]) > 8]
@@ -590,7 +638,60 @@ def _legend(spans):
     if len(black_named) == 1:
         black_letters = [s for s in spans if s["color"] == 0 and re.fullmatch(r"[A-F]", s["t"])]
         add(black_named[0], black_letters)
+    _adopt_orphans(out, orphans, spans)
     return out
+
+
+def _adopt_orphans(out, orphans, spans):
+    """Give a legend entry back the axis letter OCR dropped.
+
+    An entry with no letter is discarded, and on an OCR'd page that is how a
+    channel disappears while its neighbours read perfectly: 00973 p117 prints
+    four series and OCR returns the letter for only two, so Slurry Rate and
+    BH Proppant Conc were dropped and the chart came back with pressure alone
+    (#709, #711).
+
+    Two pieces of evidence, neither of them the missing letter itself:
+
+      - an entry measured in the same UNIT as one that DID keep its letter is
+        plotted against that same axis. A page has one concentration ladder,
+        not one per concentration.
+      - failing that, if exactly one axis the PAGE prints is still unclaimed
+        and exactly one entry still wants one, they are each other's.
+
+    Anything less certain is left alone: a wrong axis is worse than a missing
+    channel, because it exports a number that looks reasonable.
+    """
+    if not orphans:
+        return
+    by_unit = {}
+    for name, unit, _c, ax in out:
+        by_unit.setdefault(_norm_unit(unit), ax)
+    still = []
+    for name, unit, colour in orphans:
+        ax = by_unit.get(_norm_unit(unit))
+        if ax:
+            out.append((name, unit, colour, ax))
+        else:
+            still.append((name, unit, colour))
+    if len(still) != 1:
+        return
+    page_letters = set()
+    for s in spans:
+        if s["color"] != 0:
+            continue
+        letter = _axis_letter(s["t"])
+        if letter:
+            page_letters.add(letter)
+    free = sorted(page_letters - {ax for *_x, ax in out})
+    if len(free) == 1:
+        name, unit, colour = still[0]
+        out.append((name, unit, colour, free[0]))
+
+
+def _norm_unit(unit):
+    """OCR mangles the superscript, so kg/m3, kg/m? and kg/m* are one unit."""
+    return re.sub(r"[^a-z/]", "", (unit or "").lower())
 
 
 def _color_close(stroke, legend_int):
@@ -673,11 +774,14 @@ def extract_page(page, sample_sec=1.0):
     # nothing, which is the honest answer.
     placed = {}
     for s_ in spans:
-        if s_["color"] != 0 or not re.fullmatch(r"[A-F]", s_["t"]):
+        if s_["color"] != 0:
+            continue
+        letter = _axis_letter(s_["t"])
+        if letter is None:
             continue
         near = min(columns, key=lambda c: abs(c["x"] - s_["cx"]))
         if abs(near["x"] - s_["cx"]) <= 40:
-            placed.setdefault(s_["t"], near)
+            placed.setdefault(letter, near)
     for ax in letters_used:
         if ax in placed:
             mapping[ax] = placed[ax]

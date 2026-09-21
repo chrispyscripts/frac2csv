@@ -83,8 +83,39 @@ _load()
 
 
 def canon(raw_name):
-    """Canonical column for a vendor curve name, or None if unmapped."""
-    return _LOOKUP.get(_norm(raw_name))
+    """Canonical column for a vendor curve name, or None if unmapped.
+
+    A name read by OCR can be mangled into something the table does not hold,
+    and an unmapped name is not exported: 00973's legend comes back
+    "BHProppant Conc" with the space eaten, so bottom-hole concentration was
+    read off the page correctly and then left out of the CSV (#709, #711).
+
+    Repairs are tried only after the exact name misses, and a repair counts
+    only if it lands on a name the table already knows. Nothing is invented,
+    and a mangling that does not resolve still returns None.
+
+    Deliberately NOT repaired: a lost leading letter. "H Prop Conc" is one
+    edit from "BH Prop Conc" and two from "WH Prop Conc", and guessing would
+    put bottom-hole readings in the wellhead column — a wrong number that
+    looks right, which is worse than a missing one.
+    """
+    hit = _LOOKUP.get(_norm(raw_name))
+    if hit:
+        return hit
+    for cand in _ocr_repairs(raw_name or ""):
+        hit = _LOOKUP.get(_norm(cand))
+        if hit:
+            return hit
+    return None
+
+
+def _ocr_repairs(raw):
+    """Names an OCR'd legend might have mangled into `raw`."""
+    # a lost space between words: "BHProppant" -> "BH Proppant"
+    yield re.sub(r"(?<=[a-z])(?=[A-Z])", " ", raw)
+    yield re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", raw)
+    # a superscript read as punctuation: "kg/m*" and "kg/m?" are "kg/m3"
+    yield re.sub(r"[?*^]", "3", raw)
 
 
 def canon_unit(canonical):
