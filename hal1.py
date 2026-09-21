@@ -254,6 +254,107 @@ def _drop_orphans(py):
     return py
 
 
+# _drop_orphans judges a sliver by the company it keeps along x and nothing
+# else, and that is not enough when the sliver happens to stand near real
+# ink. What is left of the crimson pressure pen after _bh_conc is its palest
+# anti-aliased fringe — (255, 216, 242) and (255, 218, 241) on 00423 p308,
+# one and two rows off a core of (155, 27, 62) — which is not red enough for
+# the red family and stays in the BH mask. On that page (Treatment Interval
+# 3) fourteen such columns reach _drop_orphans; twelve are isolated and go,
+# and plot columns 190 and 194 do not, because 194 is seven columns from 201
+# where the purple pen's own ink resumes, so the whole stretch from 190 to
+# 261 reads as one long cluster and the run-length test never sees them.
+#
+# curve_positions' spike guard misses them for the mirror-image reason. It
+# blanks a short run lying more than SPIKE_TOL of the plot height off a
+# rolling median of its own trace, and through the pad the purple pen is
+# drawing nothing but the bottom rule, so of the seven finite columns its
+# 31-wide window holds around column 190, FOUR are strays — the reference it
+# computes is 186, a stray's own row, where the trace is at 692. The stray
+# then sits 27 rows from its reference and the guard wants 83, so it stays,
+# and being the highest thing in the channel it sets the channel's reported
+# peak: a 31-second island at 1155.9 kg/m3 on a chart whose treating
+# pressure is 77.3 MPa, which is the same stroke at fifteen times its value
+# (both axes come off the same two frame rows, 1500.0..0.46 against
+# 100.0..0.07).
+#
+# So look again once the obvious orphans are gone. This is not a new test
+# and it invents no new threshold: it is auto_raster's spike test, with
+# auto_raster's own SPIKE_TOL and SPIKE_RUN, run on a track the orphan pass
+# has already cleaned — and by then the window at column 190 holds
+# 159, 162, 691.5, 692, 692, the reference is 692, and the stray is 533 rows
+# off it. The two passes feed each other, since blanking a stray can leave
+# its neighbour isolated and dropping an orphan can uncover a stray, so they
+# alternate until neither has anything left to say.
+#
+# What it costs, over every treatment plot of the two files the client
+# reported — 00413 pages 196..265 and 00423 pages 302..374, 47 that read and
+# two (00413 p244, 00423 p329) that fail on the time axis before and after.
+# The same 187 channels come back, holding 934368 finite samples against
+# 935021: 653 fewer, 0.070%, spread 0.094% / 0.080% / 0.049% / 0.048% over
+# Treating Pressure, Slurry Rate, Slurry Prop Conc and BH Prop Conc, worst
+# single chart 00413 p262 at 1.21% of its BH samples. One peak moves in the
+# whole corpus, 00423 p308's, from 1155.90 to 407.16 kg/m3.
+#
+# What was rejected, and why, so it is not re-tried blind. Cutting the
+# fringe out of the MASK by ADJACENCY — dilating the red family by one
+# pixel before subtracting it — does clear this island, but measured over
+# the same 47 charts it costs a mean 2.89% of the BH channel's samples,
+# worst 7.37% on 00413 p259, 7080 against the 118 above: sixty times the
+# real ink for the same one repair. It also moves eight charts' peaks, and
+# seven of those charts had nothing wrong with them — four go UP, by as
+# much as 8.4 kg/m3 on 00423 p365, and 00423 p338 drops 93. Cutting on
+# PALENESS does not separate the populations at all: pooled over six of
+# these charts a min-channel > 150 rule takes 29.8% of the ink touching
+# the crimson, but 22.0% of the purple away from it. And a THINNESS rule,
+# which looks obvious because these columns hold one or two pixels against
+# a six-pixel pen, would delete the very thing it is meant to protect —
+# through the pad the purple pen rests ON the bottom rule and is clipped
+# to one or two pixels itself, 47 of the 53 columns it draws there on this
+# page, and 26.1% of every column the BH mask holds over the same six.
+STRAY_WIN = 31        # columns: the window curve_positions' own guard uses
+
+
+def _drop_strays(sub, py):
+    """auto_raster's spike test, re-applied to an already-thinned track.
+
+    `sub` is the plot-cropped mask `py` was traced from, which is where the
+    height of the run a column was read at comes from — a genuine
+    near-vertical move is a TALL run and SPIKE_RUN keeps it, exactly as in
+    curve_positions.
+    """
+    H = sub.shape[0]
+    ref = ar._rolling_median(py, STRAY_WIN)
+    for cx in np.flatnonzero(np.isfinite(py) & np.isfinite(ref)):
+        if abs(py[cx] - ref[cx]) <= ar.SPIKE_TOL * H:
+            continue
+        ys = np.flatnonzero(sub[:, cx])
+        if not len(ys):
+            continue
+        runs = np.split(ys, np.flatnonzero(np.diff(ys) > 2) + 1)
+        here = py[cx]
+        run = min(runs, key=lambda q: abs(float(np.median(q)) - here))
+        if int(run[-1] - run[0] + 1) <= ar.SPIKE_RUN:
+            py[cx] = np.nan
+    return py
+
+
+def _clean_track(sub, py):
+    """Drop slivers, then look again with the reference they were poisoning.
+
+    Runs to a fixed point, which needs no iteration limit of its own: a
+    round either blanks a column or is the last one, so the loop cannot
+    outlast the columns. Over every channel of the 47 charts of 00413 and
+    00423 it settles in one round 74 times and two 109 times, six at worst.
+    """
+    for _ in range(sub.shape[1] + 1):
+        before = int(np.isfinite(py).sum())
+        _drop_strays(sub, _drop_orphans(py))
+        if int(np.isfinite(py).sum()) == before:
+            break
+    return py
+
+
 # Crimson is a RED that carries a blue shoulder, and auto_raster's magenta rule
 # — (r > g + m1) & (b > g + m1) — asks only that blue beat GREEN, never that it
 # beat red. Halliburton draws Treating Pressure in about (184, 27, 70), whose
@@ -295,12 +396,14 @@ def _drop_orphans(py):
 # samples on average across all 47 charts of these two files (worst 7.4%) to
 # mend two — real ink deleted for a phantom — so it is not done here.
 #
-# The phantom that therefore survives, said plainly rather than guessed at: on
-# 00423 p308 (interval 3) a 31-second island still reads 1155.9 kg/m3, which is
-# 15x that chart's 77.3 MPa, and being the highest thing in the channel it sets
-# its reported peak. That is 31 samples of 5547, on the only one of the 47
-# charts where it happens — where before this change all 47 peaked between 1117
-# and 1235 kg/m3, and 46 now peak between 4.8 and 781.2.
+# The phantom that therefore survived this cut, said plainly rather than
+# guessed at: on 00423 p308 (interval 3) a 31-second island read 1155.9 kg/m3,
+# 15x that chart's 77.3 MPa, and being the highest thing in the channel it set
+# the channel's reported peak. That is 31 samples of 5547, on the only one of
+# the 47 charts where it happened — where before this change all 47 peaked
+# between 1117 and 1235 kg/m3, and 46 then peaked between 4.8 and 781.2. It is
+# taken on the TRACK rather than in the mask, by _clean_track above, which
+# brings that last chart to 407.16.
 #
 # ON THE UPRIGHT VARIANT THIS IS NOT A NO-OP, which is worth saying because it
 # is tempting to assume it is. 00615 draws its pressure in a pen the red family
@@ -388,7 +491,7 @@ def extract_image(img, sample_sec=1.0):
         if cov < 0.05:
             continue
         n_cols = sub.shape[1]
-        py = _drop_orphans(ar.curve_positions(sub)) + y0
+        py = _clean_track(sub, ar.curve_positions(sub)) + y0
         vals = a + bb * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
         if np.isfinite(vals).sum() < 50:

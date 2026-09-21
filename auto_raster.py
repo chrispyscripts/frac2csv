@@ -45,6 +45,16 @@ SWEPT_FACTOR = 1.4
 # axis. See the edge_blank block in curve_positions.
 EDGE_RUN = 4
 
+# How far off a rolling median of its own trace a column may read, as a
+# fraction of the plot height, and how tall its run may be, before it is
+# blanked as a stray rather than kept as a near-vertical move. These were
+# curve_positions' spike_tol/spike_run defaults and still are; they are named
+# here because hal1 re-applies the SAME test to a track its own orphan pass
+# has cleaned, and a second copy of the numbers would be a second thing to
+# keep in step. See the spike block in curve_positions and hal1._drop_strays.
+SPIKE_TOL = 0.12
+SPIKE_RUN = 8
+
 
 def tesseract_path():
     """Locate tesseract: bundled (PyInstaller) first, then PATH."""
@@ -1186,8 +1196,8 @@ def _rolling_median(v, k):
     return out
 
 
-def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=0.12,
-                    spike_run=8, glyphs=False, envelope=True,
+def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
+                    spike_run=SPIKE_RUN, glyphs=False, envelope=True,
                     swept_factor=None, edge_blank=False):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
