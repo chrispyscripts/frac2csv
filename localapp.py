@@ -772,9 +772,20 @@ class Handler(BaseHTTPRequestHandler):
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":
                     return self._json(422, {"error": "Not a PDF."})
-                stages, tables, notes, summary = process_bytes(
-                    data, req.get("filename", "file.pdf"),
-                    str(req.get("job", "")))
+                # Behind the same gate as /api/process-path, and it always
+                # should have been: the gate exists FOR this case. Its own
+                # note is "four Lab windows each dropping a file ran four
+                # whole-document reads at once", and dropping a file is this
+                # endpoint — the other one takes a path off a list. Only the
+                # list path was throttled, so a batch dropped across two Lab
+                # tabs still ran unthrottled, each read holding a decoded
+                # copy of a 40-60 MB PDF while it worked. Carmine's batch of
+                # twelve came back with the last seven "Failed to fetch"
+                # (#694's screenshot).
+                with _READ_GATE:
+                    stages, tables, notes, summary = process_bytes(
+                        data, req.get("filename", "file.pdf"),
+                        str(req.get("job", "")))
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "summary": summary})
             if self.path == "/api/manifest":
