@@ -226,6 +226,43 @@ def _spread(n, k):
     return [round(i * (n - 1) / (k - 1)) for i in range(k)]
 
 
+def _say_no_tables(doc, results, notes, npages):
+    """Say out loud when a filing carries charts but no data tables.
+
+    An empty Tables tab says nothing about why it is empty, so it reads as a
+    failure: Carmine flagged 01004 as "no tables extracted" (#691) on a
+    252-page Liberty filing whose only page of text is the BC OGC cover form.
+    Every other page is a chart. There were no tables to miss, and nothing on
+    screen said so.
+
+    Counted rather than asserted — a page with a screenful of words that we
+    did not parse is a different problem from a filing that has none, and
+    this must not claim the first is the second.
+    """
+    if any(r.get("type") == "table" for r in results):
+        return
+    if not any(r.get("type") == "series" for r in results):
+        return                      # _why_nothing already covers that case
+    texty = 0
+    for i in range(npages):
+        try:
+            if len(doc[i].get_text("words")) >= 120:
+                texty += 1
+        except Exception:
+            continue
+    if texty:
+        notes.append(
+            f"No data tables read from this filing. {texty} of {npages} pages "
+            f"carry a screenful of text — if a treatment or stage summary "
+            f"table is on one of them, it is a table this provider's reader "
+            f"does not parse yet.")
+    else:
+        notes.append(
+            f"No data tables in this filing: of {npages} pages, none carries "
+            f"enough text to be one — they are charts. Nothing is missing "
+            f"from the export; there was no table to read.")
+
+
 def _why_nothing(doc, npages, raster):
     """Say WHY a file produced nothing, not just that it did.
 
@@ -3810,4 +3847,5 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     _normalise_tables(results, filename)
     _join_stage_depth(results)
     _join_stage_meta(results)
+    _say_no_tables(doc, results, notes, npages)
     return results, notes

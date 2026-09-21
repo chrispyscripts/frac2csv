@@ -359,12 +359,12 @@ def _minute_ticks(spans):
     ladder from a value one, which is how the chemical plot of every stage
     stayed unread while the treatment plot beside it was fixed.
     """
-    cap = next((s for s in spans if _MIN_CAPTION.search(s["t"])), None)
+    cap = _min_caption(spans)
     if cap is None:
         return []
     near = [s for s in spans
             if s["color"] == 0 and re.fullmatch(r"-?\d+(\.\d+)?", s["t"])
-            and abs(s["cx"] - cap["cx"]) <= 40]
+            and abs(s["cx"] - cap[0]) <= 40]
     if not near:
         return []
     # the column the most of them share, to within a couple of points
@@ -385,14 +385,8 @@ def _minute_axis(spans):
     be any value axis.
     """
     ticks = _minute_ticks(spans)
-    if len(ticks) < 3:
-        return None, "", None
-    # minutes must ascend as the ladder is read, and evenly: the caption sits
-    # beside ONE ladder and a page has several, so this is what tells them
-    # apart from a pressure or rate axis that happens to be near it
-    step = ticks[1][0] - ticks[0][0]
-    if step <= 0 or any(abs((b[0] - a[0]) - step) > 0.05 * step
-                        for a, b in zip(ticks, ticks[1:])):
+    _need = 2 if any(x.get("ocr") for x in spans) else 3
+    if not _even_ladder(ticks, _need):
         return None, "", None
     a, b = _fit([(v * 60.0, cy) for v, cy in ticks])
     if abs(b) < 1e-12:
@@ -590,6 +584,80 @@ def _time_axis(spans, time_frame=None, time_grid=None):
     return (a, b), (date0 or ""), None
 
 
+def _min_caption(spans):
+    """Where the "Time (min)" caption sits, as (cx, cy), or None.
+
+    OCR hands the caption back as two spans — "Time" and "(min)" — so a
+    pattern that wants both in one string finds nothing, and every page that
+    needed the elapsed axis was already a page whose text had to be OCR'd.
+    """
+    for s in spans:
+        if _MIN_CAPTION.search(s["t"]):
+            return s["cx"], s["cy"]
+    heads = [s for s in spans if re.fullmatch(r"Time", s["t"].strip(), re.I)]
+    for w in heads:
+        for o in spans:
+            if o is w:
+                continue
+            if not re.match(r"\(\s*min", o["t"].strip(), re.I):
+                continue
+            dx, dy = o["cx"] - w["cx"], o["cy"] - w["cy"]
+            # Adjacent along EITHER axis. extract_page swaps cx and cy on a
+            # landscape page, and this is called on both the swapped and the
+            # unswapped spans, so a test written for one orientation finds
+            # the caption exactly half the time.
+            if (abs(dy) <= 8 and 0 < dx <= 60) or (abs(dx) <= 8 and 0 < dy <= 60):
+                return (w["cx"] + o["cx"]) / 2.0, (w["cy"] + o["cy"]) / 2.0
+    return None
+
+
+def _minute_ladder(spans, along_x):
+    """The elapsed-minute ladder read along X (landscape) or along Y (the
+    rotated pages), as [(minutes, position)] sorted, or [].
+
+    Same rule as _minute_ticks, with the two coordinates swapped: the ladder
+    SHARES one coordinate with its caption and varies in the other.
+    """
+    cap = _min_caption(spans)
+    if cap is None:
+        return []
+    cap_x, cap_y = cap
+    across = (lambda s: s["cy"]) if along_x else (lambda s: s["cx"])
+    cap_across = cap_y if along_x else cap_x
+    along = (lambda s: s["cx"]) if along_x else (lambda s: s["cy"])
+    near = [s for s in spans
+            if s["color"] == 0 and re.fullmatch(r"-?\d+(\.\d+)?", s["t"])
+            and abs(across(s) - cap_across) <= 40]
+    if not near:
+        return []
+    cols = {}
+    for s in near:
+        cols.setdefault(round(across(s) / 3.0), []).append(s)
+    best = max(cols.values(), key=len)
+    return sorted((float(s["t"]), along(s)) for s in best)
+
+
+def _even_ladder(ticks, need=3):
+    """True when [(value, pos)] ascends in even steps — a time ladder rather
+    than a pressure axis that happens to sit near the caption.
+
+    `need` drops to two on an OCR'd page: two points determine the line, and
+    OCR loses edge labels to whatever sits beside them — 01004 p202 prints
+    9 / 52 / 95 and the 9 comes back merged into the orange axis label next
+    to it as "0.09", leaving two. Evenness cannot be checked on two, so the
+    implausible-duration guard downstream is what refuses a bad fit.
+    """
+    if len(ticks) < max(2, need):
+        return False
+    if len(ticks) == 2:
+        return ticks[1][0] > ticks[0][0]
+    step = ticks[1][0] - ticks[0][0]
+    if step <= 0:
+        return False
+    return not any(abs((b[0] - a[0]) - step) > 0.05 * step
+                   for a, b in zip(ticks, ticks[1:]))
+
+
 def _horizontal(spans):
     """True when the time axis runs along X (landscape charts, page rotation 0)
     rather than Y (the rotated pages this template was first built for)."""
@@ -601,7 +669,23 @@ def _horizontal(spans):
     # CONSTANT coordinate, the fit degenerates, and the page died with
     # "implausible duration 487965257s" — fifteen years across eighty minutes.
     if len(tl) < 2:
-        return False
+        # No wall clock to spread, so ask the ELAPSED ladder which way it runs.
+        #
+        # Returning False here means "rotated", and that was being said about
+        # landscape pages purely because they print no clock. Liberty's
+        # chemical plot is exactly that page: same sheet, same orientation as
+        # the treatment plot beside it, but captioned "Time (min)" with 9 / 52
+        # / 95 along the bottom. The spans were then never swapped, the minute
+        # ladder was looked for down a column that does not exist, and the
+        # page died with "time labels not found" — 26 of 100 charts on 01004
+        # (#691), every one of them a chemical plot, while all 50 treatment
+        # plots read perfectly.
+        #
+        # Both readings are tried and the one that yields a real ladder wins,
+        # so a genuinely rotated elapsed page still reads as it did.
+        _need = 2 if any(x.get("ocr") for x in spans) else 3
+        return _even_ladder(_minute_ladder(spans, True), _need) and \
+            not _even_ladder(_minute_ladder(spans, False), _need)
     cxs = [s["cx"] for s in tl]
     cys = [s["cy"] for s in tl]
     return (max(cxs) - min(cxs)) > (max(cys) - min(cys))
