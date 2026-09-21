@@ -185,6 +185,31 @@ def axis_caption_date(img, x0, x1, y1):
 # Both fail "solid", every real column passes it (99th percentile span 17 px),
 # and requiring the whole island to sit inside the band keeps a curve that
 # merely starts early — it runs on past the band and is never a candidate.
+#
+# On the SIDEWAYS render (see extract_page) the same title is printed at
+# roughly half that size, and counting columns stops working. 00413 p247
+# (Treatment Interval 18) and 00423 p359 (Treatment Interval 20) are both
+# turned pages: the title lands in plot columns 55..60 (55..61 on 00423), and
+# only 57, 58 and 59 run its full height — the rest clip a single letter and
+# read as a solid four-pixel stroke. Three hollow columns of six is not a
+# majority, and neither is three of seven, so the island survived by exactly
+# one column and Slurry Prop Conc peaked at 828.67 and 828.65 kg/m3 on two
+# unrelated wells: the SAME number twice, a glyph at a fixed place on the
+# template rather than anything either job did. The printed trace plateaus
+# just under 600 on both, and with the title cleared they read 575.8 and
+# 569.6.
+#
+# So when the columns do not carry the vote, weigh them by ink instead. The
+# hollow columns of a title ARE the title — they cross every letter, and hold
+# 34 of the island's 48 lit pixels on 00413 p247 — while the hollow columns of
+# a curve are the strays it leaves behind, a handful of pixels beside a solid
+# stroke. That second vote is only offered to an island that floats: real ink
+# this early in a stage sits on the bottom rule, because the job starts at
+# zero and climbs, and the trace that rises out of it keeps a foot there (on
+# 00423 p314 the BH concentration climbs from row 692 to row 153 inside the
+# band, 72% of its ink in hollow columns, and must not be touched). Printed
+# decoration hangs in clear air. Both votes still require the island to sit
+# wholly inside the band, so neither can reach a curve that runs on past it.
 FURNITURE_BAND = 0.08          # of the plot width, from the left frame edge
 FURNITURE_SPAN = 0.05          # of the plot height: taller than any stroke
 FURNITURE_FILL = 0.5           # lit pixels / span: below this it is not a run
@@ -214,11 +239,21 @@ def _furniture_cols(sub):
     out = np.zeros(W, bool)
     occ = sub.any(axis=0)
     idx = np.flatnonzero(occ)
+    ink = sub.sum(axis=0)
     for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1):
         # an island that reaches past the band is a curve that started early
         if run[-1] >= band:
             continue
         if sparse[run].sum() * 2 > len(run):
+            out[run] = True
+            continue
+        # a small glyph splits into stroke-shaped columns and the count vote
+        # fails; the ink vote does not, but only for an island that hangs
+        # clear of the bottom rule, where no trace this early in a job is.
+        rows = np.flatnonzero(sub[:, run[0]:run[-1] + 1].any(axis=1))
+        if rows[-1] >= H - tall:
+            continue
+        if ink[run][sparse[run]].sum() * 2 > ink[run].sum():
             out[run] = True
     return out
 
