@@ -58,9 +58,48 @@ KIND_TITLES = {
 }
 
 
+# Two kinds of line print a summary sheet's name without BEING one, and
+# matching them filled the Lab's Tables tab with rendered pictures of pages
+# that carry no table. Both were client reports on Halliburton filings that
+# contain no Canyon page at all.
+#
+#   * A table-of-contents entry. 00971 p111 (#710) is Halliburton's own
+#     contents page — "Treatment Summary ................. 4" — and it was
+#     the ONE source page the Tables tab offered, which is exactly what the
+#     report says: "1 source page is a table of contents". 00973 p99 is the
+#     same page in the same book.
+#
+#   * A compound section bar. Peloton's "Daily Completion and WS (board
+#     report)" prints "Stimulation & Treatment Summary" as one of a dozen
+#     section headings down a daily ops page, and on these filings the box
+#     under it is empty. 00453 (#705) listed 44 of them — pages 2, 5, 8, 10,
+#     13 ... 147 — and not one ever parsed into a row; rendered into the
+#     Tables tab, those are the "stage summary screenshots" of the report.
+#     Not one filing either: a random 24-file sweep of the corpus turned up
+#     three more — 00583 (22 pages), 00946 (21), 00592 (15) — and on all
+#     four, that section bar is the ONLY way the words appear in the file.
+#
+# Nothing else is excluded, deliberately. A heading that reads oddly is still
+# a heading: 00553 p165 is titled "Stage-by-Stage Treatment Summary" and
+# 00531 p142 "Treatment Summary - Well Total", and both are real sheets that
+# only this listing makes reachable — neither parses.
+#
+# Over that 24-file sweep the listing goes from 102 pages to 43. The 59 that
+# go are those three files' section bars and 00973 p99's contents line; the
+# 43 that stay are every page of 00531, 01091, 01464 (CalFrac), 00553 and
+# 00065, unchanged.
+_TOC_LINE = re.compile(r"\.{5,}")
+# no \b before "&": a space and an "&" are both non-word characters, so
+# there is no boundary between them and the whole pattern silently missed.
+_SECTION_BAR = re.compile(r"(?:&|\band)\s+Treatment Summary\b", re.I)
+
+
 def _page_kind(text):
+    keep = [l for l in text.splitlines()
+            if not _TOC_LINE.search(l) and not _SECTION_BAR.search(l)]
+    body = "\n".join(keep)
     for kind, pat in SUMMARY_KINDS:
-        if re.search(pat, text):
+        if re.search(pat, body):
             return kind
     return None
 

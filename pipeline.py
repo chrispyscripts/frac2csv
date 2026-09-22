@@ -238,24 +238,68 @@ def _say_no_tables(doc, results, notes, npages):
     Counted rather than asserted — a page with a screenful of words that we
     did not parse is a different problem from a filing that has none, and
     this must not claim the first is the second.
+
+    A third case, which counting only the text pages used to hide: a filing
+    that binds a readable report in front of a SCANNED one. 00218 (#698) and
+    00453 (#705) each open with ~145 pages of Peloton daily paperwork and then
+    run 200-odd pages of a Halliburton stimulation report that is pictures all
+    the way down. 00218 p197 is its "9.1 Stage Summary" — six pump stages with
+    start time, treating pressure, rates, volumes and proppant mass — and
+    get_text("words") on it returns nothing at all; 00453 p200 is a 22-row
+    ACTUAL DESIGN grid, the same story. The tables ARE there and they are
+    unreachable, so pointing the reader at the 137 and 140 pages that DO carry
+    text points him at the half of the file the tables were never on.
+
+    And where the text pages are few, they are named rather than counted:
+    00915 (#706) has two, and one of them is the table.
     """
     if any(r.get("type") == "table" for r in results):
         return
     if not any(r.get("type") == "series" for r in results):
         return                      # _why_nothing already covers that case
-    texty = 0
+    # A page that produced a chart is accounted for even with no text on it —
+    # that is what a Liberty filing looks like, and #691's note exists to say
+    # so. Only the pictures nothing was read from are worth counting here.
+    charted = {r.get("page") for r in results if r.get("type") == "series"}
+    texty, mute = [], 0
     for i in range(npages):
         try:
-            if len(doc[i].get_text("words")) >= 120:
-                texty += 1
+            page = doc[i]
+            n = len(page.get_text("words"))
+            if n >= 120:
+                texty.append(i + 1)
+            elif not n and (i + 1) not in charted and page.get_images():
+                mute += 1
         except Exception:
             continue
+    # "no chart was exported from them", not "produced no chart": on 00915
+    # 24 chemical-only charts WERE read off pages like these and then set
+    # aside as duplicates of a stage already charted. Saying the reader found
+    # nothing there would be false; saying nothing came out is what happened.
+    scanned = (f" A further {mute} of the {npages} carry no text, and no "
+               f"chart was exported from them either — whatever is printed "
+               f"there is a picture, and a table among them cannot be read "
+               f"without OCR." if mute else "")
+    # Name them when there are few enough to name. 00915 (#706) has exactly
+    # two: p1 is the BC OGC cover form and p103 IS the table — a 22-stage
+    # "Frac Fluid and Additive Treatment Report" spreadsheet, every stage's
+    # volumes, pressures and proppant on its own row. "2 of 151 pages" sends
+    # the reader hunting; "pages 1, 103" puts him on it.
+    where = (f" (page{'s' if len(texty) > 1 else ''} "
+             f"{', '.join(str(p) for p in texty)})"
+             if 1 <= len(texty) <= 6 else "")
     if texty:
         notes.append(
-            f"No data tables read from this filing. {texty} of {npages} pages "
-            f"carry a screenful of text — if a treatment or stage summary "
-            f"table is on one of them, it is a table this provider's reader "
-            f"does not parse yet.")
+            f"No data tables read from this filing. {len(texty)} of {npages} "
+            f"pages carry a screenful of text{where} — if a treatment or "
+            f"stage summary table is on one of them, it is a table this "
+            f"provider's reader does not parse yet." + scanned)
+    elif mute:
+        # Not "they are charts": that is exactly what these pages are not
+        # known to be, and the reassurance below would be a guess.
+        notes.append(
+            f"No data tables in this filing: of {npages} pages, none carries "
+            f"enough text to be one." + scanned)
     else:
         notes.append(
             f"No data tables in this filing: of {npages} pages, none carries "
