@@ -230,9 +230,61 @@ def axis_caption_date(img, x0, x1, y1):
 # band, 72% of its ink in hollow columns, and must not be touched). Printed
 # decoration hangs in clear air. Both votes still require the island to sit
 # wholly inside the band, so neither can reach a curve that runs on past it.
+#
+# THE SAME TITLE ON A LIGHT RENDER arrives in pieces, and both votes are then
+# counting the wrong thing. 01367 pages 188, 200, 221 and 260 (Treatment
+# Intervals 1, 5, 12 and 25) print it in the same pale chocolate at the same
+# place on the template as page 266 does — plot columns 51..64, rows 300..392,
+# the pixel at column 52 row 307 is on all five — but page 266 renders it
+# cleanly and the other four do not: 188 lays grey vertical gridlines over the
+# whole chart and the other three run the crimson pressure pen straight down
+# through the lettering, and either way most of the glyph blends out of the
+# chocolate cut. What is left is not one island but four (51..52, 54..59,
+# 62..62, 64..64 on page 188), twenty lit pixels over ten columns, half of
+# them holding a single one. A column with one pixel has a span of one, so it
+# is never "hollow"; page 188 raises ONE sparse column of ten and page 221
+# raises none, and both votes fail however the fragments are cut — merging
+# them and asking again does not help either, because 1 of 10 columns and 3 of
+# 20 pixels are not majorities of anything. Page 188's Slurry Prop Conc peaked
+# at 835.65 kg/m3 on a 44-sample island where the rest of that channel never
+# passes 224, and 200, 221 and 260 at 906.86, 832.81 and 850.13 against a BH
+# Prop Conc on the same charts that peaks between 252 and 464. That is the
+# rest of #716, left standing by f8ae686 (#715): THAT change is what got
+# p188's ruled tick ladder read at all, so the channel exists to be wrong;
+# this one stops it being wrong.
+#
+# So do not ask those pieces what they are. Ask what they add up to. Merge the
+# band's ink across gaps a light render can open inside one glyph and weigh the
+# whole group's ink against the rows it reaches: a pen that travels 78 rows
+# lays down at least 78 pixels, because a stroke is connected, and the group on
+# page 188 holds 20. Fewer than one pixel for every two rows crossed is not a
+# pen; it is lettering with the white of the page between the letters. This
+# vote takes the floor test with it — the group must hang clear of the bottom
+# rule, exactly as the ink vote does — so 00423 p314's rise is out of reach of
+# this one too, and it keeps the whole-island-inside-the-band rule, so a curve
+# that merely starts early is never a candidate.
+#
+# WHERE IT STOPS, said plainly, because the boundary is tight and the next
+# person should not have to rediscover it. Ink per row reached, over the 17
+# groups this clears on 01366, 01367, 00413 and 00423: 0.08 to 0.45. Over the
+# three titles the ink vote already clears: 0.59 on 00413 p248, 0.59 on 01367
+# p266, 0.66 on 00423 p360. And over the titles NO vote here reaches — the
+# same glyph on pages where more of it survived the colour cut, so the pieces
+# are bigger but still scattered: 0.50 on 01366 p147, 0.54 on 00423 p321, 0.57
+# on 01367 p263, 0.59 on 00423 p348, 0.60 on 01366 p177 and 00413 p239, 0.74
+# on 01366 p144 — and 01366 p153, where so little of the glyph is left (eight
+# pixels over ten rows) that the group is not even tall enough to be asked,
+# and the peak is set by that one pixel at column 52 row 307, which survives
+# _drop_orphans only because four more fragments keep it company. That
+# population OVERLAPS the pages this must not touch — 0.59 against 0.59 — so
+# the threshold cannot be raised to take them in, and they are left reporting
+# a phantom rather than risked against the pen. Of the 109 treatment plots on
+# those four files, 21 read a Slurry Prop Conc above 650 kg/m3 with the BH pen
+# beside it under 500; 8 still do.
 FURNITURE_BAND = 0.08          # of the plot width, from the left frame edge
 FURNITURE_SPAN = 0.05          # of the plot height: taller than any stroke
 FURNITURE_FILL = 0.5           # lit pixels / span: below this it is not a run
+FURNITURE_GAP = 3              # empty columns a light render leaves in a glyph
 
 
 def _furniture_cols(sub):
@@ -254,13 +306,18 @@ def _furniture_cols(sub):
         span = float(ys[-1] - ys[0] + 1)
         if span > tall and len(ys) < FURNITURE_FILL * span:
             sparse[cx] = True
-    if not sparse.any():
-        return np.zeros(W, bool)
     out = np.zeros(W, bool)
     occ = sub.any(axis=0)
     idx = np.flatnonzero(occ)
+    if not len(idx):
+        return out
     ink = sub.sum(axis=0)
-    for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1):
+    # Neither of the first two votes can carry a run without a sparse column
+    # in it, so a mask holding none skips them; the reach vote below is asked
+    # of every mask, because 01367 p221's title raises none.
+    islands = np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1) \
+        if sparse.any() else []
+    for run in islands:
         # an island that reaches past the band is a curve that started early
         if run[-1] >= band:
             continue
@@ -275,6 +332,19 @@ def _furniture_cols(sub):
             continue
         if ink[run][sparse[run]].sum() * 2 > ink[run].sum():
             out[run] = True
+    # THE REACH VOTE. Merge across the gaps a light render opens inside one
+    # glyph and ask the group how far it gets for the ink it spends.
+    for grp in np.split(idx, np.flatnonzero(np.diff(idx) > FURNITURE_GAP) + 1):
+        if grp[0] >= band:
+            break
+        if grp[-1] >= band:
+            continue
+        rows = np.flatnonzero(sub[:, grp[0]:grp[-1] + 1].any(axis=1))
+        if rows[-1] >= H - tall:
+            continue
+        reach = float(rows[-1] - rows[0] + 1)
+        if reach > tall and ink[grp].sum() < FURNITURE_FILL * reach:
+            out[grp] = True
     return out
 
 
