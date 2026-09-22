@@ -13,6 +13,7 @@ import fitz
 import numpy as np
 
 from frac_core import PageMeta, _resample
+import aliases
 import ocr_labels
 import daily_ops
 from leucrotta import _fit, _close, _spans as _text_spans
@@ -165,9 +166,29 @@ def _ocr_legend_spans(spans):
     turned. That also recovers "475": OCR drops the J from "J475 CONC", and
     the bare number is a legend word precisely because no ladder claims it.
     """
+    # A ladder the sibling count cannot see. Two labels leave each other one
+    # neighbour instead of two, so the pair falls through to `by` and is read
+    # as part of the legend NAME — which is not a small mistake, because those
+    # two numbers then vote on where the legend line is. 00918 p159 prints the
+    # rate axis 20/16/12/8/4/0, squeezed between the pressure and GORV axes
+    # 6pt away on either side, and OCR gets 16 and 12 off it (#707).
+    #
+    # extract_page already has the page's answer to this — a pair one whole
+    # gridline apart, stepping evenly — so ask the same question here rather
+    # than a weaker one.
+    #
+    # Measured: this alone recovers no page of 00914/00915/00918/00919, because
+    # the line rule below already keeps the entry on every one of them. It is
+    # here so the two readers cannot disagree about what a ladder is, and
+    # because on p159 those two numbers ARE a line of two — one more word lost
+    # off a three-word name and they would be the majority.
+    _pair_ok = _pair_ladders(spans)
+
     def _ladder(s_):
         if not re.fullmatch(r"-?[\d,]+(\.\d+)?", s_["t"]):
             return False
+        if s_["color"] in _pair_ok:
+            return True
         return sum(1 for o in spans
                    if o is not s_ and o["color"] == s_["color"]
                    and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
@@ -195,16 +216,39 @@ def _ocr_legend_spans(spans):
         #
         # So find the line first and read along it. Whichever coordinate the
         # words agree on is the one they are lined up on.
-        med = lambda k: sorted(x[k] for x in items)[len(items) // 2]
-        my, mx = med("cy"), med("cx")
-        row = [x for x in items if abs(x["cy"] - my) <= 6]
-        col = [x for x in items if abs(x["cx"] - mx) <= 6]
+        #
+        # The line is the one holding the MOST words, not the one through the
+        # median position. A median is a position, and one word in the wrong
+        # place moves it onto itself. Liberty stacks its legend rows 14pt
+        # apart, and on 00918 p159 tesseract welds the "ry" of the blue
+        # "Slurry" to the "V" of the magenta "GORV" underneath into a single
+        # box 31.8pt tall (against 16-20pt for an ordinary word) whose centre
+        # lands BETWEEN the two rows — cx 132.3, against 119.5/124.2/125.6 for
+        # the blue row and 137.7 for the magenta one — and which the fill
+        # sampler scores blue. The median picked that one word, both candidate
+        # lines came back holding only it, and the blue entry was dropped: the
+        # rate was traced, had no name, and never reached the CSV (#707).
+        # p157 is the same sheet with the same two-label rate axis and no such
+        # weld, and read correctly throughout.
+        #
+        # Counting instead makes an intruder what it is: a line of one. It
+        # also subsumes the "|" of chart ink three hundred points below the
+        # legend that the median was introduced for.
+        def _line(k):
+            best = []
+            for anchor in items:
+                grp = [x for x in items if abs(x[k] - anchor[k]) <= 6]
+                if len(grp) > len(best):
+                    best = grp
+            return best
+
         # Decided BEFORE the sort, and it has to be. `items` IS `row` here,
         # and CPython empties a list while list.sort() runs so that mutation
         # during the sort is caught — so a key function that asks len(row)
         # gets 0, takes the else branch, and silently sorts by the wrong
         # coordinate. That reads a legend row DOWN the page, where every word
         # shares a coordinate and the sort is a tie.
+        row, col = _line("cy"), _line("cx")
         along_x = len(row) >= len(col)
         items = row if along_x else col
         if len(items) < 2:
@@ -775,6 +819,48 @@ def _snap_name(name):
     return low[hits[0]]
 
 
+# "Prop Conc" with its first letter eaten. _snap_name refuses this one on
+# purpose — "H Prop Conc" is one edit from "BH Prop Conc" and one from
+# "WH Prop Conc", which are different measurements — and so does the alias
+# table, so the curve is traced, placed on its own ladder, and then dropped
+# for want of a name it could be exported under (#707, #708).
+_LOST_LETTER = re.compile(r"h\s*prop\s*conc", re.I)
+
+
+def _resolve_lost_letter(named):
+    """Name a "H Prop Conc" from the entry printed BESIDE it, in place.
+
+    The page settles what the name alone cannot. A Liberty treatment chart
+    prints the two proppant concentrations as SEPARATE series, in separate
+    ink, against their own ladders — 00918 p159 stage 14 draws the dark-green
+    "Prop Conc (kg/m3)" on a ladder at cx 142..400 and the light-green one on
+    a second ladder at cx 154..413, 12pt to its right. So when one of the pair
+    was read whole, the mangled one is the OTHER one: the sibling reads
+    "Prop Conc" -> WH Prop Conc, therefore this is the bottom-hole curve, and
+    the sheet does print "BH Prop Conc (kg/m3)".
+
+    That is an identification, not a guess, and it is made from the page. The
+    rule runs both ways — a sibling that is already the bottom-hole entry
+    names this one wellhead — so nothing here prefers one answer.
+
+    NOT decided, and left exactly as OCR read it, when the page does not say:
+    no sibling concentration, both of them already present, a unit that does
+    not match, or more than one mangled entry. A wrong number that looks
+    plausible is worse than a missing one.
+    """
+    amb = [c for c, v in named.items()
+           if _LOST_LETTER.fullmatch(v["name"].strip())]
+    if len(amb) != 1:
+        return
+    unit = named[amb[0]]["unit"]
+    sibs = {aliases.canon(v["name"]) for c, v in named.items()
+            if c not in amb and v["unit"] == unit}
+    wh, bh = "WH Prop Conc" in sibs, "BH Prop Conc" in sibs
+    if wh == bh:                  # neither sibling, or both: nothing is said
+        return
+    named[amb[0]]["name"] = "BH Prop Conc" if wh else "WH Prop Conc"
+
+
 def _clean_name(name):
     """Drop a leading wellbore/leg prefix like 'B: ' or 'B :' so the curve
     name matches Carmine's alias table (e.g. 'B: Treating Pressure')."""
@@ -834,6 +920,33 @@ def _pair_on_the_grid(pts, grid):
     return abs(per) > 1e-9 and abs(per - round(per, 6)) < 1e-9
 
 
+def _pair_ladders(spans):
+    """Colours whose axis OCR read as a corroborated TWO-label ladder.
+
+    Factored out because BOTH readers of the legend need the same answer, and
+    they were only ever given it in one place. extract_page used it to keep a
+    two-label axis; _ocr_legend_spans did not, so the same two numbers it
+    accepted as an axis were also collected as words of that colour's NAME —
+    00918 p159 (#707). One list, one rule, no drift.
+    """
+    raw = defaultdict(list)
+    for s in spans:
+        if s["color"] != 0 and s.get("ocr") and \
+                re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
+            raw[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
+                                    s["cx"], s["cy"]))
+    grid = _grid_step({c: v for c, v in raw.items() if len(v) >= 3})
+    out = set()
+    for c, v in raw.items():
+        if len(v) != 2:
+            continue
+        if abs(v[0][2] - v[1][2]) > 12 and abs(v[0][1] - v[1][1]) > 12:
+            continue                      # not on one line: not a ladder
+        if _pair_on_the_grid(v, grid):
+            out.add(c)
+    return out
+
+
 def _arith_ladder(pts):
     """Is a THREE-label tick row a real ladder, or three OCR misreads?
 
@@ -863,6 +976,74 @@ def _arith_ladder(pts):
         return False
     return (abs(dv2 - dv1) <= 0.05 * abs(dv1)          # even in value
             and abs(dx2 - dx1) <= 0.05 * abs(dx1))     # and even in position
+
+
+def _even_run(pts):
+    """Does [(value, pos, _)] step evenly in BOTH value and position?
+
+    _arith_ladder's test, asked of any length. It is what a printed value
+    axis looks like and what a set of misreads does not.
+    """
+    if len(pts) < 3:
+        return False
+    q = sorted(pts, key=lambda p: p[1])
+    dv = [b[0] - a[0] for a, b in zip(q, q[1:])]
+    dx = [b[1] - a[1] for a, b in zip(q, q[1:])]
+    if any(abs(d) < 1e-9 for d in dv + dx):
+        return False
+    if any((d > 0) != (dv[0] > 0) for d in dv):          # values turn around
+        return False
+    return (max(dv) - min(dv) <= 0.05 * max(abs(d) for d in dv)
+            and max(dx) - min(dx) <= 0.05 * max(dx))
+
+
+def _drop_a_lost_digit(pts, grid):
+    """Drop the ONE tick label that lost characters to OCR -> pts unchanged.
+
+    00919's rate axis prints 20/16/12/8/4/0, and its 20 is printed hard
+    against the magenta 75 of the axis stacked 6pt below it. Tesseract loses
+    the trailing zero on ten of that file's nineteen treatment charts and
+    returns "2": p129 (stage 12, one of the two charts Carmine reported) reads
+    [2, 16, 12], and p143 reads [3, 24, 18, 12] off an axis printed
+    30/24/18/12/6/0.
+
+    Neither survives the rules above — [2, 16, 12] turns around, so it is not
+    an arithmetic ladder, and it is three labels, so it is not a pair the
+    gridlines can vouch for. p143 is worse: four labels are accepted without
+    question, so the 3 goes into the fit and drags the whole axis with it.
+
+    The page decides WHICH label is wrong, and it is not a majority vote —
+    each of the three pairs on p129 sits on the grid with an even step, so any
+    one of the three could be dropped and leave something that looks like an
+    axis. What only one of them does is EXPLAIN the label it dropped: read the
+    remaining ladder at the suspect's own position and it predicts 20 there,
+    and "2" is "20" with a character lost. The other two drops predict 7 and
+    30 against labels reading 16 and 12, which nothing turns into.
+
+    So: exactly one removal that both leaves a ladder the existing rules
+    accept AND accounts for the removed text as a truncation of the value
+    predicted in its place. Anything less certain returns pts untouched — a
+    missing rate beats a rate read off a scale no one printed.
+    """
+    if not (3 <= len(pts) <= 4) or _even_run(pts):
+        return pts
+    keep = []
+    for i in range(len(pts)):
+        rest = pts[:i] + pts[i + 1:]
+        if not (_even_run(rest) or _pair_on_the_grid(rest, grid)):
+            continue
+        a, b = _fit([(v, x) for v, x, _ in rest])
+        if abs(b) < 1e-9:
+            continue
+        pred = a + b * pts[i][1]
+        # a tick label is a round number, and both it and the reading it is
+        # supposed to be a truncation of are positive
+        if pred <= 0 or pts[i][0] <= 0 or abs(pred - round(pred)) > 0.02 * pred:
+            continue
+        want, got = "%d" % round(pred), "%g" % pts[i][0]
+        if len(got) < len(want) and want.startswith(got):
+            keep.append(rest)
+    return keep[0] if len(keep) == 1 else pts
 
 
 def _stamp(t):
@@ -1013,6 +1194,10 @@ def extract_page(page, sample_sec=1.0):
             named.setdefault(s["color"], {"name": _nm,
                                           "unit": m.group(2).strip(),
                                           "at": s.get("cx")})
+    # OCR pages only: a page with a text layer reads the leading letter it
+    # prints, so there is nothing here to resolve and nothing may move.
+    if any(x.get("ocr") for x in spans):
+        _resolve_lost_letter(named)
     # a black series (e.g. a chemical CONC drawn in black) shares ink with
     # axes/grid, so all black curves are indistinguishable — accept one only
     # when the page has EXACTLY one black-named series (else they'd merge into
@@ -1041,21 +1226,7 @@ def extract_page(page, sample_sec=1.0):
     # A pair is exempted only when the page corroborates it: the two sit on
     # one line, a whole number of the page's gridlines apart, stepping evenly
     # in value. That evidence comes from the OTHER axes, not from the pair.
-    _raw = defaultdict(list)
-    for s in spans:
-        if s["color"] != 0 and s.get("ocr") and \
-                re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
-            _raw[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
-                                     s["cx"], s["cy"]))
-    _grid0 = _grid_step({c: v for c, v in _raw.items() if len(v) >= 3})
-    _pair_ok = set()
-    for _c, _v in _raw.items():
-        if len(_v) != 2:
-            continue
-        if abs(_v[0][2] - _v[1][2]) > 12 and abs(_v[0][1] - _v[1][1]) > 12:
-            continue                      # not on one line: not a ladder
-        if _pair_on_the_grid(_v, _grid0):
-            _pair_ok.add(_c)
+    _pair_ok = _pair_ladders(spans)
 
     ticks = defaultdict(list)
     for s in spans:
@@ -1121,6 +1292,12 @@ def extract_page(page, sample_sec=1.0):
     # coming back bit-identical.
     _ocr_page = any(x.get("ocr") for x in spans)
     _grid = _grid_step(ticks) if _ocr_page else None
+    if _ocr_page:
+        # ...and before any of them is fitted, throw out a label OCR
+        # truncated. It is not enough to let the rules below refuse the
+        # ladder: on a four-label axis they do not refuse it, they fit
+        # through the bad label (00919 p143, #708).
+        ticks = {c: _drop_a_lost_digit(v, _grid) for c, v in ticks.items()}
     for color, pts in ticks.items():
         if len(pts) < 4 and not (_ocr_page and (_arith_ladder(pts)
                                                 or _pair_on_the_grid(pts, _grid))):
