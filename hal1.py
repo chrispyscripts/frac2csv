@@ -301,6 +301,19 @@ def _drop_orphans(py):
 # its reported peak. That is 31 samples of 5547, on the only one of the 47
 # charts where it happens — where before this change all 47 peaked between 1117
 # and 1235 kg/m3, and 46 now peak between 4.8 and 781.2.
+#
+# ON THE UPRIGHT VARIANT THIS IS NOT A NO-OP, which is worth saying because it
+# is tempting to assume it is. 00615 draws its pressure in a pen the red family
+# takes whole, so no pressure stroke is in the mask to begin with — and the cut
+# still removes 20-36 px a page, 0.6-1.2% of the magenta mask, one pixel per
+# column scattered over 20-36 columns. Their mean colour is (168, 74, 121):
+# anti-aliased BLEND pixels where the two curves cross or run close, part
+# pressure and part conc by construction. Over 55 charts that leaves 52 with a
+# bit-identical peak and moves three — p316 +0.01%, p412 -0.45%, p334 -4.13% —
+# each one a chart whose peak sample happened to sit on a crossing. Excluding
+# an ambiguous blend pixel from the conc trace is the defensible reading, but
+# it is a behaviour change on a file this fix was not aimed at, not an
+# invariant. On-pressure fraction is 0.0% before and after on all 55.
 def _bh_conc(masks):
     """The purple BH Prop Conc mask with the crimson pressure ink cut out."""
     mag = masks.get("magenta")
