@@ -6,7 +6,9 @@ the frame (green Slurry Rate), concentration ticks just inside the left
 frame (chocolate Slurry Prop Conc + purple Bottom-Hole Prop Conc),
 pressure ticks right of the frame (crimson Treating Pressure). Time axis
 is "DD HH:MM" labels. Crimson and chocolate share auto_raster's red
-family, so they are split on the g-vs-b channel inside hal1.
+family, so they are split on the g-vs-b channel inside hal1; crimson
+also reaches into the magenta family the purple pen uses, so that one
+is cut against red (see _bh_conc).
 
 Because the concentration axis lives INSIDE the plot, its decoration — tick
 stubs and the rotated "Conc. [kg/m3]" title, both drawn in the series' own
@@ -252,13 +254,71 @@ def _drop_orphans(py):
     return py
 
 
+# Crimson is a RED that carries a blue shoulder, and auto_raster's magenta rule
+# — (r > g + m1) & (b > g + m1) — asks only that blue beat GREEN, never that it
+# beat red. Halliburton draws Treating Pressure in about (184, 27, 70), whose
+# blue clears green by 43, so the whole pressure trace lands in the magenta
+# family next to the purple Bottom-Hole Prop Conc pen it was never meant to
+# share. On the three charts the client reported, half the magenta mask is
+# pressure ink: 3960 px of 8152 on 00413 p247 (Treatment Interval 18), 3932 of
+# 8362 on 00413 p250 (interval 19), 4229 of 8810 on 00423 p359 (interval 20).
+#
+# Where the purple pen is on the page the tracer's continuity mostly holds it,
+# but a BOTTOM-HOLE concentration does not exist until proppant reaches the
+# perforations — on interval 18 the purple pen rests on zero for the first
+# 20 minutes of a 77-minute chart — so through the pad the mask holds the
+# pressure stroke and nothing else, and the tracer follows the only ink there
+# is. Both axes are read off the same two frame rows, 1500.0..0.46 for conc
+# against 100.0..0.07 for pressure, so what ships is the pressure curve at
+# fifteen times its value: BH Prop Conc peaked at 1139.69 kg/m3 on interval 18,
+# where the purple pen plateaus below 600. That is #702 "BH prop con
+# misbehaving on first half of x axis", #703 and #704 "prop con appears to
+# overlap with TR pressure data".
+#
+# The cut is auto_raster's own red family, which already demands r > b + m1 —
+# what crimson has and purple cannot. The two pens are nowhere near the line:
+# across the three charts the pixels this removes run r-b = +97..+110 on the
+# median and the ones it keeps -6..-5, so nothing is being judged on a margin.
+# Measuring the samples that read ON the pressure stroke (both channels within
+# 1% of the plot height of each other, each mapped back through its own
+# axis_frame), the first half of the record goes 21.4% -> 0.0%, 31.6% -> 0.0%
+# and 28.5% -> 0.0%, and the peaks come back to 565.22, 591.19 and 560.75
+# kg/m3 against a purple pen that plateaus just under 600 on all three.
+#
+# What this does NOT reach is the palest fringe of the crimson stroke —
+# (255, 216, 242) and its neighbours — which is not red enough for the red
+# family and stays in the mask. Nothing separates those from the purple pen's
+# own anti-aliased edge: pooled over six of these charts the two sit in the
+# same r-b band, and a paleness cut at min-channel > 150 takes 29.6% of the ink
+# touching the crimson but 21.2% of the purple away from it. Cutting instead on
+# ADJACENCY to the crimson does clear them, and costs 2.9% of the BH channel's
+# samples on average across all 47 charts of these two files (worst 7.4%) to
+# mend two — real ink deleted for a phantom — so it is not done here.
+#
+# The phantom that therefore survives, said plainly rather than guessed at: on
+# 00423 p308 (interval 3) a 31-second island still reads 1155.9 kg/m3, which is
+# 15x that chart's 77.3 MPa, and being the highest thing in the channel it sets
+# its reported peak. That is 31 samples of 5547, on the only one of the 47
+# charts where it happens — where before this change all 47 peaked between 1117
+# and 1235 kg/m3, and 46 now peak between 4.8 and 781.2.
+def _bh_conc(masks):
+    """The purple BH Prop Conc mask with the crimson pressure ink cut out."""
+    mag = masks.get("magenta")
+    if mag is None:
+        return None
+    red = masks.get("red")
+    # hue_masks drops a family that holds too few pixels, so a page with no red
+    # at all is a real case and not a guard: there is then no crimson to cut.
+    return mag if red is None else (mag & ~red)
+
+
 SERIES = [  # (label, unit, axis, mask_fn)
     ("Treating Pressure", "MPa", "press",
      lambda m, g, b: m.get("red", None) is not None and (m["red"] & (b >= g))),
     ("Slurry Prop Conc", "kg/m3", "conc",
      lambda m, g, b: m.get("red", None) is not None and (m["red"] & (g > b + 15))),
     ("BH Prop Conc", "kg/m3", "conc",
-     lambda m, g, b: m.get("magenta")),
+     lambda m, g, b: _bh_conc(m)),
     ("Slurry Rate", "m3/min", "rate",
      lambda m, g, b: m.get("green") if m.get("green") is not None
      else m.get("cyan")),
