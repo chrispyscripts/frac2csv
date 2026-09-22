@@ -675,6 +675,23 @@ def _mdy(m):
     return f"{yr:04d}-{mon:02d}-{day:02d}"
 
 
+def _iso(m):
+    """'2021-09-01' -> '2021-09-01'. '' when the fields cannot be a date.
+
+    The M/D form has always been validated through _mdy and the ISO form was
+    pasted straight through, so a misread digit left the module by the front
+    door: 00971 p134 exports 2051-00-02 and p157 2021-00-03 — month zero, into
+    the CSV's DATETIME column, on pages that extract cleanly. The same range
+    test _mdy applies is applied here, so a mangled ISO label is refused and
+    the page falls back to whatever else it prints, exactly as a mangled M/D
+    label already did.
+    """
+    yr, mon, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (1 <= mon <= 12 and 1 <= day <= 31):
+        return ""
+    return f"{yr:04d}-{mon:02d}-{day:02d}"
+
+
 def _start_stamp(label_date, t_min_all):
     """(date, start_time) for a chart's first sample. -> ('YYYY-mm-dd', 'HH:MM:SS')
 
@@ -703,8 +720,8 @@ def _axis_date(spans, row):
         if not 0 < s["cy"] - row_cy < 40:      # the row directly beneath
             continue
         m = _D_ISO.fullmatch(s["t"])
-        if m:
-            found.append((s["cx"], f"{m.group(1)}-{m.group(2)}-{m.group(3)}"))
+        if m and _iso(m):
+            found.append((s["cx"], _iso(m)))
             continue
         m = _D_MDY.fullmatch(s["t"])
         if m and _mdy(m):
