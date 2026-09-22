@@ -39,6 +39,32 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.25</h2>
+    <ul>
+      <li><b>Treating pressure was being read against another channel&rsquo;s
+        scale &mdash; and most of it never showed up as bad data.</b> Where the
+        text reader loses the pressure scale, the app fell back to whichever
+        scale it had found. On six charts that was the rate scale, so a
+        pressure of 74 MPa exported as 18. On <b>twenty-five more</b> it was
+        the concentration scale, which put the pressure about fifteen times too
+        high &mdash; and the plausibility check then deleted it, so those pages
+        quietly lost two channels each and looked like missing data rather than
+        wrong data. Both are fixed at the source</li>
+      <li><b>The cause was a speck of ink.</b> The pressure scale was being
+        read &mdash; ten of its eleven numbers &mdash; but nine came back with
+        the tick mark stuck to the end (&ldquo;90-&rdquo;, &ldquo;80-&rdquo;),
+        and the reader only knew how to strip one off the <i>front</i>. That
+        left two usable numbers, one short of what it takes to trust a scale.
+        It now strips either end</li>
+      <li><b>Measured over 273 charts:</b> 1,149 channels before, 1,201 after
+        &mdash; 52 recovered, <b>none lost</b>, and the same ten pages fail
+        either way. Every pressure channel in the corpus now reports a scale
+        top of 90 or 100; before this there were scale tops reading 15 and 20</li>
+      <li>None of this was reported &mdash; it was found while checking the
+        previous release. The pages affected are in filings that already looked
+        like they had read correctly</li>
+    </ul>
+
     <h2>v1.11.24</h2>
     <ul>
       <li><b>Treating pressure was being read against the wrong scale.</b>
