@@ -36,6 +36,12 @@ FRAME_FIT_TOL = 75
 # one blank key and showed as a single "Stage ?" (#346).
 _STAGE = r"(?i:Stage|STG)"
 
+# The whole stage token as Liberty prints it, in one place: the module reads
+# it and tests/test_lib1_refrac_letter.py asserts on it, and a second copy
+# would drift the moment either changed.
+_STAGE_TOKEN = (rf"{_STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Za-z]?"
+                r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]*[A-Z]{2,4})?)\b()")
+
 
 # The company renamed. Filings before it print "Liberty Oilfield Services LLC"
 # and nothing else identifies them, so requiring "Liberty Energy" left 85 chart
@@ -1399,9 +1405,17 @@ def extract_page(page, sample_sec=1.0):
          # The re-frac letter is printed in either case: "Stage 4A" and, on
          # 01732 p207, "Middle Montney Stage 3a" — which this pattern
          # refused, so the re-plug frac of stage 3 filed as no stage (#649).
-         or re.search(rf"{_STAGE}\s+((?:[A-Z]{{2,4}}\s+)?\d+[A-Za-z]?"
-                      r"(?:\s*-\s*[A-Z]{2,4})?(?:[ \t]+[A-Z]{2,4})?)\b()",
-                      text))
+         #
+         # The trailing tag is not always spaced off the number. 01004 p171
+         # and p207 print "LMA - Stage 10HRF" and "LMA - Stage 25HRF" with
+         # nothing between, and requiring the space refused the whole token:
+         # both pages filed as no stage at all and reached Carmine as
+         # "Stage ?" (#714). [ \t]* rather than [ \t]+, which is the only
+         # difference — checked against every label shape this module has
+         # had to read, "Stage 4A HRF", "Stage 6A PW", "Stage 14A - HRF",
+         # "Stage HRF 5A", "Stage 3a", "Stage 01 of 47", "Stage 12 MPa" and
+         # "Stage 3 Part II" all still read exactly as before.
+         or re.search(_STAGE_TOKEN, text))
     if m:
         stage = " ".join(m.group(1).split())
         part = m.group(2)
