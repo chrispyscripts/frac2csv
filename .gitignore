@@ -9,3 +9,8 @@ build/
 *.png
 # ...except the bundled example chart (test data provided for this purpose)
 !examples/example-flattened-chart.png
+
+# Vercel CLI writes a short-lived OIDC token here; it must never be tracked.
+.env.local
+.env*.local
+**/.env.local
