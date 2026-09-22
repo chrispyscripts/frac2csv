@@ -412,6 +412,80 @@ def _axis_columns(spans, box=None):
                 # two points fit the line and the third has to land on it.
                 if len(chain) >= _min_chain:
                     chains.append(chain)
+                # An axis is a straight LINE, not an arithmetic sequence of
+                # whichever labels OCR happened to catch. 00217 p323 prints
+                # its pressure ladder every 10 MPa and OCR read four of the
+                # eleven — 100, 60, 30 and 0 — which sit on one line to
+                # within 0.1pt but step 40/30/30, so no constant-gap chain
+                # links them. The only arithmetic run is {60, 30, 0}, and
+                # taking it capped the axis at 60 on a page whose pressure
+                # reaches 100: Treating Pressure came out with 17.2% of its
+                # samples, the rest falling outside a scale that was never
+                # the right one (#695).
+                #
+                # So the pair also gets to claim every label that lands on
+                # ITS line, judged in POSITION, which is the thing actually
+                # measured here.
+                #
+                # Three points are still required, and the window is ONE
+                # POINT and does not widen with the pair's reach. A tick label
+                # is set on its own gridline and OCR returns its centre to a
+                # fifth of a point: every label this rule is here to recover
+                # lands 0.05 to 0.25 off its line — p323's 100 and 0 at 0.05
+                # and 0.09, its rate ladder's 5 at 0.18, 00218 p328's four top
+                # concentration labels between 0.00 and 0.24 — so a point is
+                # already four times the error being allowed for, and erring
+                # tight costs nothing: a label left out only leaves the axis
+                # as short as it was before any of this.
+                #
+                # Everything past that is a stray's way in. A window that grew
+                # with the pair — 3% of it, 8 to 10pt across a full ladder —
+                # took both of the ones this corpus has, and a flat 3pt still
+                # took one:
+                #  - 00971 p135's section number "4.3", 123pt above the frame,
+                #    which sits 0.7 to 2.4pt off the lines a pair drawn
+                #    through IT and a real label 250pt away will fit. At one
+                #    point those runs are four labels long against the
+                #    ladder's own seven and cannot win; at three they reached
+                #    six, and the page read its 0..3.0 ladder as 0.01..4.31.
+                #  - on 00002 p339 the overprinted copy's "90" (see
+                #    visible_plot_box): that page draws the same ladder at
+                #    33.4pt per 10 MPa and again at 26.0, and the hidden 90
+                #    lands 7.4pt off the visible line. Taken, it tilted the
+                #    fit to 0.14..99.60 against a printed 0..100 and read
+                #    Treating Pressure as 77.52 where the page prints 77.9.
+                #
+                # p323's own header "35.2" was never the hard case — it sits
+                # 273pt off.
+                #
+                # And a value appears ONCE on an axis, so where two labels
+                # read the same number the line keeps the one nearer to it.
+                # That is not a refinement of the window, it is the other
+                # half of the doubled page: p339 draws its two copies at
+                # different scales, but 00002 p414 draws them at the SAME
+                # one, so every label of the hidden ladder lands on the
+                # visible line to well under a point. Without this the
+                # pressure column came back with 21 ticks instead of 11, ten
+                # of them a second reading of a point already on the line,
+                # and the doubled weight tilted the fit to 0.06..100.02 on a
+                # ladder printed 0..100.
+                line = {val(group[i]): (0.0, group[i]),
+                        val(group[j]): (0.0, group[j])}
+                for k in range(len(group)):
+                    if k in (i, j):
+                        continue
+                    want = group[i]["cy"] + (val(group[k]) - val(group[i])) \
+                        * gap / vstep
+                    off = abs(group[k]["cy"] - want)
+                    if off > 1.0:
+                        continue
+                    v = val(group[k])
+                    if v in line and line[v][0] <= off:
+                        continue
+                    line[v] = (off, group[k])
+                if len(line) > len(chain) and len(line) >= _min_chain:
+                    chains.append(sorted((t for _o, t in line.values()),
+                                         key=lambda t: t["cy"]))
         if not chains:
             continue
         longest = max(len(c) for c in chains)
@@ -457,22 +531,36 @@ def _axis_columns(spans, box=None):
         # a printed 0..20.
         #
         # What actually separates an axis from a marker ladder is where it
-        # reaches ZERO. Every real axis on that page extrapolates to within a
-        # fraction of a point of the same span — A 329.3, B 329.8, C 329.4,
-        # because they all run the height of one frame — while #77's phantom
-        # column of event numbers 17..20, stepping by one over a fifth of the
-        # frame, would have to run about 440 to reach zero. The reference is
-        # the column with the MOST ticks, which is the best-evidenced fit on
-        # the page.
+        # reaches ZERO. Every real axis on this template does so on the plot
+        # frame's bottom rule, because they all run the height of one frame,
+        # while #77's phantom column of event numbers 17..20 — stepping by one
+        # over a fifth of the frame — reaches zero about 110pt below it.
+        #
+        # Compared as a POSITION, not as a span from the top tick down. A span
+        # also carries where OCR stopped reading, which is not evidence about
+        # anything: on 00218 p328 the rate ladder is read at 15, 10 and 5 and
+        # the concentration ladder at all fourteen of its labels, so their
+        # spans are 191.4 against 305.9 and the ratio test threw the rate
+        # ladder away — after which the page had ONE column, "B" claimed it
+        # from 34pt away, both pressures fell onto it through the positional
+        # fallback and all five channels were refused. The two ladders' ZEROS
+        # are 470.61 and 470.39, a fifth of a point apart, on a frame whose
+        # bottom rule the page draws at 470.28.
+        #
+        # The reference is the column with the MOST ticks, which is the
+        # best-evidenced fit on the page, and the window is 6% of its own
+        # reach — 18pt on that page against the 0.22 the rate ladder needs.
         def _zero_span(c):
             if abs(c["b"]) < 1e-9:
                 return c["y_hi"] - c["y_lo"]
             ys = (c["y_lo"], c["y_hi"], -c["a"] / c["b"])
             return max(ys) - min(ys)
 
-        ref = _zero_span(max(out, key=lambda c: c["n"]))
+        ref_c = max(out, key=lambda c: c["n"])
+        ref, z0 = _zero_span(ref_c), -ref_c["a"] / ref_c["b"]
         if ref > 0:
-            out = [c for c in out if 0.8 <= _zero_span(c) / ref <= 1.25]
+            out = [c for c in out
+                   if abs(-c["a"] / c["b"] - z0) <= 0.06 * ref]
     out.sort(key=lambda c: c["x"])
     return out
 
@@ -1103,7 +1191,20 @@ def extract_page(page, sample_sec=1.0):
     # whatever happened to be second. A letter matched to the column beneath
     # it cannot slide like that, and a letter with no column near it maps to
     # nothing, which is the honest answer.
-    placed = {}
+    # A column is ONE axis, so it is claimed by the letter standing closest
+    # to it and by no other. setdefault took the first letter to come along
+    # in span order instead, and when a page's other ladders are not read the
+    # surviving column collects every letter that happens to fall within the
+    # window: on 00217 p181 the page prints A at cx 94, B at 656 and C at 696,
+    # only C's column is found, and B matched it at 36.7pt while C sat 3.3pt
+    # away. B took it, A then fell through to the positional fallback and
+    # both pressures were mapped to the CONCENTRATION ladder — 0..1500 for a
+    # channel printed 0..100 (#695).
+    #
+    # Nearest wins, ties are impossible to split so the first is kept, and a
+    # letter left without a column maps to nothing, which is already this
+    # function's honest answer for that case.
+    best = {}                         # id(column) -> (distance, letter)
     for s_ in spans:
         if s_["color"] != 0:
             continue
@@ -1111,8 +1212,15 @@ def extract_page(page, sample_sec=1.0):
         if letter is None:
             continue
         near = min(columns, key=lambda c: abs(c["x"] - s_["cx"]))
-        if abs(near["x"] - s_["cx"]) <= 40:
-            placed.setdefault(letter, near)
+        d = abs(near["x"] - s_["cx"])
+        if d > 40:
+            continue
+        prev = best.get(id(near))
+        if prev is None or d < prev[0]:
+            best[id(near)] = (d, letter, near)
+    placed = {}
+    for _d, letter, col in best.values():
+        placed.setdefault(letter, col)
     for ax in letters_used:
         if ax in placed:
             mapping[ax] = placed[ax]
@@ -1194,7 +1302,8 @@ def extract_page(page, sample_sec=1.0):
     lab_lo = min(s["cx"] for s in t_row)
     lab_hi = max(s["cx"] for s in t_row)
     vgrid = []
-    for d in page.get_drawings():
+    rules = []                     # the same lines' y extents, visible only
+    for _i, d in enumerate(page.get_drawings()):
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         for item in d["items"]:
@@ -1205,6 +1314,8 @@ def extract_page(page, sample_sec=1.0):
             bx, by = (_unrotate(p2.x, p2.y) if rotated else (p2.x, p2.y))
             if abs(ax - bx) < 0.6 and abs(ay - by) > 100:
                 vgrid.append((ax + bx) / 2)
+                if _i >= vis_cut:
+                    rules.append((min(ay, by), max(ay, by)))
     if vgrid:
         # never narrower than the old label-based window (stay a superset)
         x_lo = min(min(vgrid) - 2, lab_lo - 30)
@@ -1246,6 +1357,42 @@ def extract_page(page, sample_sec=1.0):
     v_bot = float(hi_s[len(hi_s) // 2])
     if v_bot < v_top:
         v_top, v_bot = v_bot, v_top
+    # ...but "except where its labels stop short of it" is the whole page on
+    # an OCR'd sheet, and then the median is not the frame at all — it is the
+    # middle of three arbitrary truncations. 00217 p181 prints three ladders
+    # down one frame that runs y 138.4..470.3: A is read to its "30" at
+    # 370.6, B to its "5" at 387.2, C to its "200" at 426.1, all three
+    # stopping where OCR stopped and none of them at the frame. The median
+    # put the window's floor at 387.2, which is the 25.0 MPa line — and every
+    # segment of Backside Pressure (a flat 18.6), of Slurry Proppant Conc and
+    # of BH Proppant Conc lies below it, so all three channels lost every
+    # sample they had and were dropped from the chart, while Treating
+    # Pressure and Slurry Rate were sheared off at their floors (#695).
+    #
+    # Worth knowing before touching _axis_columns again: this is why the
+    # defect above could hide. Finding MORE tick columns TIGHTENS a median,
+    # so every improvement to column detection paid for the ladders it
+    # recovered with channels clipped away somewhere else, and came out
+    # looking like a wash.
+    #
+    # The frame does not have to be inferred: the page RULES it. The
+    # full-height vertical gridlines collected just above all run exactly the
+    # frame's height — thirteen of them on p181, every one 138.5..470.7 — and
+    # their median is the frame whether or not a single tick label was read.
+    # The median, not the extent, because an event marker drops a stem of its
+    # own down part of the frame (two on p323, 356.5..470.7).
+    #
+    # Used only when the ruled frame CONTAINS every tick the columns were fit
+    # on, which is what makes it this chart's frame and not some other
+    # rule on the sheet. Where it does not, the labels are all there is and
+    # the median above stands.
+    if rules:
+        tops = sorted(t for t, _b in rules)
+        bots = sorted(b for _t, b in rules)
+        f_top = tops[len(tops) // 2]
+        f_bot = bots[len(bots) // 2]
+        if f_top <= min(lo_s) + 2 and f_bot >= max(hi_s) - 2 and f_bot > f_top:
+            v_top, v_bot = float(f_top), float(f_bot)
 
     t_min_all, t_max_all = None, None
     series = {}
