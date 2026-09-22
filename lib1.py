@@ -783,12 +783,22 @@ def _axis_column(pts):
     a well name's digits or a stage number satisfies none of those."""
     if len(pts) < 4:
         return False
-    cys = [p[2] for p in pts]
-    if max(cys) - min(cys) > 2.0:            # scattered text, not one column
-        return False
     order = sorted(pts, key=lambda p: p[1])
     xs = [p[1] for p in order]
     vals = [p[0] for p in order]
+    cys = [p[2] for p in pts]
+    # "One row" is not one COORDINATE. The labels are aligned on their left
+    # edge and their centres are what we hold, so a short "0.0" sits ~2.1pt
+    # off a "0.200" beside it — and the flat 2.0 tolerance this used to carry
+    # threw out every Liberty black ladder by a tenth of a point. 00949 p97's
+    # Dry FR Conc then had no axis of its own and borrowed a coloured one
+    # printed 0..1000 against its own 0..1.0; 00974 p129's B596 Conc borrowed
+    # 0..1.0 against its own 0..2.4. Scale with the column instead: an axis is
+    # tight across the time axis RELATIVE to the span it covers in value,
+    # which holds at any font size. The scattered black numerics this rejects
+    # are tens of points apart, not a fraction of one.
+    if max(cys) - min(cys) > max(2.0, 0.05 * (max(xs) - min(xs))):
+        return False
     if vals != sorted(vals) and vals != sorted(vals, reverse=True):
         return False
     gaps = [b - a for a, b in zip(xs, xs[1:])]
@@ -1158,8 +1168,11 @@ def _value_panels(page, horizontal):
 
 def _panel_of(v, panels):
     """Which panel a value-axis position belongs to — the nearest one, so ink
-    running past the outermost gridline to the frame edge still counts."""
-    if not panels:
+    running past the outermost gridline to the frame edge still counts.
+
+    None for a position we do not have, so a legend span with no coordinate
+    keys the same way a single-plot page does instead of raising."""
+    if not panels or v is None:
         return None
     return min(range(len(panels)),
                key=lambda i: 0.0 if panels[i][0] <= v <= panels[i][1]
@@ -1193,6 +1206,7 @@ def extract_page(page, sample_sec=1.0):
     # time gridlines (constant along time coord, long across values) anchor
     # the interior labels when validating the frame fit
     time_grid = []
+    frame_edges = []
     for d in page.get_drawings():
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
@@ -1202,11 +1216,40 @@ def extract_page(page, sample_sec=1.0):
             else (r.x0, r.y0, r.x1, r.y1)
         if abs(gy1 - gy0) < 0.5 and (gx1 - gx0) > 100:
             time_grid.append(round((gy0 + gy1) / 2, 2))
+            # ...and each one is drawn the full HEIGHT of its own plot, so its
+            # ends are that plot's frame edges. _value_panels' bands are the
+            # outermost GRIDLINES, which is a different pair: there is no
+            # gridline at the axis zero, and the frame edge is the line the
+            # zero label belongs to.
+            frame_edges.append(round(gx0, 2))
+            frame_edges.append(round(gx1, 2))
     time_grid = sorted(set(time_grid))
+    frame_edges = sorted(set(frame_edges))
     tfit, date, frame_win = _time_axis(spans, time_frame, time_grid)
     if tfit is None:
         raise ValueError("lib1: time labels not found")
     ta, tb = tfit
+
+    # Two plots on one page share the red pen, so colour alone does not say
+    # which curve a path is. _value_panels already stopped the chemical plot's
+    # ink being concatenated into the pressure — but only the INK. The legend,
+    # the tick ladders and the axis fits were all still keyed by colour alone,
+    # and on 00949 that is three more defects:
+    #
+    #   * J475 Conc was never named. setdefault kept "Treating Pressure" for
+    #     red, so the chemical channel is not dropped from the chart, it is
+    #     dropped from the export — silently, with the comb gone.
+    #   * Treating Pressure was fitted through BOTH red ladders, the 0..100
+    #     MPa one and the chemical plot's 0..0.3. Stage 1 reports 34.9..60.0
+    #     against a chart that runs 0..77.
+    #   * the same on 00619, where green collides with DR42430 CONC: BH Prop
+    #     Conc ships 3.1..3.8 kg/m3 where the chart draws 409. No comb there
+    #     to give it away.
+    #
+    # So every key below is (colour, panel). A page holding one plot has no
+    # bands at all, _panel_of answers 0 for everything, and the keys collapse
+    # to the plain colour they were.
+    panels = _value_panels(page, horizontal)
 
     # colored series: name span "<Name> (<unit>)" + same-color numeric ticks
     named = {}
@@ -1226,9 +1269,9 @@ def extract_page(page, sample_sec=1.0):
             # cx is the VALUE-axis position of the legend entry (the spans
             # are already swapped on a landscape page), which is what says
             # WHICH plot on the page this series belongs to.
-            named.setdefault(s["color"], {"name": _nm,
-                                          "unit": m.group(2).strip(),
-                                          "at": s.get("cx")})
+            named.setdefault((s["color"], _panel_of(s.get("cx"), panels)),
+                             {"name": _nm, "unit": m.group(2).strip(),
+                              "at": s.get("cx")})
     # OCR pages only: a page with a text layer reads the leading letter it
     # prints, so there is nothing here to resolve and nothing may move.
     if any(x.get("ocr") for x in spans):
@@ -1237,18 +1280,27 @@ def extract_page(page, sample_sec=1.0):
     # axes/grid, so all black curves are indistinguishable — accept one only
     # when the page has EXACTLY one black-named series (else they'd merge into
     # garbage) and its unit matches a colored series' axis (shared via unit_fit).
-    colored_units = {v["unit"] for v in named.values()}
-    black = []
+    colored_units = defaultdict(set)
+    for (_c, _pi), v in named.items():
+        colored_units[_pi].add(v["unit"])
+    black = defaultdict(list)
     for s in spans:
         if s["color"] != 0:
             continue
         m = re.fullmatch(r"(.+?)\s*\(([^)]+)\)", s["t"])
-        if m and len(m.group(1)) > 3 and m.group(2).strip() in colored_units:
-            cand = {"name": _clean_name(m.group(1).strip()), "unit": m.group(2).strip()}
-            if cand not in black:
-                black.append(cand)
-    if len(black) == 1:
-        named[0] = black[0]
+        _pi = _panel_of(s.get("cx"), panels)
+        if m and len(m.group(1)) > 3 and m.group(2).strip() in colored_units[_pi]:
+            cand = {"name": _clean_name(m.group(1).strip()),
+                    "unit": m.group(2).strip(), "at": s.get("cx")}
+            # dedup on the NAME, never on the position: the same black entry
+            # printed twice used to collapse to one, and comparing whole
+            # dicts would leave two and refuse the series outright.
+            if not any(c["name"] == cand["name"] and c["unit"] == cand["unit"]
+                       for c in black[_pi]):
+                black[_pi].append(cand)
+    for _pi, _cands in black.items():
+        if len(_cands) == 1:
+            named[(0, _pi)] = _cands[0]
     # Which colours print only TWO ticks that the page's own grid vouches for.
     #
     # The kin>=2 rule below is what stops a stray legend word being collected
@@ -1286,8 +1338,8 @@ def extract_page(page, sample_sec=1.0):
                                or abs(o["cy"] - s["cy"]) <= 12))
                 if kin < 2:
                     continue
-            ticks[s["color"]].append((_tick_num(s["t"]),
-                                      s["cx"], s["cy"]))
+            ticks[(s["color"], _panel_of(s["cx"], panels))].append(
+                (_tick_num(s["t"]), s["cx"], s["cy"]))
     # A black series with its OWN printed tick column. Black numerics are
     # excluded above because axis, grid and title ink is black too, so a black
     # series borrows a colored axis of the same unit (unit_fit below). That
@@ -1297,11 +1349,14 @@ def extract_page(page, sample_sec=1.0):
     # and pinned it to the axis top. Accept a black column only when it looks
     # like a printed axis — see _axis_column — and leave the borrow in place
     # otherwise.
-    black_ticks = [(_tick_num(s["t"]), s["cx"], s["cy"])
-                   for s in spans
-                   if s["color"] == 0 and _is_tick(s["t"])]
-    if 0 in named and _axis_column(black_ticks):
-        ticks[0] = black_ticks
+    black_ticks = defaultdict(list)
+    for s in spans:
+        if s["color"] == 0 and _is_tick(s["t"]):
+            black_ticks[_panel_of(s["cx"], panels)].append(
+                (_tick_num(s["t"]), s["cx"], s["cy"]))
+    for _pi, _bt in black_ticks.items():
+        if (0, _pi) in named and _axis_column(_bt):
+            ticks[(0, _pi)] = _bt
     # value gridlines: long constant-x strokes. Tick LABELS sit ~12pt off
     # the gridline they annotate (left-aligned text), which biased every
     # value by a constant few units — snap each label to its gridline and
@@ -1319,6 +1374,23 @@ def extract_page(page, sample_sec=1.0):
     grid_xs = sorted(set(grid_xs))
     snap_tol = min((b - a for a, b in zip(grid_xs, grid_xs[1:])),
                    default=0) * 0.45
+    # The axis ZERO has no gridline of its own: the plot's bottom edge IS that
+    # line and the template does not draw it twice. So the zero label was the
+    # one anchor that never snapped, and its raw offset tilted every fit on
+    # the page — both proppant concentrations on 00949 p97 report 12 and 23
+    # kg/m3 through the third of the stage the chart draws flat on the axis,
+    # and the same fit puts the pressure baseline at -1.9 (clipped to 0, so
+    # invisible). The panel bands carry those edges; snap to them like any
+    # other gridline.
+    #
+    # snap_tol is taken BEFORE they go in. An edge that coincides with a drawn
+    # gridline would otherwise leave a hair-width gap in the ladder and
+    # collapse the tolerance to nothing, silently turning snapping off for the
+    # whole page — so a coincident edge is dropped instead.
+    for _e in frame_edges:
+        if all(abs(_e - g) > snap_tol for g in grid_xs):
+            grid_xs.append(_e)
+    grid_xs = sorted(grid_xs)
 
     fits = {}
     # OCR pages only. A text-layer page reads every label it prints, so it
@@ -1332,7 +1404,7 @@ def extract_page(page, sample_sec=1.0):
         # ladder: on a four-label axis they do not refuse it, they fit
         # through the bad label (00919 p143, #708).
         ticks = {c: _drop_a_lost_digit(v, _grid) for c, v in ticks.items()}
-    for color, pts in ticks.items():
+    for _key, pts in ticks.items():
         if len(pts) < 4 and not (_ocr_page and (_arith_ladder(pts)
                                                 or _pair_on_the_grid(pts, _grid))):
             continue
@@ -1373,19 +1445,19 @@ def extract_page(page, sample_sec=1.0):
                                 for i in range(1, len(vals))} - {0.0})
                 if steps and abs(lo_v % steps[0]) < 1e-6:
                     lo_v = 0.0
-            fits[color] = (a, b, lo_v, hi_v)
+            fits[_key] = (a, b, lo_v, hi_v)
     if not named or not fits:
         raise ValueError("lib1: legend or tick rows not found")
     # share an axis by unit for series without their own tick row (black series).
     # Colored axes only: a black fit is the borrower's own axis, never a donor,
     # so a colored series missing its ticks cannot inherit the black range.
     unit_fit = {}
-    for color, f in fits.items():
+    for (color, _pi), f in fits.items():
         if color == 0:
             continue
-        u = named.get(color, {}).get("unit", "")
-        if u and u not in unit_fit:
-            unit_fit[u] = f
+        u = named.get((color, _pi), {}).get("unit", "")
+        if u and (_pi, u) not in unit_fit:
+            unit_fit[(_pi, u)] = f
 
     meta = PageMeta()
     # stage labels carry re-frac suffixes/prefixes ("4A", "5B", "HRF 5A",
@@ -1430,6 +1502,9 @@ def extract_page(page, sample_sec=1.0):
     meta.date = date
 
     tick_x = [x for pts in ticks.values() for _, x, _ in pts]
+    panel_x = defaultdict(list)
+    for (_c, _pi), pts in ticks.items():
+        panel_x[_pi].extend(x for _, x, _ in pts)
     x_lo, x_hi = min(tick_x) - 10, max(tick_x) + 10
     # Smaller cx is a HIGHER value, so that -10 admits ink ten points above
     # the topmost tick — above the axis maximum by construction. On a page
@@ -1469,17 +1544,14 @@ def extract_page(page, sample_sec=1.0):
     units = {}
     axes = {}          # name -> (axis_min, axis_max) from the printed ticks
     axis_fit = {}      # name -> (a, b) so the axis can be read AT the frame
-    # Two plots on one page share the red pen, so colour alone does not say
-    # which curve a path is (see _value_panels). Nothing changes on a page
-    # holding a single plot, which is every other template we read.
-    panels = _value_panels(page, horizontal)
-    for color_int, info in named.items():
-        fit = fits.get(color_int) or unit_fit.get(info["unit"])
+    panel_of_name = {}
+    for (color_int, panel_i), info in named.items():
+        fit = fits.get((color_int, panel_i)) or \
+            unit_fit.get((panel_i, info["unit"]))
         if fit is None:
             continue
         a, b, v_lo_ax, v_hi_ax = fit
-        my_panel = (_panel_of(info["at"], panels)
-                    if panels and info.get("at") is not None else None)
+        my_panel = panel_i if panels else None
         pts = []
         for d in page.get_drawings():
             c = d.get("color")
@@ -1534,9 +1606,14 @@ def extract_page(page, sample_sec=1.0):
         # 0..75 because magenta's own 75 sits below the page's highest tick.
         # Each series is bounded by its own ladder: the position its maximum
         # tick occupies, with a point of slack for pen width.
-        x_lo_c, x_hi_c = x_lo, x_hi
+        # ...and by its own PLOT. The extent above is the page's, and on a
+        # two-plot page it reaches across the gap into the other chart.
+        _xs = panel_x.get(panel_i) or tick_x
+        x_lo_c, x_hi_c = min(_xs) - 10, max(_xs) + 10
+        if _ocr_page:
+            x_lo_c = min(_xs)
         if any(x.get("ocr") for x in spans) and abs(b) > 1e-9:
-            x_lo_c = max(x_lo, (v_hi_ax - a) / b - 1.0)
+            x_lo_c = max(x_lo_c, (v_hi_ax - a) / b - 1.0)
             # ...and the same at the BOTTOM, which was missing.
             #
             # x_hi stops ten points below the lowest tick anyone READ, and on
@@ -1555,7 +1632,7 @@ def extract_page(page, sample_sec=1.0):
             # occupies, the mirror of the line above. Ink below that is still
             # clipped to v_lo_ax, so the frame edge cannot push a curve
             # negative.
-            x_hi_c = max(x_hi, (v_lo_ax - a) / b + 1.0)
+            x_hi_c = max(x_hi_c, (v_lo_ax - a) / b + 1.0)
         keep = ((arr[:, 0] >= x_lo_c) & (arr[:, 0] <= x_hi_c) &
                 (arr[:, 1] >= y_lo) & (arr[:, 1] <= y_hi))
         arr = arr[keep]
@@ -1579,7 +1656,7 @@ def extract_page(page, sample_sec=1.0):
         # rename beats one he never learns existed. OCR pages only, so a
         # text-layer file cannot change.
         _name = info["name"]
-        if _name in series and _ocr_page:
+        if _name in series and (_ocr_page or len(panels) > 1):
             _k = 2
             while f"{_name} #{_k}" in series:
                 _k += 1
@@ -1596,6 +1673,7 @@ def extract_page(page, sample_sec=1.0):
         # from the data, so our y axis reads the same as the source report.
         axes[_name] = (float(v_lo_ax), float(v_hi_ax))
         axis_fit[_name] = (float(a), float(b))
+        panel_of_name[_name] = panel_i
     if not series:
         raise ValueError("lib1: no curves matched")
 
@@ -1653,9 +1731,17 @@ def extract_page(page, sample_sec=1.0):
     # zero, so the lowest one sits ~11% of the span above it and the backdrop
     # rode up by that much. Invert each series' own fit instead and take the
     # median, so one noisy axis can't drag the frame.
+    # geom puts the ORIGINAL PAGE behind our plot, and one rectangle cannot
+    # stand for two charts sitting one above the other. Quote the FIRST plot —
+    # the treatment chart, which is the one the ghost view exists for — and
+    # leave the other plot's channels without a frame, exactly as
+    # halliburton_ifs leaves a channel whose axis it drops. The Lab draws
+    # those against their printed tick range (meta.axes) instead.
+    _prim = min((v for v in panel_of_name.values() if v is not None),
+                default=None)
     edges_lo, edges_hi = [], []
     for _n, (fa, fb) in axis_fit.items():
-        if abs(fb) < 1e-12:
+        if abs(fb) < 1e-12 or panel_of_name.get(_n) != _prim:
             continue
         lo_v, hi_v = axes[_n]
         edges_lo.append((lo_v - fa) / fb)
@@ -1702,5 +1788,6 @@ def extract_page(page, sample_sec=1.0):
     # this is the range our curves must be placed against to sit on the ink.
     meta.axes = axes
     meta.axes_frame = {n: (af[0] + af[1] * v_lo_f, af[0] + af[1] * v_hi_f)
-                       for n, af in axis_fit.items()}
+                       for n, af in axis_fit.items()
+                       if panel_of_name.get(n) == _prim}
     return meta, samples, data, units
