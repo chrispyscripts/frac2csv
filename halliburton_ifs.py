@@ -329,7 +329,8 @@ def _axis_columns(spans, box=None):
             t = s["t"].strip().replace(",", "")
             if re.fullmatch(r"-?\d+(\.\d+)?", t):
                 continue
-            m = re.fullmatch(r"[^\d\-]{1,2}(-?\d+(?:\.\d+)?)", t)
+            m = re.fullmatch(r"[^\d\-]{1,2}(-?\d+(?:\.\d+)?)", t) or \
+                re.fullmatch(r"(-?\d+(?:\.\d+)?)[^\d]{1,2}", t)
             if m:
                 s["t"] = m.group(1)
     nums = [s for s in spans if s["color"] == 0 and
@@ -1142,44 +1143,17 @@ def _pen_resample(t, v, spans, samples, sample_sec=1.0):
     return out
 
 
-def extract_page(page, sample_sec=1.0):
-    """-> (meta, samples, {column: values}, channel_info) for an IFS chart page."""
-    rotated = page_rotated(page)
-    spans = _spans(page, rotated)
-    text = _page_text(page)
-    vis_cut, vis_box = visible_plot_box(page)
-    tfit, date = _time_axis(spans)
-    if tfit is None and any(s.get("ocr") for s in spans):
-        # The page pass reads the whole sheet at one resolution and one turn,
-        # and on this template it loses clock labels to the date line printed
-        # under them: 00973 p107 prints 06:00/06:20/06:40/07:00 and the pass
-        # returned two of them, which is one short of an axis. The interval
-        # was not reported as failed either — the pipeline gate wants three
-        # clock labels before it calls this at all — so Interval 1 simply
-        # produced nothing (#699, #711).
-        #
-        # The band is re-read on its own, and it REPLACES the page pass's
-        # reading of the same labels rather than joining it. They are two
-        # readings of one row, and the page pass's is the one that just
-        # failed: 00973 p112 read "41:00" for 11:00, and averaging that into
-        # the fit would have made a clock 30 hours wide out of a chart that
-        # runs an hour.
-        strip = _clock_strip_spans(page, rotated, spans, vis_box)
-        if strip:
-            tfit, date = _time_axis(
-                strip + [s for s in spans if not _CLOCK.fullmatch(s["t"])])
-    if tfit is None:
-        raise ValueError("IFS: time axis labels not found")
-    ta, tb = tfit
-    legend = _legend(spans, page, rotated)
-    if not legend:
-        raise ValueError("IFS: legend not found")
-    columns = _axis_columns(spans, vis_box)
-    if not columns:
-        raise ValueError("IFS: no axis tick columns")
+def _map_axes(letters_used, columns, spans):
+    """-> {axis letter: tick column} for the letters a legend uses.
+
+    Its own function because it is three rules that have to agree, and
+    each of them has been a defect: the nearest letter claims a column
+    and no other letter may have it (#695), the A fallback may only take
+    a column no letter claimed (#712), and a surplus letter on an OCR'd
+    page maps to nothing rather than to the last column (#695).
+    """
     # axis letters -> columns: A = leftmost; remaining right-side columns in
     # x order take B, C, D...  (IFS convention)
-    letters_used = sorted({ax for *_, ax in legend})
     mapping = {}
 
     # ...except that the page SAYS which column is which. IFS prints the axis
@@ -1226,7 +1200,23 @@ def extract_page(page, sample_sec=1.0):
             mapping[ax] = placed[ax]
     if len(mapping) == len(letters_used):
         pass                                # the page named every one of them
-    elif "A" in letters_used and "A" not in mapping:
+    elif "A" in letters_used and "A" not in mapping and \
+            columns[0] not in placed.values():
+        # A COLUMN IS STILL ONE AXIS when the fallback is the one asking.
+        # `columns[0]` is A's ladder only on a page where A's ladder was
+        # found. Where it was not, the leftmost column belongs to whichever
+        # letter is printed over it, and handing it to A as well puts two
+        # axes on one ladder — the thing the nearest-letter rule above
+        # exists to stop. 00218 p328 is the case: no column is built for
+        # the 0..100 MPa ladder, "B" is read over the rate ladder at 3.6pt
+        # and claims it, and the fallback handed that SAME column to A.
+        # Treating Pressure and Backside Pressure came back 0.22..18.21 off
+        # a ladder the frame rules 0..25, against a curve the sheet draws
+        # reaching 74 MPa — pressure-shaped, rate-scaled (#712).
+        #
+        # So the fallback applies only to a column no letter has claimed.
+        # A letter left without one maps to nothing, which is already this
+        # function's honest answer for every letter but A.
         mapping["A"] = columns[0]
     rest = [ax for ax in letters_used if ax != "A" and ax not in mapping]
     right = [c for c in columns[1:] if c not in mapping.values()] or \
@@ -1249,6 +1239,46 @@ def extract_page(page, sample_sec=1.0):
             mapping[ax] = right[-1]
             continue
         mapping[ax] = right[i]
+    return mapping
+
+
+def extract_page(page, sample_sec=1.0):
+    """-> (meta, samples, {column: values}, channel_info) for an IFS chart page."""
+    rotated = page_rotated(page)
+    spans = _spans(page, rotated)
+    text = _page_text(page)
+    vis_cut, vis_box = visible_plot_box(page)
+    tfit, date = _time_axis(spans)
+    if tfit is None and any(s.get("ocr") for s in spans):
+        # The page pass reads the whole sheet at one resolution and one turn,
+        # and on this template it loses clock labels to the date line printed
+        # under them: 00973 p107 prints 06:00/06:20/06:40/07:00 and the pass
+        # returned two of them, which is one short of an axis. The interval
+        # was not reported as failed either — the pipeline gate wants three
+        # clock labels before it calls this at all — so Interval 1 simply
+        # produced nothing (#699, #711).
+        #
+        # The band is re-read on its own, and it REPLACES the page pass's
+        # reading of the same labels rather than joining it. They are two
+        # readings of one row, and the page pass's is the one that just
+        # failed: 00973 p112 read "41:00" for 11:00, and averaging that into
+        # the fit would have made a clock 30 hours wide out of a chart that
+        # runs an hour.
+        strip = _clock_strip_spans(page, rotated, spans, vis_box)
+        if strip:
+            tfit, date = _time_axis(
+                strip + [s for s in spans if not _CLOCK.fullmatch(s["t"])])
+    if tfit is None:
+        raise ValueError("IFS: time axis labels not found")
+    ta, tb = tfit
+    legend = _legend(spans, page, rotated)
+    if not legend:
+        raise ValueError("IFS: legend not found")
+    columns = _axis_columns(spans, vis_box)
+    if not columns:
+        raise ValueError("IFS: no axis tick columns")
+    letters_used = sorted({ax for *_, ax in legend})
+    mapping = _map_axes(letters_used, columns, spans)
     legend = [e for e in legend if e[3] in mapping]
     if not legend:
         raise ValueError("IFS: no legend series could be tied to an axis")
