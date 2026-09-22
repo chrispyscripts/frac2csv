@@ -144,6 +144,36 @@ def _fix_unit(txt):
     return txt.strip("()[]{} ")
 
 
+# OCR welds the end of the gridline onto the tick label beside it. 01004 p157
+# prints 100/80/60/40/20/0 down its Treating Pressure axis and reads back
+# "100.0", "80.00}", "60.00}", "40.00)", "20.00" and "oo" — while the four
+# other axes on the same page read cleanly, which is why the page looked fine
+# and silently carried no pressure at all. A fullmatch on a bare number kept
+# two of the six. Two is not a ladder, the fit was refused, and the channel
+# never reached the CSV: Carmine, "No Tr Pressure" (#713), on three
+# consecutive stages of that file.
+#
+# One bracket class is dropped from the END and what remains must be the whole
+# label. Nothing is added and nothing is inferred — "oo" is not a number and
+# stays refused, because five ticks of six is already a ladder and inventing
+# the sixth would be guessing at the one the page did not give us.
+_TICK = re.compile(r"(-?[\d,]+(?:\.\d+)?)[)\]}|]*")
+
+
+def _tick_num(text):
+    """The value a tick label prints, or None when it is not a tick.
+
+    '+ 0.0' normalises the charting tool's negative zero, which Liberty
+    prints as '-0' on the zero tick of several axes.
+    """
+    m = _TICK.fullmatch(text)
+    return float(m.group(1).replace(",", "")) + 0.0 if m else None
+
+
+def _is_tick(text):
+    return _TICK.fullmatch(text) is not None
+
+
 def _ocr_legend_spans(spans):
     """Rebuild one 'NAME (unit)' span per colour from OCR words.
 
@@ -185,13 +215,13 @@ def _ocr_legend_spans(spans):
     _pair_ok = _pair_ladders(spans)
 
     def _ladder(s_):
-        if not re.fullmatch(r"-?[\d,]+(\.\d+)?", s_["t"]):
+        if not _is_tick(s_["t"]):
             return False
         if s_["color"] in _pair_ok:
             return True
         return sum(1 for o in spans
                    if o is not s_ and o["color"] == s_["color"]
-                   and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
+                   and _is_tick(o["t"])
                    and (abs(o["cx"] - s_["cx"]) <= 12
                         or abs(o["cy"] - s_["cy"]) <= 12)) >= 2
 
@@ -931,9 +961,8 @@ def _pair_ladders(spans):
     """
     raw = defaultdict(list)
     for s in spans:
-        if s["color"] != 0 and s.get("ocr") and \
-                re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
-            raw[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
+        if s["color"] != 0 and s.get("ocr") and _is_tick(s["t"]):
+            raw[s["color"]].append((_tick_num(s["t"]),
                                     s["cx"], s["cy"]))
     grid = _grid_step({c: v for c, v in raw.items() if len(v) >= 3})
     out = set()
@@ -1235,7 +1264,7 @@ def extract_page(page, sample_sec=1.0):
         # dropped, so e.g. Treating Pressure came out 15..75 instead of 0..75
         # and Slurry Rate 4..20 instead of 0..20 — every curve on those axes
         # was then placed against the wrong range. '+ 0.0' normalises -0.0.
-        if s["color"] != 0 and re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"]):
+        if s["color"] != 0 and _is_tick(s["t"]):
             # On an OCR'd page a tick has to LOOK like one: aligned with at
             # least two same-coloured siblings. OCR drops the "J" from the
             # legend's "J475 CONC" and the bare "475" was collected as a tick
@@ -1246,12 +1275,12 @@ def extract_page(page, sample_sec=1.0):
             if s.get("ocr") and s["color"] not in _pair_ok:
                 kin = sum(1 for o in spans
                           if o is not s and o["color"] == s["color"]
-                          and re.fullmatch(r"-?[\d,]+(\.\d+)?", o["t"])
+                          and _is_tick(o["t"])
                           and (abs(o["cx"] - s["cx"]) <= 12
                                or abs(o["cy"] - s["cy"]) <= 12))
                 if kin < 2:
                     continue
-            ticks[s["color"]].append((float(s["t"].replace(",", "")) + 0.0,
+            ticks[s["color"]].append((_tick_num(s["t"]),
                                       s["cx"], s["cy"]))
     # A black series with its OWN printed tick column. Black numerics are
     # excluded above because axis, grid and title ink is black too, so a black
@@ -1262,10 +1291,9 @@ def extract_page(page, sample_sec=1.0):
     # and pinned it to the axis top. Accept a black column only when it looks
     # like a printed axis — see _axis_column — and leave the borrow in place
     # otherwise.
-    black_ticks = [(float(s["t"].replace(",", "")) + 0.0, s["cx"], s["cy"])
+    black_ticks = [(_tick_num(s["t"]), s["cx"], s["cy"])
                    for s in spans
-                   if s["color"] == 0 and
-                   re.fullmatch(r"-?[\d,]+(\.\d+)?", s["t"])]
+                   if s["color"] == 0 and _is_tick(s["t"])]
     if 0 in named and _axis_column(black_ticks):
         ticks[0] = black_ticks
     # value gridlines: long constant-x strokes. Tick LABELS sit ~12pt off
