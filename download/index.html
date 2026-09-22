@@ -39,6 +39,42 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.26</h2>
+    <ul>
+      <li><b>A Liberty stage page has two charts on it, and a channel was
+        going missing between them.</b> The Treatment Plot and the Chemical
+        Plot underneath it reuse the same colours &mdash; red is Treating
+        Pressure on the top chart and J475 Conc on the bottom one. The comb
+        those shared colours caused was fixed earlier; what was left is that
+        only the first of the two got a name, so the chemical channel never
+        reached the CSV at all. Nothing looked wrong, because the channel
+        wasn&rsquo;t wrong &mdash; it wasn&rsquo;t there</li>
+      <li><b>And the treating pressure on those pages was being measured
+        against both charts&rsquo; scales at once.</b> On 00949 stage 1 that
+        reported 35 to 60 MPa against a chart that plainly runs 0 to 77. The
+        same collision on <b>00619</b> put bottom-hole proppant concentration
+        at <b>3.8 kg/m&sup3; where the chart draws 409</b> &mdash; on every
+        chart of that file, and with nothing about the curve to suggest it.
+        Each chart is now read against its own scales</li>
+      <li><b>A curve drawn flat along the bottom now reads zero.</b> There is
+        no gridline at the foot of a chart &mdash; the frame itself is that
+        line &mdash; so the zero label was the one number never lined up
+        against the drawing, and it tilted every reading on the page. Both
+        proppant concentrations on 00949 stage 1 reported 12 and 23 kg/m&sup3;
+        through the third of the stage the chart draws flat on the axis</li>
+      <li><b>A black chemical curve reads its own printed scale.</b> Black
+        scale numbers sit slightly off one another because they are
+        left-aligned, and that was enough for the app to refuse the column and
+        borrow another channel&rsquo;s scale instead. B596 Conc was being read
+        against half its own range on three charts of 00974</li>
+      <li><b>Measured over 184 charts in 23 Liberty files:</b> 15 channels
+        recovered, <b>none lost</b>, 12 scales corrected &mdash; each one
+        checked against the numbers its own page prints &mdash; and everything
+        else moved by a median of 0.04% of full scale</li>
+      <li>None of this was reported. It was found while re-checking the charts
+        behind the comb that <i>was</i> reported</li>
+    </ul>
+
     <h2>v1.11.25</h2>
     <ul>
       <li><b>Treating pressure was being read against another channel&rsquo;s
