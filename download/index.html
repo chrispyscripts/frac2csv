@@ -39,6 +39,166 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.24</h2>
+    <ul>
+      <li><b>Treating pressure was being read against the wrong scale.</b>
+        One chart reported pressure with 17% of its samples, on a 0&ndash;60
+        scale belonging to the backside pressure, for a chart whose pressure
+        reaches 78 MPa on a printed 0&ndash;100. Three separate faults, and the
+        third is why this stayed hidden: the window used to clip the traced
+        curves was taken from the scales themselves, so <b>finding more scales
+        made the window narrower</b> and quietly clipped real curve away. Any
+        earlier attempt to improve scale detection would have gained some
+        channels, lost others, and looked like no change at all. The window now
+        comes from the chart&rsquo;s own printed frame and can only ever get
+        wider. Measured over 922 charts in seven files: 95 channels recovered,
+        <b>none lost</b></li>
+      <li><b>The sideways axis title is no longer traced as a curve.</b> On
+        lighter renders the &ldquo;Conc.&rdquo; title breaks into scraps too
+        faint to recognise as text &mdash; twenty pixels across ten columns.
+        Four charts reported proppant concentration three to four times above
+        the bottom-hole pen beside them (835, 906, 832, 850); they now read
+        223, 390, 461 and 467, tracking that pen. Of 109 charts on the affected
+        wells, 21 showed this and 8 still do &mdash; the rest sit in a range
+        that overlaps real chart ink, so clearing them would risk deleting
+        genuine readings</li>
+      <li><b>The BC OGC treatment table reads.</b> Reported as &ldquo;no table
+        data&rdquo;, and correctly: the page is a complete per-stage record
+        printed sideways as a spreadsheet export, which nothing here could
+        read. It now comes out as 68 columns by 23 stage rows plus the job
+        totals. Checked using only numbers the sheet prints itself, across 374
+        stage rows from 16 filings: proppant arithmetic 372/372, clock 371/374</li>
+      <li><b>Three of the filings disagree with themselves.</b> The three clock
+        exceptions above are not extraction errors &mdash; the forms contradict
+        their own numbers, by 1440, 1440 and 5760 minutes, whole days every
+        time. One prints a four-day span against a stated duration of 60
+        minutes while every other row on the sheet is same-day. Nothing to fix
+        in the app; worth knowing before those numbers are relied on</li>
+    </ul>
+
+    <h2>v1.11.23</h2>
+    <ul>
+      <li><b>A stage label printed without a space is still a stage.</b>
+        &ldquo;Stage 10HRF&rdquo; prints the re-frac tag hard against the
+        number; the reader wanted a space before it, so both pages filed as no
+        stage at all and showed as &ldquo;Stage ?&rdquo;</li>
+      <li><b>A gridline through the scale numbers is not a digit.</b> One chart
+        rules its plot with vertical lines and, being a turned page, prints its
+        scale <i>inside</i> the frame &mdash; so 38 of the 118 columns the
+        reader crops are bars, and it read nothing at all. Both concentration
+        channels were dropped as &ldquo;axis unreadable&rdquo; on a page whose
+        curves are perfectly good. Swept over 138 charts: 2 channels recovered,
+        none lost</li>
+    </ul>
+
+    <h2>v1.11.22</h2>
+    <ul>
+      <li><b>Correction &mdash; please re-export two Halliburton wells.</b>
+        Bottom-hole proppant concentration was being traced from a colour mask
+        that also held the crimson pressure pen, so through the pad, where
+        bottom-hole concentration does not exist yet, it followed the pressure
+        stroke instead &mdash; the pressure curve at exactly fifteen times its
+        value. <b>Every chart in both files was affected, not the three
+        reported.</b> All 47 peaked between 1117 and 1235 kg/m&#179; before; 46
+        now peak between 5 and 781</li>
+      <li><b>Correction &mdash; one Liberty well had two columns swapped.</b>
+        On one sheet the wellhead and bottom-hole proppant concentrations were
+        the wrong way round, because the first name came back truncated. The
+        numbers were right and the labels were not, which no amount of looking
+        at the CSV would reveal. Re-export is the only fix</li>
+      <li><b>The axis title stopped being read as a curve.</b> On sideways
+        pages the rotated &ldquo;Conc.&rdquo; heading was traced as proppant
+        concentration, giving 828.67 on one well and 828.65 on another &mdash;
+        the same number on two unrelated wells, which is the tell</li>
+      <li><b>Missing stages that never reported themselves.</b> Of 88 failing
+        pages on one filing, 79 were not charts at all &mdash; contents pages,
+        summaries, and a stage table and service form per interval, claimed
+        because the build stamp is printed on all 282 pages. The nine real
+        failures had lost their clock labels to the date line printed beneath
+        them, and failed <i>silently</i>: the app wants three clock labels
+        before it will read a chart, so those intervals produced no chart and
+        no note</li>
+      <li><b>&ldquo;Only extracting Tr pressure&rdquo;.</b> Each legend row
+        carries a single coloured letter naming its scale, and page-wide text
+        recognition does not return isolated single characters &mdash; while
+        reading every name on the same row at 89&ndash;96% confidence. Every
+        row lost its letter and was dropped. Those letters are now read
+        directly off the page: two filings go from 36 to 61 and 31 to 60
+        charts</li>
+      <li><b>Missing slurry rate and proppant concentration on Liberty.</b>
+        Three separate faults: two legend rows welded into one box by the text
+        reader, a scale label with its last digit eaten, and a proppant name
+        that could not be told apart from its sibling. Slurry rate recovered on
+        34&rarr;46, 7&rarr;19, 39&rarr;45 and 12&rarr;24 charts across four
+        files, with nothing that was already right moved</li>
+      <li><b>The Tables tab stops showing pages that are not tables.</b> A page
+        counted as a treatment summary if those words appeared anywhere on it,
+        so a daily report&rsquo;s section heading over an empty box, and a
+        contents line reading &ldquo;Treatment Summary ......... 4&rdquo;, both
+        qualified. One file listed 35 groups over 44 pages of empty boxes;
+        another listed a single source page that was the table of contents.
+        Three of the four &ldquo;no table data&rdquo; reports were correct
+        &mdash; those tables exist only as pictures</li>
+      <li><b>The Original chart view no longer needs the internet.</b> The
+        desktop build shipped every reader and then fetched three libraries
+        from a CDN at runtime, so on a locked-down or slow connection the panel
+        simply did not draw and nothing said why</li>
+      <li><b>Dates the calendar refuses are no longer exported.</b> Two pages
+        were emitting month zero into the DATETIME column. The time of day on
+        those pages is kept &mdash; it is read off the axis and was always
+        right</li>
+    </ul>
+
+    <h2>v1.11.17 &ndash; v1.11.21</h2>
+    <ul>
+      <li><b>Gaps where the pen was resting now fill.</b> A pen sitting on the
+        bottom rule reads zero rather than nothing, and those stretches were
+        being left as holes: one stage went from 53% to 99% of its slurry rate
+        present</li>
+      <li><b>Elapsed-minute axes read whichever way they are drawn</b>, taking
+        one Liberty file from 26 failed charts to 1</li>
+      <li><b>A chart frame softened by scanning is still a frame.</b> Anti-
+        aliasing across two rows hid the bottom rule, so one file produced
+        nothing from 32 surface charts; 31 now read</li>
+      <li><b>The app stops caching a page it has already re-read</b>, which is
+        why several fixes appeared not to arrive</li>
+    </ul>
+
+    <h2>v1.11.10 &ndash; v1.11.16</h2>
+    <ul>
+      <li><b>Trican stage ends, corrected over several passes.</b> Stages were
+        being cut before they stopped pumping, and a later fix then let two
+        stages export the same minutes twice. Both are fixed: across 28 stages
+        the overlap and the gap are now 0.0 minutes</li>
+      <li><b>The whole-job re-plot is not a stage.</b> These filings print a
+        continuous chart covering every stage at once; it was appearing in the
+        stage list, and its coarse scale injected a proppant spike of 1240
+        kg/m&#179; where the real peak is 170. It is now held out of the list,
+        the chart and the CSV</li>
+      <li><b>FracView shows the same stages as the list and the export</b>, and
+        letting go of the trim tool no longer throws you back to stage 1</li>
+      <li><b>The chart shades the minutes one stage handed to the next</b>, so
+        what was removed is visible rather than simply gone</li>
+    </ul>
+
+    <h2>v1.11.0 &ndash; v1.11.9</h2>
+    <ul>
+      <li><b>Fix in box.</b> Draw a box over a stretch the reader got wrong and
+        it is re-read off the page underneath; corrections are saved and
+        re-applied</li>
+      <li><b>Isolate Interpolation</b> shows which stretches were deduced
+        rather than read, so a filled gap is never mistaken for a measurement</li>
+      <li><b>A file that is nothing but pictures now says so</b> instead of
+        looking like a failure</li>
+      <li><b>Two plots on one Liberty page stopped sharing a curve</b>, which
+        had been mixing one plot&rsquo;s red ink into the other&rsquo;s</li>
+      <li><b>Four Lab windows no longer pin the CPU.</b> Whole-document reads
+        are capped at three at a time</li>
+      <li><b>Every file is read fresh.</b> The reuse toggle is gone, and a
+        frozen build now stamps its own version so a report says which build
+        produced it</li>
+    </ul>
+
     <h2>v1.10.0</h2>
     <ul>
       <li><b>The 1,191 Alberta filings spudded 2019&ndash;2023 read.</b>
