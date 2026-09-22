@@ -575,6 +575,64 @@ def rotated_tick_column(page, clip, dpi=_TICK_STRIP_DPI, turn=3):
     return out
 
 
+# A CLOCK ladder printed sideways, read the same way.
+#
+# rotated_tick_column's sibling, for a time axis rather than a value one.
+# The full-page pass reads a chart at 200 dpi, at whatever turn won the whole
+# sheet, with the axis DATE printed 7pt below the clock row in the same band.
+# On 00973 p107 — "Interval 1 - Entire Treatment", four labels printed — it
+# returned "06:20" and "06:40", turned "06:00" into "00-0" and lost "07:00"
+# altogether, which is one label short of the three an axis needs. Cropping
+# the label band alone, standing it up and reading it at 300 dpi returns all
+# four at confidence 96+; on p112 the same crop reads 10:20/10:40/11:00/11:20
+# where the page pass had "10:40" and "41:00" — a misread hour that would
+# have fitted a clock 30 hours wide.
+_CLOCK_STRIP_DPI = 300
+_CLOCK_TEXT = re.compile(r"\d{1,2}:\d{2}(:\d{2})?")
+
+
+def rotated_clock_strip(page, clip, dpi=_CLOCK_STRIP_DPI, turn=3):
+    """[(page x, page y, "HH:MM")] for a clock row printed sideways.
+
+    `clip` is the band the labels sit in and `turn` the np.rot90 count that
+    stands them up, exactly as in rotated_tick_column. Positions come back in
+    the page's own coordinates — the caller knows which way its chart is
+    drawn, this does not.
+
+    Held to NUMBER_CONF, not TEXT_CONF: a clock label becomes the timestamp
+    on every row this chart exports, so it is a number in the sense that
+    matters here.
+    """
+    if not available() or turn % 2 == 0:
+        return []
+    try:
+        img = np.asarray(_clip_image(page, clip, dpi), dtype=np.uint8)
+    except Exception:
+        return []
+    height = img.shape[0]
+    try:
+        # psm 6 — "a single uniform block" — because a cropped ladder IS one,
+        # and the sparse mode the full-page pass uses is what let the date
+        # line below merge into the label above it.
+        boxes = ar.ocr_boxes(np.rot90(img, turn).astype(int), psm=6,
+                             whitelist="")
+    except Exception:
+        return []
+    scale = 72.0 / dpi
+    out = []
+    for b in boxes:
+        text = b["text"].strip()
+        if not _CLOCK_TEXT.fullmatch(text) or b["conf"] < NUMBER_CONF:
+            continue
+        # rot90(.., 3) sends original row r to rotated column height-1-r, and
+        # original column c to rotated row c
+        row = height - 1 - (b["x0"] + b["x1"]) / 2.0
+        col = (b["y0"] + b["y1"]) / 2.0
+        out.append((clip.x0 + (col - _TICK_STRIP_PAD) * scale,
+                    clip.y0 + (row - _TICK_STRIP_PAD) * scale, text))
+    return out
+
+
 # ------------------------------------------------------------ axis guards
 
 # How far off its own straight line a tick label may sit and still be

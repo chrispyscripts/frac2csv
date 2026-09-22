@@ -117,7 +117,61 @@ def _ocr_spans(page, rotated):
 _IFS_MARK = re.compile(r"\(IFS\s*v", re.I)
 
 
+# How much curve ink a page has to draw before this module will call it a
+# chart. The stamp alone is not enough: an IFS filing prints it on EVERY
+# page, and 00973 is 282 pages of which only 105 are charts — the rest are
+# the table of contents, the treatment summary, a stage-summary table and a
+# service-report form per interval, and all of them carry "(IFS v 7)". Asked
+# only for the stamp, detect claimed 184 pages and 88 of them then failed,
+# so a reader's page-by-page log reported 79 charts lost that were never
+# charts (#699).
+#
+# The test is the extractor's own: the ink _curve_ink counts is the ink
+# extract_page collects, by the same rule it uses to keep a black curve apart
+# from the frame it shares a colour with. Measured on 00973 every one of the
+# 105 charts draws between 8,300 and 50,140 such segments and every other
+# stamped page draws NONE, so where the line falls between them does not
+# matter much; it is set low so that a sparse chart still counts.
+_CURVE_INK_MIN = 200
+
+
+def _curve_ink(page):
+    """Stroked segments that are not a long axis-aligned rule. -> count
+
+    A frame, a gridline and a table border are all straight and long; a
+    plotted curve is neither for more than a few segments at a time. This is
+    the same test extract_page applies to black ink, applied to every colour.
+    """
+    n = 0
+    for d in page.get_drawings():
+        if d.get("color") is None or d["type"] not in ("s", "fs"):
+            continue
+        for item in d["items"]:
+            if item[0] == "l":
+                p1, p2 = item[1], item[2]
+            elif item[0] == "c":
+                p1, p2 = item[1], item[4]
+            else:
+                continue
+            dx, dy = abs(p1.x - p2.x), abs(p1.y - p2.y)
+            if (dx < 0.01 or dy < 0.01) and max(dx, dy) > 5:
+                continue
+            n += 1
+            if n >= _CURVE_INK_MIN:
+                return n
+    return n
+
+
 def detect(page):
+    # Ink before text: _page_text OCRs a page whose labels are outlines, and
+    # that costs seconds a page with nothing on it should not be charged.
+    #
+    # An IFS chart filed as a BITMAP rather than drawn falls on the false
+    # side of this, and that is the honest answer — this module reads vector
+    # curves and cannot read those pages either. The pipeline reports them
+    # separately (_ifs_raster) and does not ask here.
+    if _curve_ink(page) < _CURVE_INK_MIN:
+        return False
     return _IFS_MARK.search(_page_text(page)) is not None
 
 
@@ -423,9 +477,145 @@ def _axis_columns(spans, box=None):
     return out
 
 
+_CLOCK = re.compile(r"\d{1,2}:\d{2}(:\d{2})?")
+
+# How wide the clock labels' band is. 16pt clears "07:00" at this template's
+# 6pt type and stops short of the axis DATE printed on the line below — on
+# 00973 p107 the clock sits at page x 482 and "2021-09-01" at 489.4, and a
+# crop that takes both reads "©0700"" for the label it should read "07:00".
+_CLOCK_BAND = 16.0
+
+
+def _clock_secs(text):
+    """'06:20' / '05:54:20' -> seconds since midnight."""
+    parts = [int(p) for p in text.split(":")]
+    sec = parts[2] if len(parts) > 2 else 0
+    return parts[0] * 3600 + parts[1] * 60 + sec
+
+
+def _unwrap_midnight(vals):
+    """[(secs, position)] in position order, with midnight added back on."""
+    out = list(vals)
+    for i in range(1, len(out)):
+        if out[i][0] < out[i - 1][0] - 20000:
+            out[i] = (out[i][0] + 86400, out[i][1])
+    return out
+
+
+def _clock_bands(page, spans, box):
+    """The page-x bands the clock row may sit in, as clip rects.
+
+    Two, because neither one alone finds it on every page and they cost one
+    OCR each on a page that has already failed:
+
+      - the labels the page pass DID read say where the row is, which is the
+        only anchor on a page whose plot frame was not found. 00973 p133 and
+        p214 are read this way and no other.
+      - the plot frame's far edge, for the pages where the page pass read a
+        label so badly that its box is the wrong shape: 00973 p208 and 00971
+        p222 give up two labels to the first band and four to this one.
+    """
+    out = []
+    clocks = [s for s in spans if _CLOCK.fullmatch(s["t"])]
+    if clocks:
+        # the MEDIAN box, not the union: one badly-shaped reading widens the
+        # union enough to sweep the date line in, which is what the band is
+        # drawn narrow to avoid
+        mid = sorted((s["x0"] + s["x1"]) / 2 for s in clocks)[len(clocks) // 2]
+        out.append(fitz.Rect(mid - _CLOCK_BAND / 2, 0,
+                             mid + _CLOCK_BAND / 2, page.rect.y1))
+    if box is not None:
+        out.append(fitz.Rect(box.x1 + 1, box.y0,
+                             box.x1 + 1 + _CLOCK_BAND, box.y1))
+    return out
+
+
+def _ladder_only(readings):
+    """The readings that sit on the row's own straight line. -> [] or subset
+
+    `readings` is [(position, "HH:MM")] for one crop of the clock band.
+
+    A clock axis is evenly spaced by construction, so a label off the line is
+    a misread digit and not an unusual axis. The crops earn this guard: 00973
+    p223 comes back 19:00, 19:20, 19:40 and then "29:00" where the page
+    prints 20:00, and 00971 p164 reads "95:20" for 05:20. Nine hours of error
+    in one label moves the whole fit, and the axis is what dates every row
+    the chart exports.
+
+    Same shape as auto_raster.fit_ticks — every pair seeds a line and the
+    line with the most readings on it wins — but it has to work on three
+    readings, which fit_ticks will not look at. p223 loses the one bad label
+    and keeps its three; p164 has only three and cannot spare one, so nothing
+    survives and the page stays a failure a reader can see.
+    """
+    if len(readings) < 3:
+        return []
+    ordered = sorted(readings, key=lambda r: r[0])
+    vals = _unwrap_midnight([(_clock_secs(t), x) for x, t in ordered])
+    gaps = sorted(abs(vals[k][1] - vals[k - 1][1])
+                  for k in range(1, len(vals)))
+    gap = gaps[len(gaps) // 2]
+    if gap <= 0:
+        return []
+    best = []
+    for i in range(len(vals)):
+        for j in range(i + 1, len(vals)):
+            dx = vals[j][1] - vals[i][1]
+            if abs(dx) < 1e-6:
+                continue
+            b = (vals[j][0] - vals[i][0]) / dx
+            if b <= 0:                      # time runs left to right
+                continue
+            a = vals[i][0] - b * vals[i][1]
+            # a quarter of one label-to-label step: wide enough for a box
+            # centre that OCR put a point or two out, far too narrow for an
+            # hour digit read wrong
+            tol = 0.25 * b * gap
+            on = [k for k, (v, x) in enumerate(vals)
+                  if abs(a + b * x - v) <= tol]
+            if len(on) > len(best):
+                best = on
+    if len(best) < 3:
+        return []
+    return [ordered[k] for k in best]
+
+
+def _clock_strip_spans(page, rotated, spans, box):
+    """Span dicts for the time labels, re-read from their own band. -> []
+
+    Only for a chart drawn sideways, which is the layout every OCR'd IFS
+    filing in this corpus uses; an upright one is left to the page pass
+    rather than handled untested. Each candidate band is read and checked on
+    its own and the one that survives with the most labels wins — they are
+    two crops of ONE row, not two rows.
+    """
+    if not rotated:
+        return []
+    best = []
+    for clip in _clock_bands(page, spans, box):
+        got = _ladder_only([(_unrotate(x, y)[0], t)
+                            for x, y, t in
+                            ocr_labels.rotated_clock_strip(page, clip)])
+        if len(got) > len(best):
+            best = got
+    # The row keeps the y the page pass gave it, so that _axis_date still
+    # looks for the date on the line below the clock and not somewhere else.
+    cy = _clock_row_cy(spans)
+    return [{"t": t, "cx": cx, "cy": cy, "ocr": True,
+             "x0": 0.0, "x1": 0.0, "color": 0} for cx, t in best]
+
+
+def _clock_row_cy(spans):
+    """Where the page pass put the clock row, or a band-free default."""
+    clocks = [s for s in spans if _CLOCK.fullmatch(s["t"])]
+    if not clocks:
+        return 0.0
+    return sorted(s["cy"] for s in clocks)[len(clocks) // 2]
+
+
 def _time_axis(spans):
     """HH:MM(:SS) labels row -> seconds = a + b * x, plus start date if shown."""
-    tspans = [s for s in spans if re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s["t"])]
+    tspans = [s for s in spans if _CLOCK.fullmatch(s["t"])]
     if len(tspans) < 3:
         return None, ""
     # keep the y-row with the most time labels (legend times would be rare)
@@ -436,15 +626,7 @@ def _time_axis(spans):
     if len(row) < 3:
         return None, ""
     row.sort(key=lambda s: s["cx"])
-    vals = []
-    for s in row:
-        parts = [int(p) for p in s["t"].split(":")]
-        secs = parts[0] * 3600 + parts[1] * 60 + (parts[2] if len(parts) > 2 else 0)
-        vals.append((secs, s["cx"]))
-    # unwrap midnight
-    for i in range(1, len(vals)):
-        if vals[i][0] < vals[i - 1][0] - 20000:
-            vals[i] = (vals[i][0] + 86400, vals[i][1])
+    vals = _unwrap_midnight([(_clock_secs(s["t"]), s["cx"]) for s in row])
     a, b = _fit(vals)
     if b <= 0:
         return None, ""
@@ -747,14 +929,33 @@ def extract_page(page, sample_sec=1.0):
     rotated = page_rotated(page)
     spans = _spans(page, rotated)
     text = _page_text(page)
+    vis_cut, vis_box = visible_plot_box(page)
     tfit, date = _time_axis(spans)
+    if tfit is None and any(s.get("ocr") for s in spans):
+        # The page pass reads the whole sheet at one resolution and one turn,
+        # and on this template it loses clock labels to the date line printed
+        # under them: 00973 p107 prints 06:00/06:20/06:40/07:00 and the pass
+        # returned two of them, which is one short of an axis. The interval
+        # was not reported as failed either — the pipeline gate wants three
+        # clock labels before it calls this at all — so Interval 1 simply
+        # produced nothing (#699, #711).
+        #
+        # The band is re-read on its own, and it REPLACES the page pass's
+        # reading of the same labels rather than joining it. They are two
+        # readings of one row, and the page pass's is the one that just
+        # failed: 00973 p112 read "41:00" for 11:00, and averaging that into
+        # the fit would have made a clock 30 hours wide out of a chart that
+        # runs an hour.
+        strip = _clock_strip_spans(page, rotated, spans, vis_box)
+        if strip:
+            tfit, date = _time_axis(
+                strip + [s for s in spans if not _CLOCK.fullmatch(s["t"])])
     if tfit is None:
         raise ValueError("IFS: time axis labels not found")
     ta, tb = tfit
     legend = _legend(spans)
     if not legend:
         raise ValueError("IFS: legend not found")
-    vis_cut, vis_box = visible_plot_box(page)
     columns = _axis_columns(spans, vis_box)
     if not columns:
         raise ValueError("IFS: no axis tick columns")
