@@ -104,6 +104,26 @@ def _ocr_column(img, xa, xb, y0, y1):
     strip = img[ya:yb, xa:xb]
     if strip.size == 0:
         return []
+    # Some of these charts rule the plot with vertical gridlines, and on a
+    # rotated page the value labels are printed INSIDE the frame, so the rules
+    # run straight through the tick column. 01367 p188 has 38 such rules in
+    # its 118px concentration strip, and tesseract returned NOTHING from it —
+    # the ladder is printed perfectly legibly, the bars just destroy the
+    # layout analysis. Both concentration channels were then dropped for want
+    # of an axis, on a page whose curves are drawn and traceable: Carmine,
+    # "Missing both conc data sets" (#715, #716).
+    #
+    # A gridline is a column of ink running the WHOLE height of the plot. A
+    # digit cannot be — the tallest label on that page covers 3% of the strip
+    # — so columns that are more than half ink are blanked before the read. On
+    # p188 that turns nothing at all into 1400/1200/1000/800/600/400/200 at
+    # dead-even 92.5px spacing; on p266, the clean render of the same chart,
+    # one column qualifies, the real ticks come back identical and two noise
+    # reads go away.
+    strip = strip.copy()
+    _ink = (strip.sum(2) < 640)
+    if _ink.shape[0] > 40:
+        strip[:, _ink.mean(0) > 0.5] = 255
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * 3, pil.height * 3), Image.LANCZOS)
     words = ar.ocr_words(np.array(pil).astype(int), psm=6,
