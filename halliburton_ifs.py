@@ -780,11 +780,109 @@ def _ocr_legend_spans(spans):
     return named, letters
 
 
-def _legend(spans):
-    """[(series_name, unit, color_int, axis_letter)] from legend rows."""
+# A legend's axis letter is ONE character, and the whole-page OCR pass does
+# not return isolated single characters: on 00973 p108 the six coloured
+# letters "A B A A B A" the page draws at (93..191, 120..131) come back as
+# nothing at all, while every name word on the same rows reads at confidence
+# 89-96. Every entry then had no letter, every entry was dropped for want of
+# one, and the page failed outright with "legend not found" (#699, #711).
+#
+# The letters have not been lost, only unread: like every other string in
+# this filing they are drawn as filled glyph outlines, and a crop of one,
+# read on its own, comes back right. So the letter is READ off the page, and
+# nothing here infers one.
+_GLYPH_MAX = 24.0   # pt. A legend character is ~11pt tall on these pages;
+                    # the colour swatch rule on the same row is 161pt long
+                    # (00973 p109) and a curve or frame longer still.
+_GLYPH_MIN = 2.0    # pt. Below this it is a speck of chart ink, not a glyph.
+
+
+def _glyph_letters(page, rows, rotated):
+    """{row index: axis letter} for legend rows whose letter OCR never read.
+
+    A candidate is a filled outline in the ROW'S OWN COLOUR, one character
+    in size, on that row and to the right of its name, which the whole-page
+    OCR pass did not already read as part of a word. That last test is what
+    keeps the glyphs of the NAME itself out — every one of those sits inside
+    an OCR word box, and on 00973 p108 the name "Optikleen-WF Conc (kg/m3)"
+    is 20 such glyphs on the same row in the same ink as its letter.
+
+    A row with more than one unread glyph is left alone, and so is a crop
+    that does not read as a single A-F character. Which of two glyphs is the
+    axis letter would be a guess, and a guess here is this reader's worst
+    failure: a series read off the wrong ladder exports a plausible wrong
+    number (#699). A row that keeps no letter is dropped downstream, and a
+    missing channel is the honest answer.
+    """
+    if not rows or not ocr_labels.available():
+        return {}
+    try:
+        read = [fitz.Rect(w["rect"]) for w in ocr_labels.words(page)]
+    except Exception:
+        return {}
+    cands = defaultdict(list)
+    for rect, rgb in _outline_colours(page):
+        if not (_GLYPH_MIN <= rect.width <= _GLYPH_MAX
+                and _GLYPH_MIN <= rect.height <= _GLYPH_MAX):
+            continue
+        if any(r.intersects(rect) for r in read):
+            continue
+        cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+        if rotated:
+            cx, cy = _unrotate(cx, cy)
+        for i, s in enumerate(rows):
+            # Black is the page's structural ink — frame, grid, ticks, tick
+            # digits — so an unread black glyph on a row is as likely to be a
+            # tick mark as a letter. The one black-named series this module
+            # accepts is already the case it says it cannot separate by
+            # colour, and it is not given a letter here either.
+            if not s["color"]:
+                continue
+            # same ink, same row, right of the name: the geometry _legend
+            # already requires of a letter span it can see
+            if rgb == s["color"] and abs(cy - s["cy"]) <= 4 and cx > s["cx"]:
+                cands[i].append(rect)
+    # A page can overprint its own artwork: 00973 p203 draws every legend
+    # letter twice at bit-identical coordinates, and 541 of its 1163 filled
+    # paths are exact duplicates. Counting the second copy as a rival
+    # candidate refused three otherwise perfect pages. Two marks at the SAME
+    # place in the SAME ink are one mark and cannot disagree about the
+    # letter; one anywhere else still refuses the row.
+    single = {}
+    for i, v in cands.items():
+        if len({(r.x0, r.y0, r.x1, r.y1) for r in v}) == 1:
+            single[i] = v[0]
+    if not single:
+        return {}
+    order = sorted(single)
+    # the rotated build draws its text bottom-to-top, which is the direction
+    # _unrotate assumes for it as well
+    direction = (0.0, -1.0) if rotated else (1.0, 0.0)
+    try:
+        texts = ocr_labels.span_texts(
+            page, [(tuple(single[i]), direction) for i in order])
+    except Exception:
+        return {}
+    out = {}
+    for i, t in zip(order, texts):
+        t = (t or "").strip()
+        # exact, not _axis_letter's tolerant match: the crop holds one glyph
+        # and nothing else, so anything but one letter means it was not read
+        if re.fullmatch(r"[A-Fa-f]", t):
+            out[i] = t.upper()
+    return out
+
+
+def _legend(spans, page=None, rotated=False):
+    """[(series_name, unit, color_int, axis_letter)] from legend rows.
+
+    `page`, when given, lets a row whose axis letter OCR never returned have
+    that letter read off the page's own glyph outlines — see _glyph_letters.
+    """
     out = []
 
     orphans = []                      # entries whose axis letter OCR lost
+    orphan_rows = []                  # the legend span each orphan came from
 
     def add(s, letters):
         m = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", s["t"])
@@ -803,6 +901,7 @@ def _legend(spans):
             out.append((name, unit, s["color"], best))
         else:
             orphans.append((name, unit, s["color"]))
+            orphan_rows.append(s)
 
     named = [s for s in spans if s["color"] != 0 and
              re.search(r"\(([^)]+)\)\s*$", s["t"]) and len(s["t"]) > 8]
@@ -820,6 +919,20 @@ def _legend(spans):
     if len(black_named) == 1:
         black_letters = [s for s in spans if s["color"] == 0 and re.fullmatch(r"[A-F]", s["t"])]
         add(black_named[0], black_letters)
+    # Read before inferring. _adopt_orphans below reasons from the units and
+    # from which axes are still unclaimed; a letter the page itself prints
+    # beats either, so it goes first. Only an OCR'd page pays for it — on a
+    # page with a text layer the letters are spans and are already matched.
+    if orphans and page is not None and any(s.get("ocr") for s in spans):
+        found = _glyph_letters(page, orphan_rows, rotated)
+        keep = []
+        for i, (name, unit, colour) in enumerate(orphans):
+            if i in found:
+                out.append((name, unit, colour, found[i]))
+            else:
+                keep.append(i)
+        orphan_rows[:] = [orphan_rows[i] for i in keep]
+        orphans[:] = [orphans[i] for i in keep]
     _adopt_orphans(out, orphans, spans)
     return out
 
@@ -953,7 +1066,7 @@ def extract_page(page, sample_sec=1.0):
     if tfit is None:
         raise ValueError("IFS: time axis labels not found")
     ta, tb = tfit
-    legend = _legend(spans)
+    legend = _legend(spans, page, rotated)
     if not legend:
         raise ValueError("IFS: legend not found")
     columns = _axis_columns(spans, vis_box)
