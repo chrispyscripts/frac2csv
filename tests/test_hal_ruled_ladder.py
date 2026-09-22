@@ -36,6 +36,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import hal1                                                # noqa: E402
 
+try:                                                       # noqa: E402
+    from PIL import Image as _PIL                          # noqa: F401
+    HAVE_PIL = True
+except Exception:                                          # pragma: no cover
+    HAVE_PIL = False
+
 DRIVE = glob.glob("/Volumes/CnC-2TB-ssd/BCER-Frac/Spud-2019-2023/"
                   "01367-103133407818W600_43621_COMP_2023FEB09.pdf")
 
@@ -73,8 +79,14 @@ class WhatCountsAsARule(unittest.TestCase):
         ink2 = (a.astype(int).sum(2) < 640)
         self.assertEqual(int((ink2.mean(0) > 0.5).sum()), 0)
 
+    @unittest.skipUnless(HAVE_PIL, "Pillow is not installed")
     def test_a_short_strip_is_left_alone(self):
         """The guard is height-gated, and this proves it through _ocr_column.
+
+        Gated on Pillow because it goes through the real _ocr_column, which
+        imports PIL lazily so the module still loads without it. The unit
+        workflow installs only numpy and pymupdf, so this skips there and
+        runs everywhere the raster readers actually work.
 
         On a strip only a few rows tall "more than half ink" stops meaning
         a rule and starts meaning a thick glyph, so the blanking must not
