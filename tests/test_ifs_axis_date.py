@@ -33,6 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import halliburton_ifs as ifs                            # noqa: E402
 
+DRIVE = "/Volumes/CnC-2TB-ssd/BCER-Frac/Spud-2019-2023"
+F00971 = f"{DRIVE}/00971-102041308122W600_41208_COMP_2021SEP23.pdf"
+
 
 def sp(t, cx, cy):
     """An OCR'd span, as _spans hands one to the axis reader."""
@@ -132,6 +135,79 @@ class WhatTheCsvWouldHaveCarried(unittest.TestCase):
         date, clock = ifs._start_stamp("2021-09-01", 86400 + 3600)
         self.assertEqual(date, "2021-09-02")
         self.assertEqual(clock, "01:00:00")
+
+
+class ARefusedDateKeepsTheClock(unittest.TestCase):
+    """Refusing the date must not blank the time of day beside it.
+
+    The clock is counted off the tick fit and t_min_all; it owes the printed
+    date nothing. extract_page used to gate the whole _start_stamp call on
+    meta.date, so when _axis_date started refusing an impossible month the
+    pages that had one went from "2051-00-02 01:21:30" to "" and 00:00:00 —
+    trading a wrong field for TWO empty ones. Measured on 00971: p134 keeps
+    01:21:30, p135 01:22:12 and p157 01:43:27, which are the clocks those
+    pages read before the refusal existed.
+    """
+
+    def test_a_known_clock_survives_an_unknown_date(self):
+        # 4890 s = 01:21:30, 00971 p134's first sample
+        self.assertEqual(ifs._start_stamp("", 4890), ("", "01:21:30"))
+
+    def test_00971_p157s_clock(self):
+        # 6207 s = 01:43:27
+        self.assertEqual(ifs._start_stamp("", 6207), ("", "01:43:27"))
+
+    def test_an_unknown_date_does_not_raise_when_the_chart_crosses_a_day(self):
+        # the day-shift is the ONLY part that needs a date; with none there
+        # is nothing to shift, and strptime("") must never be reached
+        self.assertEqual(ifs._start_stamp("", 86400 + 4890), ("", "01:21:30"))
+
+    def test_the_day_shift_still_applies_when_the_date_is_known(self):
+        # unchanged behaviour, named so a future edit cannot drop it quietly
+        self.assertEqual(ifs._start_stamp("2021-09-01", 86400 + 3600),
+                         ("2021-09-02", "01:00:00"))
+
+    def test_a_chart_starting_before_its_first_tick_still_steps_back(self):
+        # 00328 p227: ticks labelled the 10th, data begins 23:54:55 on the 9th
+        self.assertEqual(ifs._start_stamp("2021-11-10", -305),
+                         ("2021-11-09", "23:54:55"))
+
+
+@unittest.skipUnless(os.path.isdir(DRIVE), "the BCER drive is not mounted")
+class OnTheRealPages(unittest.TestCase):
+    """The gate that actually caused it lives in extract_page, not here.
+
+    _start_stamp was always willing to compute a clock without a date; what
+    threw the clock away was `if meta.date:` wrapped around the call. A unit
+    test on _start_stamp cannot see that, so these read the pages.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import fitz
+        cls.doc = fitz.open(F00971)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.doc.close()
+
+    def _meta(self, pno):
+        return ifs.extract_page(self.doc[pno - 1])[0]
+
+    def test_p134_refuses_its_month_and_keeps_its_clock(self):
+        m = self._meta(134)
+        self.assertEqual(m.date, "")            # was "2051-00-02"
+        self.assertEqual(m.start_time, "01:21:30")
+
+    def test_p157_refuses_its_month_and_keeps_its_clock(self):
+        m = self._meta(157)
+        self.assertEqual(m.date, "")            # was "2021-00-03"
+        self.assertEqual(m.start_time, "01:43:27")
+
+    def test_a_page_with_a_good_date_is_untouched(self):
+        m = self._meta(156)
+        self.assertEqual(m.date, "2021-09-02")
+        self.assertEqual(m.start_time, "22:08:13")
 
 
 if __name__ == "__main__":

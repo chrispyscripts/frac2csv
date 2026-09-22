@@ -703,7 +703,7 @@ def _start_stamp(label_date, t_min_all):
     been right: Python's floor semantics already turn -305 into 23:54:55.
     """
     shift = int(t_min_all // 86400)
-    if shift:
+    if shift and label_date:
         label_date = (datetime.strptime(label_date, "%Y-%m-%d")
                       + timedelta(days=shift)).strftime("%Y-%m-%d")
     h = int(t_min_all // 3600) % 24
@@ -1366,23 +1366,31 @@ def extract_page(page, sample_sec=1.0):
             axes_frame.pop(col, None)
     meta.axes = axes
     meta.axes_frame = axes_frame
-    # start time of day for DATETIME column
-    if meta.date:
-        # The printed date labels the FIRST TICK, not the first sample, and a
-        # stage that starts just before midnight is drawn with its ticks on
-        # the next day. 00328 p227 is the case: ticks 00:00, 00:10, 00:20 all
-        # labelled 2021-11-10, while the chart's own data begins 23:54:55 —
-        # six minutes earlier, on the 9th. Read verbatim, that stage was filed
-        # a day late, and one stage out of order is enough to make the whole
-        # well's clock non-monotonic, which is exactly what sends FracView to
-        # its synthetic axis and takes every void off the Real Time view.
-        #
-        # t_min_all is in the SAME seconds the tick fit produced, with midnight
-        # already unwrapped, so it goes negative when the data starts before
-        # the first tick. Its floor-division by a day IS the correction, and
-        # the time below has always been right — Python's floor semantics
-        # already turn -305 into 23:54:55. Only the date was missing the shift.
-        meta.date, meta.start_time = _start_stamp(meta.date, t_min_all)
+    # start time of day for DATETIME column.
+    #
+    # NOT gated on knowing the date. The clock is counted off the tick fit and
+    # t_min_all, and owes the printed date nothing; only the day-shift below
+    # does. Gating the whole call on meta.date meant that refusing an
+    # impossible date threw away the time of day with it — 00971 p134 and p157
+    # print a month the calendar has no name for, and when _axis_date began
+    # refusing those the pages went from "2051-00-02 01:21:30" to "" and
+    # 00:00:00, losing a clock that had been read correctly off the axis. One
+    # unknown field should not blank a known one.
+    # The printed date labels the FIRST TICK, not the first sample, and a
+    # stage that starts just before midnight is drawn with its ticks on
+    # the next day. 00328 p227 is the case: ticks 00:00, 00:10, 00:20 all
+    # labelled 2021-11-10, while the chart's own data begins 23:54:55 —
+    # six minutes earlier, on the 9th. Read verbatim, that stage was filed
+    # a day late, and one stage out of order is enough to make the whole
+    # well's clock non-monotonic, which is exactly what sends FracView to
+    # its synthetic axis and takes every void off the Real Time view.
+    #
+    # t_min_all is in the SAME seconds the tick fit produced, with midnight
+    # already unwrapped, so it goes negative when the data starts before
+    # the first tick. Its floor-division by a day IS the correction, and
+    # the time below has always been right — Python's floor semantics
+    # already turn -305 into 23:54:55. Only the date was missing the shift.
+    meta.date, meta.start_time = _start_stamp(meta.date, t_min_all)
     return meta, samples, data, chinfo
 
 
