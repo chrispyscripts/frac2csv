@@ -86,6 +86,10 @@ try:
     import calfrac_legacy
 except Exception:                       # pragma: no cover
     calfrac_legacy = None
+try:
+    import ogc_datacapture
+except Exception:                       # pragma: no cover
+    ogc_datacapture = None
 
 
 # The build stamp every IFS page carries, matched WITHOUT case. Builds to
@@ -280,11 +284,18 @@ def _say_no_tables(doc, results, notes, npages):
                f"chart was exported from them either — whatever is printed "
                f"there is a picture, and a table among them cannot be read "
                f"without OCR." if mute else "")
-    # Name them when there are few enough to name. 00915 (#706) has exactly
-    # two: p1 is the BC OGC cover form and p103 IS the table — a 22-stage
+    # Name them when there are few enough to name. 00915 (#706) had exactly
+    # two: p1 is the BC OGC cover form and p103 IS the table — a 23-stage
     # "Frac Fluid and Additive Treatment Report" spreadsheet, every stage's
     # volumes, pressures and proppant on its own row. "2 of 151 pages" sends
     # the reader hunting; "pages 1, 103" puts him on it.
+    #
+    # HAD: ogc_datacapture reads that page now, so 00915 returns at the top of
+    # this function and is no longer an example of anything here. It is left
+    # standing as the case that earned the naming, and the count corrected —
+    # the sheet has 23 stages in spreadsheet rows 7..29, and the 22 written
+    # here was the miscount that sent #706 looking for an off-by-one in the
+    # parser rather than in this comment.
     where = (f" (page{'s' if len(texty) > 1 else ''} "
              f"{', '.join(str(p) for p in texty)})"
              if 1 <= len(texty) <= 6 else "")
@@ -3820,6 +3831,20 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         ("Treatment Summary (IFS)",
          lambda: ifs_tables.parse_treatment_summary(doc)),
     ], gate=lambda: ifs_tables is not None and ifs_tables.detect(doc))
+
+    # The BC OGC's own workbook, printed out of Excel behind a scanned
+    # report: one page, one row per stage, and every number the regulator
+    # asks for. 00915 p103 (#706) is 1855 words of live text that came back
+    # "no table data" because the page is /Rotate 90 and a stage is a page
+    # COLUMN. Gated on its own detector for the usual reason — these
+    # filings' charts are pictures, so nothing else here fires on them.
+    if ogc_datacapture is not None:
+        _tables_from(ogc_datacapture, ogc_datacapture.TITLE, [
+            (ogc_datacapture.TABLE_TITLE,
+             lambda: ogc_datacapture.parse_document(doc)),
+            (ogc_datacapture.JOB_TITLE,
+             lambda: ogc_datacapture.parse_job_summary(doc)),
+        ], gate=lambda: ogc_datacapture.detect(doc))
 
     if hal1_tables is not None:
         def _hal1_sections():

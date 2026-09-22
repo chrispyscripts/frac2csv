@@ -101,10 +101,18 @@ class TheScannedHalf(unittest.TestCase):
 class TwoPagesIsAPlaceToLook(unittest.TestCase):
     """00915 (#706), a 151-page Liberty filing. Exactly two pages carry text:
     p1 is the BC OGC cover form, and p103 is a "Frac Fluid and Additive
-    Treatment Report" spreadsheet — 22 stage rows, each with its interval
+    Treatment Report" spreadsheet — 23 stage rows, each with its interval
     depths, breakdown/average/max pressure, rates, fluid and proppant totals.
-    It is a real table and no Liberty parser reads this layout, so "2 of 151
-    pages" was true and useless. Naming them puts the reader on p103."""
+    It is a real table and no Liberty parser read this layout, so "2 of 151
+    pages" was true and useless. Naming them puts the reader on p103.
+
+    ogc_datacapture reads p103 now, so the real 00915 returns at the top of
+    _say_no_tables and never reaches any of this — see WhenItSaysNothing. The
+    pages below are synthetic and pin the SHAPE the note is written for: two
+    text pages in a scanned filing, and no table read from either. That shape
+    outlives the one file that named it. (23, not 22: the count in this
+    docstring was wrong, and was the miscount #706 went looking for in the
+    parser.)"""
 
     PAGES = ([_text_page()] + [_picture_page()] * 101 + [_text_page()]
              + [_picture_page()] * 48)
