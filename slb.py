@@ -78,7 +78,7 @@ from datetime import datetime, timedelta
 import fitz
 import numpy as np
 
-from frac_core import PageMeta, _resample
+from frac_core import PageMeta, _resample, drawings
 import ocr_labels
 
 # ---------------------------------------------------------------- detection
@@ -173,10 +173,10 @@ def _has_vector_plot(page):
     to be a plotted curve rather than a rule, a box or a column of ticks."""
     pw, ph = page.rect.width, page.rect.height
     try:
-        drawings = page.get_drawings()
+        art = drawings(page)
     except Exception:
         return False
-    for d in drawings:
+    for d in art:
         if _ink(d) is None or len(d["items"]) < _PLOT_PATH_ITEMS:
             continue
         r = d["rect"]
@@ -493,7 +493,7 @@ def _frame(page, rot):
     """
     best, best_area = None, 0.0
     pw, ph = page.rect.width, page.rect.height
-    for d in page.get_drawings():
+    for d in drawings(page):
         if not _near_black(_ink(d)):
             continue
         # A stroked frame is four lines or one "re". The filled vintage draws
@@ -732,7 +732,7 @@ def _legend(page, rot, frame, spans):
     so the label has to be read anyway and reading it settles the colour too.
     """
     keys = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         # A stroked key is one segment. The filled vintage draws the same
         # 20.8 x 1.6pt sliver as a closed outline of six items, so it needs
         # the looser count — the swatch width and height tests below are what
@@ -912,7 +912,7 @@ def _curves(page, rot, frame, colors):
     """
     out = {}
     span_min = 0.20 * (frame[2] - frame[0])
-    for d in page.get_drawings():
+    for d in drawings(page):
         if len(d["items"]) < 50:
             continue
         color = _ink(d)                 # the filled vintage paints, not strokes

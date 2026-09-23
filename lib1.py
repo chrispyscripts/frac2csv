@@ -12,7 +12,7 @@ from collections import defaultdict
 import fitz
 import numpy as np
 
-from frac_core import PageMeta, _resample
+from frac_core import PageMeta, _resample, drawings
 import aliases
 import ocr_labels
 import daily_ops
@@ -83,7 +83,7 @@ def _outline_colour(page):
     the text had, so the word's colour is the dominant fill inside its box.
     """
     out = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("fill") or d.get("color")
         if c is None:
             continue
@@ -1138,7 +1138,7 @@ def _value_panels(page, horizontal):
     (~20 units apart here) and jump the frame gap between plots (~140).
     """
     pos = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         r = d["rect"]
@@ -1191,7 +1191,7 @@ def extract_page(page, sample_sec=1.0):
     # frame time extent: the value gridlines run the full time width of the
     # plot, so their span along the time axis marks the frame edges
     t_edges = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
             continue
@@ -1207,7 +1207,7 @@ def extract_page(page, sample_sec=1.0):
     # the interior labels when validating the frame fit
     time_grid = []
     frame_edges = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
             continue
@@ -1362,7 +1362,7 @@ def extract_page(page, sample_sec=1.0):
     # value by a constant few units — snap each label to its gridline and
     # fit on true geometry (Carmine's 0422 comparison caught this).
     grid_xs = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
             continue
@@ -1553,7 +1553,7 @@ def extract_page(page, sample_sec=1.0):
         a, b, v_lo_ax, v_hi_ax = fit
         my_panel = panel_i if panels else None
         pts = []
-        for d in page.get_drawings():
+        for d in drawings(page):
             c = d.get("color")
             if c is None and d["type"] in ("f", "fs"):
                 # The 2025-era filings stroke nothing: each curve is a FILLED

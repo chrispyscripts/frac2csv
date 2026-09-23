@@ -74,6 +74,7 @@ same day. A digit read wrong would not land on a multiple of a day.
 import re
 
 import fitz
+from frac_core import drawings
 
 # ------------------------------------------------------------------ the stamp
 #
@@ -236,7 +237,7 @@ def _rules(page):
     """
     m = page.rotation_matrix
     ys = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         for it in d["items"]:
             if it[0] != "re":
                 continue

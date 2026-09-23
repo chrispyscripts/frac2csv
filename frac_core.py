@@ -15,6 +15,7 @@ Layout assumptions (MView "Casing Ign Template" and similar):
 """
 import csv
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -23,6 +24,61 @@ import numpy as np
 
 import aliases
 import ocr_labels
+
+# --- one parse of a page's vector art, shared by everyone who asks ---------
+#
+# drawings(page) re-parses the content stream AND rebuilds every path
+# into Python objects on every call, and a reader asks many times for the
+# same page: lib1 alone asks thirteen times — the frame, the time grid, the
+# value grid, the panel bands, and once more per series for the ink.
+#
+# Measured on 00949 pp.97-100 under cProfile: 11.09s total, of which 10.30s
+# is inside get_drawings — 93% of the read. Only 1.54s of THAT is the C
+# parse. The rest is five million fitz.Point constructions, built thirteen
+# times over for geometry that cannot have changed.
+#
+# A page is read start to finish before the next one starts, so a memo one
+# page deep serves every repeat and never grows.
+#
+# THREAD-LOCAL, and that is not a detail. localapp gates whole-document reads
+# at half the cores, each in its own thread, and fitz releases the GIL — so a
+# shared memo would hand thread A the drawings of whatever page thread B
+# happened to load last. That is not a slow read, it is the wrong file's
+# geometry, silently.
+_PAGE_ART = threading.local()
+
+
+def drawings(page):
+    """drawings(page), parsed once per page, per thread.
+
+    The list and the dicts in it are SHARED with the next caller: read them,
+    never mutate them. Nothing in this project does — every reader takes
+    d["rect"], d["items"], d["color"] and builds its own objects.
+    """
+    # The document is held alive by the memo so its id() cannot be recycled
+    # under us while it is the key — a recycled id would serve one file's
+    # geometry for another's page of the same number.
+    #
+    # Anything that is not a real fitz.Page is read straight through. Several
+    # tests hand these functions a stub with get_drawings() and nothing else,
+    # and a page that cannot be identified is a page that must not be cached:
+    # there is no key that says which page it is.
+    try:
+        key = (id(page.parent), page.number)
+    except AttributeError:
+        return page.get_drawings()
+    memo = getattr(_PAGE_ART, "memo", None)
+    if memo is not None and memo[0] == key:
+        return memo[2]
+    art = page.get_drawings()
+    _PAGE_ART.memo = (key, page.parent, art)
+    return art
+
+
+def forget_drawings():
+    """Drop the memo — for a caller that is done with a document and does not
+    want its page art held alive behind it."""
+    _PAGE_ART.memo = None
 
 # stroke color -> (csv column, axis kind). LAST-RESORT fallback only: the
 # template re-uses the same colours for different curves across vintages, so
@@ -98,7 +154,7 @@ def _black_segments(page):
     this function exists to stop.
     """
     segs = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         color = d.get("color")
         if d.get("type") != "s" or color is None or not _frame_ink(color):
             continue
@@ -257,7 +313,7 @@ def _clean_label(text):
 def _legend_keys(page):
     """[(rgb, rect, horizontal)] for every legend swatch on the page."""
     out = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         if d.get("type") != "s" or d.get("color") is None:
             continue
         items = d["items"]
@@ -390,7 +446,7 @@ def _curveish(page):
     prose does not reach the legend read below.
     """
     out = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         color = d.get("color")
         if color is None or len(d["items"]) <= 5:
             continue
@@ -403,7 +459,7 @@ def _curveish(page):
 def page_kind(page):
     """'vector' if the page has stroked curves in known series colors,
     else 'raster'."""
-    for d in page.get_drawings():
+    for d in drawings(page):
         color = d.get("color")
         if color is None:
             continue
@@ -787,7 +843,7 @@ def _collect_points(page, frame, series=None, unclaimed=None, known=()):
     if series is None:
         series = SERIES
     raw, orphan = {}, {}
-    for d in page.get_drawings():
+    for d in drawings(page):
         color = d.get("color")
         if color is None or d.get("type") != "s":
             continue

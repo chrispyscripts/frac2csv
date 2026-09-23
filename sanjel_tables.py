@@ -108,6 +108,7 @@ off them.
 import re
 
 import fitz
+from frac_core import drawings
 
 SUMMARY_KINDS = [
     ("completion", "Completion Details"),
@@ -208,7 +209,7 @@ def _rules(page):
     edges — Sanjel draws some borders as filled rectangles."""
     m = page.rotation_matrix
     v, h = [], []
-    for g in page.get_drawings():
+    for g in drawings(page):
         for it in g["items"]:
             if it[0] == "l":
                 p, q = it[1] * m, it[2] * m

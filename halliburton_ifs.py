@@ -17,7 +17,7 @@ import fitz
 import numpy as np
 
 import ocr_labels
-from frac_core import PageMeta
+from frac_core import PageMeta, drawings
 
 STD_NAMES = [
     (("treating pressure",), "Tr Press"),
@@ -63,7 +63,7 @@ def _outline_colours(page):
     the page draws.
     """
     out = []
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("fill") or d.get("color")
         if c is None:
             continue
@@ -143,7 +143,7 @@ def _curve_ink(page):
     the same test extract_page applies to black ink, applied to every colour.
     """
     n = 0
-    for d in page.get_drawings():
+    for d in drawings(page):
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         for item in d["items"]:
@@ -271,7 +271,7 @@ def visible_plot_box(page):
     """
     cut, box = 0, None
     pr = page.rect
-    for i, d in enumerate(page.get_drawings()):
+    for i, d in enumerate(drawings(page)):
         f = d.get("fill")
         if f is None or d["type"] not in ("f", "fs"):
             continue
@@ -1288,7 +1288,7 @@ def extract_page(page, sample_sec=1.0):
     # is the only honest statement of where this series has data at all. See
     # _pen_resample.
     pts_by_color = defaultdict(list)
-    for _i, d in enumerate(page.get_drawings()):
+    for _i, d in enumerate(drawings(page)):
         # ink drawn before the last full-plot white fill is painted over and
         # never seen by a reader — see visible_plot_box
         if _i < vis_cut:
@@ -1333,7 +1333,7 @@ def extract_page(page, sample_sec=1.0):
     lab_hi = max(s["cx"] for s in t_row)
     vgrid = []
     rules = []                     # the same lines' y extents, visible only
-    for _i, d in enumerate(page.get_drawings()):
+    for _i, d in enumerate(drawings(page)):
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         for item in d["items"]:

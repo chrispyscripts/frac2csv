@@ -30,6 +30,7 @@ import numpy as np
 import auto_raster as ar
 import curve_trace as ct
 import raster_core as rc
+from frac_core import drawings
 
 # series -> the hue families it is printed in, first choice first. MView's
 # palette is blue pressure, red rate, green concentration and purple
@@ -86,7 +87,7 @@ def detect(page):
     """One picture, no vector art, and an OCR layer that reads like an MView
     overview: a minutes axis, a pressure axis and one of the two page kinds."""
     try:
-        if len(page.get_images(full=True)) != 1 or page.get_drawings():
+        if len(page.get_images(full=True)) != 1 or drawings(page):
             return False
     except Exception:
         return False

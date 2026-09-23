@@ -48,6 +48,7 @@ from datetime import date as _date
 import numpy as np
 
 import curve_trace as ct
+from frac_core import drawings
 
 BLACK = 0
 WHITE = 0xFFFFFF
@@ -163,7 +164,7 @@ def _gridlines(drawings):
     out of the same measurement and cannot disagree with it.
     """
     hx, vy = [], []
-    for d in drawings:
+    for d in art:
         if d.get("color") is None:
             continue
         for it in d["items"]:
@@ -397,7 +398,7 @@ def extract_page(page, sample_sec=1.0):
 
     spans = _spans(page)
     text = page.get_text()
-    drawings = page.get_drawings()
+    art = drawings(page)
     xs, ys = _gridlines(drawings)
     if len(xs) < 3 or len(ys) < 3:
         # An interval that was skipped still gets its page — header, footer
@@ -485,7 +486,7 @@ def extract_page(page, sample_sec=1.0):
                 y0 - 0.05 <= (ay + by) / 2 <= y1 + 0.05)
 
     strokes = {}
-    for d in drawings:
+    for d in art:
         c = d.get("color")
         if c is None:
             continue

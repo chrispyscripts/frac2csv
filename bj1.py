@@ -13,7 +13,7 @@ from collections import defaultdict
 import fitz
 import numpy as np
 
-from frac_core import PageMeta, _resample
+from frac_core import PageMeta, _resample, drawings
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -231,13 +231,13 @@ def _spans(page):
 
 
 def _drawings(page):
-    """page.get_drawings(), stood upright on a rotated page."""
-    drawings = page.get_drawings()
+    """drawings(page), stood upright on a rotated page."""
+    art = drawings(page)
     M = _upright(page)
     if M is None:
-        return drawings
+        return art
     out = []
-    for d in drawings:
+    for d in art:
         e = dict(d)
         e["rect"] = (d["rect"] * M).normalize()
         items = []
@@ -608,9 +608,9 @@ def extract_page(page, sample_sec=1.0):
             axis_names[s["t"]] = key
 
     # legend: black names with a short colored dash stroke to the left
-    drawings = _drawings(page)
+    art = _drawings(page)
     dashes = []
-    for d in drawings:
+    for d in art:
         c = d.get("color")
         if c is None or d["type"] not in ("s", "fs"):
             continue
@@ -689,7 +689,7 @@ def extract_page(page, sample_sec=1.0):
     # per-series y-band and the >=5-item stroke length filter below already
     # exclude off-plot strokes, so widening to the frame only recovers real
     # curve points (verified: never drops points, only adds contiguous ramp).
-    vgrid = [(d["rect"].x0 + d["rect"].x1) / 2 for d in drawings
+    vgrid = [(d["rect"].x0 + d["rect"].x1) / 2 for d in art
              if d.get("color") is not None and d["type"] in ("s", "fs")
              and abs(d["rect"].x1 - d["rect"].x0) < 0.6
              and (d["rect"].y1 - d["rect"].y0) > 100]
@@ -707,7 +707,7 @@ def extract_page(page, sample_sec=1.0):
             continue
         a, b, y_lo, y_hi = fits[key]
         pts = []
-        for d in drawings:
+        for d in art:
             c = d.get("color")
             if c is None or d["type"] not in ("s", "fs"):
                 continue
@@ -776,7 +776,7 @@ def extract_page(page, sample_sec=1.0):
     # x here (no page rotation), and the stacked value axes share one frame,
     # so the horizontal gridlines give its vertical extent.
     hgrid = []
-    for d in drawings:
+    for d in art:
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         r = d["rect"]

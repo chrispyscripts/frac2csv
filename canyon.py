@@ -12,7 +12,7 @@ from collections import defaultdict
 import fitz
 import numpy as np
 
-from frac_core import PageMeta, _resample
+from frac_core import PageMeta, _resample, drawings
 
 PANEL_UNITS = {"Pressure": "MPa", "Rate": "m³/min", "Concentration": "kg/m³"}
 
@@ -155,7 +155,7 @@ def extract_page(page, sample_sec=1.0):
         p["y_end"] = panels[i + 1]["title_y"] if i + 1 < len(panels) else page_h
 
     # per-panel: y-axis ticks (black numerals, left column), time row, legend
-    drawings = page.get_drawings()
+    art = drawings(page)
     all_series = {}
     units = {}
     t_fit_global = None
@@ -198,7 +198,7 @@ def extract_page(page, sample_sec=1.0):
         name_color = {}
         for s in legend_row:
             best, bestd = None, 30
-            for d in drawings:
+            for d in art:
                 c = d.get("color")
                 if c is None or d["type"] not in ("s", "fs"):
                     continue
@@ -216,7 +216,7 @@ def extract_page(page, sample_sec=1.0):
             color_names[color].append(name)
         for color, names in color_names.items():
             pts = []
-            for d in drawings:
+            for d in art:
                 c = d.get("color")
                 if c is None or d["type"] not in ("s", "fs"):
                     continue
@@ -262,7 +262,7 @@ def extract_page(page, sample_sec=1.0):
     # whole plotted region (top panel's frame down to the bottom panel's) —
     # the horizontal gridlines across all panels give that span.
     hgrid = []
-    for d in drawings:
+    for d in art:
         if d.get("color") is None or d["type"] not in ("s", "fs"):
             continue
         r = d["rect"]

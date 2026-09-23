@@ -352,7 +352,7 @@ def _why_nothing(doc, npages, raster):
         any_readable += bool(ok)
         sat = 0
         try:
-            for d in page.get_drawings():
+            for d in fc.drawings(page):
                 for key in ("color", "fill"):
                     c = d.get(key)
                     if c and max(c[:3]) - min(c[:3]) > 0.35:
@@ -445,7 +445,7 @@ def vector_no_text(doc, sample=60):
             continue
         sat = 0
         try:
-            for d in page.get_drawings():
+            for d in fc.drawings(page):
                 for key in ("color", "fill"):
                     c = d.get(key)
                     if c and max(c[:3]) - min(c[:3]) > 0.35:

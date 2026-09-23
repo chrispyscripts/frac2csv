@@ -12,6 +12,7 @@ from collections import defaultdict
 
 import fitz
 import numpy as np
+from frac_core import drawings
 
 MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun",
@@ -193,7 +194,7 @@ def extract_window(page):
             continue
         a, b = fit
         pts = []
-        for d in page.get_drawings():
+        for d in drawings(page):
             c = d.get("color")
             if c is None or d["type"] not in ("s", "fs"):
                 continue

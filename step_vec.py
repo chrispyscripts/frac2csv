@@ -25,6 +25,7 @@ import re
 import numpy as np
 
 import curve_trace as ct
+from frac_core import drawings
 
 NUM = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
 
@@ -62,7 +63,7 @@ def detect(page):
         # already exclude it; what identifies this one is that the chart is
         # DRAWN. Do not also require zero images — these pages embed the STEP
         # logo, and that alone was disqualifying whole files.
-        return len(page.get_drawings()) > 40
+        return len(drawings(page)) > 40
     except Exception:
         return False
 
@@ -155,7 +156,7 @@ def extract_page(page, sample_sec=1.0):
 
     # curve points grouped by colour, kept with their y so a band can claim them
     strokes = {}
-    for d in page.get_drawings():
+    for d in drawings(page):
         c = d.get("color")
         if c is None:
             continue
