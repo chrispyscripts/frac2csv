@@ -153,6 +153,23 @@
   .handovernote { opacity:.9; }
   .retracemsg { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .retracemsg.bad { color:#c22a1e; }
+  .retracetools { display:inline-flex; align-items:center; gap:6px; }
+  .retracehint { color:var(--mut); font-size:11.5px; white-space:nowrap; }
+  .filtgrp { display:inline-flex; align-items:center; gap:6px; }
+  .filtgrp select { font:inherit; font-size:12px; padding:3px 6px;
+                    border:1px solid var(--line); border-radius:6px;
+                    background:var(--paper); color:var(--ink); }
+  .filtgrp input[type=range] { width:120px; accent-color:var(--carmine); }
+  .filtgrp input[type=range]:disabled { opacity:.4; }
+  .filtamtlbl { color:var(--mut); font-size:11.5px; white-space:nowrap;
+                min-width:104px; }
+  .filtsavewrap { position:relative; display:inline-block; }
+  .filtmenu { position:absolute; top:100%; left:0; z-index:40; margin-top:4px;
+              background:var(--paper); border:1px solid var(--line);
+              border-radius:8px; padding:4px; display:flex;
+              flex-direction:column; gap:2px; white-space:nowrap;
+              box-shadow:0 6px 22px rgba(0,0,0,.14); }
+  .filtmenu .btn { text-align:left; }
   .isocount { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .isotools .btn:disabled { opacity:.45; cursor:default; }
   .btn.danger { border-color:#7a2a24; color:#c22a1e; }
@@ -753,8 +770,31 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
                   title="Show only the stretches no curve was drawn for — the
 ones the reader recovered from under a curve painted over them">Isolate Interpolation</button>
           <button type="button" class="btn" id="retracebtn" hidden
-                  title="Drag a box round a bad stretch and the curve inside it is
-read again off the page underneath">Fix in box</button>
+                  title="Click the start and the end of a bad stretch, then Apply
+— the curve between them is read again off the page underneath">Fix a stretch</button>
+          <span class="retracetools" id="retracetools" hidden>
+            <span class="retracehint" id="retracehint"></span>
+            <button type="button" class="btn" id="retraceapply" disabled
+                    title="Read the curve between the two points again off the
+page underneath">Apply</button>
+            <button type="button" class="btn" id="retraceundo" hidden
+                    title="Put the last stretch back as it was read">Undo</button>
+          </span>
+          <span class="filtgrp" id="filtgrp" hidden>
+            <select id="filtsel" title="Smoothing for every curve on this chart.
+Hampel strips digitising spikes; Savitzky-Golay smooths the pixel staircase
+without moving a peak or rounding a step."></select>
+            <input type="range" id="filtamt" min="0" max="100" step="1" value="0"
+                   title="How hard the filter works — the window it averages
+over. Slide it and the chart follows."></input>
+            <span class="filtamtlbl" id="filtamtlbl">off</span>
+            <span class="filtsavewrap">
+              <button type="button" class="btn" id="filtsave"
+                      title="Save this filter">Save ▾</button>
+              <div class="filtmenu" id="filtmenu" hidden></div>
+            </span>
+            <span class="retracemsg" id="filtmsg" hidden></span>
+          </span>
           <span class="isotools" id="isotools" hidden>
             <span class="isocount" id="isocount"></span>
             <button type="button" class="btn danger" id="isodel" disabled
@@ -3000,7 +3040,8 @@ const gState = { channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1,
                  isolate: false, dedSel: new Set(), dedUndo: [],
                  // Retrace: drag a box on the chart and the curve inside it is
                  // re-read off the source page. See retraceBox.
-                 retrace: false, rbox: null, retraceUndo: [] };
+                 retrace: false, rpts: [], retraceUndo: [],
+                 filt: { kind: "none", amount: 0 } };
 const DED_SEL = "#c22a1e";
 // the handed-over tail: on the page, not in the export
 const HANDOVER_INK = "#8d9aa8";
@@ -3060,6 +3101,12 @@ function setGraph(channels, n, sampleSec, meta, handover) {
   // Saved Fix-in-box corrections go back on before the chart is measured or
   // drawn, so _vmax, the legend and the export all see the corrected curve.
   gState.boxFixApplied = boxFixApply(channels, meta);
+  // The filter reads the CORRECTED curve, so a Fix-a-stretch repair is
+  // smoothed along with everything else rather than standing proud of it.
+  // __base is re-taken here because the stage was just read afresh.
+  for (const c of channels || []) c.__base = (c.values || []).slice();
+  gState.filt = { ...filtSpecFor(meta) };
+  filtToChannels(channels, gState.filt);
   gState.channels = channels; gState.n = n; gState.dsec = sampleSec || 1;
   // The minutes this chart handed to the next one are not the stage's — the
   // export cuts them — but the PAGE draws them, so the chart has to reach
@@ -3102,7 +3149,7 @@ function setGraph(channels, n, sampleSec, meta, handover) {
   // A new stage means new channel arrays: a selection or an undo entry kept
   // across the change would point into the previous stage's samples.
   gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso(); syncRetrace();
+  syncIso(); syncRetrace(); filtSyncUI();
   redrawGraph(); buildLegend();
 }
 
@@ -3147,9 +3194,20 @@ function syncRetrace() {
   // Only meaningful with the page underneath: the box is read off that ink.
   const can = gState.channels.length > 0 && ghostHasPage();
   b.hidden = !can;
-  if (!can && gState.retrace) { gState.retrace = false; gState.rbox = null; }
+  if (!can && gState.retrace) { gState.retrace = false; gState.rpts = []; }
   b.classList.toggle("on", gState.retrace);
-  b.textContent = gState.retraceUndo.length ? "Fix in box \u00b7 undo" : "Fix in box";
+  const tools = $("retracetools");
+  if (tools) {
+    tools.hidden = !gState.retrace;
+    const n = gState.rpts.length;
+    $("retraceapply").disabled = n !== 2;
+    $("retracehint").textContent =
+      n === 0 ? "click the start of the bad stretch"
+        : n === 1 ? "now click the end"
+          : "Apply, or click again to start over";
+    const u = $("retraceundo");
+    u.hidden = !gState.retraceUndo.length;
+  }
 }
 function ghostHasPage() {
   const cv = $("origgraph");
@@ -3207,11 +3265,20 @@ function applyRetrace(i0, i1, yTop, yBot) {
                        chanUnfrac(c, fr(Math.min(yTop, yBot))),
                        chanUnfrac(c, fr(Math.max(yTop, yBot))));
   if (!r.ok) return r;
-  const before = [];
-  for (let i = i0; i <= i1; i++) before.push(c.values[i]);
-  gState.retraceUndo.push({ ci: pick, i0, before });
+  const before = [], beforeBase = [];
+  for (let i = i0; i <= i1; i++) {
+    before.push(c.values[i]);
+    beforeBase.push(c.__base ? c.__base[i] : undefined);
+  }
+  gState.retraceUndo.push({ ci: pick, i0, before, beforeBase });
+  // Into the UNFILTERED curve as well as the drawn one. __base is what the
+  // slider re-filters from, so a repair that only reached .values would be
+  // rubbed out by the next nudge of the slider.
   for (let k = 0; k < r.vals.length; k++) {
-    if (r.vals[k] != null) c.values[i0 + k] = r.vals[k];
+    if (r.vals[k] != null) {
+      c.values[i0 + k] = r.vals[k];
+      if (c.__base) c.__base[i0 + k] = r.vals[k];
+    }
   }
   boxFixAdd(gState.meta, c.key || c.label, i0, r.vals);
   return { ok: true, channel: chanName(c), found: r.found, span: i1 - i0 + 1,
@@ -3221,7 +3288,10 @@ function retraceUndoLast() {
   const u = gState.retraceUndo.pop();
   if (!u) return;
   const c = gState.channels[u.ci];
-  for (let k = 0; k < u.before.length; k++) c.values[u.i0 + k] = u.before[k];
+  for (let k = 0; k < u.before.length; k++) {
+    c.values[u.i0 + k] = u.before[k];
+    if (c.__base && u.beforeBase) c.__base[u.i0 + k] = u.beforeBase[k];
+  }
   boxFixDrop(gState.meta, c.key || c.label, u.i0);   // undo unsaves it too
   syncRetrace(); redrawGraph(); buildLegend();
 }
@@ -3265,7 +3335,7 @@ function dedUndoLast() {
 
 function clearGraph() {
   gState.isolate = false; gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso(); syncRetrace();
+  syncIso(); syncRetrace(); filtSyncUI();
   gState.channels = []; gState.hover = null; gState.hidden = new Set();
   $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
@@ -4046,15 +4116,27 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
     }
   });
   if (gState._dedSeen && dedRaf == null) dedRaf = requestAnimationFrame(dedTick);
-  const b = gState.rbox;
-  if (b) {
-    const x = Math.min(b.x0, b.x1), y = Math.min(b.y0, b.y1);
-    const w = Math.abs(b.x1 - b.x0), h = Math.abs(b.y1 - b.y0);
+  // The two points of a Fix-a-stretch selection. The first one alone still
+  // has to be visible, or a mis-click cannot be seen before the second.
+  const pts = gState.rpts || [];
+  if (pts.length) {
     ctx.save();
-    ctx.fillStyle = "rgba(29,91,216,.10)";
-    ctx.strokeStyle = "#1d5bd8"; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 3]);
-    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+    if (pts.length === 2) {
+      const x = Math.min(pts[0].x, pts[1].x), w = Math.abs(pts[1].x - pts[0].x);
+      const y = Math.min(pts[0].y, pts[1].y), h = Math.abs(pts[1].y - pts[0].y);
+      ctx.fillStyle = "rgba(29,91,216,.10)";
+      ctx.fillRect(x, GP.T, w, H - GP.T - GP.B);
+      ctx.strokeStyle = "#1d5bd8"; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x, y, w, h);
+    }
+    ctx.setLineDash([]);
+    for (const p of pts) {
+      ctx.strokeStyle = "#1d5bd8"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(p.x, GP.T); ctx.lineTo(p.x, H - GP.B); ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.strokeStyle = "#1d5bd8"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, 6.2832);
+      ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -4826,6 +4908,474 @@ let timeFix = (() => {
   try { return JSON.parse(localStorage.getItem("f2c.timeFix") || "{}"); }
   catch (e) { return {}; }
 })();
+
+// ---- digitiser filters ----------------------------------------------------
+//
+// A traced curve carries two kinds of noise that want opposite treatment, and
+// one filter cannot do both:
+//
+//   * SPIKES — the tracer followed the wrong ink for a column (a gridline, a
+//     neighbour's anti-aliased fringe, a legend swatch). Measured on 00028
+//     p97: 3,860 samples, not one off the ink by more than 2px, so these are
+//     not tracer error but the wrong ink being genuinely there. A smoother
+//     run over a spike does not remove it, it spreads it into a broad hump.
+//   * STAIRCASES — the pixel grid quantises a smooth ramp into steps.
+//
+// So spikes are STRIPPED first (Hampel: median + MAD, replace, do not blend)
+// and only then smoothed (Savitzky-Golay: local polynomial, which keeps the
+// height and the position of a real peak and adds no lag). Doing it the other
+// way round bakes the spike in.
+//
+// Every filter here:
+//   * leaves a null/NaN sample null — a gap is missing data, not zero, and a
+//     filter must not invent a reading where the sheet drew none;
+//   * shrinks its window at the ends rather than padding, so the first and
+//     last samples come back untouched instead of dragged toward a made-up
+//     value;
+//   * returns a new array and never mutates its input, because the slider
+//     recomputes from the unfiltered curve on every move.
+
+function filtFinite(v) {
+  return v != null && typeof v === "number" && isFinite(v);
+}
+
+// The median of an already-gathered window. Sorting a copy: the caller's
+// scratch array is reused across samples and must not be left in sorted order.
+function filtMedianOf(xs) {
+  if (!xs.length) return null;
+  const s = xs.slice().sort((a, b) => a - b);
+  const h = s.length >> 1;
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+}
+
+// Hampel: replace a sample that sits more than `nSigma` robust deviations
+// from its neighbours' median WITH that median.
+//
+// MAD is scaled by 1.4826 so that, on normally distributed noise, the
+// threshold means the same as a standard deviation would — which is what
+// makes "3" a sensible default rather than an arbitrary dial.
+function filtHampel(v, win, nSigma) {
+  const n = v.length, h = Math.max(1, Math.floor(win / 2));
+  const k = nSigma == null ? 3 : nSigma;
+  const out = v.slice();
+  const w = [];
+  for (let i = 0; i < n; i++) {
+    if (!filtFinite(v[i])) { out[i] = v[i]; continue; }
+    w.length = 0;
+    for (let j = Math.max(0, i - h); j <= Math.min(n - 1, i + h); j++)
+      if (filtFinite(v[j])) w.push(v[j]);
+    if (w.length < 3) continue;
+    const med = filtMedianOf(w);
+    const dev = w.map(x => Math.abs(x - med));
+    let scale = filtMedianOf(dev) * 1.4826;
+    // A window that is flat apart from a minority has MAD exactly 0 — and
+    // that is the case Hampel exists for: one sample at 5 in a run of 70s.
+    // Refusing to judge a zero-MAD window (the obvious guard) therefore skips
+    // every isolated spike on a steady curve, which is most of them.
+    //
+    // The mean absolute deviation still has a scale there, and it is the
+    // right one: on the spike window above it is 9.3, so a 65-unit departure
+    // is 7 deviations out and goes. On a genuine STEP the same fallback is
+    // ~21 and the samples either side are 0 out, so the step stands — which
+    // is the property that actually has to hold.
+    if (!(scale > 0)) scale = dev.reduce((a, b) => a + b, 0) / dev.length;
+    if (!(scale > 0)) continue;              // truly constant: nothing to judge
+    if (Math.abs(v[i] - med) > k * scale) out[i] = med;
+  }
+  return out;
+}
+
+// A plain running median. Kept separate from Hampel because it replaces EVERY
+// sample rather than only the ones that fail a test — blunter, and the right
+// answer when the trace is noisy everywhere rather than spiky in places.
+function filtMedian(v, win) {
+  const n = v.length, h = Math.max(1, Math.floor(win / 2));
+  const out = v.slice();
+  const w = [];
+  for (let i = 0; i < n; i++) {
+    if (!filtFinite(v[i])) { out[i] = v[i]; continue; }
+    w.length = 0;
+    for (let j = Math.max(0, i - h); j <= Math.min(n - 1, i + h); j++)
+      if (filtFinite(v[j])) w.push(v[j]);
+    if (w.length) out[i] = filtMedianOf(w);
+  }
+  return out;
+}
+
+// Savitzky-Golay convolution weights for the CENTRE of a window of half-width
+// h, fitting a polynomial of the given order.
+//
+// The weights are the first row of (A'A)^-1 A', where A is the Vandermonde
+// matrix over the offsets -h..h. Solved directly: the normal matrix is only
+// (order+1) square, and order is 2 or 3.
+function filtSavGolCoef(h, order) {
+  const m = 2 * h + 1, p = Math.min(order, m - 1);
+  // normal matrix: ATA[a][b] = sum over offsets of t^(a+b)
+  const ATA = [];
+  for (let a = 0; a <= p; a++) {
+    ATA.push([]);
+    for (let b = 0; b <= p; b++) {
+      let s = 0;
+      for (let t = -h; t <= h; t++) s += Math.pow(t, a + b);
+      ATA[a].push(s);
+    }
+  }
+  // Solve ATA x = e0 by Gauss-Jordan with partial pivoting; x then dots with
+  // A' to give the weights. Only the FIRST row of the inverse is needed,
+  // because a centred fit is evaluated at t = 0.
+  const M = ATA.map((row, i) => row.concat(i === 0 ? 1 : 0));
+  for (let c = 0; c <= p; c++) {
+    let piv = c;
+    for (let r = c + 1; r <= p; r++)
+      if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    if (Math.abs(M[piv][c]) < 1e-12) return null;
+    const tmp = M[c]; M[c] = M[piv]; M[piv] = tmp;
+    const d = M[c][c];
+    for (let j = c; j <= p + 1; j++) M[c][j] /= d;
+    for (let r = 0; r <= p; r++) {
+      if (r === c) continue;
+      const f = M[r][c];
+      if (!f) continue;
+      for (let j = c; j <= p + 1; j++) M[r][j] -= f * M[c][j];
+    }
+  }
+  const x = [];
+  for (let a = 0; a <= p; a++) x.push(M[a][p + 1]);
+  const w = [];
+  for (let t = -h; t <= h; t++) {
+    let s = 0;
+    for (let a = 0; a <= p; a++) s += x[a] * Math.pow(t, a);
+    w.push(s);
+  }
+  return w;
+}
+
+// Savitzky-Golay smoothing.
+//
+// Chosen over a moving average because it does not flatten a corner: a frac
+// curve is mostly straight lines meeting at sharp breaks, and an average
+// rounds every one of them and lags the whole curve by half a window. The
+// local polynomial reproduces a straight run exactly and a quadratic peak
+// without clipping its height.
+function filtSavGol(v, win, order) {
+  const n = v.length;
+  let h = Math.max(1, Math.floor(win / 2));
+  const p = Math.max(1, Math.min(order == null ? 2 : order, 5));
+  const out = v.slice();
+  const cache = {};
+  for (let i = 0; i < n; i++) {
+    if (!filtFinite(v[i])) { out[i] = v[i]; continue; }
+    // The window shrinks at the ends AND at a gap, so the fit is always
+    // centred and symmetric: an off-centre window is what puts a hook on the
+    // first and last samples of every stage.
+    let hh = Math.min(h, i, n - 1 - i);
+    while (hh > 0) {
+      let ok = true;
+      for (let j = i - hh; j <= i + hh; j++)
+        if (!filtFinite(v[j])) { ok = false; break; }
+      if (ok) break;
+      hh--;
+    }
+    if (hh < 1 || 2 * hh + 1 <= p) continue;      // nothing to fit: leave it
+    const key = hh + ":" + p;
+    const w = cache[key] || (cache[key] = filtSavGolCoef(hh, p));
+    if (!w) continue;
+    let s = 0;
+    for (let k = -hh; k <= hh; k++) s += w[k + hh] * v[i + k];
+    out[i] = s;
+  }
+  return out;
+}
+
+// Robust LOESS: locally weighted linear regression with tricube distance
+// weights, then two bisquare reweightings so a surviving artefact cannot drag
+// its neighbourhood the way it would in a plain local average.
+//
+// O(n * window), so the caller keeps the span modest on a live slider.
+function filtLoess(v, frac, iters) {
+  const n = v.length;
+  const idx = [];
+  for (let i = 0; i < n; i++) if (filtFinite(v[i])) idx.push(i);
+  const m = idx.length;
+  const out = v.slice();
+  if (m < 4) return out;
+  const q = Math.max(2, Math.min(m - 1, Math.round((frac || 0.1) * m)));
+  const rounds = iters == null ? 2 : iters;
+  let rw = new Array(m).fill(1);           // robustness weights
+  let fit = new Array(m).fill(0);
+  for (let pass = 0; pass <= rounds; pass++) {
+    for (let a = 0; a < m; a++) {
+      // the q nearest neighbours in INDEX space, which is time here
+      let lo = Math.max(0, a - (q >> 1)), hi = Math.min(m - 1, lo + q - 1);
+      lo = Math.max(0, hi - q + 1);
+      const x0 = idx[a];
+      let dmax = Math.max(Math.abs(idx[lo] - x0), Math.abs(idx[hi] - x0)) || 1;
+      let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+      for (let b = lo; b <= hi; b++) {
+        const d = Math.abs(idx[b] - x0) / dmax;
+        const t = 1 - d * d * d;
+        let w = t > 0 ? t * t * t : 0;
+        w *= rw[b];
+        if (!(w > 0)) continue;
+        const x = idx[b] - x0, y = v[idx[b]];
+        sw += w; sx += w * x; sy += w * y; sxx += w * x * x; sxy += w * x * y;
+      }
+      const det = sw * sxx - sx * sx;
+      // A degenerate neighbourhood (every weight on one x) has no slope to
+      // find; the weighted mean is the honest answer there.
+      fit[a] = Math.abs(det) < 1e-12
+        ? (sw ? sy / sw : v[x0])
+        : (sxx * sy - sx * sxy) / det;
+    }
+    if (pass === rounds) break;
+    const res = [];
+    for (let a = 0; a < m; a++) res.push(Math.abs(v[idx[a]] - fit[a]));
+    const s = filtMedianOf(res);
+    // Everything already on the fit: no outliers to down-weight, and dividing
+    // by 6*0 would make every weight NaN and blank the channel.
+    if (!(s > 0)) break;
+    rw = res.map(r => {
+      const u = r / (6 * s);
+      return u >= 1 ? 0 : (1 - u * u) * (1 - u * u);
+    });
+  }
+  for (let a = 0; a < m; a++) out[idx[a]] = fit[a];
+  return out;
+}
+
+// The dial the slider actually turns.
+//
+// One 0..100 control has to mean something for every filter, so it maps to
+// each one's own natural parameter and a window is always ODD (a centred
+// window has a middle sample). 0 is off, and off means the curve is returned
+// untouched rather than passed through a one-sample filter.
+const FILT_KINDS = [
+  { id: "none",   label: "None" },
+  { id: "hampel", label: "Hampel — strip spikes" },
+  { id: "sg",     label: "Savitzky-Golay — smooth" },
+  { id: "both",   label: "Hampel → Savitzky-Golay (recommended)" },
+  { id: "median", label: "Median — blunt" },
+  { id: "loess",  label: "Robust LOESS — trend" },
+];
+
+function filtOdd(x) {
+  const n = Math.max(3, Math.round(x));
+  return n % 2 ? n : n + 1;
+}
+
+// amount 0..100 -> the window each filter wants.
+//   Hampel  3..31 samples, the span a digitising spike occupies
+//   SG     5..41 with order 2, the 11-21 range the workflow calls for sitting
+//          just under halfway up the slider
+//   LOESS  2%..20% of the stage
+function filtParams(kind, amount) {
+  const a = Math.max(0, Math.min(100, Number(amount) || 0)) / 100;
+  if (kind === "hampel") return { win: filtOdd(3 + a * 28), nSigma: 3 };
+  if (kind === "median") return { win: filtOdd(3 + a * 28) };
+  if (kind === "sg") return { win: filtOdd(5 + a * 36), order: 2 };
+  if (kind === "both") return { win: filtOdd(3 + a * 28), nSigma: 3,
+                                win2: filtOdd(5 + a * 36), order: 2 };
+  if (kind === "loess") return { frac: 0.02 + a * 0.18 };
+  return {};
+}
+
+// Run one filter spec over one channel's samples. The single entry point the
+// chart, the export and the tests all go through, so they cannot drift.
+function filtApply(values, kind, amount) {
+  if (!values || !values.length) return values;
+  if (!kind || kind === "none" || !(Number(amount) > 0)) return values.slice();
+  const p = filtParams(kind, amount);
+  if (kind === "hampel") return filtHampel(values, p.win, p.nSigma);
+  if (kind === "median") return filtMedian(values, p.win);
+  if (kind === "sg") return filtSavGol(values, p.win, p.order);
+  if (kind === "both")
+    return filtSavGol(filtHampel(values, p.win, p.nSigma), p.win2, p.order);
+  if (kind === "loess") return filtLoess(values, p.frac, 2);
+  return values.slice();
+}
+
+// ---- which filter a stage is read through ---------------------------------
+//
+// Held the way every other correction is: in localStorage, re-applied over a
+// fresh read, so a setting survives the next drop of the same file. Two
+// scopes, because the two questions are different ones:
+//
+//   byStage    this file, this stage — what the slider is doing right now
+//   byProvider every chart this provider ever files. A digitiser's noise is a
+//              property of the PLOTTER, not of the well: if CalFrac's sheets
+//              need an 11-sample Hampel they need it on all of them, and
+//              having to dial it in per stage is the actual complaint.
+//
+// The UNFILTERED curve is kept on the channel as __base, so the slider
+// recomputes from the original on every move rather than filtering an already
+// filtered curve — drag it to 80 and back to 20 and you get what 20 means,
+// not what 80 then 20 means.
+let filtStore = (() => {
+  try {
+    const j = JSON.parse(localStorage.getItem("f2c.filters") || "{}");
+    return { byStage: j.byStage || {}, byProvider: j.byProvider || {} };
+  } catch (e) { return { byStage: {}, byProvider: {} }; }
+})();
+function filtSave() {
+  try { localStorage.setItem("f2c.filters", JSON.stringify(filtStore)); }
+  catch (e) { /* private mode — it just will not outlive the tab */ }
+}
+const filtStageKey = meta => `${fileScope()}::${(meta && meta.stage) || "?"}`;
+function filtProvider() {
+  const f = fileScope();
+  const e = entries.find(x => x && x.name === f);
+  return (e && e.provider) || "Other";
+}
+const FILT_OFF = { kind: "none", amount: 0 };
+// A stage's own setting wins over the provider default: the default is where
+// you start, not something you cannot get out of.
+function filtSpecFor(meta) {
+  const own = filtStore.byStage[filtStageKey(meta)];
+  if (own) return own;
+  const prov = filtStore.byProvider[filtProvider()];
+  return prov || FILT_OFF;
+}
+function filtSpecEq(a, b) {
+  return (a || FILT_OFF).kind === (b || FILT_OFF).kind
+      && Number((a || FILT_OFF).amount) === Number((b || FILT_OFF).amount);
+}
+
+// The unfiltered curve, captured once per channel.
+function filtBase(c) {
+  if (!c.__base) c.__base = (c.values || []).slice();
+  return c.__base;
+}
+// Re-read a set of channels through a filter spec. Reassigns .values rather
+// than writing through it, so the export — which reads the same channel
+// objects — sees the filtered curve without a second code path.
+function filtToChannels(channels, spec) {
+  const s = spec || FILT_OFF;
+  let n = 0;
+  for (const c of channels || []) {
+    const base = filtBase(c);
+    c.values = filtApply(base, s.kind, s.amount);
+    c.__filt = s.kind === "none" || !(s.amount > 0) ? null : s;
+    if (c.__filt) n++;
+  }
+  return n;
+}
+
+// ---- the toolbar ----------------------------------------------------------
+function filtSyncUI() {
+  const grp = $("filtgrp");
+  if (!grp) return;
+  grp.hidden = !(gState.channels && gState.channels.length);
+  if (grp.hidden) return;
+  const spec = gState.filt || FILT_OFF;
+  const sel = $("filtsel"), amt = $("filtamt");
+  if (sel.value !== spec.kind) sel.value = spec.kind;
+  if (Number(amt.value) !== Number(spec.amount)) amt.value = spec.amount;
+  amt.disabled = spec.kind === "none";
+  const k = FILT_KINDS.find(x => x.id === spec.kind);
+  $("filtamtlbl").textContent =
+    spec.kind === "none" ? "off"
+      : `${spec.amount}%  ${filtWindowNote(spec)}`;
+  // Say what is SAVED, not what is on screen: the difference between the two
+  // is the whole reason the button is there.
+  const saved = filtSpecFor(gState.meta);
+  $("filtsave").classList.toggle("on", !filtSpecEq(saved, spec));
+  $("filtsave").title = filtSpecEq(saved, spec)
+    ? "This filter is already saved for this stage"
+    : "Save this filter — for this stage, every stage in the file, or every "
+      + "future file from this service provider";
+}
+// What the slider actually chose, in the units the workflow is written in.
+function filtWindowNote(spec) {
+  const p = filtParams(spec.kind, spec.amount);
+  if (spec.kind === "loess") return `span ${Math.round(p.frac * 100)}%`;
+  if (spec.kind === "both") return `${p.win} + ${p.win2} samples`;
+  return `${p.win} samples`;
+}
+// Re-filter the open stage and redraw. Called on every slider move, so it
+// does the work on a frame rather than on the event.
+let filtPending = null;
+function filtPreview(spec) {
+  gState.filt = spec;
+  filtSyncUI();
+  if (filtPending) return;
+  filtPending = requestAnimationFrame(() => {
+    filtPending = null;
+    filtToChannels(gState.channels, gState.filt);
+    redrawGraph(); buildLegend();
+  });
+}
+function filtMenu() {
+  const m = $("filtmenu");
+  if (!m) return;
+  const prov = filtProvider();
+  m.innerHTML = "";
+  const spec = gState.filt || FILT_OFF;
+  const rows = [
+    ["stage", "Save for this stage"],
+    ["file", "Apply to every stage in this file"],
+    ["provider", `Save as the default for ${prov}`],
+  ];
+  if (filtStore.byProvider[prov]) rows.push(["clearprov", `Clear the ${prov} default`]);
+  for (const [id, label] of rows) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn"; b.textContent = label;
+    b.addEventListener("click", () => { m.hidden = true; filtCommit(id, spec); });
+    m.appendChild(b);
+  }
+  m.hidden = false;
+}
+function filtCommit(scope, spec) {
+  const off = spec.kind === "none" || !(spec.amount > 0);
+  if (scope === "clearprov") {
+    delete filtStore.byProvider[filtProvider()];
+    filtSave(); filtSyncUI();
+    filtSay(`the ${filtProvider()} default is cleared`);
+    return;
+  }
+  if (scope === "provider") {
+    if (off) delete filtStore.byProvider[filtProvider()];
+    else filtStore.byProvider[filtProvider()] = { ...spec };
+    filtSave(); filtSyncUI();
+    filtSay(off ? `no filter is now the ${filtProvider()} default`
+                : `saved as the default for ${filtProvider()}`);
+    return;
+  }
+  if (scope === "stage") {
+    if (off) delete filtStore.byStage[filtStageKey(gState.meta)];
+    else filtStore.byStage[filtStageKey(gState.meta)] = { ...spec };
+    filtSave(); filtSyncUI();
+    filtSay("saved for this stage");
+    return;
+  }
+  // Every stage of the file, including ones never opened — which is the point:
+  // an export carries all of them, and a filter that only reached the stages
+  // someone happened to look at would ship a file filtered in patches.
+  const stages = filtStagesOfFile();
+  let n = 0;
+  for (const st of stages) {
+    const key = `${fileScope()}::${(st.meta && st.meta.stage) || "?"}`;
+    if (off) delete filtStore.byStage[key];
+    else filtStore.byStage[key] = { ...spec };
+    if (st.channels) { filtToChannels(st.channels, spec); n++; }
+  }
+  filtSave(); filtSyncUI(); redrawGraph(); buildLegend();
+  filtSay(off ? `cleared on ${n} stage(s)` : `applied to ${n} stage(s)`);
+}
+// The stages of the file on screen, however the Lab happens to be holding it.
+function filtStagesOfFile() {
+  const f = fileScope();
+  const e = entries.find(x => x && x.name === f);
+  if (e && e.well && e.well.stages) return e.well.stages;
+  if (e && e.items) return e.items.filter(i => i && i.channels);
+  return gState.channels.length ? [{ meta: gState.meta, channels: gState.channels }] : [];
+}
+function filtSay(msg) {
+  const el = $("filtmsg");
+  if (!el) return;
+  el.hidden = false; el.textContent = msg;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.hidden = true; }, 5000);
+}
 
 // A stretch re-read off the page with Fix in box, per file + stage + channel,
 // held the way timeFix is.
@@ -6347,14 +6897,76 @@ async function openFlag() {
 $("flagbtn").addEventListener("click", openFlag);
 $("isobtn").addEventListener("click", () => setIso(!gState.isolate));
 $("retracebtn").addEventListener("click", () => {
-  // A second press with something to undo puts the last box back, so the
-  // control is also its own escape hatch.
-  if (gState.retrace && gState.retraceUndo.length) { retraceUndoLast(); return; }
   gState.retrace = !gState.retrace;
   if (gState.retrace) { gState.isolate = false; gState.dedSel.clear(); }
-  gState.rbox = null;
+  gState.rpts = [];
   syncIso(); syncRetrace(); redrawGraph();
 });
+// Apply is deliberately a separate press from the second click: the two
+// points can be looked at, and re-picked, before anything is written.
+$("retraceapply").addEventListener("click", () => {
+  const pts = gState.rpts;
+  if (pts.length !== 2) return;
+  const cv = $("graph"), { L, R } = GP, W = cv.width;
+  const plotW = W - L - R, span = Math.max(1e-9, gState.t1 - gState.t0);
+  const iAt = x => Math.round(((x - L) / plotW * span + gState.t0) / gState.dsec);
+  let i0 = iAt(Math.min(pts[0].x, pts[1].x));
+  let i1 = iAt(Math.max(pts[0].x, pts[1].x));
+  i0 = Math.max(0, i0); i1 = Math.min(gState.n - 1, i1);
+  const msg = $("retracemsg");
+  const say = (t, bad) => {
+    if (!msg) return;
+    msg.hidden = false; msg.textContent = t;
+    msg.classList.toggle("bad", !!bad);
+    clearTimeout(msg._t);
+    msg._t = setTimeout(() => { msg.hidden = true; }, 6000);
+  };
+  if (i1 - i0 < 1) { say("those two points are the same sample", true); return; }
+  const r = applyRetrace(i0, i1, pts[0].y, pts[1].y);
+  say(r.ok ? `${r.channel}: ${r.found} of ${r.span} samples re-read off the page`
+           : `could not re-read: ${r.why}`, !r.ok);
+  // applyRetrace has already written the repair through to __base, so this
+  // just redraws the filtered view of it.
+  if (r.ok) filtToChannels(gState.channels, gState.filt);
+  gState.rpts = [];
+  syncRetrace(); redrawGraph(); buildLegend();
+});
+$("retraceundo").addEventListener("click", () => {
+  retraceUndoLast();
+  filtToChannels(gState.channels, gState.filt);
+  syncRetrace(); redrawGraph(); buildLegend();
+});
+
+// ---- the filter controls --------------------------------------------------
+(() => {
+  const sel = $("filtsel");
+  for (const k of FILT_KINDS) {
+    const o = document.createElement("option");
+    o.value = k.id; o.textContent = k.label;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => {
+    const kind = sel.value;
+    // Picking a filter with the slider at zero would look broken — it is the
+    // one setting where doing nothing is not what was asked for.
+    const amount = kind === "none" ? 0
+      : (Number($("filtamt").value) > 0 ? Number($("filtamt").value) : 35);
+    filtPreview({ kind, amount });
+  });
+  $("filtamt").addEventListener("input", () => {
+    const kind = sel.value === "none" ? "both" : sel.value;
+    filtPreview({ kind, amount: Number($("filtamt").value) });
+  });
+  $("filtsave").addEventListener("click", e => {
+    e.stopPropagation();
+    const m = $("filtmenu");
+    if (m.hidden) filtMenu(); else m.hidden = true;
+  });
+  document.addEventListener("click", () => {
+    const m = $("filtmenu");
+    if (m && !m.hidden) m.hidden = true;
+  });
+})();
 $("isodel").addEventListener("click", dedDelete);
 $("isoundo").addEventListener("click", dedUndoLast);
 $("flagcap").addEventListener("click", async () => {
@@ -6568,8 +7180,12 @@ $("lblmode").addEventListener("click", e => {
     if (gState.retrace) {
       const p = pos(e);
       if (p.x >= GP.L && p.x <= cv.width - GP.R && p.y >= GP.T && p.y <= cv.height - GP.B) {
-        gState.rbox = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, live: true };
-        redrawGraph();
+        // A third click starts a new selection rather than growing the old
+        // one: two points is the whole of the gesture, and "click again to
+        // start over" is easier to explain than a rule about which end moves.
+        if (gState.rpts.length >= 2) gState.rpts = [];
+        gState.rpts.push({ x: p.x, y: p.y });
+        syncRetrace(); redrawGraph();
         return;
       }
     }
@@ -6588,37 +7204,11 @@ $("lblmode").addEventListener("click", e => {
   });
   window.addEventListener("mouseup", () => {
     pan = null; cv.classList.remove("panning");
-    const b = gState.rbox;
-    if (!b || !b.live) return;
-    b.live = false;
-    const { L, R } = GP, W = cv.width;
-    const plotW = W - L - R, span = Math.max(1e-9, gState.t1 - gState.t0);
-    const iAt = x => Math.round(((x - L) / plotW * span + gState.t0) / gState.dsec);
-    let i0 = iAt(Math.min(b.x0, b.x1)), i1 = iAt(Math.max(b.x0, b.x1));
-    i0 = Math.max(0, i0); i1 = Math.min(gState.n - 1, i1);
-    gState.rbox = null;
-    if (i1 - i0 < 1 || Math.abs(b.y1 - b.y0) < 4) { redrawGraph(); return; }
-    const r = applyRetrace(i0, i1, b.y0, b.y1);
-    const msg = $("retracemsg");
-    if (msg) {
-      msg.hidden = false;
-      msg.textContent = r.ok
-        ? `${r.channel}: ${r.found} of ${r.span} samples re-read off the page`
-        : `could not re-read: ${r.why}`;
-      msg.classList.toggle("bad", !r.ok);
-      clearTimeout(msg._t);
-      msg._t = setTimeout(() => { msg.hidden = true; }, 6000);
-    }
-    syncRetrace(); redrawGraph(); buildLegend();
   });
   cv.addEventListener("mousemove", e => {
     if (!gState.channels.length) return;
     const p = pos(e);
-    if (gState.rbox && gState.rbox.live) {
-      gState.rbox.x1 = p.x; gState.rbox.y1 = p.y;
-      redrawGraph();
-      return;
-    }
+
     if (pan) {
       const dt = (pan.x - p.x) / (cv.width - GP.L - GP.R) * (pan.t1 - pan.t0);
       let t0 = pan.t0 + dt, t1 = pan.t1 + dt;
