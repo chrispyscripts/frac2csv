@@ -157,7 +157,7 @@ def _cluster(vals, tol=1.0):
     return out
 
 
-def _gridlines(drawings):
+def _gridlines(art):
     """-> (xs, ys): the chart's vertical and horizontal rules.
 
     The frame is the outermost pair on each list, so the plot rectangle comes
@@ -399,7 +399,7 @@ def extract_page(page, sample_sec=1.0):
     spans = _spans(page)
     text = page.get_text()
     art = drawings(page)
-    xs, ys = _gridlines(drawings)
+    xs, ys = _gridlines(art)
     if len(xs) < 3 or len(ys) < 3:
         # An interval that was skipped still gets its page — header, footer
         # and "Did not frac zone 5" in the remarks, and no chart at all.
