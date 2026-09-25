@@ -155,14 +155,21 @@
   .retracemsg.bad { color:#c22a1e; }
   .retracetools { display:inline-flex; align-items:center; gap:6px; }
   .retracehint { color:var(--mut); font-size:11.5px; white-space:nowrap; }
-  .filtgrp { display:inline-flex; align-items:center; gap:6px; }
+  /* Two filters, two sliders, two readouts and the Save control do not fit
+     beside the buttons: measured at 1212px of controls in a 770px bar, with
+     Save pushed clean off the end. The group takes its own row and wraps
+     inside it, so nothing is unreachable at any panel width. */
+  .filtgrp { display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+             flex-basis:100%; }
   .filtgrp select { font:inherit; font-size:12px; padding:3px 6px;
                     border:1px solid var(--line); border-radius:6px;
                     background:var(--paper); color:var(--ink); }
-  .filtgrp input[type=range] { width:120px; accent-color:var(--carmine); }
+  .filtgrp input[type=range] { width:96px; accent-color:var(--carmine); }
   .filtgrp input[type=range]:disabled { opacity:.4; }
-  .filtamtlbl { color:var(--mut); font-size:11.5px; white-space:nowrap;
-                min-width:104px; }
+  .filtamtlbl { color:var(--mut); font-size:11.5px; white-space:nowrap; }
+  .filtthen { color:var(--mut); font-size:11.5px; }
+  .filtsrc { color:var(--mut); font-size:11.5px; white-space:nowrap; }
+  .filtsrc.own { color:var(--carmine); }
   .filtsavewrap { position:relative; display:inline-block; }
   .filtmenu { position:absolute; top:100%; left:0; z-index:40; margin-top:4px;
               background:var(--paper); border:1px solid var(--line);
@@ -788,6 +795,13 @@ without moving a peak or rounding a step."></select>
                    title="How hard the filter works — the window it averages
 over. Slide it and the chart follows."></input>
             <span class="filtamtlbl" id="filtamtlbl">off</span>
+            <span class="filtthen" id="filtthen">then</span>
+            <select id="filtsel2" title="A second filter, run on what the first
+one produced. Order matters: strip the spikes, then smooth."></select>
+            <input type="range" id="filtamt2" min="0" max="100" step="1" value="0"
+                   title="How hard the second filter works."></input>
+            <span class="filtamtlbl" id="filtamtlbl2">off</span>
+            <span class="filtsrc" id="filtsrc"></span>
             <span class="filtsavewrap">
               <button type="button" class="btn" id="filtsave"
                       title="Save this filter">Save ▾</button>
@@ -5179,6 +5193,31 @@ function filtParams(kind, amount) {
   return {};
 }
 
+// Two filters, in order. The second reads what the first produced.
+//
+// Sequence is the whole point and it is not commutative: strip the spikes,
+// THEN smooth. Run the other way round the smoother spreads each spike into a
+// broad hump and the stripper — which looks for a sample far from its
+// neighbours' median — can no longer see one to remove.
+//
+// A spec is {kind, amount, kind2, amount2}. The second pair is optional, so a
+// setting saved before there was a second filter still reads correctly.
+function filtRun(values, spec) {
+  const s = spec || {};
+  let out = filtApply(values, s.kind, s.amount);
+  if (s.kind2 && s.kind2 !== "none" && Number(s.amount2) > 0)
+    out = filtApply(out, s.kind2, s.amount2);
+  return out;
+}
+// Does this spec do anything at all? "Off" has to be a thing a stage can BE,
+// not just the absence of a setting — see filtSpecFor.
+function filtIsOff(spec) {
+  const s = spec || {};
+  const one = !s.kind || s.kind === "none" || !(Number(s.amount) > 0);
+  const two = !s.kind2 || s.kind2 === "none" || !(Number(s.amount2) > 0);
+  return one && two;
+}
+
 // Run one filter spec over one channel's samples. The single entry point the
 // chart, the export and the tests all go through, so they cannot drift.
 function filtApply(values, kind, amount) {
@@ -5226,14 +5265,31 @@ function filtProvider() {
   const e = entries.find(x => x && x.name === f);
   return (e && e.provider) || "Other";
 }
-const FILT_OFF = { kind: "none", amount: 0 };
+const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0 };
 // A stage's own setting wins over the provider default: the default is where
 // you start, not something you cannot get out of.
+//
+// And "off" is a setting a stage can HAVE. Deleting the entry to mean off —
+// which is what this did — made one chart impossible to turn off whenever a
+// provider default existed: the entry went, the lookup fell through to the
+// default, and the filter came straight back. Applying something everywhere
+// then left every chart stuck with it. An entry is now always stored, and
+// only filtClearStage() removes one.
 function filtSpecFor(meta) {
   const own = filtStore.byStage[filtStageKey(meta)];
   if (own) return own;
   const prov = filtStore.byProvider[filtProvider()];
   return prov || FILT_OFF;
+}
+// Where the setting on screen came from, for the line beside the Save button.
+function filtSourceOf(meta) {
+  if (filtStore.byStage[filtStageKey(meta)]) return "stage";
+  if (filtStore.byProvider[filtProvider()]) return "provider";
+  return "none";
+}
+function filtClearStage(meta) {
+  delete filtStore.byStage[filtStageKey(meta)];
+  filtSave();
 }
 function filtSpecEq(a, b) {
   return (a || FILT_OFF).kind === (b || FILT_OFF).kind
@@ -5253,8 +5309,8 @@ function filtToChannels(channels, spec) {
   let n = 0;
   for (const c of channels || []) {
     const base = filtBase(c);
-    c.values = filtApply(base, s.kind, s.amount);
-    c.__filt = s.kind === "none" || !(s.amount > 0) ? null : s;
+    c.values = filtRun(base, s);
+    c.__filt = filtIsOff(s) ? null : s;
     if (c.__filt) n++;
   }
   return n;
@@ -5267,14 +5323,32 @@ function filtSyncUI() {
   grp.hidden = !(gState.channels && gState.channels.length);
   if (grp.hidden) return;
   const spec = gState.filt || FILT_OFF;
-  const sel = $("filtsel"), amt = $("filtamt");
-  if (sel.value !== spec.kind) sel.value = spec.kind;
-  if (Number(amt.value) !== Number(spec.amount)) amt.value = spec.amount;
-  amt.disabled = spec.kind === "none";
-  const k = FILT_KINDS.find(x => x.id === spec.kind);
-  $("filtamtlbl").textContent =
-    spec.kind === "none" ? "off"
-      : `${spec.amount}%  ${filtWindowNote(spec)}`;
+  const pairs = [["filtsel", "filtamt", "filtamtlbl", "kind", "amount"],
+                 ["filtsel2", "filtamt2", "filtamtlbl2", "kind2", "amount2"]];
+  for (const [selId, amtId, lblId, kKey, aKey] of pairs) {
+    const sel = $(selId), amt = $(amtId);
+    const kind = spec[kKey] || "none", amount = Number(spec[aKey]) || 0;
+    if (sel.value !== kind) sel.value = kind;
+    if (Number(amt.value) !== amount) amt.value = amount;
+    amt.disabled = kind === "none";
+    $(lblId).textContent = kind === "none" ? "off"
+      : `${amount}%  ${filtWindowNote({ kind, amount })}`;
+  }
+  // The second filter only makes sense on the output of a first one, and an
+  // empty control pair is noise on a toolbar this crowded.
+  const chained = (spec.kind && spec.kind !== "none");
+  $("filtthen").hidden = !chained;
+  $("filtsel2").hidden = !chained;
+  $("filtamt2").hidden = !chained;
+  $("filtamtlbl2").hidden = !chained;
+  // Which setting is in force, so "why is this chart filtered" has an answer
+  // on the toolbar rather than in the Save menu.
+  const src = filtSourceOf(gState.meta);
+  const el = $("filtsrc");
+  el.textContent = src === "stage" ? "\u00b7 this chart\u2019s own setting"
+    : src === "provider" ? `\u00b7 ${filtProvider()} default`
+      : "";
+  el.classList.toggle("own", src === "stage");
   // Say what is SAVED, not what is on screen: the difference between the two
   // is the whole reason the button is there.
   const saved = filtSpecFor(gState.meta);
@@ -5295,7 +5369,7 @@ function filtWindowNote(spec) {
 // does the work on a frame rather than on the event.
 let filtPending = null;
 function filtPreview(spec) {
-  gState.filt = spec;
+  gState.filt = { ...FILT_OFF, ...spec };
   filtSyncUI();
   if (filtPending) return;
   filtPending = requestAnimationFrame(() => {
@@ -5311,10 +5385,14 @@ function filtMenu() {
   m.innerHTML = "";
   const spec = gState.filt || FILT_OFF;
   const rows = [
-    ["stage", "Save for this stage"],
+    ["stage", "Save for this chart only"],
     ["file", "Apply to every stage in this file"],
     ["provider", `Save as the default for ${prov}`],
   ];
+  // The way back. Without it, a setting applied everywhere is a setting one
+  // chart can never get out of — which is the complaint this answers.
+  if (filtStore.byStage[filtStageKey(gState.meta)])
+    rows.push(["clearstage", "Drop this chart's own setting"]);
   if (filtStore.byProvider[prov]) rows.push(["clearprov", `Clear the ${prov} default`]);
   for (const [id, label] of rows) {
     const b = document.createElement("button");
@@ -5325,7 +5403,15 @@ function filtMenu() {
   m.hidden = false;
 }
 function filtCommit(scope, spec) {
-  const off = spec.kind === "none" || !(spec.amount > 0);
+  const off = filtIsOff(spec);
+  if (scope === "clearstage") {
+    filtClearStage(gState.meta);
+    gState.filt = { ...filtSpecFor(gState.meta) };
+    filtToChannels(gState.channels, gState.filt);
+    filtSyncUI(); redrawGraph(); buildLegend();
+    filtSay("this chart follows the default again");
+    return;
+  }
   if (scope === "clearprov") {
     delete filtStore.byProvider[filtProvider()];
     filtSave(); filtSyncUI();
@@ -5341,10 +5427,12 @@ function filtCommit(scope, spec) {
     return;
   }
   if (scope === "stage") {
-    if (off) delete filtStore.byStage[filtStageKey(gState.meta)];
-    else filtStore.byStage[filtStageKey(gState.meta)] = { ...spec };
+    // Stored even when it is off: "no filter on this one chart" is a choice,
+    // and deleting the entry to mean it would hand the chart straight back to
+    // whatever default is in force.
+    filtStore.byStage[filtStageKey(gState.meta)] = { ...spec };
     filtSave(); filtSyncUI();
-    filtSay("saved for this stage");
+    filtSay(off ? "this chart is set to no filter" : "saved for this chart");
     return;
   }
   // Every stage of the file, including ones never opened — which is the point:
@@ -5354,8 +5442,7 @@ function filtCommit(scope, spec) {
   let n = 0;
   for (const st of stages) {
     const key = `${fileScope()}::${(st.meta && st.meta.stage) || "?"}`;
-    if (off) delete filtStore.byStage[key];
-    else filtStore.byStage[key] = { ...spec };
+    filtStore.byStage[key] = { ...spec };
     if (st.channels) { filtToChannels(st.channels, spec); n++; }
   }
   filtSave(); filtSyncUI(); redrawGraph(); buildLegend();
@@ -6939,23 +7026,45 @@ $("retraceundo").addEventListener("click", () => {
 
 // ---- the filter controls --------------------------------------------------
 (() => {
-  const sel = $("filtsel");
-  for (const k of FILT_KINDS) {
-    const o = document.createElement("option");
-    o.value = k.id; o.textContent = k.label;
-    sel.appendChild(o);
+  for (const id of ["filtsel", "filtsel2"]) {
+    const sel = $(id);
+    for (const k of FILT_KINDS) {
+      const o = document.createElement("option");
+      o.value = k.id; o.textContent = k.label;
+      sel.appendChild(o);
+    }
   }
-  sel.addEventListener("change", () => {
-    const kind = sel.value;
-    // Picking a filter with the slider at zero would look broken — it is the
-    // one setting where doing nothing is not what was asked for.
-    const amount = kind === "none" ? 0
-      : (Number($("filtamt").value) > 0 ? Number($("filtamt").value) : 35);
-    filtPreview({ kind, amount });
+  // The spec on screen, read off both control pairs.
+  const read = () => ({
+    kind: $("filtsel").value,
+    amount: Number($("filtamt").value) || 0,
+    kind2: $("filtsel2").value,
+    amount2: Number($("filtamt2").value) || 0,
+  });
+  // Picking a filter with the slider at zero would look broken — it is the one
+  // setting where doing nothing is not what was asked for.
+  const START = 35;
+  $("filtsel").addEventListener("change", () => {
+    const spec = read();
+    if (spec.kind === "none") { spec.amount = 0; spec.kind2 = "none"; spec.amount2 = 0; }
+    else if (!(spec.amount > 0)) spec.amount = START;
+    filtPreview(spec);
+  });
+  $("filtsel2").addEventListener("change", () => {
+    const spec = read();
+    if (spec.kind2 === "none") spec.amount2 = 0;
+    else if (!(spec.amount2 > 0)) spec.amount2 = START;
+    filtPreview(spec);
   });
   $("filtamt").addEventListener("input", () => {
-    const kind = sel.value === "none" ? "both" : sel.value;
-    filtPreview({ kind, amount: Number($("filtamt").value) });
+    const spec = read();
+    if (spec.kind === "none") spec.kind = "both";
+    filtPreview(spec);
+  });
+  $("filtamt2").addEventListener("input", () => {
+    const spec = read();
+    if (spec.kind2 === "none") spec.kind2 = "sg";
+    filtPreview(spec);
   });
   $("filtsave").addEventListener("click", e => {
     e.stopPropagation();
