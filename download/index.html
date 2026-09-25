@@ -39,6 +39,44 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.27</h2>
+    <ul>
+      <li><b>Smoothing you control, on the chart.</b> There is now a filter box
+        above the chart: pick one, and the slider beside it sets how hard it
+        works &mdash; live, on every curve at once, so you can see what it costs
+        before you keep it. It starts <b>off</b>, and off means the curve is
+        exported exactly as it was read</li>
+      <li><b>Spikes and staircases are not the same problem.</b> A spike is the
+        tracer following the wrong ink for a moment &mdash; a gridline, or the
+        fringe of the curve beside it. A staircase is the pixel grid turning a
+        smooth ramp into steps. Smoothing a spike does not remove it, it
+        spreads it into a broad hump, so the recommended setting strips the
+        spikes first (Hampel) and only then smooths what is left
+        (Savitzky-Golay). Each is offered on its own as well, with a blunt
+        median and a robust LOESS for trend</li>
+      <li><b>A step stays a step and a peak keeps its height.</b> That is why
+        Savitzky-Golay rather than a rolling average: it fits a small
+        polynomial instead of averaging, so a pump shutdown stays vertical, a
+        breakdown pressure keeps its number, and nothing shifts in time. The
+        slider reports the window it is using in samples, so a setting can be
+        written down and repeated</li>
+      <li><b>Save it once for a service provider.</b> Save offers three scopes:
+        this stage, every stage in this file &mdash; including the ones you
+        have not opened &mdash; or the default for that provider&rsquo;s future
+        files. A digitiser&rsquo;s noise belongs to the plotter, not the well,
+        so a setting dialled in once on a STEP report is what every later STEP
+        report should open with. A stage you have set yourself keeps its own
+        setting</li>
+      <li><b>Fix in box is now Fix a stretch, and takes two clicks.</b> Click
+        the start of the bad stretch, click the end, then Apply &mdash; so the
+        two points can be seen and re-picked before anything is written, and a
+        third click starts over. Undo is its own button. The repair itself is
+        unchanged: the curve between the points is read again off the page
+        underneath</li>
+      <li>What the chart shows is what the CSV carries, so there is never a
+        question of which one is right</li>
+    </ul>
+
     <h2>v1.11.26</h2>
     <ul>
       <li><b>A Liberty stage page has two charts on it, and a channel was
