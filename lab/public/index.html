@@ -2059,6 +2059,9 @@ function render(entry, fname, stages, tables, notes, summary) {
   entry.viewMode = "seconds";
   entry.items = secItems.length ? secItems : sumItems;   // active list
   entry._tables = tables || [];
+  // Hand-filled cells go back on before anything reads the tables — the
+  // window, the summary count and the export all see the corrected rows.
+  cellEditApply(entry._tables, entry.name);
   entry.provider = well ? well.provider : (tables[0] ? providerOf(tables[0].source) : "Other");
   // Open it only when nothing is on screen yet. With a queue running, every
   // file that finished used to yank the middle column and the graph over to
@@ -5464,6 +5467,92 @@ function filtSay(msg) {
   el._t = setTimeout(() => { el.hidden = true; }, 5000);
 }
 
+// ---- cells filled in by hand ---------------------------------------------
+//
+// A table is only as good as the sheet it was read off, and some of these
+// sheets do not print every cell — a stage summary with a blank interval
+// top, a scanned row the OCR could not resolve. Until now the only way to
+// finish a table was to export it and fix the CSV, which puts the correction
+// outside the app: the next read loses it, and nobody can see which numbers
+// were read and which were typed.
+//
+// Held the way every other correction is — localStorage, re-applied over a
+// fresh read — and keyed by the TABLE'S TITLE rather than its position,
+// because the tables of a filing are sorted for display and a positional key
+// would move an edit onto a different table.
+let cellEdit = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.cellEdit") || "{}"); }
+  catch (e) { return {}; }
+})();
+const cellEditKey = (file, title, r, c) =>
+  `${file}::${title || "?"}::${r}::${c}`;
+function cellEditSave() {
+  try { localStorage.setItem("f2c.cellEdit", JSON.stringify(cellEdit)); }
+  catch (e) { /* private mode — it just will not outlive the tab */ }
+}
+// Put the saved edits back over freshly read tables. Rows the reader no
+// longer produces are left alone rather than grown back: an edit is a
+// correction to a cell that exists, not a way to add rows.
+function cellEditApply(tables, file) {
+  let n = 0;
+  for (const t of tables || []) {
+    for (let r = 0; r < (t.rows || []).length; r++) {
+      for (let c = 0; c < (t.rows[r] || []).length; c++) {
+        const v = cellEdit[cellEditKey(file, t.title, r, c)];
+        if (v !== undefined) { t.rows[r][c] = v.v; n++; }
+      }
+    }
+  }
+  return n;
+}
+function cellEditCount() { return Object.keys(cellEdit).length; }
+// Called from the tables window, which is a separate document.
+window.tableCellEdit = function (title, r, c, value) {
+  const e = current && current.entry;
+  if (!e) return false;
+  const t = (e._tables || []).find(x => (x.title || "?") === title);
+  if (!t || !t.rows || !t.rows[r]) return false;
+  const key = cellEditKey(e.name, title, r, c);
+  // What the READER produced is kept beside what was typed, so clearing the
+  // cell can put it straight back instead of waiting for the file to be read
+  // again. Recorded on the FIRST edit only — edit a cell twice and the
+  // original is still the sheet's own value, not your previous attempt.
+  const was = key in cellEdit ? cellEdit[key].was : t.rows[r][c];
+  cellEdit[key] = { v: String(value === null || value === undefined ? "" : value),
+                    was: was };
+  t.rows[r][c] = cellEdit[key].v;
+  cellEditSave();
+  return true;
+};
+// Clearing a cell puts back what the READER found, so there is always a way
+// out of an edit. Its own call rather than a magic value in tableCellEdit:
+// the first attempt sent "\u0000" to mean "clear", the tables window is
+// written with document.write, and the HTML parser turns a NUL into U+FFFD —
+// so the sentinel arrived as a different character, never matched, and got
+// stored as the cell's new contents.
+window.tableCellClear = function (title, r, c) {
+  const e = current && current.entry;
+  if (!e) return null;
+  const key = cellEditKey(e.name, title, r, c);
+  if (!(key in cellEdit)) return null;
+  const t = (e._tables || []).find(x => (x.title || "?") === title);
+  const was = cellEdit[key].was;
+  if (t && t.rows && t.rows[r]) t.rows[r][c] = was;
+  delete cellEdit[key];
+  cellEditSave();
+  return String(was === null || was === undefined ? "" : was);
+};
+// What the reader itself produced for a cell, so the window can offer it back.
+window.tableCellOriginal = function (title, r, c) {
+  const e = current && current.entry;
+  const t = e && (e._tables || []).find(x => (x.title || "?") === title);
+  return (t && t.rows && t.rows[r]) ? t.rows[r][c] : "";
+};
+window.tableCellIsEdited = function (title, r, c) {
+  const e = current && current.entry;
+  return !!(e && cellEdit[cellEditKey(e.name, title, r, c)] !== undefined);
+};
+
 // A stretch re-read off the page with Fix in box, per file + stage + channel,
 // held the way timeFix is.
 //
@@ -6498,13 +6587,21 @@ $("tablebtn").addEventListener("click", () => {
   }
   const esc = v => String(v === null || v === undefined ? "" : v)
     .replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const att = v => esc(v).replace(/"/g, "&quot;");
   const name = (current && current.entry && current.entry.name) || "tables";
   const body = tabs.map(t => `<h2>${esc(t.title || "Table")}</h2>
     <div class="wrap"><table><thead><tr>${
       (t.columns || []).map(c => `<th>${esc(c)}</th>`).join("")
     }</tr></thead><tbody>${
-      (t.rows || []).map(r => `<tr>${
-        (r || []).map(c => `<td>${esc(c)}</td>`).join("")
+      (t.rows || []).map((r, ri) => `<tr>${
+        (r || []).map((c, ci) => {
+          const v = esc(c);
+          const cls = (v === "" ? "empty" : "")
+            + (window.tableCellIsEdited(t.title || "?", ri, ci) ? " edited" : "");
+          return `<td data-t="${att(t.title || "?")}" data-r="${ri}" `
+               + `data-c="${ci}"${cls.trim() ? ` class="${cls.trim()}"` : ""}>`
+               + `${v}</td>`;
+        }).join("")
       }</tr>`).join("")
     }</tbody></table></div>
     <p class="cnt">${(t.rows || []).length} rows &middot; ${(t.columns || []).length} columns</p>`
@@ -6523,6 +6620,22 @@ $("tablebtn").addEventListener("click", () => {
  th{position:sticky;top:0;background:#f3f1ef;text-align:left;font-weight:600}
  td:first-child,th:first-child{text-align:left}
  tr:hover td{background:#f7f5f3}
+ /* Every cell is editable, so every cell has to LOOK it before it is
+    clicked — an empty cell especially, which is the one most worth filling
+    and the one with nothing in it to click on. */
+ td{position:relative;cursor:text}
+ td:hover{background:#eaf1ff;outline:1px solid #b9cdf3;outline-offset:-1px}
+ td.empty{min-width:38px}
+ td.empty:hover::after{content:"+";position:absolute;left:50%;top:50%;
+   transform:translate(-50%,-50%);color:#5b7fc7;font-weight:600}
+ /* A typed cell is marked for good: a table where you cannot tell what was
+    read from what was entered is worse than one with holes in it. */
+ td.edited{background:#fff6e5;box-shadow:inset 2px 0 0 #d98a00}
+ td.edited:hover{background:#ffeecb}
+ td input{font:inherit;font-size:12px;width:100%;min-width:70px;
+   box-sizing:border-box;border:1px solid #1d5bd8;border-radius:3px;
+   padding:1px 4px;text-align:right;background:#fff;color:#1a1a1a}
+ .hint{color:#777;font-size:11px;margin:6px 2px 0}
  .cnt{color:#777;font-size:11px;margin:5px 2px 0}
  .colsbtn{font:inherit;font-size:12px;padding:4px 11px;border-radius:6px;
           border:1px solid #d8d4d0;background:#fff;color:#1a1a1a;cursor:pointer}
@@ -6535,6 +6648,9 @@ $("tablebtn").addEventListener("click", () => {
     way round. A table of numbers is read, not watched, so it stays on paper. */
 </style><h1>${esc(name)}</h1>
 <p><button type="button" class="colsbtn" id="colsbtn">Columns…</button><span id="colsmsg"></span></p>
+<p class="hint">Click any cell to type a value. Enter saves, Esc cancels, and
+clearing a cell puts back what was read off the sheet. Edited cells are
+marked, and follow into the CSV.</p>
 ${body}
 <script>
 document.getElementById("colsbtn").addEventListener("click", function () {
@@ -6547,6 +6663,85 @@ document.getElementById("colsbtn").addEventListener("click", function () {
       "Open the Lab window and use Columns… there.";
   }
 });
+
+// ---- fill a cell by hand -------------------------------------------------
+//
+// The value is written back through the OPENER, because that is where the
+// tables live: this window is a rendering of them. That also means an edit
+// reaches the export by the same route everything else does, rather than
+// being a second copy of the data that has to be kept in step.
+//
+// If the Lab window has gone, the edit cannot be saved — so it is refused
+// and said out loud, rather than accepted into a document nobody will read
+// again.
+(function () {
+  var editing = null;
+  function say(msg) {
+    var m = document.getElementById("colsmsg");
+    if (!m) return;
+    m.textContent = msg;
+    clearTimeout(m._t);
+    m._t = setTimeout(function () { m.textContent = ""; }, 5000);
+  }
+  function commit(td, input, original) {
+    var val = input.value.trim();
+    editing = null;
+    var ok = false;
+    try {
+      // an emptied cell asks for the reader's own value back
+      if (val === "") {
+        var back = window.opener.tableCellClear(td.dataset.t, +td.dataset.r,
+                                                +td.dataset.c);
+        ok = true;
+        if (back !== null) val = back;          // the reader's own value
+      } else {
+        ok = window.opener.tableCellEdit(td.dataset.t, +td.dataset.r,
+                                         +td.dataset.c, val);
+      }
+    } catch (e) { ok = false; }
+    if (!ok) {
+      td.textContent = original;
+      td.classList.toggle("empty", original === "");
+      say("The Lab window is closed — the edit was not saved.");
+      return;
+    }
+    td.textContent = val;
+    td.classList.toggle("empty", val === "");
+    td.classList.toggle("edited",
+                        window.opener.tableCellIsEdited(
+                          td.dataset.t, +td.dataset.r, +td.dataset.c));
+  }
+  document.addEventListener("click", function (ev) {
+    var td = ev.target.closest ? ev.target.closest("td") : null;
+    if (!td || !td.dataset || td.dataset.r === undefined) return;
+    if (editing === td) return;
+    if (editing) return;                       // one at a time
+    editing = td;
+    var original = td.textContent;
+    var input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    td.textContent = "";
+    td.appendChild(input);
+    input.focus();
+    input.select();
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); commit(td, input, original); }
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        editing = null;
+        td.textContent = original;
+        td.classList.toggle("empty", original === "");
+      }
+    });
+    // Blur commits rather than cancels: clicking the next cell to carry on
+    // typing is the whole workflow, and losing the value you just entered
+    // because you moved on is the kind of thing that stops anyone using it.
+    input.addEventListener("blur", function () {
+      if (editing === td) commit(td, input, original);
+    });
+  });
+})();
 <\/script>`);
   w.document.close();
   try { w.focus(); } catch (e) { /* some browsers refuse; harmless */ }
