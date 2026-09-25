@@ -309,6 +309,137 @@ def _axis_letter(text):
     return last if "A" <= last <= "F" else None
 
 
+def _unweld_tick_digit(nums, tol_frac=0.06):
+    """OCR welds a speck onto the END of a tick label, as a DIGIT.
+
+    00149 p139's pressure ladder comes back 100, 805, 705, 60, 505, 40, 30,
+    205, 105 where the page prints 100, 80, 70, 60, 50, 40, 30, 20, 10 — a
+    speck of the gridline read as a 5 on five of the nine labels.
+
+    The strip above removes only a NON-numeric speck, so these stay numeric
+    and are believed. And they are self-consistent: 805, 705, 505, 205, 105
+    sit on their own straight line, five members against the four clean ones,
+    so the column wins with 105..804.9. Both pressure channels are then
+    deleted by the plausibility guard as an axis that cannot belong to them,
+    and the chart comes back with three curves instead of five — Carmine's
+    "missing the rate on most charts" and "no Tr Press", which look like
+    missing data rather than a misread axis.
+
+    So offer every label a second reading — itself with the last digit gone —
+    and keep the repair only where it puts strictly MORE of the column on one
+    straight line. A ladder that reads correctly already explains all of
+    itself, so nothing about it can change.
+    """
+    by_x = {}
+    for s in nums:
+        by_x.setdefault(round(s["cx"] / 6.0), []).append(s)
+    for group in by_x.values():
+        if len(group) < 4:
+            continue
+        # every label's candidate readings: as printed, and one digit shorter
+        cand = []
+        for s in group:
+            t = s["t"].replace(",", "")
+            opts = [(float(t), None)]
+            body = t[1:] if t.startswith("-") else t
+            if "." not in body and len(body) > 1:
+                short = ("-" if t.startswith("-") else "") + body[:-1]
+                opts.append((float(short), short))
+            cand.append((s, opts))
+        span_v = max(abs(o[0]) for _s, os_ in cand for o in os_) or 1.0
+        tol = tol_frac * span_v
+        best = None
+        for i in range(len(cand)):
+            for oi, (vi, _ri) in enumerate(cand[i][1]):
+                for j in range(i + 1, len(cand)):
+                    dy = cand[j][0]["cy"] - cand[i][0]["cy"]
+                    if abs(dy) < 1e-6:
+                        continue
+                    for oj, (vj, _rj) in enumerate(cand[j][1]):
+                        b = (vj - vi) / dy
+                        if abs(b) < 1e-12:
+                            continue
+                        a = vi - b * cand[i][0]["cy"]
+                        hit, repairs, asread, kept = 0, [], 0, []
+                        for s2, opts2 in cand:
+                            want = a + b * s2["cy"]
+                            pick = None
+                            for k, (v2, r2) in enumerate(opts2):
+                                if abs(v2 - want) <= tol:
+                                    pick = (k, r2)
+                                    break
+                            if pick is not None:
+                                hit += 1
+                                if pick[0] == 0:
+                                    asread += 1
+                                    kept.append(opts2[0][0])
+                                elif pick[1] is not None:
+                                    repairs.append((s2, pick[1], opts2[0][0]))
+                        # more of the column explained wins; a tie goes to the
+                        # reading that changes nothing
+                        key = (hit, asread)
+                        if best is None or key > best[0]:
+                            best = (key, repairs, kept)
+        if not best:
+            continue
+        (hit, asread), repairs, kept = best
+        # only rewrite when the repair explains strictly more of the column
+        # than believing every label as printed does
+        if not repairs:
+            continue
+        # how many does the best AS-READ-ONLY line explain?
+        best_plain = 0
+        for i in range(len(cand)):
+            vi = cand[i][1][0][0]
+            for j in range(i + 1, len(cand)):
+                dy = cand[j][0]["cy"] - cand[i][0]["cy"]
+                if abs(dy) < 1e-6:
+                    continue
+                b = (cand[j][1][0][0] - vi) / dy
+                if abs(b) < 1e-12:
+                    continue
+                a = vi - b * cand[i][0]["cy"]
+                on = sum(1 for s2, opts2 in cand
+                         if abs(opts2[0][0] - (a + b * s2["cy"])) <= tol)
+                best_plain = max(best_plain, on)
+        # THREE labels must survive AS PRINTED on the winning line.
+        #
+        # Without that this is not a repair, it is a rescale: strip the last
+        # digit off EVERY label of a 1500/1300/1100 concentration ladder and
+        # what is left is 150/130/110 — still perfectly collinear, because
+        # dividing a ladder by ten is a ladder. So when one label of a clean
+        # ladder is misread, "repair them all" explains one more than
+        # believing the page does, and the column silently comes back ten
+        # times too small. It did: WH Prop Conc 513 -> 51, BH Prop Conc's
+        # axis 1500 -> 140, both caught by tests/test_ifs_wrong_axis.
+        #
+        # A welded speck lands on SOME labels and not others — five of nine on
+        # 00149 p139, with 100, 60, 40 and 30 read correctly beside them. That
+        # mixture is the evidence. A uniform strip has none.
+        # And a weld only ever makes a number BIGGER. Every repaired label,
+        # as OCR read it, has to exceed every label kept as printed: 805, 705,
+        # 505, 205 and 105 all stand above the 100 that was read correctly on
+        # 00149 p139. Strip a 900/800/700 concentration ladder by a digit and
+        # the "repaired" values are 90/80/70, under what was kept — which is a
+        # rescale wearing a repair's clothes, and 00217 p323 is where it got
+        # caught (WH Prop Conc 513 -> 51).
+        # Two is not enough, and 00217 p323 is why: there the pair that
+        # survived was 0 and -100 — both junk — and because every real label
+        # is larger than zero, the "every repair inflates" test below passed
+        # and the whole 1400..200 concentration ladder was divided by ten.
+        # Three readings establish a line on their own; two only fit one.
+        # ...and every one of them has to be a real reading. On 00217 p323
+        # the pair that survived was 0 and -100 — both junk — and since every
+        # real label is larger than zero, the inflation test below waved the
+        # whole 1400..200 concentration ladder through and divided it by ten.
+        # A tick that reads zero or negative vouches for nothing.
+        kept = [k for k in kept if k > 0]
+        inflated = kept and all(raw > max(kept) for _s, _t, raw in repairs)
+        if hit > best_plain and len(kept) >= 2 and inflated:
+            for s2, txt, _raw in repairs:
+                s2["t"] = txt
+
+
 def _axis_columns(spans, box=None):
     """Cluster numeric black tick labels into vertical columns."""
     ocr = any(s.get("ocr") for s in spans)
@@ -335,6 +466,8 @@ def _axis_columns(spans, box=None):
                 s["t"] = m.group(1)
     nums = [s for s in spans if s["color"] == 0 and
             re.fullmatch(r"-?\d+(\.\d+)?", s["t"].replace(",", ""))]
+    if ocr:
+        _unweld_tick_digit(nums)
     if ocr:
         # A tick MARK beside its label reads as a minus sign: 00148 p136's
         # concentration column comes back "-0", "-500", "1000". A leading
