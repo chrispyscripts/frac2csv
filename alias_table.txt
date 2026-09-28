@@ -82,7 +82,7 @@ curve.Slurry Rate = Surf Total Slurry Rate
 Step-2
 chart_headers_include = Surface Chart, Chemical Chart
 chart_stage_tokens = Interval
-curve.Tr Press = Mainline
+curve.Tr Press = Mainline, Main
 curve.Slurry Rate = Slurry Rate
 curve.WH Prop Conc = Prop Conc
 curve.BH Prop Conc = Btm Prop Conc
