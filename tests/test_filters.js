@@ -23,7 +23,7 @@ function lift(name) {
 }
 const NAMES = ["filtFinite", "filtMedianOf", "filtHampel", "filtMedian",
                "filtSavGolCoef", "filtSavGol", "filtLoess", "filtOdd",
-               "filtParams", "filtApply"];
+               "filtParams", "filtApply", "filtRun", "filtIsOff"];
 eval(NAMES.map(lift).join("\n"));
 
 let failed = 0;
@@ -172,6 +172,54 @@ function close(a, b, tol, what) {
   const want = [-3 / 35, 12 / 35, 17 / 35, 12 / 35, -3 / 35];
   for (let i = 0; i < 5; i++) close(w[i], want[i], 1e-9, `SG 5-point weight ${i}`);
   close(w.reduce((a, b) => a + b, 0), 1, 1e-9, "the weights sum to one");
+}
+
+// ---- two filters, in order ------------------------------------------------
+{
+  // spiky, stepped, staircased — the real shape
+  const truth = [];
+  for (let i = 0; i < 200; i++) truth.push(i < 100 ? 60 : 25);
+  const v = truth.slice();
+  for (let i = 0; i < v.length; i++) v[i] += (i % 7 - 3) * 0.15;
+  for (const i of [17, 43, 71, 132, 168]) v[i] = 2;
+  const err = a => {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) if (Math.abs(i - 100) > 12) s += Math.abs(a[i] - truth[i]);
+    return s / a.length;
+  };
+  const strip_then_smooth = filtRun(v, { kind: "hampel", amount: 50, kind2: "sg", amount2: 50 });
+  const smooth_then_strip = filtRun(v, { kind: "sg", amount: 50, kind2: "hampel", amount2: 50 });
+  ok(err(strip_then_smooth) < err(v), "the chain improves on the raw trace");
+  // THE point of letting the order be chosen: it is not commutative. Smoothing
+  // first spreads each spike into a hump the stripper can no longer see.
+  ok(err(strip_then_smooth) < err(smooth_then_strip),
+     "strip-then-smooth beats smooth-then-strip");
+  const once = filtRun(v, { kind: "hampel", amount: 50 });
+  ok(err(strip_then_smooth) < err(once), "and the second filter earns its place");
+}
+
+// ---- a spec saved before there was a second filter still reads ------------
+{
+  const v = [3, 9, 1, 7, 2, 8, 4, 6, 5, 9, 2, 7, 3];
+  const old = { kind: "hampel", amount: 40 };              // no kind2 at all
+  const same = filtRun(v, old);
+  const explicit = filtApply(v, "hampel", 40);
+  ok(same.every((x, i) => x === explicit[i]),
+     "one-filter spec runs exactly as it did before the chain existed");
+  ok(filtRun(v, { kind: "hampel", amount: 40, kind2: "none", amount2: 80 })
+       .every((x, i) => x === explicit[i]),
+     "a second filter set to none does nothing however far its slider is up");
+}
+
+// ---- off is a state, not an absence --------------------------------------
+{
+  ok(filtIsOff(undefined) && filtIsOff({}), "no spec is off");
+  ok(filtIsOff({ kind: "none", amount: 0, kind2: "none", amount2: 0 }), "none/0 is off");
+  ok(filtIsOff({ kind: "sg", amount: 0 }), "a filter at zero is off");
+  ok(!filtIsOff({ kind: "sg", amount: 10 }), "a filter above zero is on");
+  // the one that mattered: a chart set to off in the SECOND slot only
+  ok(!filtIsOff({ kind: "none", amount: 0, kind2: "sg", amount2: 20 }),
+     "a second filter alone still counts as on");
 }
 
 console.log(failed ? `${failed} FAILED` : "filters: all assertions passed");
