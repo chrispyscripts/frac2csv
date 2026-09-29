@@ -9,6 +9,7 @@ to the right. Time axis is HH:MM labels along the bottom.
 Everything needed is in the text layer, so calibration comes entirely from
 tick-label positions — no frame detection required.
 """
+import itertools
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -440,6 +441,95 @@ def _unweld_tick_digit(nums, tol_frac=0.06):
                 s2["t"] = txt
 
 
+# An IFS treatment chart draws three value ladders: pressure, rate and
+# concentration. Fewer than three means one was lost, not that the page has
+# fewer.
+_AXES_WANTED = 3
+
+
+def _tick_val(s):
+    return float(s["t"].replace(",", ""))
+
+
+def _rescue_pair_columns(spare, out):
+    """A ladder OCR cut down to TWO readable labels, recovered from where it
+    reaches zero.
+
+    Three labels is the floor on an OCR page, and it is the right floor: two
+    points always fit a line, so a pair vouches for nothing by itself. On
+    00217 that costs the rate ladder on 31 of 125 charts. It is printed
+    20/15/10/5/0 and comes back
+
+        '20'  '15'  '4'   (nothing)  (nothing)
+
+    -- the 10 misread, the 5 and the 0 not returned at all -- so the longest
+    arithmetic chain is {20, 15} and the column is dropped. Slurry Rate then
+    has no scale and is cut from the chart. That is Carmine's "missing the
+    rate on most charts" (#754).
+
+    What vouches for the pair is the page, not the pair. Every ladder on one
+    of these plots runs the full height of the same frame, so they all reach
+    zero at the same y -- measured over both filings, a page's own columns
+    agree on it to a median 0.29pt. The zero-position test a few lines below
+    already relies on this to throw out event-marker ladders (#77); this asks
+    the same question of a pair and admits it only if the answer matches the
+    page's best-evidenced column.
+
+    Deliberately narrow, because a pair is weak evidence:
+
+      * only when the page is SHORT of ladders. With three already found,
+        firing would add a fourth -- which is what it would do on 2 pages of
+        00149, where all three are present and correct.
+      * only with two columns already there, so the zero being matched is
+        itself corroborated rather than one column's opinion.
+      * only if EXACTLY ONE pair in the cluster lands on that zero. With
+        three labels there are three pairs; on 00217 the true (20, 15) puts
+        zero on the frame's bottom rule and the two pairs involving the
+        misread '4' put it 115 and 125pt above. If more than one qualifies
+        the column is ambiguous and is left alone.
+      * OCR pages only. A text page loses no labels and keeps its floor of
+        four.
+    """
+    # Enforced here as well as at the call site: the guards ARE the rule, and
+    # a caller that skipped them would be admitting a pair on no evidence.
+    if not (2 <= len(out) < _AXES_WANTED):
+        return []
+    ref_c = max(out, key=lambda c: c["n"])
+    if abs(ref_c["b"]) < 1e-9:
+        return []
+    z0 = -ref_c["a"] / ref_c["b"]
+    ys = (ref_c["y_lo"], ref_c["y_hi"], z0)
+    ref = max(ys) - min(ys)
+    if ref <= 0:
+        return []
+    got = []
+    for group in spare:
+        pairs = []
+        for s1, s2 in itertools.combinations(
+                sorted(group, key=lambda s: s["cy"]), 2):
+            if s2["cy"] - s1["cy"] < 8:
+                continue
+            v1, v2 = _tick_val(s1), _tick_val(s2)
+            if v1 == v2:
+                continue
+            b = (v2 - v1) / (s2["cy"] - s1["cy"])
+            if abs(b) < 1e-9:
+                continue
+            a = v1 - b * s1["cy"]
+            if abs(-a / b - z0) <= 0.06 * ref:
+                pairs.append((a, b, [s1, s2]))
+        if len(pairs) != 1:
+            continue
+        a, b, chain = pairs[0]
+        cy = [s["cy"] for s in chain]
+        got.append({"x": float(np.mean([s["cx"] for s in chain])),
+                    "a": a, "b": b, "n": len(chain),
+                    "y_lo": min(cy), "y_hi": max(cy)})
+    if not got or len(out) + len(got) > _AXES_WANTED:
+        return []          # more candidates than missing ladders: cannot tell
+    return got
+
+
 def _axis_columns(spans, box=None):
     """Cluster numeric black tick labels into vertical columns."""
     ocr = any(s.get("ocr") for s in spans)
@@ -505,6 +595,7 @@ def _axis_columns(spans, box=None):
 
     _min_chain = 3 if ocr else 4
     out = []
+    spare = []              # clusters that produced no column (see _rescue_pair_columns)
     for group in clusters:
         # Four labels is the guard that keeps a stray pair from becoming an
         # axis. OCR loses labels rather than inventing them — 00148's rate
@@ -512,6 +603,8 @@ def _axis_columns(spans, box=None):
         # which is still enough to fit a line AND check it against a third
         # point. Text pages are unchanged.
         if len(group) < (3 if ocr else 4):
+            if ocr and len(group) >= 2:
+                spare.append(group)
             continue
         # keep the longest chain that is evenly spaced in y AND arithmetic in
         # value (drops strays: section numbers, stray decimals, event-marker
@@ -621,6 +714,8 @@ def _axis_columns(spans, box=None):
                     chains.append(sorted((t for _o, t in line.values()),
                                          key=lambda t: t["cy"]))
         if not chains:
+            if ocr:
+                spare.append(group)
             continue
         longest = max(len(c) for c in chains)
         keep = [c for c in chains if len(c) >= longest - 1]
@@ -636,6 +731,8 @@ def _axis_columns(spans, box=None):
         else:
             best_chain = max(keep, key=len)
         if len(best_chain) < _min_chain:
+            if ocr:
+                spare.append(group)
             continue
         vals = [(val(s), s["cy"]) for s in best_chain]
         a, b = _fit(vals)
@@ -695,6 +792,11 @@ def _axis_columns(spans, box=None):
         if ref > 0:
             out = [c for c in out
                    if abs(-c["a"] / c["b"] - z0) <= 0.06 * ref]
+    # A ladder cut down to two readable labels, judged against the zero the
+    # columns above agree on. After the filter, so the reference is a column
+    # that survived it.
+    if ocr and spare and 2 <= len(out) < _AXES_WANTED:
+        out = out + _rescue_pair_columns(spare, out)
     out.sort(key=lambda c: c["x"])
     return out
 
