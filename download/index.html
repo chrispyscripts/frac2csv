@@ -39,6 +39,67 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.28</h2>
+    <ul>
+      <li><b>A second filter, run on what the first one leaves.</b> The filter
+        box has a second slot: pick a filter and a <i>then</i> appears with the
+        same list beside it. The two run in order on the same curve, which is
+        what the recommended pipeline actually is &mdash; strip the spikes with
+        Hampel, then smooth what is left with Savitzky-Golay. Order is kept, so
+        Hampel-then-SG and SG-then-Hampel are two different settings and both
+        are available. The second slot appears only once a first filter is
+        chosen. A setting saved before this release runs exactly as it did</li>
+      <li><b>One chart can now disagree with the provider default.</b> Setting
+        a default for a service provider used to make every chart under it
+        read-only &mdash; you could see the setting but not get out of it on a
+        single stage that needed something else. A chart&rsquo;s own setting
+        now wins, and <i>off</i> is a setting like any other, so one chart can
+        be left unfiltered under a provider that filters everything.
+        &ldquo;Drop this chart&rsquo;s own setting&rdquo; puts it back under
+        the default</li>
+      <li><b>Fill in a table cell by hand.</b> Every cell highlights when you
+        point at it and takes a click. Type, press Enter, and the value is
+        yours; an empty cell shows a <b>+</b>. Edited cells stay marked in
+        amber with a bar down the left, so you can always tell what the reader
+        found from what you typed, and clearing a cell puts the sheet&rsquo;s
+        own value straight back. Edits survive re-reading the same file and go
+        into the CSV</li>
+      <li><b>Halliburton IFS: the slurry rate is back on charts that were
+        missing it.</b> On 00217 the rate axis is printed 20 / 15 / 10 / 5 / 0
+        and the page is read by OCR, which returned the 20 and the 15, misread
+        the 10 as a 4, and returned nothing at all for the 5 and the 0. Two
+        labels is below what the app will trust as a scale, so the axis was
+        thrown away and the rate went with it &mdash; on most of that
+        file&rsquo;s charts. It is now recovered from where the ladder reaches
+        zero: every scale on one of these plots runs the full height of the
+        same frame, so they all reach zero in the same place, and a pair that
+        agrees with the rest of the page can be believed. <b>17 charts on that
+        file gain their slurry rate, and no other reading on any chart of it
+        moves by a single digit</b></li>
+      <li><b>Halliburton IFS: the treating pressure is back where a tick mark
+        was read as a digit.</b> On a filed-rotated page the tick stub above
+        each number is absorbed into it, so a ladder printed 100 / 90 / 80 …
+        comes back 100, 805, 705, 60, 505 … Those corrupted numbers sit on a
+        straight line of their own &mdash; five against four clean ones &mdash;
+        so the app preferred them, read the axis as 105 to 805, and then
+        correctly deleted both pressure channels as belonging to a scale no
+        pressure could sit on. The chart shipped three curves instead of five
+        and looked like missing data rather than a misread axis. Each label is
+        now offered a second reading with its last digit removed, kept only
+        where that puts strictly more of the ladder on one straight line, so a
+        ladder that already reads correctly can never be touched</li>
+      <li><b>STEP: a chart whose pressure was labelled &ldquo;Main&rdquo; now
+        reports it as Treating Pressure.</b> The curve was always read, traced
+        and scaled correctly; it arrived under a name the alias table did not
+        know, so it was filed as an unrecognised extra and the Tr Press column
+        came out empty. One word, and the chart that reported &ldquo;No TR
+        pressure&rdquo; now carries it</li>
+      <li><b>Still open on those IFS files.</b> 00217 has charts that fail for
+        reasons this release does not touch &mdash; 37 pages where the legend
+        cannot be found and 22 where the time axis cannot be read. Those are
+        next, and 00149&rsquo;s missing stage 1 is a different fault again</li>
+    </ul>
+
     <h2>v1.11.27</h2>
     <ul>
       <li><b>Smoothing you control, on the chart.</b> There is now a filter box
