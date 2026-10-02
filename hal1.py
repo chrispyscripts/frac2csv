@@ -566,6 +566,77 @@ SERIES = [  # (label, unit, axis, mask_fn)
 ]
 
 
+_CONC_PAIR = ("Slurry Prop Conc", "BH Prop Conc")
+
+
+def _deduce_conc(traced, notes):
+    """The concentration curve the page paints the other one over.
+
+    Wellhead and bottom-hole concentration are drawn on the SAME 0..1500 axis
+    and, once proppant reaches the perfs, at very nearly the same value. Where
+    they coincide the page shows one line, and the pen underneath is simply not
+    in the picture. Measured over 24 stages of 00411: Slurry Prop Conc loses
+    13,772 samples in 205 mid-flight runs, none shorter than 11 samples, with
+    the curve either side of them at a median 492 kg/m3 -- these are not
+    dropout at zero, they are the middle of the job. Through every one of them
+    BH Prop Conc is present 99.5% of the time and reads a median 488 where WH
+    is blank. On the page itself, of 428 plot columns carrying no chocolate
+    ink, 273 carry purple.
+
+    So it is occlusion, and the ink is genuinely gone -- there is no threshold
+    to relax. What is recoverable is the DEDUCTION, which curve_trace.fill_under
+    already makes for STEP and Trican: a curve with no ink in a column inside
+    its own drawn span is under something, and the only thing it can be under
+    is the other curve's stroke. See fill_under for why this is not a fill from
+    a neighbour, and for the guard that cannot work (matching the donor at both
+    edges of the gap can never fire on real occlusion, because the donor
+    leaving is what makes the hidden curve reappear).
+
+    Which one is hidden is read off THIS chart's pixels rather than assumed:
+    count, for each of the pair, the columns inside its own drawn span where it
+    has no ink and the other does. Stricter than the Trican version this is
+    taken from -- that one falls back to legend order when neither is clearly
+    hidden, and here neither being clearly hidden means the pair does not
+    behave this way on this chart and nothing is deduced at all.
+    """
+    a, b = _CONC_PAIR
+    if a not in traced or b not in traced:
+        return {}
+
+    def blanks(x, y):
+        ix = traced[x][0].any(axis=0)
+        iy = traced[y][0].any(axis=0)
+        if not ix.any():
+            return 0
+        lo = int(np.argmax(ix))
+        hi = int(len(ix) - np.argmax(ix[::-1]))
+        return int((~ix[lo:hi] & iy[lo:hi]).sum())
+
+    na, nb = blanks(a, b), blanks(b, a)
+    if na > nb * 2 and na >= 20:
+        hidden, cover = a, b
+    elif nb > na * 2 and nb >= 20:
+        hidden, cover = b, a
+    else:
+        return {}
+    hs, hp = traced[hidden][0], traced[hidden][1]
+    cs, cp = traced[cover][0], traced[cover][1]
+    # islands=False: this must only ADD. With islands on, fill_under also
+    # blanks one-to-three-column islands in the hidden trace, and _clean_track
+    # has already made that judgement for this template -- an island that
+    # survives it is one hal1 decided to keep. Left on, it took 01367 p260's
+    # Slurry Prop Conc peak from 467.69 to 465.69, which is a traced reading
+    # moving because of a deduction pass that is supposed to leave traced
+    # readings alone (tests/test_hal_light_title pins those five peaks).
+    got = ct.fill_under(hs, hp, cs, cp, islands=False)      # fills hp in place
+    if not got:
+        return {}
+    notes.append(f"{hidden}: {len(got)} columns read from under {cover} where "
+                 f"the page paints {cover} over it and the two coincide — "
+                 f"deduced, not traced")
+    return {hidden: set(int(c) for c in got)}
+
+
 def extract_image(img, sample_sec=1.0):
     """-> (samples, channels, info) from the treatment-plot image."""
     img = np.asarray(img).astype(int)
@@ -599,6 +670,11 @@ def extract_image(img, sample_sec=1.0):
     g, b = img[..., 1], img[..., 2]
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
+    # Trace every series FIRST, so the concentration pair can be compared
+    # column by column before any of it is turned into readings — which is
+    # what says which of the two the page paints over the other. See
+    # _deduce_conc.
+    traced = {}
     for label, unit, axis, mask_fn in SERIES:
         cal = fits.get(axis)
         mask = mask_fn(masks, g, b)
@@ -607,7 +683,6 @@ def extract_image(img, sample_sec=1.0):
         if cal is None:
             notes.append(f"{label}: axis unreadable")
             continue
-        a, bb, ntick = cal
         sub = mask[y0:y1, x0:x1].copy()
         junk = _furniture_cols(sub)
         if junk.any():
@@ -615,8 +690,15 @@ def extract_image(img, sample_sec=1.0):
         cov = float(sub.any(axis=0).mean())
         if cov < 0.05:
             continue
+        traced[label] = (sub, _clean_track(sub, ar.curve_positions(sub)), cov)
+    deduced_cols = _deduce_conc(traced, notes)
+    for label, unit, axis, mask_fn in SERIES:
+        if label not in traced:
+            continue
+        a, bb, ntick = fits[axis]
+        sub, py_local, cov = traced[label]
         n_cols = sub.shape[1]
-        py = _clean_track(sub, ar.curve_positions(sub)) + y0
+        py = py_local + y0
         vals = a + bb * py
         t_cols = (ta + tb * (np.arange(n_cols) + x0)) - t_start
         if np.isfinite(vals).sum() < 50:
@@ -635,6 +717,17 @@ def extract_image(img, sample_sec=1.0):
               "label": label, "unit": unit, "color": "",
               "values": v, "ticks": ntick, "coverage": cov,
               "axis_frame": (float(a + bb * y0), float(a + bb * y1))}
+        # Which samples were deduced from under a covering curve rather than
+        # traced from this channel's own ink, on the same grid as `values`.
+        # The column forced the reading, but the page never drew it, so it
+        # travels labelled and the Lab draws it differently instead of letting
+        # it pass for ink. Resampled with the values so the two cannot drift.
+        _cols = deduced_cols.get(label)
+        if _cols:
+            _flag = np.zeros(n_cols, dtype=float)
+            _flag[np.fromiter(sorted(_cols), dtype=int)] = 1.0
+            ch["deduced"] = np.nan_to_num(
+                ct.resample(samples, t_cols, _flag)) >= 0.5
         # An axis that cannot be this channel's own axis is normally a refusal
         # — a dropped channel is visible in the Lab, a wrong one is not — and
         # step1 does refuse. Hal-1 only WARNS, deliberately.
