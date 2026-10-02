@@ -39,6 +39,31 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.29</h2>
+    <ul>
+      <li><b>Ten more units of reach on every filter.</b> The far end of the
+        slider was not enough on the worst traces, so each filter&rsquo;s
+        ceiling goes up by ten of whatever unit it reports beside the slider:
+        Hampel and the plain median now run 3 to <b>41</b> samples,
+        Savitzky-Golay 5 to <b>51</b>, and LOESS spans 2% to <b>30%</b> of the
+        stage. The bottom of the slider is untouched &mdash; 0 still means off,
+        and the first notch is still the gentlest setting there was</li>
+      <li><b>What that costs, said plainly.</b> The slider is still 0 to 100,
+        so a longer range over the same travel puts every setting lower on it.
+        The two-step workflow&rsquo;s 11-21 Savitzky-Golay window used to sit
+        at 17-44% and now sits at <b>13-35%</b>. Nothing reinterprets a setting
+        you already saved &mdash; the stored number is the slider position and
+        it still means that position &mdash; but a provider default dialled in
+        on v1.11.28 will now work somewhat harder than it did, so it is worth
+        opening one chart under it and checking you still like it</li>
+      <li><b>This is why the label counts samples.</b> The number beside the
+        slider has always reported the window in samples rather than only the
+        percentage, and that is the number worth writing down and repeating: it
+        survives a change like this one, and the percentage does not</li>
+      <li><b>Which templates this release touches: the Lab only.</b> No reader
+        changed, so every filing reads exactly as it did under v1.11.28</li>
+    </ul>
+
     <h2>v1.11.28</h2>
     <ul>
       <li><b>A second filter, run on what the first one leaves.</b> The filter
