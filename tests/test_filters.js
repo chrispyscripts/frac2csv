@@ -161,8 +161,18 @@ function close(a, b, tol, what) {
   ok(filtOdd(1) >= 3, "and never smaller than three samples");
   const lo = filtParams("sg", 0), hi = filtParams("sg", 100);
   ok(lo.win < hi.win, "more slider is a wider window");
-  ok(filtParams("sg", 40).win >= 11 && filtParams("sg", 40).win <= 21,
-     "the workflow's 11-21 window sits mid-slider");
+  // the ceilings each went up by 10 units in v1.11.29
+  ok(filtParams("hampel", 100).win === 41, "Hampel reaches 41 samples");
+  ok(filtParams("median", 100).win === 41, "median reaches 41 samples");
+  ok(hi.win === 51, "SG reaches 51 samples");
+  ok(Math.abs(filtParams("loess", 100).frac - 0.30) < 1e-9,
+     "LOESS reaches a 30% span");
+  // the workflow's 11-21 SG window is still reachable; a longer range at the
+  // same slider length moved it down from 17-44% to 13-35%
+  ok(filtParams("sg", 13).win >= 11 && filtParams("sg", 35).win <= 21,
+     "the workflow's 11-21 window is in the lower third of the slider");
+  ok(filtParams("sg", 0).win === 5, "and the bottom of the slider is unchanged");
+  ok(filtParams("hampel", 0).win === 3, "for every filter");
   ok(filtParams("hampel", 100).nSigma === 3, "the Hampel threshold stays at 3 MAD");
 }
 

@@ -5181,18 +5181,29 @@ function filtOdd(x) {
 }
 
 // amount 0..100 -> the window each filter wants.
-//   Hampel  3..31 samples, the span a digitising spike occupies
-//   SG     5..41 with order 2, the 11-21 range the workflow calls for sitting
-//          just under halfway up the slider
-//   LOESS  2%..20% of the stage
+//   Hampel  3..41 samples, the span a digitising spike occupies
+//   SG     5..51 with order 2
+//   LOESS  2%..30% of the stage
+//
+// Each ceiling is 10 units higher than it shipped in v1.11.28 -- 10 samples
+// for the window filters, 10 percentage points for LOESS, which is the unit
+// each one reports beside the slider. The far end of the old slider was not
+// enough on the worst STEP traces.
+//
+// The slider is still 0..100, so a WIDER range at the same length means every
+// setting now sits lower on it: the workflow's 11-21 SG window was 17-44% and
+// is now 13-35%, and a filter saved before this change opens a little
+// stronger than it did. That is the cost of the extra reach, and it is in the
+// label -- the number beside the slider is the window in samples, which is
+// what to write down and repeat, not the percentage.
 function filtParams(kind, amount) {
   const a = Math.max(0, Math.min(100, Number(amount) || 0)) / 100;
-  if (kind === "hampel") return { win: filtOdd(3 + a * 28), nSigma: 3 };
-  if (kind === "median") return { win: filtOdd(3 + a * 28) };
-  if (kind === "sg") return { win: filtOdd(5 + a * 36), order: 2 };
-  if (kind === "both") return { win: filtOdd(3 + a * 28), nSigma: 3,
-                                win2: filtOdd(5 + a * 36), order: 2 };
-  if (kind === "loess") return { frac: 0.02 + a * 0.18 };
+  if (kind === "hampel") return { win: filtOdd(3 + a * 38), nSigma: 3 };
+  if (kind === "median") return { win: filtOdd(3 + a * 38) };
+  if (kind === "sg") return { win: filtOdd(5 + a * 46), order: 2 };
+  if (kind === "both") return { win: filtOdd(3 + a * 38), nSigma: 3,
+                                win2: filtOdd(5 + a * 46), order: 2 };
+  if (kind === "loess") return { frac: 0.02 + a * 0.28 };
   return {};
 }
 
