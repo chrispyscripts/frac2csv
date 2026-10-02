@@ -32,7 +32,15 @@ function lift(name) {
   throw new Error(`${name} is unbalanced`);
 }
 const stageNum = s => { const m = String(s).match(/\d+/); return m ? +m[0] : 1e9; };
-eval(lift("stageItems"));
+// stageItems re-applies the "export the whole chart" setting as it builds the
+// list — the single place every list in the app is built, so the setting
+// cannot miss one. That pulls in the keepTail helpers and the store they read.
+let keepTailStore = {};
+let current = null;
+function fileScope() { return (current && current.entry && current.entry.name) || ""; }
+eval([lift("keepTailApply"), lift("keepTailApplyAll"), lift("keepTailOn"),
+      lift("stageItems")].join("\n"));
+const keepTailKey = meta => `${fileScope()}::${(meta && meta.stage) || "?"}`;
 
 let pass = 0, fail = 0;
 function is(got, want, what) {
@@ -90,6 +98,36 @@ for (const f of ["handover.channels", "handover.n"])
 const py = fs.readFileSync(path.join(__dirname, "..", "localapp.py"), "utf8");
 for (const f of ['"to"', '"n"', '"channels"'])
   is(py.includes(f), true, `localapp ships ${f}`);
+
+
+// ---- "export the whole chart": the tail spliced back on --------------------
+//
+// The seconds export counts its rows from item.n and reads each channel by
+// index, so values and n have to move together. A longer values array alone
+// would sit in memory and never reach a CSV.
+console.log("\nexporting the whole chart");
+{
+  current = { entry: { name: "w.pdf" } };
+  keepTailStore = {};
+  const mk = () => stageItems([chart("1", 3, tail("2", 659))])[0];
+
+  let it = mk();
+  is(it.n, 5760, "off by default — the chart stops at the handover");
+  is(it.channels[0].values.length, 0, "and the values stop there too");
+
+  keepTailStore["w.pdf::1"] = true;
+  it = mk();
+  is(it.n, 5760 + 659, "on: item.n grows by the tail, so the CSV gets the rows");
+  is(it.channels[0].values.length, 659, "and the channel carries the tail");
+
+  // a round trip, not a tail on a tail
+  keepTailApply(it, false);
+  is(it.n, 5760, "off again restores n");
+  is(it.channels[0].values.length, 0, "and the values");
+  keepTailApply(it, true); keepTailApply(it, true);
+  is(it.n, 5760 + 659, "twice on is still one tail");
+  is(it.channels[0].values.length, 659, "on the values as well");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

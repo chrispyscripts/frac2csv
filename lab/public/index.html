@@ -1915,7 +1915,7 @@ function stageItems(stages, keepContinuous) {
   // sort by the first number anywhere in the label ("HRF 5A" -> 5), then text
   order.sort((a, b) => (stageNum(a) - stageNum(b)) ||
                        (a < b ? -1 : a > b ? 1 : 0));
-  return order.map(k => {
+  const out = order.map(k => {
     const grp = groups.get(k);
     const channels = [], seen = new Set();
     for (const st of grp) for (const c of st.channels)
@@ -1942,6 +1942,8 @@ function stageItems(stages, keepContinuous) {
              handover,
              n: Math.max(...grp.map(s => s.n)), sample_sec: grp[0].sample_sec || 1 };
   }).map((it, i) => ({ ...it, seq: i + 1 }));   // 1..N position for sequential labels
+  keepTailApplyAll(out);
+  return out;
 }
 
 // stage label shown in the UI, per the As-labeled / Sequential toggle
@@ -4305,6 +4307,30 @@ function buildLegend() {
     h.title = "These minutes run on into the next stage's chart, which re-plots "
             + "them with the same values. They are drawn here so this chart ends "
             + "where the printed page does, and exported once, with that stage.";
+    const on = keepTailOn(gState.meta);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn keeptail" + (on ? " on" : "");
+    btn.textContent = on ? "Exporting the whole chart" : "Export the whole chart";
+    btn.title = on
+      ? "These minutes are being exported here AND with stage "
+        + gState.handover.to
+      : "Export this chart as the page draws it, clock or no clock. The "
+        + "minutes below will then appear twice — here and on stage "
+        + gState.handover.to + ".";
+    btn.addEventListener("click", () => {
+      const now = !keepTailOn(gState.meta);
+      if (now) keepTailStore[keepTailKey(gState.meta)] = true;
+      else delete keepTailStore[keepTailKey(gState.meta)];
+      keepTailSave();
+      const it = current && current.item;
+      keepTailApply(it, now);
+      if (it) setGraph(it.channels, it.n, it.sample_sec, it.meta, it.handover);
+      if (gState.filt) filtToChannels(gState.channels, gState.filt);
+      redrawGraph(); buildLegend();
+    });
+    h.appendChild(document.createTextNode(" "));
+    h.appendChild(btn);
     Lg.appendChild(h);
   }
   gState.channels.forEach((c, ci) => {
@@ -5263,6 +5289,65 @@ function filtApply(values, kind, amount) {
 // recomputes from the original on every move rather than filtering an already
 // filtered curve — drag it to 80 and back to 20 and you get what 20 means,
 // not what 80 then 20 means.
+// ---- keep the whole chart, however the clock reads ------------------------
+//
+// A chart that runs on into the next stage is cut where the next chart begins,
+// because those minutes are re-plotted there with the same values and writing
+// them twice would double-count them in any sum. The tail is not thrown away —
+// it comes down with the stage as `handover` and is drawn greyed — but the
+// EXPORT stops at the cut.
+//
+// That is the right default and it is not always what is wanted. Asked for
+// directly: a way to take the chart as the page draws it and leave the clock
+// out of it. So this is per chart, stored like every other correction and
+// re-applied over a fresh read.
+//
+// Turning it on DOES export those minutes twice, once here and once on the
+// stage they were handed to. That is the point of it, and the note says so
+// rather than leaving it to be discovered in a sum.
+let keepTailStore = (() => {
+  try { return JSON.parse(localStorage.getItem("f2c.keeptail") || "{}"); }
+  catch (e) { return {}; }
+})();
+function keepTailSave() {
+  try { localStorage.setItem("f2c.keeptail", JSON.stringify(keepTailStore)); }
+  catch (e) { /* private mode */ }
+}
+const keepTailKey = meta => `${fileScope()}::${(meta && meta.stage) || "?"}`;
+function keepTailOn(meta) { return !!keepTailStore[keepTailKey(meta)]; }
+// Splice the handed-over tail back onto a stage, or take it off again.
+//
+// Takes the ITEM, not its channels: the seconds export counts its rows from
+// item.n and reads each channel by index, so a longer values array on its own
+// would be silently ignored — the extra samples would sit in memory and never
+// reach a CSV. Both move together or neither does.
+//
+// Works off __tailBase, the values as the reader gave them, so toggling twice
+// is a round trip rather than a tail on a tail.
+function keepTailApply(item, on) {
+  const h = item && item.handover;
+  if (!h || !h.n || !item.channels) return 0;
+  const by = {};
+  for (const hc of (h.channels || [])) by[hc.key || hc.label] = hc.values;
+  if (item.__nBase == null) item.__nBase = item.n;
+  let n = 0;
+  for (const c of item.channels) {
+    if (!c.__tailBase) c.__tailBase = (c.values || []).slice();
+    const tail = by[c.key || c.label];
+    if (on && tail && tail.length) { c.values = c.__tailBase.concat(tail); n++; }
+    else { c.values = c.__tailBase.slice(); }
+    // the filter chain re-reads from __base, so it has to follow or a filtered
+    // chart would snap back to the trimmed length on the next slider move
+    c.__base = c.values.slice();
+  }
+  item.n = on ? item.__nBase + h.n : item.__nBase;
+  return n;
+}
+// Re-applied over a fresh read, like every other correction.
+function keepTailApplyAll(items) {
+  for (const it of items || [])
+    if (it && it.handover && keepTailOn(it.meta)) keepTailApply(it, true);
+}
 let filtStore = (() => {
   try {
     const j = JSON.parse(localStorage.getItem("f2c.filters") || "{}");
