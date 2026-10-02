@@ -1028,6 +1028,14 @@ const KIND_RANK = { schedule: 0, summary: 1, log: 2, other: 3 };
 const KIND_LABEL = { schedule: "Schedules", summary: "Summaries",
                      log: "Logs", other: "Other tables" };
 
+// The source file's name without its extension. Was six copies of
+// `.replace(/\.pdf$/i, "")`, which is right until the source IS a csv — a
+// dropped "stage-summary.csv" then exported as
+// "stage-summary.csv-stages-table.csv".
+function srcBase(name) {
+  return String(name || "").replace(/\.(pdf|csv)$/i, "");
+}
+
 function tableCsvName(base, title, i, used) {
   let slug = String(title || "").toLowerCase()
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48)
@@ -1746,7 +1754,7 @@ async function saveExports(entry, dir) {
     if (settings.format !== "csv") { await put(base + ".xlsx", wellXLSX(entry.well.stages, settings.xlsxTabs, entry.name)); n++; }
   }
   for (const t of (entry._tables || [])) {
-    await put(entry.name.replace(/\.pdf$/i, "") + exportSuffix(entry) + "-stages-table.csv", tableCSV(t, entry));
+    await put(srcBase(entry.name) + exportSuffix(entry) + "-stages-table.csv", tableCSV(t, entry));
     n++;
   }
   return n;
@@ -2130,7 +2138,7 @@ function wellProvider(well) {
 }
 
 function render(entry, fname, stages, tables, notes, summary) {
-  const base = fname.replace(/\.pdf$/i, "");
+  const base = srcBase(fname);
   summary = summary || [];
   // Seconds view = the stage graphs; Summary view = the document's summary
   // pages (rendered) plus any parsed table (the BJ Totals grid)
@@ -8065,7 +8073,7 @@ function deleteEntry(entry) {
     const wi = wells.indexOf(entry.well);
     if (wi >= 0) wells.splice(wi, 1);
   }
-  const base = entry.name.replace(/\.pdf$/i, "");
+  const base = srcBase(entry.name);
   // match on the file's own base, not on the old "-stages-table" prefix —
   // table CSVs are named after the table now, so that prefix matches nothing
   // and every removed file used to leave its tables behind in the export
@@ -8198,7 +8206,7 @@ function askExportOptions(entry) {
       exOpts.provider = $("exOptProvider").checked;
       exOpts.kind = $("exOptKind").checked;
       const e = entry || (current && current.entry);
-      const base = e && e.well ? e.well.base : (e ? e.name.replace(/\.pdf$/i, "") : "file");
+      const base = e && e.well ? e.well.base : (e ? srcBase(e.name) : "file");
       $("exoptsnote").textContent = e ? "e.g. " + base + exportSuffix(e) + "-seconds.csv" : "";
     };
     $("exOptProvider").onchange = preview;
@@ -8228,7 +8236,7 @@ async function emitSeconds(entry, well) {
 // the summary table CSV(s) for one entry (BJ Totals etc.)
 async function emitSummary(entry) {
   const out = [];
-  const base = entry.name.replace(/\.pdf$/i, "") + exportSuffix(entry);
+  const base = srcBase(entry.name) + exportSuffix(entry);
   const used = new Set();
   for (const t of (entry._tables || [])) {
     // every table used to be written as "<base>-summary.csv"; in a zip keyed
@@ -8340,7 +8348,7 @@ async function exportSummaryAll() {
     const pairs = [];
     for (const e of list)
       for (const t of e._tables)
-        pairs.push({ name: e.name.replace(/\.pdf$/i, "") + exportSuffix(e) + "-summary.csv", text: tableCSV(t, e) });
+        pairs.push({ name: srcBase(e.name) + exportSuffix(e) + "-summary.csv", text: tableCSV(t, e) });
     await emitZip(pairs, "carmines-summary.zip"); exportDone([`${pairs.length} file(s) (zip)`]);
   }
 }
