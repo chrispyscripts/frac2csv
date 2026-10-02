@@ -5274,11 +5274,41 @@ function filtSave() {
   catch (e) { /* private mode — it just will not outlive the tab */ }
 }
 const filtStageKey = meta => `${fileScope()}::${(meta && meta.stage) || "?"}`;
-function filtProvider() {
-  const f = fileScope();
-  const e = entries.find(x => x && x.name === f);
+// WHICH READER drew this chart, not which company filed it.
+//
+// The default used to hang on the service company, and that is the wrong hook
+// for a filter. A company files through more than one plotter, and the Lab's
+// own provider table puts them in one bucket:
+//
+//   Halliburton   "Halliburton IFS chart"            read from the PDF's own
+//                                                    line geometry
+//                 "Halliburton treatment plot (raster)"   pixel-traced
+//   STEP          "STEP chart" (vector) + two raster readers
+//   CalFrac       "CalFrac chart" + "MView chart"
+//
+// A vector curve carries no digitising noise at all; a traced one does. So a
+// Hampel window dialled in on the traced charts was being applied to the
+// vector ones too, where it can only take something away. The thing that
+// decides how much filtering a curve needs is the PLOTTER, which is what the
+// reader's own source string names.
+//
+// That string is already human-readable and is already what a flag report
+// calls the provider, so nothing new has to be invented to show it.
+function filtReaderKey() {
+  const it = current && current.item;
+  if (it && it.source) return String(it.source);
+  return filtCompanyKey();
+}
+// What a default saved before this change was filed under. Still read, so an
+// existing setting keeps working rather than silently vanishing — it is only
+// narrower from the next save on.
+function filtCompanyKey() {
+  const e = entries.find(x => x && x.name === fileScope());
   return (e && e.provider) || "Other";
 }
+// Kept as the name the UI shows, so a long source string does not have to be
+// spelled out twice.
+function filtProvider() { return filtReaderKey(); }
 const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0 };
 // A stage's own setting wins over the provider default: the default is where
 // you start, not something you cannot get out of.
@@ -5292,13 +5322,18 @@ const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0 };
 function filtSpecFor(meta) {
   const own = filtStore.byStage[filtStageKey(meta)];
   if (own) return own;
-  const prov = filtStore.byProvider[filtProvider()];
-  return prov || FILT_OFF;
+  const byReader = filtStore.byProvider[filtReaderKey()];
+  if (byReader) return byReader;
+  // Nothing under the reader — fall back to a default saved under the company
+  // before defaults were keyed this way.
+  const legacy = filtStore.byProvider[filtCompanyKey()];
+  return legacy || FILT_OFF;
 }
 // Where the setting on screen came from, for the line beside the Save button.
 function filtSourceOf(meta) {
   if (filtStore.byStage[filtStageKey(meta)]) return "stage";
-  if (filtStore.byProvider[filtProvider()]) return "provider";
+  if (filtStore.byProvider[filtReaderKey()]) return "provider";
+  if (filtStore.byProvider[filtCompanyKey()]) return "provider";
   return "none";
 }
 function filtClearStage(meta) {
@@ -5427,14 +5462,20 @@ function filtCommit(scope, spec) {
     return;
   }
   if (scope === "clearprov") {
-    delete filtStore.byProvider[filtProvider()];
+    delete filtStore.byProvider[filtReaderKey()];
+    delete filtStore.byProvider[filtCompanyKey()];
     filtSave(); filtSyncUI();
     filtSay(`the ${filtProvider()} default is cleared`);
     return;
   }
   if (scope === "provider") {
-    if (off) delete filtStore.byProvider[filtProvider()];
-    else filtStore.byProvider[filtProvider()] = { ...spec };
+    // Saving under the reader supersedes any company-wide default that was
+    // standing in for it, otherwise the old key would keep answering for the
+    // readers this one does not cover.
+    if (off) delete filtStore.byProvider[filtReaderKey()];
+    else filtStore.byProvider[filtReaderKey()] = { ...spec };
+    if (filtCompanyKey() !== filtReaderKey())
+      delete filtStore.byProvider[filtCompanyKey()];
     filtSave(); filtSyncUI();
     filtSay(off ? `no filter is now the ${filtProvider()} default`
                 : `saved as the default for ${filtProvider()}`);
