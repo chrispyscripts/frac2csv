@@ -380,6 +380,11 @@
   .stagerow.badtime-row .fixtime, .stagerow.edited-row .fixtime {
              visibility:visible; border-color:var(--carmine); color:var(--carmine); }
   .stagerow.badtime-row { background:rgba(163,22,49,0.06); }
+  .seg.dropmode { display:flex; width:100%; margin:0 0 6px; }
+  .seg.dropmode button { flex:1; padding:7px 0; font-size:12px; font-weight:600;
+    letter-spacing:.02em; }
+  .drop.csv { border-style:dashed; }
+  .dropwrong { color:var(--bad); font-size:11px; margin:4px 0 0; }
   .dropnote { margin:6px 10px; padding:6px 9px; border-radius:7px;
               border:1px solid var(--carmine); color:var(--carmine);
               background:rgba(163,22,49,0.06); font-size:11.5px;
@@ -722,6 +727,15 @@
         <div class="mnote" id="mnote">Pick any folder holding the files — they're
         matched by name if the layout differs. Exports save into each PDF's own
         folder.</div>
+      </div>
+      <!-- WHAT THIS DROP ZONE TAKES. Asked for as "a big toggle at the top of
+           the drop menu ... and only accept those": the two kinds are read by
+           completely different code, and a CSV landing in the PDF path is not
+           a useful accident, so the mode gates the drop rather than decorating
+           it. Big because it changes what the whole left column means. -->
+      <div class="seg dropmode" id="dropmode">
+        <button type="button" data-m="pdf" class="on">PDF reports</button>
+        <button type="button" data-m="csv">CSV files</button>
       </div>
       <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
         Drop PDFs or a .txt file list here <b>or click</b>
@@ -1248,17 +1262,126 @@ function makeFileEntry(name) {
 }
 
 let busy = Promise.resolve();
+// ---- which kind of file this column takes ---------------------------------
+//
+// Two completely separate readers sit behind this: a PDF goes to the server to
+// be extracted, a CSV is already data and is only parsed. Dropping one into
+// the other's path produces nothing useful, and silently ignoring the odd one
+// out is how a user ends up staring at an empty list wondering which of the
+// forty files failed. So the mode gates the drop, and anything it turns away
+// SAYS it was turned away and why.
+let dropMode = "pdf";                       // "pdf" | "csv"
+function setDropMode(m) {
+  dropMode = m === "csv" ? "csv" : "pdf";
+  const csv = dropMode === "csv";
+  for (const b of document.querySelectorAll("#dropmode button"))
+    b.classList.toggle("on", b.dataset.m === dropMode);
+  const d = $("drop"), inp = $("file");
+  d.classList.toggle("csv", csv);
+  d.innerHTML = (csv ? "Drop CSV files here <b>or click</b>"
+                     : "Drop PDFs or a .txt file list here <b>or click</b>");
+  d.setAttribute("aria-label", csv ? "Upload CSV files"
+                                   : "Upload frac report PDFs");
+  inp.setAttribute("accept", csv ? ".csv" : ".pdf,.txt");
+  d.appendChild(inp);                       // innerHTML above dropped it
+  dropWrong([]);
+}
+function dropWrong(names) {
+  let el = $("dropwrong");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "dropwrong"; el.id = "dropwrong";
+    $("drop").parentNode.insertBefore(el, $("drop").nextSibling);
+  }
+  if (!names.length) { el.textContent = ""; return; }
+  const want = dropMode === "csv" ? "CSV" : "PDF";
+  el.textContent = names.length === 1
+    ? `${names[0]} is not a ${want} — this tab takes ${want} files only.`
+    : `${names.length} files were not ${want}s and were left out.`;
+}
+
+// A dropped CSV, parsed into the same {title, columns, rows} a parsed table
+// uses — so it renders, edits and exports through the code that already
+// exists rather than growing a second table path.
+//
+// RFC4180 quoting, because an exported frac table carries commas inside
+// quoted cells (a well name with a comma, a note) and splitting on "," alone
+// silently shifts every column after the first such cell.
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = "", q = false;
+  const t = text.replace(/\r\n?/g, "\n");
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (q) {
+      if (ch === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  while (rows.length && rows[rows.length - 1].every(c => c === "")) rows.pop();
+  return rows;
+}
+
+async function loadCsvFile(f) {
+  // makeFileEntry builds the row in the file list AND registers the entry, so
+  // a CSV joins the same list a PDF does and the same delete button removes it.
+  const entry = makeFileEntry(f.name);
+  workStarted();
+  try {
+    const rows = parseCsv(await f.text());
+    if (!rows.length) { entry.set("no rows", "err"); return; }
+    // First row is the header when it is all text and the next row is not —
+    // an export always writes one, a hand-cut file sometimes does not, and
+    // guessing wrong either eats a row of data or labels columns "1, 2, 3".
+    const looksNumeric = r => r.some(c => /^-?[\d,]+(\.\d+)?$/.test(c.trim()) && c.trim() !== "");
+    const header = !looksNumeric(rows[0]) && rows.length > 1
+      ? rows.shift() : rows[0].map((_c, i) => `col ${i + 1}`);
+    const table = { title: f.name.replace(/\.csv$/i, ""),
+                    columns: header, rows };
+    entry._tables = [table];
+    render(entry, f.name, [], [table], [], []);
+    // AFTER render: it derives provider from the table's own source string and
+    // would otherwise file a dropped CSV under "Other". A CSV has no service
+    // company — it is whatever the person dropped — and saying so keeps it out
+    // of the provider menu's real vendors.
+    entry.provider = "CSV";
+    entry.set(`${rows.length} row${rows.length === 1 ? "" : "s"} · `
+              + `${header.length} column${header.length === 1 ? "" : "s"}`, "ok");
+  } catch (e) {
+    entry.set(String((e && e.message) || e).slice(0, 50), "err");
+  } finally { workFinished(); }
+}
+
+// Wired here rather than beside the other input listeners: `dropMode` is a
+// `let` declared just above, and a call from further up the file lands in its
+// temporal dead zone — which throws during load and takes every global after
+// it with it. The page came up with no script at all.
+for (const b of document.querySelectorAll("#dropmode button"))
+  b.addEventListener("click", () => setDropMode(b.dataset.m));
+setDropMode("pdf");
+
 function enqueue(files) {
+  const refused = [];
   for (const f of files) {
     const n = f.name.toLowerCase();
+    if (dropMode === "csv") {
+      if (n.endsWith(".csv")) loadCsvFile(f);
+      else refused.push(f.name);
+      continue;
+    }
     if (n.endsWith(".txt")) { loadManifest(f); continue; }
-    if (!n.endsWith(".pdf")) continue;
+    if (!n.endsWith(".pdf")) { refused.push(f.name); continue; }
     const q = makeFileEntry(f.name);
     workStarted();
     busy = busy.then(() => handleFile(f, q))
                .catch(() => {})
                .finally(workFinished);
   }
+  dropWrong(refused);
 }
 
 // ---------- TXT file-list manifests (batch straight off the drive) ----------
