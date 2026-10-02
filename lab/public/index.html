@@ -5438,10 +5438,17 @@ function filtMenu() {
     ["file", "Apply to every stage in this file"],
     ["provider", `Save as the default for ${prov}`],
   ];
-  // The way back. Without it, a setting applied everywhere is a setting one
-  // chart can never get out of — which is the complaint this answers.
+  // The ways back, each at the scope it undoes. Without them a setting applied
+  // everywhere is a setting one chart can never get out of — the complaint
+  // this answers — and "Apply to every stage" had no matching undo at all:
+  // the only way to lift it was to re-apply "off" to the whole well, which
+  // leaves an explicit off on every chart rather than removing the settings.
+  // Each row appears only when there is something for it to clear, so the
+  // menu never offers a no-op.
   if (filtStore.byStage[filtStageKey(gState.meta)])
-    rows.push(["clearstage", "Drop this chart's own setting"]);
+    rows.push(["clearstage", "Clear this chart's own setting"]);
+  if (filtStagesWithOwnSetting().length)
+    rows.push(["clearfile", "Clear every chart's setting in this well"]);
   if (filtStore.byProvider[prov]) rows.push(["clearprov", `Clear the ${prov} default`]);
   for (const [id, label] of rows) {
     const b = document.createElement("button");
@@ -5451,8 +5458,40 @@ function filtMenu() {
   }
   m.hidden = false;
 }
+// The charts of this well that carry a setting of their OWN, as opposed to
+// following a default. What "clear every chart in this well" has to remove,
+// and what decides whether that row is worth offering.
+function filtStagesWithOwnSetting() {
+  const f = fileScope();
+  return filtStagesOfFile().filter(
+    st => filtStore.byStage[`${f}::${(st.meta && st.meta.stage) || "?"}`]);
+}
+
 function filtCommit(scope, spec) {
   const off = filtIsOff(spec);
+  // Clearing a well REMOVES each chart's own setting so every one of them
+  // follows the default again. Deliberately not the same as applying "off" to
+  // the well, which writes an explicit off on every chart and would then
+  // override the very default this is handing them back to.
+  if (scope === "clearfile") {
+    const f = fileScope();
+    let n = 0;
+    for (const st of filtStagesOfFile()) {
+      const key = `${f}::${(st.meta && st.meta.stage) || "?"}`;
+      if (filtStore.byStage[key]) { delete filtStore.byStage[key]; n++; }
+      // Re-read every stage, including ones never opened: an export carries
+      // all of them, so leaving the unopened ones on their old filter would
+      // ship a well filtered in patches.
+      if (st.channels) filtToChannels(st.channels, filtSpecFor(st.meta));
+    }
+    filtSave();
+    gState.filt = { ...filtSpecFor(gState.meta) };
+    filtToChannels(gState.channels, gState.filt);
+    filtSyncUI(); redrawGraph(); buildLegend();
+    filtSay(n === 1 ? "1 chart follows the default again"
+                    : `${n} charts follow the default again`);
+    return;
+  }
   if (scope === "clearstage") {
     filtClearStage(gState.meta);
     gState.filt = { ...filtSpecFor(gState.meta) };

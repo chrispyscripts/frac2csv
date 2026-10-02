@@ -103,5 +103,42 @@ console.log("with no source at all it falls back to the company");
   ok(filtReaderKey() === "Liberty", "so a chart with no source is never keyless");
 }
 
-console.log(failed ? `\n${failed} FAILED` : "\nfilter reader key: all assertions passed");
+
+// ---- clearing, at each scope -----------------------------------------------
+console.log("\nclearing at each scope");
+{
+  // the two helpers the clear rows depend on, lifted with their own state
+  let gStateStub = { meta: { stage: "3" } };
+  eval(lift("filtStagesWithOwnSetting"));
+  global.filtStagesOfFile = () => ([
+    { meta: { stage: "1" } }, { meta: { stage: "2" } }, { meta: { stage: "3" } },
+  ]);
+  filtStore = { byStage: {}, byProvider: {} };
+  open("STEP surface chart (raster)", "STEP", "w.pdf");
+  filtStore.byProvider[filtReaderKey()] = { kind: "hampel", amount: 50 };
+  for (const st of ["1", "3"])
+    filtStore.byStage[`w.pdf::${st}`] = { kind: "sg", amount: 20 };
+
+  ok(filtStagesWithOwnSetting().length === 2,
+     "two of the three charts carry a setting of their own");
+
+  // clearing ONE chart leaves the other, and hands that chart back to the default
+  delete filtStore.byStage["w.pdf::3"];
+  ok(filtSpecFor({ stage: "3" }).kind === "hampel",
+     "the cleared chart follows the provider default again");
+  ok(filtSpecFor({ stage: "1" }).kind === "sg",
+     "and its neighbour keeps its own setting");
+  ok(filtStagesWithOwnSetting().length === 1, "one chart left holding one");
+
+  // clearing the WELL removes what is left, and does NOT touch the default
+  for (const st of filtStagesOfFile()) delete filtStore.byStage[`w.pdf::${st.meta.stage}`];
+  ok(filtStagesWithOwnSetting().length === 0, "no chart holds its own setting");
+  for (const st of ["1", "2", "3"])
+    ok(filtSpecFor({ stage: st }).kind === "hampel",
+       `chart ${st} follows the default`);
+  ok(filtStore.byProvider[filtReaderKey()].kind === "hampel",
+     "and the default itself survives — clearing a well is not clearing it");
+}
+
+console.log(failed ? `\n${failed} FAILED` : "\nclear scopes: all assertions passed");
 process.exit(failed ? 1 : 0);
