@@ -637,6 +637,44 @@ def process_path(path, fmt="both", tabs=True, seq=False, dest_folder="",
 _ROOT_CACHE = {}
 
 
+def _nt_drive_letters():
+    """The drive letters that actually EXIST on this machine, minus the ones
+    that hang.
+
+    This used to probe A: through Z: unconditionally, and os.path.isdir on a
+    letter Windows has no device for is not free: A: and B: go to the floppy
+    controller and a MAPPED NETWORK DRIVE whose server is gone blocks until
+    the SMB client gives up, tens of seconds each. Twenty-six of those on one
+    request is far past any browser's patience, and the only drop that calls
+    this is a .txt list — a dropped PDF never resolves a path — so lists came
+    back "Failed to fetch" while PDFs worked. Worse, the result cache is only
+    written on SUCCESS, so an abandoned request cached nothing and every list
+    after it hung the same way.
+
+    GetLogicalDrives gives the letters that exist; GetDriveType drops the
+    remote ones, which are the ones that hang and are never where this corpus
+    lives (USB and internal disks are REMOVABLE and FIXED). If the call is
+    unavailable for any reason, fall back to the old sweep minus A: and B:
+    rather than failing outright.
+    """
+    import string
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        mask = k32.GetLogicalDrives()
+        out = []
+        for i, d in enumerate(string.ascii_uppercase):
+            if not (mask & (1 << i)):
+                continue
+            # 1 = no root dir, 4 = remote. Skip both.
+            if k32.GetDriveTypeW(f"{d}:\\") in (1, 4):
+                continue
+            out.append(d)
+        return out
+    except Exception:
+        return [d for d in string.ascii_uppercase if d not in ("A", "B")]
+
+
 def find_drive_roots(manifest_path):
     """Locate the manifest path's top folder (e.g. 'BCER-Frac') on any
     mounted volume (mac) or drive letter (windows) — the drive letter in
@@ -658,11 +696,13 @@ def find_drive_roots(manifest_path):
                     if os.path.isdir(p):
                         roots.append(p)
     elif os.name == "nt":
-        import string
-        for d in string.ascii_uppercase:
+        for d in _nt_drive_letters():
             p = f"{d}:\\{name}"
-            if os.path.isdir(p):
-                roots.append(p)
+            try:
+                if os.path.isdir(p):
+                    roots.append(p)
+            except OSError:
+                continue
     home = os.path.join(os.path.expanduser("~"), name)
     if os.path.isdir(home):
         roots.append(home)
