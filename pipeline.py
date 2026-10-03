@@ -3812,9 +3812,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # the reason the Calfrac note below gives. Carmine ran 299 Liberty files
     # and got the Summary view on 10: charts read on 172, and the summary was
     # unreachable on the other 127 no matter what those files printed.
-    _summary(liberty_summary,
-             "Liberty chart" in chart_srcs
-             or liberty_summary.detect_document(doc),
+    _liberty_doc = ("Liberty chart" in chart_srcs
+                    or liberty_summary.detect_document(doc))
+    _summary(liberty_summary, _liberty_doc,
              "Stimulation Summary", liberty_summary.parse_stimulation)
     # Calfrac printed three different summary layouts across the corpus and
     # only the newest one was ever read, so most Calfrac wells came back with
@@ -3968,6 +3968,25 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 _table(tab.get("title") or "Sanjel table", tab)
         except Exception as e:
             notes.append(f"Sanjel tables parse failed — {e}")
+
+    # Liberty's stage-keyed sheets (#767): the wellbore, pressure, fluid and
+    # proppant grids each key a row on the stage number, and Carmine's
+    # per-stage summary dropdown is to be assembled from them. Unparsed until
+    # 2026-10-02 because `^Stage No` filed every one of them under
+    # "proppant". Gated on Liberty's own pages, as the Stimulation Summary
+    # above is; placed here because _table is defined just above.
+    if _liberty_doc:
+        try:
+            _lib_tabs = liberty_summary.parse_stage_sheets(doc)
+        except Exception as e:
+            _lib_tabs = {}
+            notes.append(f"Liberty stage sheets parse failed — {e}")
+        for _kind, _title in (
+                ("wellbore", "Wellbore Summary (Liberty)"),
+                ("pressure", "Pressure Summary (Liberty)"),
+                ("fluid", "Fluid Summary — volumes by stage (Liberty)"),
+                ("proppant", "Proppant Summary (Liberty)")):
+            _table(_title, _lib_tabs.get(_kind))
 
     # BJ's "Fracturing-Acidizing Treatment" sheets: a whole filing of these and
     # no charts at all reported "No extractable data" for weeks (#332/#360/#361
