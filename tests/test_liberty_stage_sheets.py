@@ -203,6 +203,12 @@ T122 = "\n".join(['Desired LOS Ticket #', '172029', 'Stage No', 'Treated Water',
 T123 = "\n".join(['Desired LOS Ticket #', '172029', 'Stage', 'Max Working MPa', 'Global Trips', 'Ave Rate', 'Ave MPa', 'Max Rate', 'Max MPa', 'F_ISIP', 'F_BHISIP', 'F_FG', 'BD_Psi', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'])  # p123
 T125 = "\n".join(['Stage No', 'PERF TopShot', 'PERF BottomShot', 'Sum of PERF PlugDepth', 'PERF TotalNumShots', 'PERF NumPerfClusters', 'Top Shot Flush Vol (m3)', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21'])  # p125
 
+# page text of the pages a rule took for something they are not
+T88_STEPDOWN = "\n".join(['Stage', 'FSD Start', 'Rate', 'FSD WB', 'Fric', 'FSD 1st', 'BHP', 'FSD NWB', 'Fric', 'FSD Perf', 'Fric', 'FSD T Fric', 'FSD Perfs', 'Open', 'F_ISIP', 'F_BHISIP', 'F_FG', 'F 1Min', 'F 5Min', 'F 15Min', '1', '25.50', '57.82', '17.532', 'FINAL STEP DOWN SUMMARY'])  # 00269 p88
+T150_CHEMICAL = "\n".join(['Chemical Name', 'Chemic', 'al Uni..', 'Stage No', '1', '2', '3', 'B701', 'L', 'BLE-475U', 'kg', 'SODA ASH', 'kg', '0K', '1K', '2K', 'CHEMICAL COMPARISON', 'Proposed Quote vs Field Design vs Actual Pumped Volumes', 'Measure Names', 'Chemical Actual', 'Chemical Field Design'])  # 00470 p150
+T154_COMPLETION = "\n".join(['Stage', '1', '2', '3', '% Complete', 'JOB COMPLETION PERCENTAGE', 'Measure Names', '% Design Clean', '% Design Proppant'])  # 00470 p154
+T165_FLUIDCHART = "\n".join(['Stage No', '2', '4', '6', '0', '500', '1000', 'Fluid Vol (m3)', 'TREATMENT FLUID VOLUME BY STAGE', 'Fluid Name', 'HCR Acid', 'HCR-14', 'HVFR 1.75', 'HVFR 2.0'])  # 00470 p165
+
 
 class PageKinds(unittest.TestCase):
     def test_every_49367_sheet_lands_on_its_own_kind(self):
@@ -246,6 +252,19 @@ class PageKinds(unittest.TestCase):
         for kind, _pat in ls.SUMMARY_KINDS:
             self.assertIn(kind, ls.KIND_TITLES)
         self.assertIn("proppant_chart", ls.KIND_TITLES)
+
+    def test_final_step_down_is_its_own_sheet_not_the_pressure_grid(self):
+        # it prints F_BHISIP, which filed it under "pressure" beside p87
+        self.assertEqual(ls._page_kind(T88_STEPDOWN), "stepdown")
+
+    def test_a_measure_names_legend_alone_is_not_the_pressure_pivot(self):
+        # every multi-measure chart prints that legend title
+        self.assertEqual(ls._page_kind(T150_CHEMICAL), "chemical")
+        self.assertIsNone(ls._page_kind(T154_COMPLETION))
+        self.assertEqual(ls._page_kind(T116), "pressure_measures")
+
+    def test_the_fluid_bar_chart_is_not_the_fluid_grid(self):
+        self.assertEqual(ls._page_kind(T165_FLUIDCHART), "fluid_chart")
 
 
 class PressureGrid(unittest.TestCase):
