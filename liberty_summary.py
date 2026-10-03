@@ -47,7 +47,17 @@ _LIBERTY = re.compile(r"Liberty\s+(?:Energy|Oilfield)", re.I)
 SUMMARY_KINDS = [
     ("stimulation", r"STIMULATION SUMMARY"),
     ("wellcompletion", r"WELL COMPLETION SUMMARY"),
-    ("pressure_measures", r"^Measure Names\s*$"),
+    # a stage-keyed grid of its own (FSD rates, frictions, F_ISIP, F_BHISIP,
+    # F_FG) that the F_BHISIP column below used to file under the pressure
+    # grid -- 00269 p88, printed straight after PRESSURE SUMMARY
+    ("stepdown", r"FINAL STEP ?DOWN SUMMARY"),
+    # "Measure Names" is the legend title of EVERY Tableau chart that plots
+    # more than one measure -- job completion %, pumpdown, pump time per
+    # stage, even the chemical comparison (00470 p150-169) -- so the pivot is
+    # the one that names a pressure measure too
+    ("pressure_measures",
+     r"(?s)\A(?=.*^Measure Names\s*$)(?=.*(?:PRESSURE SUMMARY|"
+     r"^(?:Ave|Max) (?:BHPSI|MPa|PSI)\s*$|^F_B?H?ISIP\s*$|^BD_Psi\s*$))"),
     ("ballhit", r"BALL HIT INFO|^Ball Hit Vol\b"),
     ("pressure_presets", r"Pressure Summary Presets|Initial & Final Stepdowns"),
     # the per-stage grid, by title or by the columns only it prints
@@ -64,6 +74,9 @@ SUMMARY_KINDS = [
     ("proppant_chart", r"(?s)\A(?=.*^Stage No\s*$)(?=.*^-?\d+K\s*$)"
                        r"(?=.*^Prop(?:pant)? (?:Actual|Design|Name)\b)"),
     ("chemical", r"CHEMICAL (?:COMPARISON|CONCENTRATION)|^Chemical Name\s*$"),
+    # the stacked-bar chart of the same volumes (00470 p165): stage-keyed
+    # with a fluid legend, so the rule below took it for the grid
+    ("fluid_chart", r"TREATMENT FLUID VOLUMES? BY STAGE"),
     # by stage, named for the fluids it prints: the 2025 sheet is titled
     # FLUID SUMMARY; the older one is known only by its columns
     ("fluid", r"(?s)^FLUID SUMMARY\s*$|\A(?=.*^Stage No\s*$)"
@@ -87,7 +100,9 @@ KIND_TITLES = {
     "ballhit": "Ball Hit Info",
     "wellbore": "Wellbore Summary",
     "fluid": "Fluid Volumes by Stage",
+    "fluid_chart": "Fluid Volumes by Stage (chart)",
     "fluid_totals": "Fluid Volumes (well totals)",
+    "stepdown": "Final Step Down Summary",
     "chemical": "Chemical Comparison",
     "stagetable": "Stage table",
     "timetracker": "TimeTracker Log",
