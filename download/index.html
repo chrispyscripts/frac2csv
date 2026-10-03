@@ -39,6 +39,68 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.32</h2>
+    <ul>
+      <li><b>Sanjel: a stage that prints a clock but no day is no longer
+        exported in the year 2000.</b> 00100&rsquo;s interval 19 heads its page
+        &ldquo;January 0, 1900&rdquo; &mdash; Excel&rsquo;s way of printing an
+        empty date &mdash; which the reader refuses, and rightly: believing it
+        once put a stage a century off. But that page&rsquo;s TIME axis is
+        perfectly good, running 20:37 to 21:22. Only the day was missing, and
+        losing the day lost the clock with it, because a stage is placed by a
+        full timestamp. So it exported as <b>2000-01-01 20:37:16</b>, and in a
+        CSV sorted by time that row sorts above the whole job</li>
+      <li><b>That one bad date was also causing the overlap.</b> A stage sitting
+        in the year 2000 is no longer between its neighbours on the clock, so
+        the hand-over trim &mdash; which cuts a chart where the next one begins
+        &mdash; could not pair it with them. On 00100 it trimmed 22 charts
+        instead of 24 and left stage 18 running straight into 19. Give the
+        stage its real day and both go: <b>all 29 stages dated, 24 charts
+        trimmed, and not one overlapping pair in the exported CSV</b></li>
+      <li><b>The day is taken only where it cannot be anything else.</b> The
+        dated charts either side must agree on the day, and this chart&rsquo;s
+        clock must fall between theirs &mdash; 18 is 19:57 and 20 is 21:19 on
+        2016-01-28, and 20:37 sits between them. A chart whose clock falls
+        outside its neighbours&rsquo; has wrapped past midnight, which is a
+        guess rather than a reading, so it is left undated. The time is never
+        rewritten; only the day is filled</li>
+      <li><b>Liberty: a chart whose last clock label is lost no longer exports
+        half its stage.</b> 00918 p159 prints three labels along a frame ruled
+        for a full hour, and with no text layer every label is read by OCR,
+        which returned only the first two. The export window then fell back to
+        the span <i>between those two labels</i> &mdash; 1800 seconds, half the
+        sheet &mdash; while all four channels carry ink to 3217 seconds. The
+        window is now taken from the plot frame. That also repairs the slope: a
+        fit through the raw label boxes ran 4.65% fast on 00914, so every
+        timestamp on the page drifted, not just the end</li>
+      <li><b>&ldquo;Lots of time errors that appear to be false flags&rdquo;
+        &mdash; they were all false.</b> 00009 has 38 charts; 23 carry a clock
+        and 15 do not, and a chart with no time read is written 00:00:00. All
+        fifteen landed on one instant and thirteen were reported as starting
+        before the stage before them finished. Nothing was wrong with those
+        clocks; there was no clock. A chart that genuinely starts at midnight
+        is still checked, and a real overlap still reports</li>
+      <li><b>The end-trim switch moved up beside the chart.</b> It decides what
+        the export contains, so it belongs above the chart rather than on a note
+        in the legend. It appears only on a chart that has a trimmed end, and it
+        says what it costs: those minutes then appear twice, here and on the
+        stage they were handed to</li>
+      <li><b>Stacked view: the stage and the day, above the charts.</b> The only
+        things naming a stacked chart were the tail of a long file name and a
+        grey line where the date ran on into a sample count. The two that matter
+        now have their own line</li>
+      <li><b>Dropping a file list is no longer slow to resolve on some
+        machines.</b> Finding a list&rsquo;s folder used to try every drive
+        letter from A to Z. A letter with no drive behind it is not free to ask
+        about &mdash; one mapped to a server that is gone can take tens of
+        seconds &mdash; so a list could sit there long enough for the app to
+        give up on it. It now asks Windows which drives exist and skips the
+        network ones</li>
+      <li><b>Which templates this release touches:</b> the <b>Sanjel</b> and
+        <b>Liberty</b> readers, and the Lab. Every other template reads exactly
+        as it did under v1.11.31</li>
+    </ul>
+
     <h2>v1.11.31</h2>
     <ul>
       <li><b>Schlumberger: nine stages that had a time and no date now have
