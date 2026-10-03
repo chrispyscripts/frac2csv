@@ -26,6 +26,11 @@
   .title { font-size:14px; font-weight:600; margin-top:1px;
            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .stamp { margin-top:3px; display:flex; align-items:baseline; gap:9px;
+    flex-wrap:wrap; }
+  .stamp .st { font-size:15px; font-weight:650; letter-spacing:.01em; }
+  .stamp .dt { font-size:12.5px; color:var(--mut); font-family:var(--mono); }
+  .stamp .dt b { color:var(--ink); font-weight:600; }
   .tools { display:flex; align-items:center; gap:8px; flex-shrink:0; }
   .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
          color:var(--ink); font:inherit; font-size:12px; font-weight:600;
@@ -62,6 +67,11 @@
     <div class="meta">
       <div class="wordmark">Carmine's Lab &mdash; stacked charts</div>
       <div class="title" id="title">&mdash;</div>
+      <!-- Which chart this is, in the two terms that identify it: the stage as
+           the sheet labels it, and the day it ran. Above the charts and in
+           their own line, not folded into the file name or the grey run-on
+           below it. -->
+      <div class="stamp" id="stamp" hidden></div>
       <div class="sub" id="sub">Waiting for the Lab window&hellip;</div>
     </div>
     <div class="tools">
@@ -286,6 +296,7 @@ function applyNone(d) {
   $("msg").textContent = "Pick a stage in the Lab window — this view follows it.";
   $("title").textContent = "—";
   $("sub").textContent = "no stage selected";
+  setStamp({});
   $("pglbl").textContent = "";
   document.title = "Stacked charts — Carmine's Lab";
 }
@@ -304,6 +315,7 @@ function applyStage(d) {
   state.hoverT = null;
   $("title").textContent = d.title || "";
   $("sub").textContent = d.sub || "";
+  setStamp(d);
   document.title = (d.title || "Stacked charts") + " — stacked";
   updatePageLbl();
   $("msg").hidden = state.channels.length > 0;
@@ -311,6 +323,46 @@ function applyStage(d) {
     $("msg").textContent = "This stage has no channels to plot.";
   build();
   ack();
+}
+
+// The stage and the day, above the charts.
+//
+// A stacked window is opened to read ONE stage closely, and until now the only
+// things naming it were the file name's tail ("… — Chart 19") and a grey mono
+// line where the date ran on into a duration, a sample count, a channel count
+// and a reader name. Both are still there; this says the two that matter in
+// their own line, in their own size.
+//
+// Hidden rather than blank when a stage has neither — an empty bar that moves
+// the charts down is worse than no bar.
+function setStamp(d) {
+  const el = $("stamp");
+  if (!el) return;
+  const stage = (d.stageLabel || "").trim();
+  const date = (d.date || "").trim();
+  const time = (d.startTime || "").trim();
+  if (!stage && !date) { el.hidden = true; el.textContent = ""; return; }
+  // Built as nodes rather than markup: a stage label is whatever the sheet
+  // printed, and it goes on screen as text, not as HTML.
+  el.textContent = "";
+  if (stage) {
+    const a = document.createElement("span");
+    a.className = "st"; a.textContent = "Stage " + stage;
+    el.appendChild(a);
+  }
+  if (date) {
+    const b = document.createElement("span");
+    b.className = "dt"; b.textContent = date;
+    // 00:00:00 is this pipeline's "no time read", not midnight — see
+    // _abs_start. Printing it would state a clock the sheet never gave.
+    if (time && time !== "00:00:00") {
+      b.appendChild(document.createTextNode(" "));
+      const c = document.createElement("b"); c.textContent = time;
+      b.appendChild(c);
+    }
+    el.appendChild(b);
+  }
+  el.hidden = false;
 }
 
 function applyView(d) {

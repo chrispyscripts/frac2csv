@@ -6831,6 +6831,15 @@ function stackPayload() {
     seq: stackSeq, id: stackId(),
     file: (current.entry && current.entry.name) || "", chart: it.key,
     title: $("pv-title").textContent, sub: $("pv-sub").textContent,
+    // The stage and the day, as their OWN fields rather than left for the
+    // stacked window to pick back out of the title and the sub line. Asked
+    // for directly: those two are what tells you which chart you are looking
+    // at, and they were the file name's tail and a grey run-on between a
+    // sample count and a reader name.
+    stageLabel: stageDisplay(stageLabel(it))
+      + (stageVariant(it.key) ? " (" + stageVariant(it.key) + ")" : ""),
+    date: (it.meta && it.meta.date) || "",
+    startTime: (it.meta && it.meta.start_time) || "",
     n: gState.n, dsec: gState.dsec, tMax: gState.tMax,
     t0: gState.t0, t1: gState.t1,
     clock0: gState.clock0 ? gState.clock0.getTime() : null,
