@@ -39,6 +39,60 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.30</h2>
+    <ul>
+      <li><b>Halliburton image charts: the wellhead proppant concentration
+        comes back.</b> Wellhead and bottom-hole concentration are drawn on the
+        same 0&ndash;1500 scale and, once proppant reaches the perfs, at very
+        nearly the same number &mdash; so the two pens lie on top of each other
+        and the page shows one line. The wellhead curve was the one underneath,
+        and where it was covered it simply went missing: on one 24-chart file,
+        13,772 samples in 205 separate stretches, none of them short, all in
+        the middle of the job at around 490&nbsp;kg/m&sup3;. It is now read
+        from under the curve covering it. <b>Over 72 charts in two files,
+        wellhead concentration went from 61.5% to 69.5% present on one and from
+        68.9% to 82.5% on the other, every chart improved, and treating
+        pressure, slurry rate and bottom-hole concentration did not move at
+        all.</b> Recovered stretches are marked as deduced on the chart rather
+        than passed off as traced ink</li>
+      <li><b>A filter default now belongs to the chart type, not the
+        company.</b> Halliburton files through two completely different
+        plotters &mdash; the IFS charts are read from the PDF&rsquo;s own line
+        geometry, the treatment plots are traced from a picture &mdash; and
+        both sat in one &ldquo;Halliburton&rdquo; bucket, as did STEP&rsquo;s
+        three readers and CalFrac&rsquo;s two. A vector curve carries no
+        digitising noise at all, so a setting dialled in on the traced charts
+        was being applied to the vector ones where it could only take something
+        away. <b>Anything already saved keeps working</b> and narrows to the
+        chart type next time you save it</li>
+      <li><b>Clear a filter for one chart, or for a whole well.</b>
+        &ldquo;Apply to every stage in this file&rdquo; had no way back: the
+        only way to lift it was to apply <i>off</i> everywhere, which is not
+        the same thing &mdash; that writes an explicit off onto every chart and
+        then overrides the very default they should fall back to. Two new items
+        in the Save menu hand a chart, or a whole well, back to the default.
+        Each appears only when there is something for it to clear, and clearing
+        a well leaves the provider default alone</li>
+      <li><b>Export a chart whole, however the clock reads.</b> A chart that
+        runs on into the next stage is cut where the next chart begins, because
+        those minutes are re-plotted there and writing them twice would
+        double-count them. A button on the hand-over note now takes the chart
+        exactly as the page draws it &mdash; and says what it costs: those
+        minutes then appear twice, once here and once on the stage they were
+        handed to</li>
+      <li><b>Drop CSVs instead of PDFs.</b> A toggle at the top of the file
+        column switches it between PDF reports and CSV files, and in CSV mode
+        it takes CSVs only &mdash; anything else is turned away by name rather
+        than quietly ignored. A dropped CSV behaves like any other table: it
+        opens in the Tables view, every cell takes a hand edit, edits survive a
+        re-read, and it exports the same way. Commas inside quoted cells are
+        read properly, so a well name or a note like &ldquo;screened out, 2.1
+        min&rdquo; no longer shifts every column after it</li>
+      <li><b>Which templates this release touches:</b> the <b>Halliburton
+        treatment plot (raster)</b> reader, and the Lab. Every other template
+        reads exactly as it did under v1.11.29</li>
+    </ul>
+
     <h2>v1.11.29</h2>
     <ul>
       <li><b>Ten more units of reach on every filter.</b> The far end of the
