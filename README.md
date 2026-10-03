@@ -100,8 +100,16 @@ scale, per-channel correlation ≥ 0.9996.
 ## Run from source
 
 ```
-pip install pymupdf numpy
+pip install -r requirements.txt
 python frac2csv_gui.py
 ```
 
 Works on Windows, macOS and Linux (Python 3.10+).
+
+`requirements.txt` pins the exact libraries the shipped EXE is built with.
+Test against those, not against whatever an older system Python carries: the
+Mac's `/usr/bin/python3` (3.9) has PyMuPDF 1.26.5, which is not what ships.
+
+```
+python3.14 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```

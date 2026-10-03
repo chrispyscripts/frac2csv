@@ -1,0 +1,17 @@
+# The libraries the readers run on, pinned to what every shipped EXE has been
+# built with (v1.9.0 through v1.11.33 all installed exactly these; read off
+# the build-windows logs on 2026-10-03).
+#
+# Pinned because the readers live on PyMuPDF's page.get_drawings() and
+# get_text() output: an unpinned install picks up whatever was released that
+# morning, and two builds of IDENTICAL code could then read a chart
+# differently. The client has twice reported "the new version broke X"
+# (#764, #771) where the code had not changed, and an unpinned library made
+# that impossible to rule out quickly.
+#
+# Bumping one is a reader change: run the A/B digest sweep
+# (validation-tools/page-art-memo/abdigest.py on branch cpu-page-art-memo)
+# across the providers before shipping it.
+pymupdf==1.28.2
+numpy==2.5.3
+pillow==12.3.0
