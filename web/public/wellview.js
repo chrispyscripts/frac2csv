@@ -18,6 +18,7 @@ const tip = $('wv-tip');
 let W = null;                 // the well record
 let STAGES = [];              // treatment stages, ordered by number
 let ENG = new Map();          // stage key -> engineering summary
+let reconciliation = null;
 let pts = [];                 // trajectory as [x=east, y=-tvd, z=north] metres
 let sel = 0;                  // selected stage index
 let follow = false, playing = 0;
@@ -44,6 +45,7 @@ function buildPoints(t) {
 
 function pointAtMd(md) {
   if (!pts.length || md == null) return null;
+  if (md < pts[0][3] || md > pts[pts.length - 1][3]) return null;
   let i = pts.findIndex(p => p[3] >= md);
   if (i < 0) return pts[pts.length - 1];
   if (i === 0) return pts[0];
@@ -96,6 +98,7 @@ function focusStage(i, hard) {
   if (p && (follow || hard)) {
     goal.target = [p[0], p[1], p[2]];
     goal.scale = Math.max(goal.scale, 0.5);
+    camera.pan = [0, 0];
   }
   render();
   draw();
@@ -195,7 +198,7 @@ function elapsedOf(st, n) {
 function resetZoom() {
   const st = STAGES[sel]; const ser = stageSeries(st);
   const n = Math.max(0, ...Object.values(ser).map(a => a.length));
-  view.t0 = 0; view.t1 = Math.max(1, (n - 1) * (st.step_s || 1));
+  view.t0 = 0; view.t1 = Math.max(1, (n - 1) * (st?.step_s || 1));
   drawGraphs();
 }
 
@@ -289,7 +292,9 @@ function row(label, value, unit) {
 }
 
 function engFor(st) {
-  return ENG.get(String(st.label)) || ENG.get('n:' + st.n) || null;
+  // A BCER depth-only row is not a treatment merely because its number matches.
+  if (!st || String(st.source || '').startsWith('BCER')) return null;
+  return ENG.get(String(st.label)) || null;
 }
 
 function render() {
@@ -297,8 +302,16 @@ function render() {
   const e = engFor(st) || {};
   const w = W.well || {};
   const curves = Object.keys(stageSeries(st)).length;
+  const inferredDepth = (st.notes || []).some(n => /matched by|completion table/i.test(n));
   const depthNote = st.placed
-    ? '<div class="wv-warn">This stage has no printed depth. It is placed by its stage number, not measured.</div>' : '';
+    ? '<div class="wv-warn">No verified depth for this treatment; no spatial marker is drawn.</div>'
+    : inferredDepth ? '<div class="wv-warn">Provisional chart location: assigned from completion order. The independently printed summary depths are audited below.</div>' : '';
+  const auditRow = reconciliation?.rows.find(r => r.label === st.label);
+  const auditText = !auditRow ? 'No matched treatment-summary record.'
+    : auditRow.status === 'matched_printed_depth' ? `Summary port ${fmt(auditRow.printed_top_m,1)} m matches depth-order record ${auditRow.depth_order}. This corroborates the summary location; chart identity still uses its source label.`
+    : auditRow.status === 'ambiguous_depth' ? `Summary port ${fmt(auditRow.printed_top_m,1)} m matches multiple completion records. Their record identities remain unresolved.`
+    : auditRow.status === 'summary_depth_only' ? `Summary reports ${fmt(auditRow.printed_top_m,1)} m, absent from the completion-depth table.`
+    : 'The summary has no printed depth; stage number alone does not verify a depth match.';
   const mismatch = (W.bcer_stages || []).length && (W.bcer_stages || []).length !== STAGES.length
     ? `<div class="wv-warn">The operator filed ${W.bcer_stages.length} intervals and the Lab charted ${STAGES.length}. The two numberings are kept separate; where they cannot be reconciled a stage keeps its own label.</div>` : '';
 
@@ -357,6 +370,7 @@ function render() {
     </dl>
     ${(st.notes || []).length ? `<div class="wv-note" style="margin-top:8px">${st.notes.join('<br>')}</div>` : ''}
     ${mismatch}
+    ${reconciliation ? `<div class="wv-warn">${reconciliation.summaries} summaries · ${reconciliation.depth_intervals} completion intervals. ${auditText}</div><a href="data/stage-reconciliation.json" target="_blank" rel="noopener">Full reconciliation report</a>` : ''}
   </section>`;
 
   document.querySelectorAll('#wv-steps button').forEach((b, i) => b.classList.toggle('on', i === sel));
@@ -371,11 +385,11 @@ async function load() {
   try { d = await (await fetch(`data/wells/${encodeURIComponent(WA)}.json`)).json(); }
   catch (err) { $('wv-name').textContent = `Well ${WA} not found`; return; }
   W = d;
+  try { const r = await fetch('data/stage-reconciliation.json'); if(r.ok)reconciliation=(await r.json()).wells[WA]||null; } catch (_) {}
   const w = d.well || {};
   STAGES = (d.stages || []).slice().sort((a, b) => (a.n || 0) - (b.n || 0));
   for (const e of d.engineering_stages || []) {
     ENG.set(String(e.label), e);
-    if (!ENG.has('n:' + e.n)) ENG.set('n:' + e.n, e);
   }
   pts = buildPoints(d.trajectory || {});
 
@@ -453,7 +467,7 @@ addEventListener('keydown', e => {
 // 3D interaction
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('pointerdown', e => {
-  drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2 };
+  drag = { x: e.clientX, y: e.clientY, startX:e.clientX, startY:e.clientY, pan: e.shiftKey || e.button === 2 };
   cv.setPointerCapture(e.pointerId); cv.style.cursor = 'grabbing';
 });
 cv.addEventListener('pointermove', e => {
@@ -481,11 +495,19 @@ cv.addEventListener('pointermove', e => {
   } else tip.style.display = 'none';
 });
 cv.addEventListener('pointerup', e => {
-  if (drag && Math.abs(e.clientX - drag.x) < 3 && hover != null) focusStage(hover, true);
+  if (drag && Math.hypot(e.clientX - drag.startX,e.clientY-drag.startY) < 4) {
+    const r=cv.getBoundingClientRect();
+    const h=hits.find(q=>Math.hypot(q.x-(e.clientX-r.left),q.y-(e.clientY-r.top))<q.r);
+    if(h)focusStage(h.i,true);
+  }
   drag = null; cv.style.cursor = 'grab';
 });
+cv.addEventListener('pointercancel',()=>{drag=null;cv.style.cursor='grab'});
+cv.addEventListener('pointerleave',()=>{hover=null;tip.style.display='none'});
 cv.addEventListener('wheel', e => {
   e.preventDefault();
+  const p=pointAtMd(STAGES[sel]?.top_m);
+  if(p){goal.target=p.slice(0,3);camera.pan=[0,0];}
   goal.scale = Math.max(0.01, Math.min(40, goal.scale * (e.deltaY > 0 ? 1 / 1.12 : 1.12)));
 }, { passive: false });
 addEventListener('resize', () => { resize(); drawGraphs(); });

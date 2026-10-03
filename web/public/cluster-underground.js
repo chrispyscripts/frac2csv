@@ -39,7 +39,7 @@ function renderPanel(){content.replaceChildren();if(!pad){content.innerHTML='<di
  const label=document.createElement('div');label.textContent='Treatment summaries (independent numbering)';content.append(label);
  const grid=document.createElement('div');grid.className='ug-stages';well.stages.forEach(s=>{const b=document.createElement('button');b.textContent=s.label;b.classList.toggle('on',stage===s);b.title='Stage '+s.label;b.onclick=()=>{stage=s;renderPanel()};grid.append(b)});content.append(grid);
  const info=document.createElement('div');const v=(x)=>x==null?'Not supplied':fmt(x,2);info.innerHTML=stage?`<strong>Stage ${stage.n}</strong><dl><dt>Average rate</dt><dd>${v(stage.avg_rate_m3_min)}${stage.avg_rate_m3_min==null?'':' m³/min'}</dd><dt>Proppant</dt><dd>${v(stage.proppant_t)}${stage.proppant_t==null?'':' t'}</dd><dt>Top / base MD</dt><dd>Not supplied</dd></dl>`:well.stages.length?'Choose a stage above.':'Stage data not supplied for this well.';if(stage){const date=document.createElement('div');date.textContent=stage.date||'Date not supplied';info.append(date)}
- const note=document.createElement('p');note.textContent='Measured intervals use depth-order IDs; their link to treatment summaries needs verification. Treatment traces, geological notes and materials are not loaded.';info.append(note);const link=document.createElement('a');link.href='well.html?wa='+encodeURIComponent(well.well.wa);link.textContent='Open well data ↗';info.append(link);content.append(info);
+ const note=document.createElement('p');note.textContent='Depth-order IDs and treatment summaries are kept separate unless printed depths support their match. Open the well dashboard for treatment curves and the reconciliation details.';info.append(note);const link=document.createElement('a');link.href='wellview.html?wa='+encodeURIComponent(well.well.wa);link.textContent='Open well dashboard →';info.append(link);content.append(info);
 }
 function project(q){const x=q[0]-camera.target[0],y=q[1]-camera.target[1],z=q[2]-camera.target[2],c=Math.cos(camera.yaw),s=Math.sin(camera.yaw),xx=x*c-z*s,zz=x*s+z*c,cp=Math.cos(camera.pitch),sp=Math.sin(camera.pitch);return [width/2+camera.pan[0]+xx*camera.scale,height/2+camera.pan[1]-(y*cp-zz*sp)*camera.scale,zz*cp+y*sp];}
 function path(points,color,lineWidth,alpha=1){ctx.beginPath();points.forEach((q,i)=>{const a=project(q);i?ctx.lineTo(a[0],a[1]):ctx.moveTo(a[0],a[1])});ctx.strokeStyle=color;ctx.lineWidth=lineWidth;ctx.globalAlpha=alpha;ctx.stroke();ctx.globalAlpha=1;}
@@ -65,7 +65,10 @@ canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,
 const UG_KEY='stratum.underground';
 function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.stringify({
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
- pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:''}))}catch(e){}}
+ pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
+ stage:stage?stage.label:null,interval:interval?interval.n:null,
+ panelScroll:overlay.querySelector('.ug-panel').scrollTop,
+ surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}}))}catch(e){}}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
 addEventListener('pagehide',ugSave);
 overlay.querySelector('#ug-back').addEventListener('click',ugClear);
@@ -74,7 +77,10 @@ overlay.querySelector('#ug-back').addEventListener('click',ugClear);
  try{await ready}catch(e){return}
  active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();
  selectPad(s.pad||'');
- if(s.wa&&pad){const w=pad.wells.find(x=>x.well&&x.well.wa===s.wa);if(w){well=w;renderPanel()}}
+ if(s.wa&&pad){const w=pad.wells.find(x=>x.well&&x.well.wa===s.wa);if(w){well=w;stage=w.stages.find(x=>x.label===s.stage)||null;interval=w.depth_intervals.find(x=>x.n===s.interval)||null;renderPanel()}}
+ if(s.entryCamera)entryCamera=structuredClone(s.entryCamera);
+ overlay.querySelector('.ug-panel').scrollTop=s.panelScroll||0;
+ if(s.surface)map.jumpTo(s.surface);
  camera.yaw=s.yaw;camera.pitch=s.pitch;camera.scale=s.scale;
  camera.pan=s.pan.slice();camera.target=s.target.slice();
  goal.scale=s.scale;goal.target=s.target.slice();

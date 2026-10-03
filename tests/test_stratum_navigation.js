@@ -1,0 +1,48 @@
+// Exercise the shipped state transitions and hit generation without a browser.
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../web/public/cluster-underground.js'),'utf8');
+const between=(a,b)=>source.slice(source.indexOf(a),source.indexOf(b,source.indexOf(a)));
+const objects=new Map();
+const element=()=>({hidden:false,disabled:false,value:'',textContent:'',scrollTop:0,style:{},focus(){},addEventListener(){}});
+const nodes=new Map();
+const overlay={classList:{add(){},remove(){}},setAttribute(){},querySelector(s){if(!nodes.has(s))nodes.set(s,element());return nodes.get(s)}};
+const pads=[0,1].map(i=>({id:'pad-'+i,name:'Pad '+i,color:'#abcdef',point:[i*200,0,0],wells:[]}));
+pads.forEach((p,i)=>p.wells.push({pad:p,well:{wa:String(i)},points:[[i*200,0,0],[i*200,-1000,1000]],stages:[{label:'2'}],depth_intervals:[{n:7,point:[i*200,-1000,700]}]}));
+const initial={yaw:.91,pitch:-.2,scale:.27,target:[111,-800,245],pan:[55,-31]};
+const plain=o=>JSON.parse(JSON.stringify(o));
+const noop=()=>{};
+const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:null,stage:null,interval:null,hover:null,entryCamera:null,
+  camera:structuredClone(initial),goal:{scale:1,target:[0,0,0]},padMenu:element(),padPage:element(),returnButton:element(),canvas:element(),tip:element(),overlay,
+  resize:noop,renderPanel:noop,fit(){c.camera.pan=[900,900];c.goal.target=[0,0,0];c.goal.scale=1;},
+  active:true,hits:[],width:1000,height:800,raf:0,requestAnimationFrame:()=>1,path:noop,project:p=>p,
+  ctx:new Proxy({},{get:()=>noop,set:()=>true}),draw:noop,
+  sessionStorage:{setItem:(k,v)=>objects.set(k,v),getItem:k=>objects.get(k)||null,removeItem:k=>objects.delete(k)},
+  addEventListener:noop,ready:Promise.resolve(),button:element(),
+  map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}}
+};
+vm.createContext(c);
+vm.runInContext(between('function selectPad(id)','function renderPanel'),c);
+c.selectPad('pad-0');assert.deepEqual(plain(c.entryCamera),initial);
+c.camera.yaw=2;c.camera.target[0]=999;
+c.selectPad('pad-1');assert.equal(c.pad.id,'pad-0','neighbour pad must not become selected');
+c.returnToCluster();assert.deepEqual(plain(c.camera),initial,'back restores every camera component');
+assert.deepEqual(plain(c.goal.target),initial.target);
+c.selectPad('pad-0');c.stage=c.well.stages[0];c.interval=c.well.depth_intervals[0];
+overlay.querySelector('.ug-panel').scrollTop=43;
+vm.runInContext(between('function draw(){','function resize()'),c);
+c.draw();assert(c.hits.length>0);assert(c.hits.every(h=>h.p===c.pad),'background pads, toes and intervals have no hit targets');
+// Save the focused view, then simulate a fresh map page reached via Back.
+const tail=between("const UG_KEY=",'(async()=>{let s=null');
+vm.runInContext(tail,c);c.ugSave();
+const saved=JSON.parse(objects.get('stratum.underground'));
+assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);
+c.pad=null;c.well=null;c.entryCamera=null;c.camera={yaw:0,pitch:0,scale:1,target:[0,0,0],pan:[0,0]};c.draw=noop;
+const restore=source.slice(source.indexOf('(async()=>{let s=null'),source.lastIndexOf('})();'));
+(async()=>{
+ await vm.runInContext(restore,c);
+ assert.equal(c.pad.id,'pad-0');assert.equal(c.stage.label,'2');assert.equal(c.interval.n,7);
+ assert.equal(overlay.querySelector('.ug-panel').scrollTop,43);
+ assert.deepEqual(plain(c.camera.target),saved.target);
+ c.returnToCluster();assert.deepEqual(plain(c.camera),initial,'well → pad → cluster restores original entry camera');
+ console.log('PASS: exact camera restoration, locked neighbour hit targets, and well round-trip state');
+})().catch(e=>{console.error(e);process.exitCode=1});

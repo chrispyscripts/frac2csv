@@ -42,7 +42,10 @@ html.embedded{--bg:#0e1b26;--card:#132330;--ink:#e3f3f7;--mut:#9db6c3;--line:#2b
 <script>
 const q = new URLSearchParams(location.search);
 const SET = q.get("set"), PAD = q.get("pad");
-if(q.get('embedded')==='1')document.documentElement.classList.add('embedded');
+if(q.get('embedded')==='1'){
+  document.documentElement.classList.add('embedded');
+  const base=document.createElement('base');base.target='_top';document.head.append(base);
+}
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
 async function main() {
@@ -95,7 +98,7 @@ function drawPlan(pads, wells) {
     const p = pts(w);
     const d = p.map((q, j) => (j ? "L" : "M") + X(q[0]).toFixed(1) + " " + Y(q[1]).toFixed(1)).join("");
     const col = hue(pads.length > 1 ? pads.indexOf(w.pad) : i);
-    g += `<a href="well.html?wa=${encodeURIComponent(w.wa)}"><path d="${d}" fill="none" stroke="${col}" stroke-width="${w.stages ? 2.4 : 1.4}" stroke-linejoin="round" opacity="${w.stages ? 1 : .75}"><title>${w.name} · WA ${w.wa} · TD ${fmt(w.td)} m · lateral ${fmt(w.lateral)} m</title></path></a>`;
+    g += `<a href="wellview.html?wa=${encodeURIComponent(w.wa)}"><path d="${d}" fill="none" stroke="${col}" stroke-width="${w.stages ? 2.4 : 1.4}" stroke-linejoin="round" opacity="${w.stages ? 1 : .75}"><title>${w.name} · WA ${w.wa} · TD ${fmt(w.td)} m · lateral ${fmt(w.lateral)} m</title></path></a>`;
     const e = p[p.length - 1];
     g += `<circle cx="${X(e[0])}" cy="${Y(e[1])}" r="2.2" fill="${col}"/>`;
   });
@@ -112,7 +115,7 @@ function drawPlan(pads, wells) {
 function drawTable(pads, wells) {
   const rows = wells.map(w => `<tr>
     <td>${pads.length > 1 ? `<a href="pad.html?set=${encodeURIComponent(SET)}&pad=${encodeURIComponent(w.pad.id)}">${w.pad.name.replace(/^.*pad /, "pad ")}</a>` : ""}</td>
-    <td><a href="well.html?wa=${encodeURIComponent(w.wa)}">${w.name}</a></td>
+    <td><a href="wellview.html?wa=${encodeURIComponent(w.wa)}">${w.name}</a></td>
     <td class="num">${w.wa}</td><td>${w.uwi || ""}</td>
     <td class="num">${fmt(w.td)}</td><td class="num">${fmt(w.tvd)}</td><td class="num">${fmt(w.lateral)}</td>
     <td class="num">${w.stations ? fmt(w.stations) : "–"}</td><td class="num">${w.depth_intervals ? fmt(w.depth_intervals) : "–"}</td><td class="num">${w.stages ? fmt(w.stages) : "–"}</td><td class="num">${w.logs ? fmt(w.logs) : "–"}</td>
