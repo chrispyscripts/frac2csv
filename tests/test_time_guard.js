@@ -23,6 +23,7 @@ const timeFixGet = () => null;
 // the thresholds the guard uses, lifted so the test cannot drift from them
 const OVERLAP_FRAC = parseFloat(src.match(/const OVERLAP_FRAC = ([\d.]+)/)[1]);
 const OVERLAP_FLOOR_MS = eval(src.match(/const OVERLAP_FLOOR_MS = ([^;]+);/)[1]);
+eval(lift("stageHasClock"));
 eval(lift("stageStartMs"));
 eval(lift("stageEndMs"));
 eval(lift("overlapWorthFlagging"));
@@ -102,6 +103,44 @@ is(flagged([...pair("1", "2023-03-12", "17:20:04", "17:19:58"),
 is(flagged([st("", "2023-03-12", "10:00:00", 60),
             st("", "2023-03-12", "10:30:00", 60)]),
    [""], "blank stage names are not treated as one stage");
+
+// ---- no clock read is not a clock that is WRONG (#768) --------------------
+//
+// 00009 (BJ) has 38 charts; 23 carry a clock and 15 do not. A chart with no
+// time read is written 00:00:00 — the reader's own default, and what
+// "no time" means everywhere else in the pipeline — so all fifteen landed on
+// one instant and thirteen were reported as starting before the stage before
+// them finished. Carmine: "lots of time errors that appear to be false
+// flags? everything looks correct in fracview". They were all false: nothing
+// was wrong with the clock, there was no clock.
+console.log("\na stage with no clock read is not judged against its neighbours");
+{
+  const S = (stage, t, mins, clock) => ({
+    meta: { stage, date: "2019-03-01", start_time: t, clock_chart: !!clock },
+    n: mins * 60, sample_sec: 1 });
+
+  const clockless = [];
+  for (let i = 24; i <= 38; i++) clockless.push(S(String(i), "00:00:00", 115));
+  is(stageTimeIssues(clockless).length, 0,
+     "fifteen clockless charts raise nothing (thirteen before)");
+
+  // ...but a chart that CLOCKED ITSELF at midnight is a real reading
+  is(stageTimeIssues([S("1", "00:00:00", 120, true),
+                      S("2", "00:30:00", 120, true)]).length, 1,
+     "a real midnight start is still judged");
+
+  is(stageHasClock(S("1", "00:00:00", 60)), false, "bare midnight: no clock");
+  is(stageHasClock(S("1", "00:00:00", 60, true)), true,
+     "midnight on a self-clocking chart IS a clock");
+  is(stageHasClock(S("1", "08:37:00", 60)), true, "any other time is a clock");
+  is(stageHasClock(S("1", "", 60)), false, "and blank is not");
+
+  // the guard still works on a well that has clocks
+  is(stageTimeIssues([S("1", "08:00:00", 60), S("2", "09:05:00", 60)]).length, 0,
+     "a clean well is still clean");
+  is(stageTimeIssues([S("1", "08:00:00", 120), S("2", "08:05:00", 120)]).length, 1,
+     "and a real overlap still flags");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

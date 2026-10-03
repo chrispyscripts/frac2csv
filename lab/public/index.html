@@ -4988,6 +4988,26 @@ function stageStartMs(st) {
   return isFinite(ms) ? ms : NaN;
 }
 
+// Does this stage have a clock AT ALL?
+//
+// A start of exactly 00:00:00 means "no time was read" everywhere in the
+// pipeline (see _abs_start) — the reader's own default — except on a chart
+// that clocked itself, where midnight is a time like any other. The Lab could
+// not tell the two apart, so fifteen clockless BJ charts on 00009 all landed
+// on one instant and thirteen were reported as starting before the stage
+// before them finished. Every one of those was a false flag: nothing was
+// wrong with the clock, there was no clock (#768).
+//
+// A time the user typed counts as a clock — it is the one reading we know
+// someone stands behind.
+function stageHasClock(st) {
+  if (!st || !st.meta) return false;
+  if (timeFixGet(st)) return true;
+  const t = st.meta.start_time || "";
+  if (!t) return false;
+  return t !== "00:00:00" || !!st.meta.clock_chart;
+}
+
 function stageEndMs(st) {
   const a = stageStartMs(st);
   if (!isFinite(a)) return NaN;
@@ -5049,6 +5069,11 @@ function stageTimeIssues(stages) {
     // eval'd on its own by tests/test_time_guard.js, so it has to stand up
     // without the rest of the page around it.
     if (stages[i] && stages[i].meta && stages[i].meta.continuous) continue;
+    // No clock read is not a clock that is wrong. Skipped here for the same
+    // reason a CONTINUOUS re-plot is: there is nothing for the user to fix,
+    // and a warning they cannot act on sends them hunting a fault that does
+    // not exist.
+    if (!stageHasClock(stages[i])) continue;
     const a = stageStartMs(stages[i]);
     if (!isFinite(a)) continue;
     // This list is one entry per CHART, not per stage — serialize() appends

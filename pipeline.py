@@ -104,6 +104,16 @@ def _md(meta):
     return {"title": meta.title, "uwi": meta.uwi, "stage": meta.stage,
             "date": meta.date, "start_time": meta.start_time,
             "duration_min": meta.duration_min,
+            # Did this chart CLOCK ITSELF? 00:00:00 means "no time read"
+            # everywhere in this pipeline (see _abs_start) except on a chart
+            # that plots a real clock, where midnight is a time like any
+            # other. The Lab needs the same distinction to tell a stage that
+            # started at midnight from fifteen that never got a time at all —
+            # without it, 00009's 15 clockless charts stacked on one instant
+            # and 13 of them were flagged as starting before their
+            # predecessor finished (#768, "lots of time errors that appear to
+            # be false flags").
+            "clock_chart": bool(getattr(meta, "clock_chart", False)),
             # the chart's printed time-axis label set, where the template
             # reports one (BJ) — see _split_bj_windows
             "axis_window": getattr(meta, "axis_window", ""),
