@@ -1320,7 +1320,51 @@ def service_report_index(doc):
     than taking whichever came first. An undated chart is a visible gap; a
     chart dated off the wrong treatment is a wrong answer wearing a date.
     """
-    seen = {}
+    return service_report_dates(doc)[0]
+
+
+# The interval line, to the END of its line, so a report headed
+# "// Interval 50 High Rate Flush" keeps what distinguishes it from
+# "// Interval 50". _SSR_INTERVAL takes the number alone and is kept for the
+# by-number map below.
+_SSR_LINE = re.compile(r"//\s*Interval\s+(\d{1,3})([^\n]*)", re.I)
+
+
+def ssr_label_key(text):
+    """'50 High Rate Flush' / '// Interval 50' -> a key both sides can agree on.
+
+    Lower-cased, runs of space collapsed, so the report's own heading and the
+    chart's printed stage label meet in the middle. Returns None when there is
+    no interval number to key on.
+    """
+    m = re.search(r"(\d{1,3})([^\n]*)", str(text or "").strip())
+    if not m:
+        return None
+    tail = re.sub(r"\s+", " ", m.group(2).strip().lower())
+    return f"{int(m.group(1))} {tail}".strip()
+
+
+def service_report_dates(doc):
+    """-> ({interval number: date}, {label key: date}).
+
+    Two maps from one pass. The by-number one is what this has always
+    returned; the by-LABEL one exists because a number is not always the whole
+    name of a treatment.
+
+    00021 prints two reports for interval 50 and two for 51 — the main
+    treatment and a "High Rate Flush", on DIFFERENT days (50 on 02-28 and
+    03-01; 51 on 03-01 and 03-02) — and two charts to match, labelled "50" and
+    "50 High Rate Flush". Collapsed to the number the two dates disagree, so
+    the interval was dropped and BOTH charts came through undated, which is
+    Carmine's "SCHLUM not getting the date for some stages". Kept apart by
+    their own labels they agree with themselves, and each chart takes the date
+    of the report that names it.
+
+    The by-number map keeps the disagreement rule exactly as it was: where two
+    reports for one number disagree AND nothing distinguishes them, the number
+    is still dropped rather than dated off whichever came first.
+    """
+    by_num, by_label = {}, {}
     for pno in range(doc.page_count):
         try:
             page = doc[pno]
@@ -1329,14 +1373,29 @@ def service_report_index(doc):
             continue
         if not _SSR_MARK.search(text):
             continue
-        m = _SSR_INTERVAL.search(text)
+        m = _SSR_LINE.search(text)
         if not m:
             continue
         d = _service_report_start(page)
         if d is None:
             continue
-        seen.setdefault(int(m.group(1)), set()).add(d.strftime("%Y-%m-%d"))
-    return _resolve_service_dates(seen)
+        day = d.strftime("%Y-%m-%d")
+        suffix = re.sub(r"\s+", " ", m.group(2).strip())
+        # The by-NUMBER map takes only the reports headed by a bare number.
+        # Letting "// Interval 20b" in under 20 would make 20 disagree with
+        # itself and drop a date that is not in doubt: the number alone names
+        # the main treatment, and the suffixed ones are reached by label.
+        #
+        # This is also why 20b and its four siblings were invisible before.
+        # The old pattern needed a word boundary after the digits and "20b"
+        # has none — 0 and b are both word characters — so those five pages
+        # matched nothing at all and were skipped, reports and dates and all.
+        if not suffix:
+            by_num.setdefault(int(m.group(1)), set()).add(day)
+        key = ssr_label_key(m.group(1) + " " + suffix)
+        if key:
+            by_label.setdefault(key, set()).add(day)
+    return _resolve_service_dates(by_num), _resolve_service_dates(by_label)
 
 
 def _resolve_service_dates(seen):

@@ -1328,6 +1328,44 @@ class SLBServiceReport(unittest.TestCase):
         self.assertEqual(got, {5: "2018-07-11"})
 
 
+class SsrLabelKey(unittest.TestCase):
+    """A treatment is named by its number AND whatever follows it (#766).
+
+    00021 charts "50" and "50 High Rate Flush" as two stages and prints a
+    service report for each, a day apart. It also re-treats five intervals and
+    heads those reports "// Interval 20b", "23B", "25b", "34B Hi Rate Flush"
+    and "38B".
+
+    Keyed by the number alone all nine charts came through with NO DATE: the
+    50s and 51s because their two reports disagreed and the interval was
+    dropped, and the five letters because the old pattern wanted a word
+    boundary after the digits — "20b" has none, 0 and b are both word
+    characters, so those pages matched nothing and were skipped entirely.
+    """
+
+    def test_a_bare_number_keys_on_itself(self):
+        self.assertEqual(slb.ssr_label_key("50"), "50")
+        self.assertEqual(slb.ssr_label_key("// Interval 50"), "50")
+
+    def test_the_two_sides_of_one_treatment_meet(self):
+        """the report's heading and the chart's printed label."""
+        self.assertEqual(slb.ssr_label_key("50 High Rate Flush"),
+                         slb.ssr_label_key("// Interval 50 High Rate Flush"))
+        self.assertEqual(slb.ssr_label_key("20 b"),
+                         slb.ssr_label_key("// Interval 20b"))
+        self.assertEqual(slb.ssr_label_key("34 B Hi Rate Flush"),
+                         slb.ssr_label_key("// Interval 34B Hi Rate Flush"))
+
+    def test_a_suffix_is_not_the_same_treatment(self):
+        self.assertNotEqual(slb.ssr_label_key("50"),
+                            slb.ssr_label_key("50 High Rate Flush"))
+        self.assertNotEqual(slb.ssr_label_key("20"), slb.ssr_label_key("20b"))
+
+    def test_nothing_to_key_on(self):
+        for raw in ("", None, "Interval", "zone"):
+            self.assertIsNone(slb.ssr_label_key(raw))
+
+
 class ZoneCaptionHash(unittest.TestCase):
     """"Zone #1" is a zone caption too (#579).
 

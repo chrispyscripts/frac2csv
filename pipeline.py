@@ -2934,14 +2934,30 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                     if not getattr(meta, "date", ""):
                         if _slb_service[0] is None:
                             try:
-                                _slb_service[0] = slb.service_report_index(doc)
+                                _slb_service[0] = slb.service_report_dates(doc)
                             except Exception:
-                                _slb_service[0] = {}
-                        try:
-                            _iv = int(str(getattr(meta, "stage", "")).strip())
-                        except (TypeError, ValueError):
-                            _iv = None
-                        _d = _slb_service[0].get(_iv)
+                                _slb_service[0] = ({}, {})
+                        _by_num, _by_label = _slb_service[0]
+                        # BY LABEL first. A number is not always the whole name
+                        # of a treatment: 00021 charts "50" and "50 High Rate
+                        # Flush" as two stages and prints a service report for
+                        # each, a day apart, and it re-treats five intervals as
+                        # "20b", "23B", "25b", "34B Hi Rate Flush" and "38B".
+                        # Keyed by number those nine charts came through with
+                        # no date at all — the two 50s and the two 51s because
+                        # their reports disagreed and the interval was dropped,
+                        # the five letters because int("20 b") does not parse.
+                        # Keyed by their own labels each one finds the report
+                        # that names it, and they are genuinely different days:
+                        # "20" is 2019-02-08 and "20 b" is 2019-02-10.
+                        _lbl = slb.ssr_label_key(getattr(meta, "stage", ""))
+                        _d = _by_label.get(_lbl) if _lbl else None
+                        if not _d:
+                            try:
+                                _iv = int(str(getattr(meta, "stage", "")).strip())
+                            except (TypeError, ValueError):
+                                _iv = None
+                            _d = _by_num.get(_iv)
                         if _d:
                             meta.date = _d
                     # A Zone Summary sheet is a picture, not a vector plot, and
