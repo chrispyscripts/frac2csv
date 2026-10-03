@@ -6545,13 +6545,64 @@ function fvPayload(entry) {
   // that must never look authoritative.
   return { type: "fv:well", file: entry.name, uwi: (raw[0].meta.uwi || ""),
            synthetic, jumps: L.jumps, stages,
-           edits: fvEdits.get(entry.name) || null };
+           edits: (function () {
+             const e = fvEdits.get(entry.name) || null;
+             return e && fvEditFits(raw, e) ? e : null;
+           }()) };
+}
+
+// WHICH TIMELINE an edit was made against.
+//
+// A FracView edit is a set of ABSOLUTE cut points, and applyFvEdits compares
+// them against where the stages sit now. That is exact as long as the stages
+// have not moved — and a date correction moves them. On 00100, fixing
+// interval 19's year shifted that stage by SIXTEEN YEARS, so every stored
+// boundary addressed a timeline that no longer existed: the stage fell
+// outside every bound and contributed nothing, while its neighbours were cut
+// at points meant for somewhere else. Carmine: "after you make changes to the
+// date, the adjust feature ... pulls data backwards and cuts off instead of
+// adjusting between the 2 stages".
+//
+// So an edit records the timeline it was made on, and is refused against any
+// other. The boundaries are the expensive thing in this app to recreate — all
+// done by eye — so they are only dropped when they provably no longer mean
+// what they meant.
+function fvTimeline(raw) {
+  const L = fvLayout(raw || []);
+  return (L.starts || []).map(
+    (s, i) => `${s}:${raw[i].n}:${raw[i].sample_sec || 1}`).join("|");
+}
+// Is this edit still about this well as it stands?
+//
+// An edit saved before edits carried a timeline has no `tl`. Rather than throw
+// those away or trust them blindly, they are accepted once if their span still
+// lies inside the well's own — an edit made against THIS layout always does,
+// and one made against a sixteen-year-displaced layout cannot — and stamped
+// on the way through, so the question is only ever asked once.
+function fvEditFits(raw, ed) {
+  if (!ed || !ed.bounds || ed.bounds.length < 2) return false;
+  const now = fvTimeline(raw);
+  if (ed.tl) return ed.tl === now;
+  const L = fvLayout(raw || []);
+  const starts = L.starts || [];
+  if (!starts.length) return false;
+  const lo = Math.min(...starts);
+  const hi = Math.max(...starts.map(
+    (s, i) => s + raw[i].n * (raw[i].sample_sec || 1) * 1000));
+  const a = ed.bounds[0], b = ed.bounds[ed.bounds.length - 1];
+  const slack = 36e5;                       // an hour either side
+  const ok = a >= lo - slack && b <= hi + slack;
+  if (ok) ed.tl = now;                      // adopted; never asked again
+  return ok;
 }
 
 // The whole of the edit's meaning: rebuild the stage list from the original
 // samples, cut at the boundaries FracView holds.
 function applyFvEdits(raw, ed) {
   if (!ed || !ed.bounds || ed.bounds.length < 2) return raw;
+  // Boundaries that address a timeline this well no longer has would cut it
+  // at the wrong places rather than not at all, which is the worse failure.
+  if (!fvEditFits(raw, ed)) return raw;
   // the same order FracView was shown, or the edit's bounds address stages
   // this never displayed
   const L0 = fvLayout(raw);
@@ -6615,6 +6666,7 @@ function fvApplyToEntry(entry, ed) {
   const w = entry && entry.well;
   if (!w) return;
   if (!w.stagesRaw) w.stagesRaw = w.stages;
+  if (ed) ed.tl = fvTimeline(w.stagesRaw);   // the layout it was drawn on
   ed ? fvEdits.set(entry.name, ed) : fvEdits.delete(entry.name);
   fvEditsSave();
   w.stages = ed ? applyFvEdits(w.stagesRaw, ed) : w.stagesRaw;
