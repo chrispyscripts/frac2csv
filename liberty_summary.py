@@ -46,7 +46,9 @@ _LIBERTY = re.compile(r"Liberty\s+(?:Energy|Oilfield)", re.I)
 # lands on its own kind.
 SUMMARY_KINDS = [
     ("stimulation", r"STIMULATION SUMMARY"),
-    ("wellcompletion", r"WELL COMPLETION SUMMARY"),
+    # the dark-theme sheets of 2025 (00674 p534, 01124 p69) title
+    # it in the plural
+    ("wellcompletion", r"WELL COMPLETIONS? SUMMARY"),
     # a stage-keyed grid of its own (FSD rates, frictions, F_ISIP, F_BHISIP,
     # F_FG) that the F_BHISIP column below used to file under the pressure
     # grid -- 00269 p88, printed straight after PRESSURE SUMMARY
