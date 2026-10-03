@@ -58,13 +58,15 @@ SUMMARY_KINDS = [
     # ticks (0K, 100K ...) instead, and _page_kind splits that one off
     ("proppant", r"PROPPANT SUMMARY|^Prop Screw\b"),
     # the chart twin without its title: stage-keyed, a Prop column, and an
-    # axis counted in thousands
-    ("proppant_chart", r"(?s)(?=.*^Stage No\s*$)(?=.*^-?\d+K\s*$)"
+    # axis counted in thousands. The lookaheads are pinned to \A: unpinned,
+    # re.search retried them at every offset, quadratic in the page text --
+    # 6 s on one 27 KB page of 00674 (682 pages), minutes per filing.
+    ("proppant_chart", r"(?s)\A(?=.*^Stage No\s*$)(?=.*^-?\d+K\s*$)"
                        r"(?=.*^Prop(?:pant)? (?:Actual|Design|Name)\b)"),
     ("chemical", r"CHEMICAL (?:COMPARISON|CONCENTRATION)|^Chemical Name\s*$"),
     # by stage, named for the fluids it prints: the 2025 sheet is titled
     # FLUID SUMMARY; the older one is known only by its columns
-    ("fluid", r"(?s)^FLUID SUMMARY\s*$|(?=.*^Stage No\s*$)"
+    ("fluid", r"(?s)^FLUID SUMMARY\s*$|\A(?=.*^Stage No\s*$)"
               r"(?=.*^(?:Treated Water|Fresh Water|HVFR\b|HCR Acid|HCl))"),
     ("timetracker", r"^LIBERTY\s*$|TimeTracker"),
     ("cement", r"^Cement Report"),

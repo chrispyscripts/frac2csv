@@ -234,6 +234,14 @@ class PageKinds(unittest.TestCase):
         self.assertEqual(ls._page_kind("Stage No\nFresh Water\nHCR Acid\n1\n2"),
                          "fluid")
 
+    def test_a_long_page_is_classified_in_linear_time(self):
+        # 00674 p566 is 27 KB of text; unpinned lookaheads took 6 s on it
+        import time
+        text = "\n".join("Row %d some cell text 12.5" % i for i in range(1500))
+        t0 = time.time()
+        self.assertIsNone(ls._page_kind(text))
+        self.assertLess(time.time() - t0, 0.5)
+
     def test_every_kind_has_a_title(self):
         for kind, _pat in ls.SUMMARY_KINDS:
             self.assertIn(kind, ls.KIND_TITLES)
