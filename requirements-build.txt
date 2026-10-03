@@ -1,0 +1,5 @@
+# The Windows EXE build: the runtime libraries plus the bundler, pinned to
+# what built v1.11.33. See requirements.txt for why these are pinned.
+-r requirements.txt
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
