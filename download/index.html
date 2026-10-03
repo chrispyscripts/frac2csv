@@ -39,6 +39,39 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.33</h2>
+    <ul>
+      <li><b>FracView: &ldquo;adjust&rdquo; no longer pulls data backwards or
+        cuts a stage off after a date change.</b> A FracView edit is a set of
+        absolute cut points on the clock, saved per file, and applying it means
+        comparing those points against where the stages sit now. That is exact
+        as long as the stages have not moved &mdash; and a date correction
+        moves them. On 00100, giving interval 19 its real year shifted that
+        stage by sixteen years, so every saved boundary addressed a timeline
+        that no longer existed: the stage fell outside every bound and
+        contributed nothing, which is the &ldquo;cuts off&rdquo;, while its
+        neighbours were cut at points meant for somewhere else, which is the
+        &ldquo;pulls data backwards&rdquo;. Both halves of the report, from one
+        cause</li>
+      <li><b>An edit now remembers the timeline it was drawn on, and is refused
+        against any other.</b> The boundaries are the most expensive thing in
+        this app to recreate &mdash; all of it done by eye &mdash; so they are
+        dropped only when they provably no longer mean what they meant. A
+        refused edit is set aside rather than applied, which leaves the well as
+        read instead of cut at the wrong places: the better of the two
+        failures. Correct the dates first, then draw the boundaries, and they
+        hold</li>
+      <li><b>Edits saved before this release carry no timeline.</b> Rather than
+        throw them away or trust them blindly, each is accepted once if its
+        span still lies inside the well&rsquo;s own &mdash; an edit drawn on
+        the current layout always does, and one drawn on a layout sixteen years
+        away cannot &mdash; and is stamped on the way through, so the question
+        is asked once and never again</li>
+      <li><b>Which templates this release touches: the Lab only (FracView).</b>
+        No reader changed, so every filing reads exactly as it did under
+        v1.11.32</li>
+    </ul>
+
     <h2>v1.11.32</h2>
     <ul>
       <li><b>Sanjel: a stage that prints a clock but no day is no longer
