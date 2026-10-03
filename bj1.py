@@ -194,6 +194,80 @@ def _garbled(page):
 JM_OCR_MAX_SPANS = 120
 
 
+# A BJ-1 chart whose labels are glyph OUTLINES (01247-01254, 00730, #774):
+# no text layer at all, so there are no spans for the garbled-font path above
+# to crop either, and detect saw an empty page on every chart (01247: 90
+# chart pages, p195-p284, all read as nothing).
+# ocr_labels.outline_spans rebuilds the strings from the glyph paths and
+# reads them. Reading costs a render and a tesseract call, so a textless page
+# first has to LOOK like this template, from its geometry alone: BJ-1 prints
+# its clock as "Mon-DD HH:MM" slanted 30 degrees, one string per gridline,
+# and a page with three or more such strings is worth reading. Nothing here
+# decides what the page is — detect still wants the title and a clock label
+# in the text that comes back.
+_OUTLINE_CLOCK_MIN_GLYPHS = 7          # "Jan-1 0:00" is the shortest form
+_OUTLINE_CLOCK_MIN = 3
+
+
+def _clock_slant(groups):
+    """Does this textless page print a slanted clock axis? (geometry only)
+
+    Three or more strings of clock length, turned to ONE angle between 20
+    and 70 degrees, standing in ONE row — the axis under the plot (or one
+    column, on a page whose content is drawn sideways).
+    """
+    sl = []
+    for g in groups:
+        if g["n"] < _OUTLINE_CLOCK_MIN_GLYPHS:
+            continue
+        ang = float(np.degrees(np.arctan2(g["dir"][1], g["dir"][0])))
+        if 20.0 <= abs(ang) % 90.0 <= 70.0:
+            r = g["rect"]
+            sl.append((ang, (r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0))
+    for a, cx, cy in sl:
+        row = sum(1 for b, x, y in sl if abs(b - a) <= 3.0
+                  and (abs(y - cy) <= 8.0 or abs(x - cx) <= 8.0))
+        if row >= _OUTLINE_CLOCK_MIN:
+            return True
+    return False
+
+
+def _outline_spans(page, M):
+    """bj1 spans for a page with no text layer, read off its glyph outlines.
+
+    The box is the INK box, not a line box; extract_page allows for that
+    where it matters (the clock labels' right edge). A number is held to
+    NUMBER_CONF and anything else to TEXT_CONF, as everywhere OCR can
+    become a value in a CSV.
+    """
+    import ocr_labels
+    if not ocr_labels.available():
+        return []
+    try:
+        got = ocr_labels.outline_spans(page, accept=_clock_slant)
+    except Exception:
+        return []
+    out = []
+    for g in got:
+        t = (g.get("text") or "").strip()
+        if not t:
+            continue
+        number = re.fullmatch(r"-?[\d,]+(\.\d+)?", t) or TIME_RE.fullmatch(t)
+        floor = ocr_labels.NUMBER_CONF if number else ocr_labels.TEXT_CONF
+        if g.get("conf", -1) < floor:
+            continue
+        r = fitz.Rect(g["rect"])
+        if M is not None:
+            r = (r * M).normalize()
+        x0, y0, x1, y1 = r
+        c = g.get("color") or (0.0, 0.0, 0.0)
+        out.append({"t": t, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                    "cx": (x0 + x1) / 2, "cy": (y0 + y1) / 2,
+                    "color": tuple(round(float(v), 2) for v in c[:3]),
+                    "ocr": True})
+    return out
+
+
 def _spans(page):
     out = []
     M = _upright(page)
@@ -207,6 +281,9 @@ def _spans(page):
     raw = [(span, line.get("dir", (1.0, 0.0)))
            for block in page.get_text("dict")["blocks"]
            for line in block.get("lines", []) for span in line["spans"]]
+    if garbled and not raw:
+        # not a character on the page: the labels are drawn, not written
+        return _outline_spans(page, M)
     texts = [_unshift(span["text"]).strip() for span, _d in raw]
     if garbled:
         # the box and colour are the page's; the text is read off the
@@ -407,6 +484,78 @@ def _resolve_year(doc, mon, day):
     return 2000
 
 
+def _vertical_ticks(drawings):
+    """x of every tick mark and gridline in _drawings(page): the
+    strokes an outlined clock label is snapped to (see _snap_to_tick).
+
+    A tick or a gridline is a path of its own, black or grey, and the WHOLE
+    path is one vertical line — asked of its box, not its items, because
+    the same line comes back as an "l", a zero-width "re" or a segment drawn
+    there and back depending on what wrote the file. A curve's vertical
+    steps belong to a path that runs across the plot and never qualify.
+    """
+    xs = []
+    for d in drawings:
+        c = d.get("color")
+        if c is None or d["type"] not in ("s", "fs"):
+            continue
+        if max(c) - min(c) > 0.05:
+            continue                          # coloured: a curve or a dash
+        r = d["rect"]
+        if r.width < 0.05 and r.height >= 2.0:
+            xs.append((r.x0 + r.x1) / 2)
+    return sorted(set(round(x, 2) for x in xs))
+
+
+# How far right of an outlined clock label's INK the tick it names may sit.
+# The label is right-aligned on its tick and turned 30 degrees, so the ink
+# ends short of the anchor by the descent and the side bearing: 1.7-1.9pt on
+# every label of 01247 p197 and 00730 p203, where the text-layer twin of the
+# template (01150 p194) puts its span box 0.6pt PAST the tick. Minor ticks
+# sit 13.8pt apart, so only one is ever in reach.
+_TICK_REACH = 4.0
+
+
+def _snap_to_tick(x1, ticks_x):
+    """An outlined clock label's right ink edge -> the tick it labels, or the
+    ink edge itself when no stroke is in reach."""
+    near = [x for x in ticks_x if x1 - 0.5 <= x <= x1 + _TICK_REACH]
+    return min(near, key=lambda x: abs(x - x1)) if near else x1
+
+
+# Seconds an OCR'd clock label may sit off the line the others agree on. The
+# labels are whole minutes on evenly spaced ticks, so the honest ones agree to
+# a few seconds; a misread minute is 60 s or more away and a misread hour or
+# day is thousands.
+_CLOCK_TOL = 45.0
+
+
+def _clock_inliers(tpts):
+    """[keep?] for each (secs, x, y): the largest set of labels that fall on
+    one straight time-vs-x line, by trying every pair. Fewer than three
+    agreeing keeps none, so the caller raises "time labels not found"."""
+    n = len(tpts)
+    best = None
+    for i in range(n):
+        for j in range(i + 1, n):
+            (si, xi, _), (sj, xj, _) = tpts[i], tpts[j]
+            if abs(xj - xi) < 1.0 or sj == si:
+                continue
+            b = (sj - si) / (xj - xi)
+            if b <= 0:
+                continue
+            keep = [abs(si + b * (x - xi) - s) <= _CLOCK_TOL for s, x, _ in tpts]
+            if best is None or sum(keep) > sum(best):
+                best = keep
+    if best is None or sum(best) < 3:
+        return [False] * n
+    return best
+
+
+def _letters(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -463,6 +612,9 @@ def extract_page(page, sample_sec=1.0):
     tpts = []
     daytags = []
     tlabels = []
+    ocr = any(s.get("ocr") for s in spans)
+    drawings = _drawings(page)
+    ticks_x = _vertical_ticks(drawings) if ocr else []
     for s in spans:
         m = TIME_RE.fullmatch(s["t"])
         if m:
@@ -471,13 +623,23 @@ def extract_page(page, sample_sec=1.0):
                 continue
             secs = ((MONTHS[mon] * 31 + int(day)) * 86400
                     + int(hh) * 3600 + int(mm) * 60)
-            tpts.append((secs, s["x1"], s["cy"]))
+            x1 = _snap_to_tick(s["x1"], ticks_x) if ocr else s["x1"]
+            tpts.append((secs, x1, s["cy"]))
             daytags.append((secs, MONTHS[mon], int(day)))
             # re-printed, not the raw span text: TIME_RE tolerates "Apr-6"
             # and a run of spaces, and two pages of ONE chart must not look
             # different because of typesetting
             tlabels.append((secs, f"{mon}-{int(day):02d} "
                                   f"{int(hh):02d}:{mm}"))
+    if ocr and len(tpts) >= 3:
+        # A label read off the ink can be misread, and one misread minute
+        # tilts a least-squares clock across the whole chart. The labels
+        # sit on evenly spaced gridlines, so the honest ones agree on one
+        # line to within seconds; the ones that do not are dropped.
+        keep = _clock_inliers(tpts)
+        tpts = [p for p, k in zip(tpts, keep) if k]
+        daytags = [p for p, k in zip(daytags, keep) if k]
+        tlabels = [p for p, k in zip(tlabels, keep) if k]
     if len(tpts) < 3 and jobmaster:
         # "Elapsed Time (min)" under the plot, its labels the row above it
         cap = next((s for s in spans if "Elapsed Time" in s["t"]), None)
@@ -560,6 +722,23 @@ def extract_page(page, sample_sec=1.0):
         if not placed:
             cols[round(s["x1"])].append(s)
             lefts[round(s["x1"])] = s["x0"]
+    if ocr:
+        # an OCR'd tick that is off its own column's straight line is a
+        # misread digit, and it would become the axis's full scale; keep
+        # only the readings on the line (ocr_labels.axis_column_ok)
+        import ocr_labels
+        for key in list(cols):
+            ss = cols[key]
+            if len(ss) < 3:
+                continue
+            ok = ocr_labels.axis_column_ok(
+                [(s["cy"], float(s["t"].replace(",", ""))) for s in ss])
+            if ok is None:
+                cols[key] = []
+                continue
+            good = set(ok)
+            cols[key] = [s for s in ss
+                         if (float(s["cy"]), float(s["t"].replace(",", ""))) in good]
     fits = {}          # col_x -> (a, b, y_lo, y_hi)
     for key, ss in cols.items():
         if len(ss) < 3:
@@ -608,7 +787,6 @@ def extract_page(page, sample_sec=1.0):
             axis_names[s["t"]] = key
 
     # legend: black names with a short colored dash stroke to the left
-    drawings = _drawings(page)
     dashes = []
     for d in drawings:
         c = d.get("color")
@@ -649,6 +827,14 @@ def extract_page(page, sample_sec=1.0):
         for ax_text, key in axis_names.items():
             if base in re.sub(r"\s+", " ", ax_text):
                 return key
+        if ocr:
+            # the legend and the axis title are two separate readings of
+            # the same words, one of them turned on its side: compare them
+            # as letters and digits, not as spacing and brackets
+            nb = _letters(base)
+            for ax_text, key in axis_names.items():
+                if nb and nb in _letters(ax_text):
+                    return key
         return None
 
     # a black series (e.g. Comb FR Ratio) has a black legend dash, so it never
@@ -693,6 +879,24 @@ def extract_page(page, sample_sec=1.0):
              if d.get("color") is not None and d["type"] in ("s", "fs")
              and abs(d["rect"].x1 - d["rect"].x0) < 0.6
              and (d["rect"].y1 - d["rect"].y0) > 100]
+    if ocr:
+        # The filings whose labels are outlines were flattened, and the
+        # flattening FILLED what the text-layer twin strokes: the frame's
+        # sides are thin filled rectangles and a dashed gridline is a filled
+        # path of dashes. Read as strokes only, 01247 p195's window ran from
+        # its first gridline to its fourth, 09:58 to 13:02, on a chart whose
+        # curves run 09:21 to 15:26 — the stage lost its opening ramp and
+        # the whole second pumping period after 14:00, and came out 95
+        # minutes long instead of 365. The same edges, read as fills.
+        for d in drawings:
+            f = d.get("fill")
+            if d["type"] != "f" or f is None or max(f) - min(f) > 0.05:
+                continue
+            boxes = [d["rect"]] + [fitz.Rect(it[1]) for it in d["items"]
+                                   if it[0] == "re"]
+            for r in boxes:
+                if r.width < 1.0 and r.height > 100:
+                    vgrid.append((r.x0 + r.x1) / 2)
     if vgrid:
         x_lo, x_hi = min(vgrid) - 2, max(vgrid) + 2
     else:

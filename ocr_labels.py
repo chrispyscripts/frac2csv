@@ -377,6 +377,246 @@ def span_texts(page, spans):
     return out
 
 
+# ---- labels drawn as glyph OUTLINES: no text layer, no span boxes ----
+#
+# The third shape of a lying page. 01247-01254 (Ovintiv's 2025 Tower Lake pad,
+# BJ) and 00730 print their BJ charts with every character converted to a
+# filled path: no font, no span, `page.get_text()` empty on the chart and on
+# nearly every other page of the filing. span_texts has no boxes to crop, and
+# the whole-page pass reads the title and legend but not the slanted clock
+# labels or the turned axis titles (#774: nine files, every chart skipped,
+# all nine "No extractable data").
+#
+# The page's own drawing order puts the strings back together. Each glyph is
+# one path, a string's glyphs are drawn one after another, so a run of
+# consecutive paths of the same ink, each beside the last, IS a string — its
+# box, its colour and its direction come straight from the geometry. Only the
+# characters are unknown, and those are read by redrawing each string ALONE
+# onto a scratch page, stood upright, and reading the whole stack in one
+# tesseract call. Nothing else on the page is in the image: no tick mark
+# welded to a digit, no gridline through a slanted label.
+OUTLINE_GLYPH_MAX = 16.0      # pt; no glyph box is bigger than this
+OUTLINE_SCALE = 5.0           # same magnification span_texts reads at
+OUTLINE_MAX_GROUPS = 300      # past this the page is a table, not a chart
+_OUTLINE_SNAP_DEG = 10.0      # a string this close to a right angle is one
+_OUTLINE_GAP = 1.0            # break when the next glyph is this many glyph
+                              # sizes clear of the last
+
+
+def _cd_rect(d):
+    return fitz.Rect(d["rect"])
+
+
+def _glyph_paths(page):
+    """The filled paths small enough to be glyphs, in drawing order."""
+    out = []
+    for d in page.get_cdrawings():
+        if d.get("type") != "f" or d.get("fill") is None:
+            continue
+        fill = tuple(d["fill"])
+        if len(fill) == 3 and min(fill) > 0.9:
+            continue                          # white: a mask, not ink
+        r = _cd_rect(d)
+        if r.width > OUTLINE_GLYPH_MAX or r.height > OUTLINE_GLYPH_MAX:
+            continue
+        if min(r.width, r.height) < 0.05 or max(r.width, r.height) < 0.4:
+            continue                          # a degenerate sliver
+        out.append((d.get("seqno", 0), r, fill, d))
+    out.sort(key=lambda g: g[0])
+    return out
+
+
+def _direction(rects):
+    """The unit vector a string of glyph boxes runs along, first to last.
+
+    The boxes' centres weighted by their area, so a period or a hyphen —
+    small and off the line the digits sit on — cannot tilt "0.00" off the
+    horizontal. Snapped to a right angle when within _OUTLINE_SNAP_DEG.
+    """
+    if len(rects) < 2:
+        return (1.0, 0.0)
+    c = np.array([((r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0) for r in rects])
+    w = np.array([max(r.width * r.height, 1e-3) for r in rects])
+    m = (c * w[:, None]).sum(axis=0) / w.sum()
+    d = c - m
+    cov = (d * w[:, None]).T @ d
+    vals, vecs = np.linalg.eigh(cov)
+    u = vecs[:, int(np.argmax(vals))]
+    if np.dot(u, c[-1] - c[0]) < 0:
+        u = -u
+    ang = np.degrees(np.arctan2(u[1], u[0]))
+    for snap in (-180.0, -90.0, 0.0, 90.0, 180.0):
+        if abs(ang - snap) <= _OUTLINE_SNAP_DEG:
+            ang = snap
+    rad = np.radians(ang)
+    ux, uy = float(np.cos(rad)), float(np.sin(rad))
+    return (0.0 if abs(ux) < 1e-9 else ux, 0.0 if abs(uy) < 1e-9 else uy)
+
+
+def outline_groups(page):
+    """[{rect, dir, n, color, paths}] — the page's outlined strings, unread.
+
+    Geometry only, no OCR: cheap enough to ask of every textless page, which
+    is what lets a template decide whether the page is worth reading.
+    """
+    groups, cur = [], []
+
+    def close():
+        if cur:
+            rects = [g[1] for g in cur]
+            box = fitz.Rect(rects[0])
+            for r in rects[1:]:
+                box |= r
+            groups.append({"rect": box, "dir": _direction(rects),
+                           "n": len(cur), "color": cur[0][2],
+                           "paths": [g[3] for g in cur]})
+
+    for g in _glyph_paths(page):
+        if cur:
+            seq, r, fill = g[0], g[1], g[2]
+            pseq, pr, pfill = cur[-1][0], cur[-1][1], cur[-1][2]
+            size = max(max(x[1].width, x[1].height) for x in cur[-3:])
+            size = max(size, r.width, r.height, 2.0)
+            gap = max(r.x0 - pr.x1, pr.x0 - r.x1, r.y0 - pr.y1, pr.y0 - r.y1, 0.0)
+            if seq != pseq + 1 or fill != pfill or gap > _OUTLINE_GAP * size \
+                    or _off_the_line(cur, r, size):
+                close()
+                cur = []
+        cur.append(g)
+    close()
+    return groups
+
+
+def _off_the_line(cur, r, size):
+    """Does glyph box `r` fail to CONTINUE the string so far?
+
+    A table cell prints "Type" over "Sand" 1.2pt apart and draws them one
+    after the other, so they pass the adjacency test; joined, they made one
+    string running 21 degrees downhill, and on 01116's report pages three of
+    those looked like a slanted clock axis. The next glyph of a string lies
+    AHEAD of the last along the line the string already runs, and not far
+    off that line.
+    """
+    if len(cur) < 2:
+        return False
+    c = lambda q: ((q.x0 + q.x1) / 2.0, (q.y0 + q.y1) / 2.0)   # noqa: E731
+    (fx, fy), (px, py), (nx, ny) = c(cur[0][1]), c(cur[-1][1]), c(r)
+    ux, uy = px - fx, py - fy
+    norm = (ux * ux + uy * uy) ** 0.5
+    if norm < 0.5 * size:
+        return False
+    ux, uy = ux / norm, uy / norm
+    vx, vy = nx - px, ny - py
+    along = vx * ux + vy * uy
+    perp = abs(vx * uy - vy * ux)
+    return along < -0.3 * size or perp > 0.6 * size
+
+
+def _draw_upright(groups, scale):
+    """Every string redrawn alone and upright, one band each -> (img, bands).
+
+    Bands are (index, y0, y1) in the image's pixels. The glyphs are the
+    page's own paths, rotated so the string reads left to right; the fill
+    rule is the path's own, so the counters of 0, 6, 8 and 9 stay open.
+    """
+    tmp = fitz.open()
+    placed, bands = [], []
+    gutter = 8.0
+    y, width = gutter, 0.0
+    for gi, g in enumerate(groups):
+        ux, uy = g["dir"]
+        nx, ny = -uy, ux                     # the reading frame's "down"
+        xs, ys = [], []
+        for d in g["paths"]:
+            r = _cd_rect(d)
+            for p in (r.tl, r.tr, r.bl, r.br):
+                xs.append(p.x * ux + p.y * uy)
+                ys.append(p.x * nx + p.y * ny)
+        x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+        M = fitz.Matrix(ux, nx, uy, ny, gutter - x0, y - y0)
+        placed.append((g, M))
+        bands.append((gi, y, y + (y1 - y0)))
+        width = max(width, (x1 - x0) + 2 * gutter)
+        y += (y1 - y0) + gutter
+    page = tmp.new_page(width=max(width, 20.0), height=y + gutter)
+    for g, M in placed:
+        for d in g["paths"]:
+            sh = page.new_shape()
+            for it in d["items"]:
+                k = it[0]
+                if k == "l":
+                    sh.draw_line(fitz.Point(it[1]) * M, fitz.Point(it[2]) * M)
+                elif k == "c":
+                    sh.draw_bezier(*(fitz.Point(p) * M for p in it[1:5]))
+                elif k == "re":
+                    sh.draw_quad(fitz.Rect(it[1]).quad * M)
+                elif k == "qu":
+                    sh.draw_quad(fitz.Quad(it[1]) * M)
+            sh.finish(fill=(0, 0, 0), color=None,
+                      even_odd=bool(d.get("even_odd")),
+                      closePath=bool(d.get("closePath")))
+            sh.commit()
+    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale))
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        pix.height, pix.width, pix.n)
+    img = img[..., :3] if pix.n >= 3 else np.repeat(img, 3, axis=2)
+    return (np.ascontiguousarray(img),
+            [(gi, y0 * scale, y1 * scale) for gi, y0, y1 in bands],
+            gutter * scale)
+
+
+def outline_spans(page, accept=None):
+    """[{text, rect, dir, n, color, conf}] for a page whose labels are outlines.
+
+    `rect` is the INK box of the string in page space (unrotated, as
+    get_drawings reports it) — tighter than a PDF span's line box, which
+    callers that place labels on gridlines must allow for. `conf` is the
+    lowest word confidence in the string, -1 when nothing read.
+
+    `accept(groups)` is the caller's own cheap look at the geometry before
+    any OCR is paid for; a page it refuses comes back [] and is remembered.
+    """
+    store = _cache(page)
+    key = ("outline", getattr(page, "number", None),
+           getattr(accept, "__name__", None))
+    if store is not None and key in store:
+        return store[key]
+    out = []
+    try:
+        groups = outline_groups(page)
+        if groups and len(groups) <= OUTLINE_MAX_GROUPS and available() \
+                and (accept is None or accept(groups)):
+            img, bands, gutter = _draw_upright(groups, OUTLINE_SCALE)
+            try:
+                boxes = ar.ocr_boxes(img.astype(int), psm=6, whitelist="")
+            except Exception:
+                boxes = []
+            words = {gi: [] for gi, _a, _b in bands}
+            for b in boxes:
+                t = (b.get("text") or "").strip()
+                if not t:
+                    continue
+                cy = (b["y0"] + b["y1"]) / 2.0
+                for gi, y0, y1 in bands:
+                    if y0 - gutter / 2 <= cy < y1 + gutter / 2:
+                        words[gi].append((b["x0"], t, b["conf"]))
+                        break
+            for gi, g in enumerate(groups):
+                ws = sorted(words[gi])
+                t = " ".join(w[1] for w in ws)
+                t = re.sub(r"(?<=m)[*?³](?=/|\)|$)", "3", t)
+                t = t.replace("—", "-").replace("–", "-")
+                out.append({"text": t, "rect": fitz.Rect(g["rect"]),
+                            "dir": g["dir"], "n": g["n"],
+                            "color": g["color"],
+                            "conf": min((w[2] for w in ws), default=-1.0)})
+    except Exception:
+        out = []
+    if store is not None:
+        store[key] = out
+    return out
+
+
 def text_spans(page):
     """[(bbox, text)] for every OCR'd line carrying a letter.
 
