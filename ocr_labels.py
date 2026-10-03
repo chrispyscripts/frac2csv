@@ -497,10 +497,17 @@ def _off_the_line(cur, r, size):
     AHEAD of the last along the line the string already runs, and not far
     off that line.
     """
-    if len(cur) < 2:
+    # The line is drawn through the FULL-SIZE glyphs only. A period or a
+    # hyphen sits off the centre line of the digits around it, so "5." alone
+    # points 35 degrees downhill, and judged against that "5.00" broke after
+    # its period on every additive-page tick of 01247.
+    area = lambda q: q.width * q.height                        # noqa: E731
+    big = max(area(g[1]) for g in cur)
+    ref = [g[1] for g in cur if area(g[1]) >= 0.25 * big]
+    if len(ref) < 2:
         return False
     c = lambda q: ((q.x0 + q.x1) / 2.0, (q.y0 + q.y1) / 2.0)   # noqa: E731
-    (fx, fy), (px, py), (nx, ny) = c(cur[0][1]), c(cur[-1][1]), c(r)
+    (fx, fy), (px, py), (nx, ny) = c(ref[0]), c(ref[-1]), c(r)
     ux, uy = px - fx, py - fy
     norm = (ux * ux + uy * uy) ** 0.5
     if norm < 0.5 * size:
@@ -606,10 +613,16 @@ def outline_spans(page, accept=None):
                 t = " ".join(w[1] for w in ws)
                 t = re.sub(r"(?<=m)[*?³](?=/|\)|$)", "3", t)
                 t = t.replace("—", "-").replace("–", "-")
+                # The string is as sure as its least sure WORD — but a lone
+                # symbol is not a word anyone keys on. BJ titles its wells
+                # "Well Ø", tesseract reads the Ø as "@" at confidence 15 on
+                # some pages and 83 on others, and the minimum over every
+                # word threw away 01247 p222's whole title over it.
+                alnum = [w[2] for w in ws if any(ch.isalnum() for ch in w[1])]
+                conf = min(alnum) if alnum else min((w[2] for w in ws), default=-1.0)
                 out.append({"text": t, "rect": fitz.Rect(g["rect"]),
                             "dir": g["dir"], "n": g["n"],
-                            "color": g["color"],
-                            "conf": min((w[2] for w in ws), default=-1.0)})
+                            "color": g["color"], "conf": conf})
     except Exception:
         out = []
     if store is not None:

@@ -170,6 +170,19 @@ class TheShape(_Built):
         self.assertTrue(all(g["dir"] == (1.0, 0.0) for g in groups))
         self.assertFalse(bj1._clock_slant(groups))
 
+    def test_a_decimal_point_does_not_break_a_number(self):
+        # "5." alone points downhill — the period sits on the baseline — and
+        # judged against that the "00" after it was a new string; every tick
+        # of 01247's additive axes ("0.375", "1.125") came apart that way
+        src = fitz.open()
+        page = src.new_page(width=200, height=200)
+        for i, t in enumerate(("0.375", "1.125", "5.00")):
+            w = fitz.get_text_length(t, fontname="helv", fontsize=8)
+            page.insert_text((60.0 - w, 50.0 + 40 * i), t, fontsize=8, fontname="helv")
+        groups = ocr_labels.outline_groups(_outlined(page)[0])
+        self.assertEqual([g["n"] for g in groups], [5, 5, 4])
+        self.assertTrue(all(g["dir"] == (1.0, 0.0) for g in groups))
+
     def test_a_refused_page_costs_no_ocr(self):
         real = ocr_labels.ar.ocr_boxes
         calls = []
