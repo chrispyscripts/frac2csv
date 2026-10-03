@@ -666,6 +666,13 @@ class PageKinds(unittest.TestCase):
         self.assertIsNone(ls._page_kind(T154_COMPLETION))
         self.assertEqual(ls._page_kind(T116), "pressure_measures")
 
+    def test_the_dark_theme_well_completions_summary(self):
+        # 01124 p69: the late-2025 sheets say COMPLETIONS
+        self.assertEqual(ls._page_kind(
+            "WELL COMPLETIONS SUMMARY\nPETRONAS HZ TOWN d-4-C/94-G-1\n45031\n"
+            "Lower Montney\nPlug and Perf\nWell Name\nAPI\nAFE"),
+            "wellcompletion")
+
     def test_the_fluid_bar_chart_is_not_the_fluid_grid(self):
         self.assertEqual(ls._page_kind(T165_FLUIDCHART), "fluid_chart")
 
