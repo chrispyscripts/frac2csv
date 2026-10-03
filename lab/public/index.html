@@ -790,6 +790,15 @@ a picture of these panels and the extraction diagnostics">Flag Error</button>
           <button type="button" class="btn" id="isobtn" hidden
                   title="Show only the stretches no curve was drawn for — the
 ones the reader recovered from under a curve painted over them">Isolate Interpolation</button>
+          <!-- The auto-trim of a chart's END, where the next stage's chart
+               re-plots the same minutes. Lives up here, above the chart, not
+               only on the hand-over note in the legend: it decides what the
+               export contains, which is not a legend's job to own. Both
+               controls drive the same setting. -->
+          <button type="button" class="btn" id="trimbtn" hidden
+                  title="This chart runs on into the next stage and is cut
+where that stage's chart begins. Click to keep the whole chart as the page
+draws it."></button>
           <button type="button" class="btn" id="retracebtn" hidden
                   title="Click the start and the end of a bad stretch, then Apply
 — the curve between them is read again off the page underneath">Fix a stretch</button>
@@ -1282,7 +1291,8 @@ let dropMode = "pdf";                       // "pdf" | "csv"
 function setDropMode(m) {
   dropMode = m === "csv" ? "csv" : "pdf";
   const csv = dropMode === "csv";
-  for (const b of document.querySelectorAll("#dropmode button"))
+  $("trimbtn").addEventListener("click", keepTailToggle);
+for (const b of document.querySelectorAll("#dropmode button"))
     b.classList.toggle("on", b.dataset.m === dropMode);
   const d = $("drop"), inp = $("file");
   d.classList.toggle("csv", csv);
@@ -3299,7 +3309,7 @@ function setGraph(channels, n, sampleSec, meta, handover) {
   // A new stage means new channel arrays: a selection or an undo entry kept
   // across the change would point into the previous stage's samples.
   gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso(); syncRetrace(); filtSyncUI();
+  syncIso(); syncRetrace(); filtSyncUI(); keepTailSyncUI();
   redrawGraph(); buildLegend();
 }
 
@@ -3485,7 +3495,7 @@ function dedUndoLast() {
 
 function clearGraph() {
   gState.isolate = false; gState.dedSel.clear(); gState.dedUndo.length = 0;
-  syncIso(); syncRetrace(); filtSyncUI();
+  syncIso(); syncRetrace(); filtSyncUI(); keepTailSyncUI();
   gState.channels = []; gState.hover = null; gState.hidden = new Set();
   $("graph").height = DEFAULT_H; $("origgraph").height = DEFAULT_H;
   const cv = $("graph");
@@ -4449,17 +4459,7 @@ function buildLegend() {
       : "Export this chart as the page draws it, clock or no clock. The "
         + "minutes below will then appear twice — here and on stage "
         + gState.handover.to + ".";
-    btn.addEventListener("click", () => {
-      const now = !keepTailOn(gState.meta);
-      if (now) keepTailStore[keepTailKey(gState.meta)] = true;
-      else delete keepTailStore[keepTailKey(gState.meta)];
-      keepTailSave();
-      const it = current && current.item;
-      keepTailApply(it, now);
-      if (it) setGraph(it.channels, it.n, it.sample_sec, it.meta, it.handover);
-      if (gState.filt) filtToChannels(gState.channels, gState.filt);
-      redrawGraph(); buildLegend();
-    });
+    btn.addEventListener("click", keepTailToggle);
     h.appendChild(document.createTextNode(" "));
     h.appendChild(btn);
     Lg.appendChild(h);
@@ -5455,6 +5455,39 @@ function keepTailOn(meta) { return !!keepTailStore[keepTailKey(meta)]; }
 //
 // Works off __tailBase, the values as the reader gave them, so toggling twice
 // is a round trip rather than a tail on a tail.
+// The one place the auto-trim is turned on or off, so the button above the
+// chart and the one on the hand-over note cannot drift apart.
+function keepTailToggle() {
+  const now = !keepTailOn(gState.meta);
+  if (now) keepTailStore[keepTailKey(gState.meta)] = true;
+  else delete keepTailStore[keepTailKey(gState.meta)];
+  keepTailSave();
+  const it = current && current.item;
+  keepTailApply(it, now);
+  if (it) setGraph(it.channels, it.n, it.sample_sec, it.meta, it.handover);
+  if (gState.filt) filtToChannels(gState.channels, gState.filt);
+  redrawGraph(); buildLegend();
+}
+// Shown only on a chart that HAS a trimmed end — on every other chart the
+// button would be a control for nothing.
+function keepTailSyncUI() {
+  const b = $("trimbtn");
+  if (!b) return;
+  const h = gState.handover;
+  b.hidden = !(h && h.n > 0);
+  if (b.hidden) return;
+  const on = keepTailOn(gState.meta);
+  const mins = Math.round(h.n * (gState.dsec || 1) / 60);
+  b.classList.toggle("on", on);
+  b.textContent = on ? "End trim off" : "End trim on";
+  b.title = on
+    ? `Keeping the whole chart: the last ${mins} min are exported here AND `
+      + `with stage ${h.to}. Click to trim the end again.`
+    : `The last ${mins} min of this chart run on into stage ${h.to}, whose own `
+      + `chart re-plots them, so the export stops there. Click to keep the `
+      + `whole chart as the page draws it.`;
+}
+
 function keepTailApply(item, on) {
   const h = item && item.handover;
   if (!h || !h.n || !item.channels) return 0;
