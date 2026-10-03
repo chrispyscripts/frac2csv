@@ -18,7 +18,8 @@ const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:nul
   ctx:new Proxy({},{get:()=>noop,set:()=>true}),draw:noop,
   sessionStorage:{setItem:(k,v)=>objects.set(k,v),getItem:k=>objects.get(k)||null,removeItem:k=>objects.delete(k)},
   addEventListener:noop,ready:Promise.resolve(),button:element(),
-  map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}}
+  map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}},
+  colorBy:'pad',NEUTRAL:'#d6e6ee',GAMMA_NONE:'#6b8290',GAMMA_INK:['#000','#111'],setColor:async m=>{c.colorBy=m}
 };
 vm.createContext(c);
 vm.runInContext(between('function selectPad(id)','function renderPanel'),c);
@@ -31,11 +32,17 @@ c.selectPad('pad-0');c.stage=c.well.stages[0];c.interval=c.well.depth_intervals[
 overlay.querySelector('.ug-panel').scrollTop=43;
 vm.runInContext(between('function draw(){','function resize()'),c);
 c.draw();assert(c.hits.length>0);assert(c.hits.every(h=>h.p===c.pad),'background pads, toes and intervals have no hit targets');
+// Gamma mode: a logged well gets per-bin hit targets on the locked pad only; an
+// unlogged well (pad-1) draws dashed and must not throw or add gamma targets.
+const logged=pads[0].wells[0];Object.assign(logged,{gmd0:0,gbin:5,gv:[90,null,120,140,60],gpts:[[0,0,0],[0,-5,0],[0,-10,0],[0,-15,0],[0,-20,0],[0,-25,0]],gby:[[0,4],[2,3]]});
+c.colorBy='gamma';c.draw();const gh=c.hits.filter(h=>h.g!=null);
+assert.deepEqual(plain(gh.map(h=>h.g)),[4],'bins 1,4,7… are hover targets; bin 1 has no reading so only 4 remains');assert(c.hits.every(h=>h.p===c.pad),'gamma targets stay on the locked pad');
+c.colorBy='pad';
 // Save the focused view, then simulate a fresh map page reached via Back.
 const tail=between("const UG_KEY=",'(async()=>{let s=null');
 vm.runInContext(tail,c);c.ugSave();
 const saved=JSON.parse(objects.get('stratum.underground'));
-assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);
+assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);assert.equal(saved.colorBy,'pad');
 c.pad=null;c.well=null;c.entryCamera=null;c.camera={yaw:0,pitch:0,scale:1,target:[0,0,0],pan:[0,0]};c.draw=noop;
 const restore=source.slice(source.indexOf('(async()=>{let s=null'),source.lastIndexOf('})();'));
 (async()=>{
