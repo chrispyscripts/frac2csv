@@ -39,6 +39,53 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.31</h2>
+    <ul>
+      <li><b>Schlumberger: nine stages that had a time and no date now have
+        both.</b> On 00021, 51 of 60 charts were dated and nine were not
+        &mdash; the five re-treatments labelled &ldquo;20 b&rdquo;, &ldquo;23
+        B&rdquo;, &ldquo;25 b&rdquo;, &ldquo;34 B Hi Rate Flush&rdquo; and
+        &ldquo;38 B&rdquo;, and both halves of intervals 50 and 51. Two
+        different causes, and the same mistake behind each: a treatment was
+        being looked up by its interval number alone</li>
+      <li><b>Five of them were never read.</b> The filing does print a service
+        report for each &mdash; headed &ldquo;// Interval 20b&rdquo;,
+        &ldquo;23B&rdquo; and so on &mdash; but the pattern looking for them
+        expected a space or a punctuation mark after the number, and
+        &ldquo;20b&rdquo; has neither, so those five pages were passed over
+        entirely. The chart could not have used them anyway, because
+        &ldquo;20 b&rdquo; is not a number</li>
+      <li><b>The other four were read and then dropped on purpose.</b> Interval
+        50 prints two reports, the main treatment on 2019-02-28 and a High Rate
+        Flush on 03-01, and interval 51 the same a day later. Read as one
+        interval those dates disagree, and the rule has always been to drop a
+        date rather than guess which treatment it belongs to &mdash; a chart
+        with no date shows a gap, a chart with the wrong date does not. That
+        rule is unchanged. What changed is that the two are no longer read as
+        one interval: the report says which treatment it is, the chart says
+        which treatment it is, and they are matched on that</li>
+      <li><b>So the dates are now per treatment rather than per interval, which
+        is the point.</b> &ldquo;20&rdquo; is 2019-02-08 and &ldquo;20 b&rdquo;
+        is 2019-02-10 &mdash; two days apart. Had the old lookup managed to
+        read them at all, it would have put both on the 8th</li>
+      <li><b>FracView: a stage that prints no clock no longer lands on top of
+        the next one.</b> A stage with no time of its own is placed after the
+        stage before it, and nothing checked whether it fitted. On 00100, stage
+        19 prints no clock and runs 45 minutes, stage 18 ends at 20:42 and
+        stage 20 prints 21:19 &mdash; a 37-minute gap &mdash; so stage 19 was
+        drawn eight minutes over stage 20&rsquo;s band: the same minutes under
+        two stages, the same curve drawn twice, and nothing to say which was
+        which. A placed stage is now pulled back to end where the next printed
+        stage begins. Where the gap is genuinely too short, as it is here,
+        something has to overlap and it is now the stage you have already read
+        rather than the one you are about to &mdash; and the error no longer
+        carries forward into every stage after it. A stage that fits its gap is
+        placed exactly as before</li>
+      <li><b>Which templates this release touches:</b> the
+        <b>Schlumberger (SLB)</b> reader, and FracView. Every other template
+        reads exactly as it did under v1.11.30</li>
+    </ul>
+
     <h2>v1.11.30</h2>
     <ul>
       <li><b>Halliburton image charts: the wellhead proppant concentration
