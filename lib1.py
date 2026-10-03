@@ -23,6 +23,14 @@ from leucrotta import _fit, _close, _spans as _text_spans
 # spacing is uneven by up to a minute, so this has to sit above 60.
 FRAME_FIT_TOL = 75
 
+# How far a clock label may sit from the gridline it names, as a fraction of
+# the gridline spacing. A label in the body of the axis is centred on its line;
+# the two outermost are clamped INWARD so their text stays on the sheet. See
+# _time_axis for the measurement both bounds come from. Neither reaches the
+# half-step at which a label would be nearer some other line.
+GRID_SNAP_TOL = 0.2
+EDGE_SNAP_TOL = 0.45
+
 
 # Liberty writes the stage token two ways: "Stage 13" on most filings and
 # "STG 1" on the newer ones (01397/01398 title theirs "Upper Montney - STG 1").
@@ -663,6 +671,66 @@ def _time_axis(spans, time_frame=None, time_grid=None):
                 if ok:
                     win = tuple(sorted((a2 + b2 * lo_e, a2 + b2 * hi_e)))
                     return (a2, b2), (date0 or ""), win
+        # The two edges need a label AT each of them, and OCR does not always
+        # return the last one. 00918 p159 prints 08:25, 08:55 and 09:25 along a
+        # frame that runs the full hour, ruled every six minutes; OCR reads the
+        # first two, the test above finds the last label it got 301pt short of
+        # the far edge and refuses the fit, and the window falls back to the
+        # 1800s BETWEEN THOSE TWO LABELS — half the sheet. Every channel on that
+        # page traces ink out to 3217s and everything past 1800 was thrown away.
+        #
+        # The gridlines are still printed and the labels still sit on them, so
+        # calibrate on the GRIDLINE each label names and take the window from
+        # the frame as before. That also repairs the SLOPE, which is the wider
+        # damage: a fit through the raw label boxes ran 00914 p154 4.65% fast
+        # (9.5609 s/pt against the 9.1355 the ruled geometry gives), so every
+        # timestamp on the page drifted, not just the window's end.
+        #
+        # Snapping is what makes two labels enough, and the reason it is sound
+        # is that Liberty's raw label positions are NOT evenly spaced while its
+        # gridlines are. An interior label is centred on its line; the two
+        # OUTERMOST are clamped inward so their text stays on the sheet, which
+        # is the whole of that 4.65%. Measured over 1,319 clock labels on the
+        # 334 chart pages of 00627/00914/00915/00918/00919/00949: interior
+        # labels sit within 0.115 of a gridline spacing of their line on an
+        # OCR'd page and 0.106 on one with a text layer, while the clamp on an
+        # outermost label reaches 0.346 — 20.4pt of a 59.2pt step on 00914 p154
+        # and 00915 p125. Hence two bounds, both under the half-step at which a
+        # label could belong to a different line at all.
+        #
+        # Those bounds are also what refuses a ladder carrying a line the chart
+        # never drew: 00949 p106 collects a spurious one at 462.21, 14.7pt
+        # after a ladder stepping 36.7, and its last label snaps to that
+        # instead of to the frame edge it belongs to — 0.266 of a step away,
+        # so the page keeps the fit it had. Then the fit is judged the way the
+        # frame-edge fit above is judged, every label read at the line it
+        # snapped to having to give back its own printed time, which is the
+        # consistency check once there are more labels than the two a line
+        # needs.
+        ladder = sorted(set(anchors))
+        gaps = [hi - lo for lo, hi in zip(ladder, ladder[1:])]
+        # the MEDIAN gap, not the smallest: a gridline is reported rounded to
+        # a hundredth of a point while the frame edge is not, so the line that
+        # IS an edge shows up twice, a few thousandths apart
+        step = sorted(gaps)[len(gaps) // 2] if gaps else 0.0
+        snapped = []
+        for secs, cy in pts if step > 0 else ():
+            g = min(ladder, key=lambda a: abs(a - cy))
+            clamped = min(abs(g - lo_e), abs(g - hi_e)) < 1.0
+            if abs(cy - g) > (EDGE_SNAP_TOL if clamped else GRID_SNAP_TOL) * step:
+                snapped = []
+                break
+            snapped.append((secs, g))
+        lines = sorted({g for _s, g in snapped})
+        # two distinct lines, and far enough apart to be a baseline: the
+        # corpus above never puts them closer than five gridlines
+        if len(lines) >= 2 and lines[-1] - lines[0] >= 2 * step:
+            a2, b2 = _fit(snapped)
+            if abs(b2) > 1e-12 and all(
+                    abs(a2 + b2 * g - secs) <= FRAME_FIT_TOL
+                    for secs, g in snapped):
+                win = tuple(sorted((a2 + b2 * lo_e, a2 + b2 * hi_e)))
+                return (a2, b2), (date0 or ""), win
     a, b = _fit(pts)
     if abs(b) < 1e-12:
         return None, "", None
