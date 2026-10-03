@@ -6355,8 +6355,41 @@ function fvLayout(stages) {
   }
   for (let i = first + 1; i < stages.length; i++) {
     if (isFinite(starts[i])) continue;          // printed — kept as printed,
-    starts[i] = starts[i - 1] + dur(i - 1);     // even where it goes backwards
-    invented.add(i); why[i] = "placed";
+    // The whole RUN of clockless stages, so it can be judged as one. Laid
+    // forward from the stage before, which is right whenever it fits.
+    let j = i;
+    while (j + 1 < stages.length && !isFinite(starts[j + 1])) j++;
+    for (let k = i; k <= j; k++) {
+      starts[k] = starts[k - 1] + dur(k - 1);   // even where it goes backwards
+      invented.add(k); why[k] = "placed";
+    }
+    // ...but it must not run INTO the next stage that printed a clock.
+    //
+    // Laid forward and never checked against what comes after, a clockless
+    // chart longer than the gap it has to sit in lands on top of its
+    // neighbour: 00100 stage 19 prints no clock and is 45 min, stage 18 ends
+    // 20:42 and stage 20 prints 21:19, so it was drawn 8 minutes over stage
+    // 20's band — two stages on the same minutes, the same ink twice, and
+    // nothing on screen saying which was which.
+    //
+    // The run is pulled back to END on the next printed start. That start is
+    // a time the sheet actually prints; the end of the stage before it is a
+    // printed start plus a duration, so where the two disagree the printed
+    // one is the better anchor. It is also what this function already does
+    // for a clockless run at the FRONT, which hangs back off the first real
+    // start — the middle case was simply not symmetric with it.
+    //
+    // Where the run is LONGER than the gap, no placement fits and something
+    // must overlap. Anchoring on the next printed start puts that overlap at
+    // the front, against a stage that has already been seen, rather than over
+    // the one about to be read — and it stops the error travelling forward
+    // into every stage after it.
+    const nextPrinted = j + 1 < stages.length ? starts[j + 1] : NaN;
+    if (isFinite(nextPrinted)) {
+      const over = (starts[j] + dur(j)) - nextPrinted;
+      if (over > 0) for (let k = i; k <= j; k++) starts[k] -= over;
+    }
+    i = j;
   }
 
   // Backwards steps in the order the FILING prints them, named while the

@@ -122,5 +122,57 @@ console.log("\nstage order out of the sort is stable on a tie");
   is(labels(fvLayout(a)), ["7", "8", "9"], "printed order kept");
 }
 
+// ---- a clockless stage must not be laid ON TOP of the next printed one ----
+//
+// 00100 (Sanjel) stage 19 prints no clock and runs 45 min. Stage 18 starts
+// 19:57 and runs 45 (so ends 20:42); stage 20 prints 21:19. Laid forward from
+// 18 and never checked against 20, stage 19 was drawn 20:42-21:27 — eight
+// minutes over stage 20's band. That is Carmine's "serious overlap ... when
+// looking at the fracview": the same minutes under two stages, the same ink
+// drawn twice, and nothing saying which was which.
+console.log("a placed stage stops where the next printed one starts");
+{
+  const a = [st("18", "2016-01-28", "19:57:16", 45),
+             st("19", "", "", 45),
+             st("20", "2016-01-28", "21:19:16", 45)];
+  const L = fvLayout(a);
+  const end19 = L.starts[1] + 45 * 60 * 1000;
+  is(end19 <= L.starts[2], true, "stage 19 does not run into stage 20");
+  is(L.starts[1], at("2016-01-28", "21:19:16") - 45 * 60 * 1000,
+     "it is anchored to END on stage 20's printed start");
+  is(L.starts[0], at("2016-01-28", "19:57:16"), "and 18 keeps its printed clock");
+  is(L.starts[2], at("2016-01-28", "21:19:16"), "as does 20");
+  is([...L.invented], [1], "only the clockless one is ours");
+}
+
+console.log("where it fits, nothing moves");
+{
+  // the same shape, but stage 19 is short enough for the gap
+  const a = [st("18", "2016-01-28", "19:57:16", 45),
+             st("19", "", "", 20),
+             st("20", "2016-01-28", "21:19:16", 45)];
+  const L = fvLayout(a);
+  is(L.starts[1], at("2016-01-28", "20:42:16"),
+     "a run that fits is still laid forward from the stage before");
+}
+
+console.log("a RUN of clockless stages is judged together");
+{
+  const a = [st("1", "2016-01-28", "06:00:00", 30),
+             st("2", "", "", 30), st("3", "", "", 30),
+             st("4", "2016-01-28", "07:00:00", 30)];
+  const L = fvLayout(a);
+  const end3 = L.starts[2] + 30 * 60 * 1000;
+  is(end3 <= L.starts[3], true, "the last of the run clears the next printed stage");
+  is(L.starts[1] >= L.starts[0], true, "and the first of it does not run backwards");
+}
+
+console.log("with nothing printed after it, it is still laid forward");
+{
+  const a = [st("1", "2016-01-28", "06:00:00", 30), st("2", "", "", 30)];
+  const L = fvLayout(a);
+  is(L.starts[1], at("2016-01-28", "06:30:00"), "no next start to anchor to");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
