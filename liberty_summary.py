@@ -259,9 +259,16 @@ def parse_stimulation(doc):
 #
 # A column the sheet titled but never filled (PERF TotalNumShots on 49367,
 # PERF ClusterLength / PerfDiam on 00269) is reported in `empty_columns`, not
-# shipped blank. The Min / Max / Average footer under the pressure grid is
-# printed by a SEPARATE sheet with its own column pitch, so it is matched by
-# order rather than by x and kept apart in `totals`.
+# shipped blank.
+#
+# The Min / Max / Average footer under the pressure grid (Grand Total under
+# the proppant grid) is printed by a SEPARATE sheet with its own column pitch
+# and its own column list: on 49367 and 00697 it carries PopOffSet H, which
+# the grid does not, and stops before BD_Psi, which the grid has -- matched
+# by order, every total from the third column on sat one column off. Neither
+# x nor order can be trusted, so a footer value goes to the column whose own
+# min / max / mean / sum it is (_footer_totals), and one that is no column's
+# is not shipped.
 _INT = re.compile(r"^\d{1,4}$")
 _NUMC = re.compile(r"^-?[\d,]*\.?\d+%?$")
 _UNIT_CELL = re.compile(r"^\(?(?:m3|m³|m3pm|m3/min|bbls?|bpm|MPa|kPa|psi|PSI|"
@@ -461,17 +468,77 @@ def _stage_grid(page):
     out = [[cs[0][4]] + [cells[r][i] for i in filled]
            for r, (_cy, cs) in enumerate(body)]
 
-    totals = {}
+    footer = {}
     for cy, cs in rows:
-        if cy <= last_y or not _FOOTER.match(cs[0][4]):
-            continue
-        fv = [c[4].replace(",", "") for c in cs[1:]]
-        if len(fv) == len(filled):
-            totals[cs[0][4].rstrip(":")] = fv
+        if cy > last_y and _FOOTER.match(cs[0][4]):
+            footer[cs[0][4].rstrip(":")] = [c[4].replace(",", "")
+                                            for c in cs[1:]]
     return {"columns": ["Stage"] + [names[i] for i in filled], "rows": out,
-            "totals": totals,
+            "totals": _footer_totals(len(filled), out, footer),
+            "footer": footer,
             "empty_columns": [names[i] for i in keep if i not in filled],
             "all_columns": [names[i] for i in keep]}
+
+
+def _num(v):
+    try:
+        return float(v.replace(",", "").rstrip("%"))
+    except (AttributeError, ValueError):
+        return None
+
+
+def _step(v):
+    """the rounding step a printed number carries: "12.66" -> 0.01"""
+    v = (v or "").replace(",", "").rstrip("%")
+    return 10.0 ** -(len(v) - v.index(".") - 1) if "." in v else 1.0
+
+
+_STATS = {"min": min, "max": max, "average": lambda v: sum(v) / len(v),
+          "avg": lambda v: sum(v) / len(v), "total": sum,
+          "grand total": sum, "sum": sum}
+
+
+def _footer_totals(ncols, rows, footer):
+    """{label: [printed value]} -> {label: [value or None per column]}.
+
+    Each printed value goes to the column whose own min / max / mean / sum it
+    is, within the rounding of the footer and of the cells it summarises,
+    keeping the printed order. When every label prints the same number of
+    values they are matched a footer column at a time, all labels agreeing,
+    so a constant column cannot take another's Min by coincidence."""
+    labels = [lab for lab in footer if lab.lower() in _STATS and footer[lab]]
+    if not labels or not rows:
+        return {}
+    cols = []
+    for i in range(ncols):
+        cells = [r[i + 1] for r in rows if _num(r[i + 1]) is not None]
+        cols.append(([_num(c) for c in cells],
+                     max([_step(c) for c in cells] or [1.0]), len(cells)))
+
+    def fits(lab, v, col):
+        vals, step, n = col
+        x = _num(v)
+        if x is None or not vals:
+            return False
+        f = _STATS[lab.lower()]
+        slack = step * (n if f is sum else 1)       # rounded cells, summed
+        return abs(f(vals) - x) <= (_step(v) + slack) / 2 + 1e-9
+
+    out = {lab: [None] * ncols for lab in labels}
+    widths = set(len(footer[lab]) for lab in labels)
+    runs = ([[(lab, j) for lab in labels] for j in range(widths.pop())]
+            if len(widths) == 1 else
+            [[(lab, j)] for lab in labels for j in range(len(footer[lab]))])
+    last = {}
+    for run in runs:
+        start = max(last.get(lab, -1) for lab, _j in run) + 1
+        for i in range(start, ncols):
+            if all(fits(lab, footer[lab][j], cols[i]) for lab, j in run):
+                for lab, j in run:
+                    out[lab][i] = footer[lab][j]
+                    last[lab] = i
+                break
+    return {lab: v for lab, v in out.items() if any(x is not None for x in v)}
 
 
 # the sheets that are a grid keyed on the stage, and the title each is
@@ -500,7 +567,7 @@ def _parse_kind(doc, kind, groups=None):
     if groups is None:
         groups = find_summary_pages(doc)
     names, filled, by_stage = [], set(), {}
-    totals, pages, repeats = {}, [], []
+    footer, pages, repeats = {}, [], []
     for g in groups:
         if g["kind"] != kind:
             continue
@@ -518,17 +585,17 @@ def _parse_kind(doc, kind, groups=None):
             filled.update(cols)
             for r in tab["rows"]:
                 by_stage[r[0]] = dict(zip(cols, r[1:]))
-            for lab, vals in tab["totals"].items():
-                totals.setdefault(lab, {}).update(zip(cols, vals))
+            footer.update(tab["footer"])
             pages.append(p)
     if not by_stage:
         return None
     columns = [nm for nm in names if nm in filled]
     rows = [[s] + [by_stage[s].get(nm) for nm in columns]
             for s in sorted(by_stage, key=_stage_no)]
+    # the footer summarises the whole sheet, so it is matched against every
+    # stage read, not the page it was printed on
     return {"columns": ["Stage"] + columns, "rows": rows,
-            "totals": {lab: [t.get(nm) for nm in columns]
-                       for lab, t in totals.items()},
+            "totals": _footer_totals(len(columns), rows, footer),
             "empty_columns": [nm for nm in names if nm not in filled],
             "pages": pages, "repeated_pages": repeats}
 

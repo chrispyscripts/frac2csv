@@ -4,10 +4,11 @@ Six different Tableau sheets lead with "Stage No", and the Summary view used
 to label every one of them "Proppant Summary" — so nothing on them could be
 parsed. The first fixtures are the page text and the cell spans of 49367 (the
 2025 vintage, VERMILION HZ MICA F09-21). The ones after them come from the
-corpus check of 2026-10-03 (21 Liberty filings, both drives): 00269 (AER
-Montney ARC, 0498236), 00738 (AER Duvernay, 0512870) and 00470 (AER Duvernay,
-0503168) -- the right-aligned sheets, the bbl and bare-m3 flush columns, the
-three-line proppant header, and the pages that are not what their legend says.
+corpus check of 2026-10-03 (26 Liberty filings, AER and BCER, both drives):
+00269 (AER Montney ARC, 0498236), 00738, 00470 and 00697 (AER Duvernay) and
+00938 (BCER 2025, a one-stage job) -- the right-aligned sheets, the bbl,
+bare-m3 and Gal flush columns, the three-line proppant header, the footer
+sheet's own column list, and the pages that are not what their legend says.
 """
 import os
 import sys
@@ -555,6 +556,67 @@ P127_WELLBORE_BOXES = [  # its header rectangles
     (916.5, 167.2, 1132.5, 197.2),
     (1132.5, 167.2, 1347.8, 197.2),
 ]
+P40_PRESSURE = [  # 00938 p40, 47 spans
+    (7.5, 143.5, 159.3, 160.1, 'PRESSURE SUMMARY'),
+    (20.7, 184.4, 47.5, 197.6, 'Stage'),
+    (92.7, 186.7, 163.0, 198.0, 'Max Working MPa'),
+    (218.2, 186.7, 293.3, 198.0, 'Sum of Global Trips'),
+    (366.3, 186.7, 400.9, 198.0, 'Ave Rate'),
+    (495.1, 186.7, 528.7, 198.0, 'Ave MPa'),
+    (621.9, 186.7, 658.4, 198.0, 'Max Rate'),
+    (750.2, 186.7, 785.8, 198.0, 'Max MPa'),
+    (883.5, 186.7, 908.3, 198.0, 'F_ISIP'),
+    (1006.0, 186.7, 1042.2, 198.0, 'F_BHISIP'),
+    (1142.1, 186.7, 1161.9, 198.0, 'F_FG'),
+    (1266.0, 186.7, 1293.8, 198.0, 'BD_Psi'),
+    (31.7, 725.4, 35.8, 734.5, '1'),
+    (111.0, 721.1, 143.4, 737.6, '29.00'),
+    (239.2, 721.1, 271.6, 737.6, '43.00'),
+    (370.5, 721.1, 395.7, 737.6, '1.22'),
+    (495.0, 721.1, 527.4, 737.6, '38.05'),
+    (627.0, 721.1, 652.2, 737.6, '1.23'),
+    (751.5, 721.1, 783.9, 737.6, '40.34'),
+    (879.0, 721.1, 911.4, 737.6, '18.58'),
+    (25.7, 1265.2, 43.3, 1278.3, 'Min'),
+    (128.2, 1265.2, 152.5, 1277.4, '29.00'),
+    (219.0, 1265.2, 243.3, 1277.4, '43.00'),
+    (402.0, 1265.2, 426.3, 1277.4, '48.00'),
+    (498.8, 1265.2, 517.6, 1277.4, '1.22'),
+    (585.0, 1265.2, 609.3, 1277.4, '38.05'),
+    (681.8, 1265.2, 700.6, 1277.4, '1.23'),
+    (768.0, 1265.2, 792.3, 1277.4, '40.34'),
+    (858.8, 1265.2, 883.0, 1277.4, '18.58'),
+    (24.8, 1282.4, 44.2, 1295.6, 'Max'),
+    (128.2, 1282.5, 152.5, 1294.6, '29.00'),
+    (219.0, 1282.5, 243.3, 1294.6, '43.00'),
+    (402.0, 1282.5, 426.3, 1294.6, '48.00'),
+    (498.8, 1282.5, 517.6, 1294.6, '1.22'),
+    (585.0, 1282.5, 609.3, 1294.6, '38.05'),
+    (681.8, 1282.5, 700.6, 1294.6, '1.23'),
+    (768.0, 1282.5, 792.3, 1294.6, '40.34'),
+    (858.8, 1282.5, 883.0, 1294.6, '18.58'),
+    (15.5, 1298.9, 53.5, 1312.1, 'Average'),
+    (128.2, 1299.0, 152.5, 1311.1, '29.00'),
+    (219.0, 1299.0, 243.3, 1311.1, '43.00'),
+    (402.0, 1299.0, 426.3, 1311.1, '48.00'),
+    (498.8, 1299.0, 517.6, 1311.1, '1.22'),
+    (585.0, 1299.0, 609.3, 1311.1, '38.05'),
+    (681.8, 1299.0, 700.6, 1311.1, '1.23'),
+    (768.0, 1299.0, 792.3, 1311.1, '40.34'),
+    (858.8, 1299.0, 883.0, 1311.1, '18.58'),
+]
+P40_PRESSURE_BOXES = [  # its header rectangles
+    (63.8, 168.0, 192.0, 198.0),
+    (192.0, 168.0, 319.5, 198.0),
+    (319.5, 168.0, 447.8, 198.0),
+    (447.8, 168.0, 576.0, 198.0),
+    (576.0, 168.0, 704.2, 198.0),
+    (704.2, 168.0, 831.8, 198.0),
+    (831.8, 168.0, 960.0, 198.0),
+    (960.0, 168.0, 1088.2, 198.0),
+    (1088.2, 168.0, 1215.8, 198.0),
+    (1215.8, 168.0, 1344.0, 198.0),
+]
 P139_PRESSURE = [  # 00738 p139, 35 spans
     (7.5, 143.5, 159.3, 160.1, 'PRESSURE SUMMARY'),
     (20.7, 169.4, 47.5, 182.6, 'Stage'),
@@ -701,12 +763,16 @@ class PressureGrid(unittest.TestCase):
             "1", "84.00", "87.00", "8.78", "78.40", "10.53", "82.09",
             "24.20", "43.00", "22.04", "41.10"])
 
-    def test_footer_matched_by_order_not_by_x(self):
-        # the Min/Max/Average sheet has its own column pitch
-        self.assertEqual(set(self.tab["totals"]), {"Min", "Max", "Average"})
-        self.assertEqual(self.tab["totals"]["Min"][3], "4.55")
-        self.assertEqual(self.tab["totals"]["Average"][0], "83.97")
-        self.assertEqual(self.tab["totals"]["Max"][-1], "23.41")
+    def test_the_footer_is_kept_as_printed(self):
+        # its own sheet: its own pitch, and PopOffSet H (90.00) third
+        self.assertEqual(self.tab["footer"]["Min"][:4],
+                         ["82.00", "84.00", "90.00", "4.55"])
+
+    def test_a_footer_no_column_agrees_with_is_not_shipped(self):
+        # it summarises 77 stages and the fixture holds three; matched by
+        # order it put PopOffSet H's 90.00 under Ave Rate, Ave Rate's 4.55
+        # under Ave MPa, and so on to F_FG's under BD_Psi
+        self.assertEqual(self.tab["totals"], {})
 
 
 class WellboreGrid(unittest.TestCase):
@@ -783,9 +849,10 @@ class RightAlignedPressure(unittest.TestCase):
             "1", "80.00", "82.00", "7.69", "77.15", "9.38", "79.25",
             "25.50", "57.82", "17.53"])
         self.assertEqual(tab["rows"][1][0], "2")
+        # the footer covers 28 stages; of the fixture's two, only the two
+        # constant columns agree with it, and only they get a total
         self.assertEqual(tab["totals"]["Max"],
-                         ["80.00", "82.00", "12.14", "77.15", "13.64",
-                          "81.20", "37.97", "70.29", "21.31"])
+                         ["80.00", "82.00"] + [None] * 7)
 
     def test_by_the_header_rectangles(self):
         self.check(ls._stage_grid(_Page(P87_PRESSURE, P87_PRESSURE_BOXES)))
@@ -868,8 +935,64 @@ class ThreeLineProppantHeader(unittest.TestCase):
             "250000", "253656", "250000", "0"])
 
     def test_grand_total_footer(self):
-        self.assertEqual(self.tab["totals"]["Grand Total"][-4:],
+        # 28 stages summed, three in the fixture: only the all-zero
+        # Actual-Design columns add up, so only they carry it
+        self.assertEqual(self.tab["footer"]["Grand Total"][-4:],
                          ["6700000", "6628358", "6700000", "0"])
+        # (40/70 White is pumped on stages 1 and 2 only, so its total is
+        # whole in the fixture and is matched)
+        self.assertEqual(self.tab["totals"]["Grand Total"], [
+            None, None, None, "0", "300000", "297510", "300000", "0",
+            None, None, None, "0"])
+
+
+class FooterTotals(unittest.TestCase):
+    """00938 p40, a one-stage job: the whole sheet and its whole footer. The
+    footer prints PopOffSet H (48.00) third, which the grid does not, and
+    nothing for F_BHISIP / F_FG / BD_Psi."""
+    def setUp(self):
+        self.tab = ls._stage_grid(_Page(P40_PRESSURE, P40_PRESSURE_BOXES))
+
+    def test_each_total_under_the_column_it_summarises(self):
+        self.assertEqual(self.tab["columns"], [
+            "Stage", "Max Working MPa", "Sum of Global Trips", "Ave Rate",
+            "Ave MPa", "Max Rate", "Max MPa", "F_ISIP"])
+        row = self.tab["rows"][0][1:]
+        for lab in ("Min", "Max", "Average"):
+            self.assertEqual(self.tab["totals"][lab], row, lab)
+        self.assertEqual(self.tab["footer"]["Min"][2], "48.00")
+
+    def test_by_value_through_the_rounding(self):
+        rows = [["1", "8.78", "41.10"], ["2", "10.43", "67.90"],
+                ["3", "10.66", "58.24"]]
+        got = ls._footer_totals(2, rows, {
+            "Min": ["90.00", "8.78", "41.10"],
+            "Average": ["92.29", "9.96", "55.75"],
+            "Grand Total": ["1", "29.87", "167.24"]})
+        self.assertEqual(got, {"Min": ["8.78", "41.10"],
+                               "Average": ["9.96", "55.75"],
+                               "Grand Total": ["29.87", "167.24"]})
+        self.assertEqual(ls._footer_totals(2, rows, {"Max": ["9.00"]}), {})
+
+    def test_stitched_sheets_are_totalled_over_every_page(self):
+        # 49367 p123 cut after stage 2, the Min row on page two carrying the
+        # minima of stages 1-3 at the footer sheet's own x (PopOffSet H's
+        # 90.00 third). Page two alone agrees only on its constant columns.
+        head = [c for c in P123_PRESSURE if c[1] < 181]
+        mins = iter(["84.00", "87.00", "90.00", "8.78", "77.45", "10.53",
+                     "82.09", "24.20", "43.00", "22.04"])
+        foot = [c if c[4] == "Min" else c[:4] + (next(mins),)
+                for c in sorted((c for c in P123_PRESSURE
+                                 if 1264 <= c[1] < 1265), key=lambda c: c[0])]
+        one = head + [c for c in P123_PRESSURE if 181 <= c[1] < 209]
+        two = head + [c for c in P123_PRESSURE if 209 <= c[1] < 223] + foot
+        self.assertEqual(ls._stage_grid(_Page(two))["totals"]["Min"],
+                         ["84.00", "87.00"] + [None] * 8)
+        tab = ls.parse_pressure(_Doc([_Page(one), _Page(two)]))
+        self.assertEqual([r[0] for r in tab["rows"]], ["1", "2", "3"])
+        self.assertEqual(tab["totals"], {"Min": [
+            "84.00", "87.00", "8.78", "77.45", "10.53", "82.09", "24.20",
+            "43.00", "22.04", None]})
 
 
 class TwoSheetFluidHeader(unittest.TestCase):
