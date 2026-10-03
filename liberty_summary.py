@@ -238,19 +238,36 @@ def parse_stimulation(doc):
 # ------------------------------------------------------- stage-keyed grids
 #
 # The wellbore, pressure, fluid and proppant sheets are Tableau exports: one
-# text span per cell, a title, a header row (two when a unit line sits under
-# the names), then one row per stage keyed by its number down the left
-# margin. Cells are centre-aligned on a stable x per column, so the columns
-# are the clusters of the body cells' centres and the header is dropped onto
-# them. A column the sheet titled but never filled (PERF TotalNumShots on
-# 49367) leaves no body centre; it is reported in `empty_columns`, not
+# text span per cell, a title, a header (one to three lines), then one row per
+# stage keyed by its number down the left margin.
+#
+# The columns come from the HEADER, not from the body. Tableau draws every
+# header cell as a filled rectangle, and the vertical edges of those
+# rectangles are the column boundaries; a body value belongs to the column
+# whose band holds its centre. That matters because the body is aligned
+# either way: 49367 (2025) centres its numbers, but most of the corpus
+# right-aligns them (00269, 00198, 00738 ...), where a centre-x cluster puts
+# "-1,995" and "0" of one column in two columns and drops every header name
+# (they sit at the column's centre, 25 pt left of the numbers). A header cell
+# whose rectangle spans several columns is a group label ("30/70 White" over
+# Prop Actual / Prop Screw / Prop Design / Proppant Actual-Design) and is
+# prefixed to the names under it; the caption over everything ("Proppant
+# Name") is dropped. Without rectangles (a page that draws none) the bands are
+# the midpoints between the header names' centres.
+#
+# A column the sheet titled but never filled (PERF TotalNumShots on 49367,
+# PERF ClusterLength / PerfDiam on 00269) is reported in `empty_columns`, not
 # shipped blank. The Min / Max / Average footer under the pressure grid is
 # printed by a SEPARATE sheet with its own column pitch, so it is matched by
 # order rather than by x and kept apart in `totals`.
 _INT = re.compile(r"^\d{1,4}$")
 _NUMC = re.compile(r"^-?[\d,]*\.?\d+%?$")
-_UNIT_CELL = re.compile(r"^\(?(?:m3|m³|m3pm|m3/min|MPa|kPa|psi|PSI|kg|lbs?|"
-                        r"tonnes?|t|m|min|%|L)\)?$")
+_UNIT_CELL = re.compile(r"^\(?(?:m3|m³|m3pm|m3/min|bbls?|bpm|MPa|kPa|psi|PSI|"
+                        r"kgs?|lbs?|tonnes?|t|m|ft|min|%|L|[Gg]al)\)?$")
+# a flush-volume header prints its unit four ways -- "(m3)" (49367), "m3"
+# (00738), "bbl" (00269), "Gal" (00697) -- and the column name carries it
+# the one way: "Top Shot Flush Vol (m3)"
+_TRAIL_UNIT = re.compile(r"\s+\(?(m3|m³|bbls?|[Gg]al)\)?$")
 _FOOTER = re.compile(r"^(?:Min|Max|Average|Avg|Total|Grand Total|Sum)\b", re.I)
 _TITLE = re.compile(r"\bSUMMARY\b")
 _KEY_HEAD = re.compile(r"^Stage(?:\s+No\.?)?\s*$", re.I)
@@ -303,80 +320,156 @@ def _is_stage_row(cells):
             and _INT.match(cells[0][4]) is not None)
 
 
+def _header_boxes(page, top, bottom, key_x):
+    """the filled rectangles Tableau draws behind the header cells, between
+    the title and the first stage row, less the key column's own cell"""
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return []
+    out = []
+    for d in drawings:
+        if d.get("fill") is None:
+            continue
+        x0, y0, x1, y1 = tuple(d["rect"])
+        if x1 - x0 < 4 or y1 - y0 < 4 or y0 < top - 1 or y1 > bottom + 1:
+            continue
+        if x0 - 1 <= key_x <= x1 + 1:
+            continue
+        out.append((x0, y0, x1, y1))
+    return out
+
+
+def _bands(boxes):
+    """column bands [(x0, x1)] from the header rectangles' vertical edges --
+    every stretch between two edges that some rectangle covers"""
+    edges = []
+    for x in sorted(v for b in boxes for v in (b[0], b[2])):
+        if not edges or x - edges[-1] > 1.5:
+            edges.append(x)
+    return [(a, b) for a, b in zip(edges, edges[1:])
+            if b - a >= 8 and any(bx[0] - 1 <= (a + b) / 2 <= bx[2] + 1
+                                  for bx in boxes)]
+
+
+def _band_of(bands, cx, slack=12.0):
+    for i, (a, b) in enumerate(bands):
+        if a - 0.5 <= cx <= b + 0.5:
+            return i
+    if not bands:
+        return None
+    i = min(range(len(bands)), key=lambda i: min(abs(bands[i][0] - cx),
+                                                 abs(bands[i][1] - cx)))
+    a, b = bands[i]
+    return i if min(abs(a - cx), abs(b - cx)) <= slack else None
+
+
 def _stage_grid(page):
-    """One sheet page -> {columns, rows, totals, empty_columns} or None.
+    """One sheet page -> {columns, rows, totals, empty_columns, all_columns}
+    or None.
 
     columns[0] is "Stage"; a row is [stage, cell, ...] with None where the
-    sheet printed nothing in that column."""
+    sheet printed nothing in that column. all_columns is every column the
+    header names, filled or not, in page order."""
     rows = _rows(_cells(page))
     body = [(cy, cs) for cy, cs in rows if _is_stage_row(cs)]
     if not body:
         return None
     first_y, last_y = body[0][0], body[-1][0]
     # the header is everything between the title and the first stage row;
-    # with no title on the page, sixty points is more than a name-and-unit
+    # with no title on the page, sixty points is more than a three-line
     # header ever takes
     title_y = max([cy for cy, cs in rows if cy < first_y
                    and any(_TITLE.search(c[4]) for c in cs)]
                   or [first_y - 60])
-    head = [c for cy, cs in rows if title_y < cy < first_y for c in cs]
-
-    vals = [c for _cy, cs in body for c in cs[1:]]
-    anchors = _cluster([(c[0] + c[2]) / 2 for c in vals], 12.0)
-    if not anchors:
+    key = body[0][1][0]
+    key_x, key_x1 = (key[0] + key[2]) / 2, key[2]
+    head = [c for cy, cs in rows if title_y < cy < first_y for c in cs
+            if not _KEY_HEAD.match(c[4])
+            and not (c[0] - 1 <= key_x <= c[2] + 1)]   # the key's own name
+    boxes = _header_boxes(page, title_y, first_y, key_x)
+    bands = _bands(boxes)
+    if not bands:
+        # no rectangles: one band per header name, split at the midpoints
+        xs = _cluster([(c[0] + c[2]) / 2 for c in head], 8.0)
+        if not xs:                      # no header either: the body's own x
+            vals = [c for _cy, cs in body for c in cs[1:]]
+            xs = _cluster([(c[0] + c[2]) / 2 for c in vals], 12.0)
+        cuts = [key_x1] + [(a + b) / 2 for a, b in zip(xs, xs[1:])] + [1e9]
+        bands = list(zip(cuts, cuts[1:]))
+    if not bands:
         return None
-    pitch = (min(b - a for a, b in zip(anchors, anchors[1:]))
-             if len(anchors) > 1 else 100.0)
-    near = max(12.0, 0.3 * pitch)
 
-    def col_of(cx):
-        i = min(range(len(anchors)), key=lambda i: abs(anchors[i] - cx))
-        return i if abs(anchors[i] - cx) <= near else None
-
-    key_x = (body[0][1][0][0] + body[0][1][0][2]) / 2
-    names = [[] for _ in anchors]
-    units = [None] * len(anchors)
-    empty = []
+    # header text -> its band(s): a rectangle over one band names (or gives
+    # the unit of) that column; one over several is a group label
+    parts = [[] for _ in bands]
+    units = [None] * len(bands)
+    groups = []                                   # (y, first, last, text)
     for c in sorted(head, key=lambda c: (c[1], c[0])):
-        cx, t = (c[0] + c[2]) / 2, c[4]
-        if _KEY_HEAD.match(t) or abs(cx - key_x) <= near:
-            continue                        # the key column names itself
-        i = col_of(cx)
-        if i is None:
-            if not _UNIT_CELL.match(t):
-                empty.append(t)             # titled, never filled
-            continue
-        if _UNIT_CELL.match(t):
-            units[i] = t.strip("()")
-        else:
-            names[i].append(t)
-    columns = ["Stage"]
-    for i in range(len(anchors)):
-        nm = " ".join(names[i]) or "col%d" % (i + 1)
+        cx, cy, t = (c[0] + c[2]) / 2, (c[1] + c[3]) / 2, c[4]
+        hosts = [b for b in boxes if b[0] - 1 <= cx <= b[2] + 1
+                 and b[1] - 1 <= cy <= b[3] + 1]
+        span = []
+        if hosts:
+            b = min(hosts, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+            span = [i for i, (a, z) in enumerate(bands)
+                    if b[0] - 1 <= (a + z) / 2 <= b[2] + 1]
+        if not span:
+            i = _band_of(bands, cx)
+            span = [] if i is None else [i]
+        if len(span) > 1:
+            groups.append((cy, span[0], span[-1], t))
+        elif span and _UNIT_CELL.match(t):
+            units[span[0]] = t.strip("()")
+        elif span:
+            parts[span[0]].append(t)
+    names = []
+    for i in range(len(bands)):
+        nm = " ".join(parts[i])
         if units[i] and units[i] not in nm:
-            nm = "%s (%s)" % (nm, units[i])
-        columns.append(nm)
+            nm = "%s (%s)" % (nm, units[i]) if nm else units[i]
+        nm = _TRAIL_UNIT.sub(lambda m: " (%s)" % m.group(1), nm)
+        over = sorted((g for g in groups if g[1] <= i <= g[2]),
+                      key=lambda g: g[0])
+        if len(over) > 1:     # a caption over the whole sheet says nothing
+            over = [g for g in over[:-1]
+                    if (g[1], g[2]) != (0, len(bands) - 1)] + over[-1:]
+        names.append(": ".join([g[3] for g in over] + ([nm] if nm else [])))
 
-    out = []
-    for _cy, cs in body:
-        row = [cs[0][4]] + [None] * len(anchors)
+    cells = [[None] * len(bands) for _ in body]
+    for r, (_cy, cs) in enumerate(body):
         for c in cs[1:]:
-            i = col_of((c[0] + c[2]) / 2)
+            i = _band_of(bands, (c[0] + c[2]) / 2)
             if i is None:
                 continue
             v = c[4].replace(",", "") if _NUMC.match(c[4]) else c[4]
-            row[i + 1] = v if row[i + 1] is None else row[i + 1] + " " + v
-        out.append(row)
+            cells[r][i] = v if cells[r][i] is None else cells[r][i] + " " + v
+    filled = [i for i in range(len(bands))
+              if any(row[i] is not None for row in cells)]
+    if not filled:
+        return None
+    # a band with neither name nor value (the gutter between two sheets) is
+    # no column; a filled one without a name is called by its place
+    keep = [i for i in range(len(bands)) if names[i] or i in filled]
+    seen = {}
+    for i in keep:
+        nm = names[i] or ("col%d" % (i + 1))
+        seen[nm] = seen.get(nm, 0) + 1
+        names[i] = nm if seen[nm] == 1 else "%s (%d)" % (nm, seen[nm])
+    out = [[cs[0][4]] + [cells[r][i] for i in filled]
+           for r, (_cy, cs) in enumerate(body)]
 
     totals = {}
     for cy, cs in rows:
         if cy <= last_y or not _FOOTER.match(cs[0][4]):
             continue
         fv = [c[4].replace(",", "") for c in cs[1:]]
-        if len(fv) == len(anchors):
+        if len(fv) == len(filled):
             totals[cs[0][4].rstrip(":")] = fv
-    return {"columns": columns, "rows": out, "totals": totals,
-            "empty_columns": empty}
+    return {"columns": ["Stage"] + [names[i] for i in filled], "rows": out,
+            "totals": totals,
+            "empty_columns": [names[i] for i in keep if i not in filled],
+            "all_columns": [names[i] for i in keep]}
 
 
 # the sheets that are a grid keyed on the stage, and the title each is
@@ -385,10 +478,27 @@ def _stage_grid(page):
 STAGE_SHEETS = ("wellbore", "pressure", "fluid", "proppant")
 
 
+def _stage_no(s):
+    try:
+        return (0, int(s))
+    except ValueError:
+        return (1, s)
+
+
 def _parse_kind(doc, kind, groups=None):
+    """one table from every page of `kind`, stitched on the stage number.
+
+    A sheet that runs onto a second page continues with the next stages and
+    stitches by column name, so a column empty on one page and filled on the
+    other is one column. A page whose stages were already read is a reprint
+    -- 00470 (AER Duvernay, 2022) prints the whole sheet set twice, and the
+    wellbore, pressure, fluid and proppant tables came back with every stage
+    twice -- and is listed in `repeated_pages` instead. Rows are in stage
+    order whichever way the sheet sorted them (00738 prints 74 down to 1)."""
     if groups is None:
         groups = find_summary_pages(doc)
-    columns, rows, totals, empty, pages = None, [], {}, [], []
+    names, filled, by_stage = [], set(), {}
+    totals, pages, repeats = {}, [], []
     for g in groups:
         if g["kind"] != kind:
             continue
@@ -396,18 +506,29 @@ def _parse_kind(doc, kind, groups=None):
             tab = _stage_grid(doc[p - 1])
             if not tab:
                 continue
-            if columns is None:
-                columns = tab["columns"]
-            elif len(tab["columns"]) != len(columns):
-                continue        # a differently shaped sheet under one title
-            rows.extend(tab["rows"])
-            totals.update(tab["totals"])
-            empty = empty or tab["empty_columns"]
+            if any(r[0] in by_stage for r in tab["rows"]):
+                repeats.append(p)
+                continue
+            cols = tab["columns"][1:]
+            for nm in tab["all_columns"]:
+                if nm not in names:
+                    names.append(nm)
+            filled.update(cols)
+            for r in tab["rows"]:
+                by_stage[r[0]] = dict(zip(cols, r[1:]))
+            for lab, vals in tab["totals"].items():
+                totals.setdefault(lab, {}).update(zip(cols, vals))
             pages.append(p)
-    if not rows:
+    if not by_stage:
         return None
-    return {"columns": columns, "rows": rows, "totals": totals,
-            "empty_columns": empty, "pages": pages}
+    columns = [nm for nm in names if nm in filled]
+    rows = [[s] + [by_stage[s].get(nm) for nm in columns]
+            for s in sorted(by_stage, key=_stage_no)]
+    return {"columns": ["Stage"] + columns, "rows": rows,
+            "totals": {lab: [t.get(nm) for nm in columns]
+                       for lab, t in totals.items()},
+            "empty_columns": [nm for nm in names if nm not in filled],
+            "pages": pages, "repeated_pages": repeats}
 
 
 def parse_stage_sheets(doc):
