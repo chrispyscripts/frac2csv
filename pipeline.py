@@ -680,6 +680,75 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
     return out
 
 
+def _sanjel_dates(results, notes):
+    """A Sanjel chart that prints a clock but no DAY takes the day around it.
+
+    These sheets print the day in their header and the clock on the time axis,
+    and the two are read independently. 00100 p37 heads interval 19
+    "January 0, 1900" -- Excel's empty-date sentinel, which sanjel.py refuses
+    outright and should (v1.11.3 shipped that; believing it put a stage a
+    century off). But the page's TIME axis is perfectly good: it runs
+    20:37:16 to 21:22:16, and only the day was ever missing.
+
+    Losing the day loses the clock with it, because everything downstream keys
+    a stage's position on a full timestamp. So interval 19 arrived with no
+    time at all and FracView PLACED it -- after interval 18, at 20:42 -- when
+    the sheet says 20:37. Carmine: "stage 19 ... the time needs to be
+    adjusted". It did, and the number to adjust it to was printed on the page
+    the whole time.
+
+    The day is taken only where it cannot be anything else: the nearest dated
+    chart each side of it must agree on the day, and this chart's clock must
+    fall strictly between theirs. 18 is 19:57 and 20 is 21:19 on 2016-01-28,
+    and 20:37 sits between them, so there is one day it can be. A chart whose
+    clock does NOT fall between its neighbours' has wrapped past midnight or
+    belongs somewhere else, and that is a guess rather than a reading -- it is
+    left undated, which is what an undated chart is for.
+    """
+    rows = [r for r in results
+            if r.get("type") == "series" and r.get("source") == "Sanjel chart"]
+    if len(rows) < 3:
+        return
+    rows.sort(key=lambda r: r.get("page") or 0)
+
+    def hms(md):
+        t = (md.get("start_time") or "").strip()
+        p_ = t.split(":")
+        try:
+            return int(p_[0]) * 3600 + int(p_[1]) * 60 + int(p_[2] if len(p_) > 2 else 0)
+        except (ValueError, IndexError):
+            return None
+
+    filled = 0
+    for i, r in enumerate(rows):
+        md = r.get("meta") or {}
+        if md.get("date") or not md.get("start_time"):
+            continue
+        ours = hms(md)
+        if ours is None:
+            continue
+        prev = next((rows[j] for j in range(i - 1, -1, -1)
+                     if (rows[j].get("meta") or {}).get("date")), None)
+        nxt = next((rows[j] for j in range(i + 1, len(rows))
+                    if (rows[j].get("meta") or {}).get("date")), None)
+        if not prev or not nxt:
+            continue
+        pm, nm = prev["meta"], nxt["meta"]
+        if pm.get("date") != nm.get("date"):
+            continue                      # the run spans midnight: not ours to pick
+        a, b = hms(pm), hms(nm)
+        if a is None or b is None or not (a < ours < b):
+            continue                      # not between them: a guess, not a reading
+        md["date"] = pm["date"]
+        filled += 1
+    if filled:
+        notes.append(
+            f"{filled} Sanjel chart(s) print a clock but no day — their header "
+            f"carries Excel's empty-date sentinel — and were dated from the "
+            f"charts either side of them, which agree on the day and whose "
+            f"clocks bracket theirs. The TIME is the chart's own.")
+
+
 def _canyon_dates(doc, results, notes):
     """Date each Canyon chart from the report's printed interval summary.
 
@@ -3532,6 +3601,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
     # a Canyon chart page dates itself from the job, not from the interval
     _canyon_dates(doc, results, notes)
+    _sanjel_dates(results, notes)
 
     # a Trican CONTINUOUS chart re-plots the stage charts end to end
     _trican_continuous(results, notes)
