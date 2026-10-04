@@ -25,16 +25,20 @@ const regionReady=fetch('data/region/index.json').then(r=>{if(!r.ok)throw Error(
 const padCache=new Map(),AREA_MAX=30;
 function fetchPad(id){if(!padCache.has(id))padCache.set(id,fetch('data/region/pads/'+encodeURIComponent(id)+'.json').then(r=>{if(!r.ok)throw Error('pad '+id);return r.json()}));return padCache.get(id)}
 const padDist=(a,lat,lon)=>Math.hypot(a.lat-lat,(a.lon-lon)*Math.cos(lat*Math.PI/180))*111.32;
+// the map's setting: only wells with treatment charts, or every well
+const chartedOnly=()=>!!(window.stratumWells&&window.stratumWells.chartedOnly());
+const shownPads=()=>chartedOnly()?region.pads.filter(p=>p.curves):region.pads;
 // the pads in the map's view, nearest its centre first, at most AREA_MAX of them
 // so the scene stays legible; an empty view takes the nearest few instead
-function areaIds(){if(!region)return[];const b=map.getBounds(),c=map.getCenter(),near=p=>padDist(p,c.lat,c.lng);let ps=region.pads.filter(p=>b.contains([p.lon,p.lat]));if(!ps.length)ps=region.pads.slice().sort((x,y)=>near(x)-near(y)).slice(0,6);return ps.sort((x,y)=>near(x)-near(y)).slice(0,AREA_MAX).map(p=>p.id)}
+function areaIds(){if(!region)return[];const b=map.getBounds(),c=map.getCenter(),near=p=>padDist(p,c.lat,c.lng);let ps=shownPads().filter(p=>b.contains([p.lon,p.lat]));if(!ps.length)ps=shownPads().slice().sort((x,y)=>near(x)-near(y)).slice(0,6);return ps.sort((x,y)=>near(x)-near(y)).slice(0,AREA_MAX).map(p=>p.id)}
 // the pads around one pad, for opening the 3D view on it from the map
-function idsAround(id,km=4){const c=region&&region.pads.find(p=>p.id===id);if(!c)return[];return region.pads.filter(p=>padDist(p,c.lat,c.lon)<=km).sort((x,y)=>padDist(x,c.lat,c.lon)-padDist(y,c.lat,c.lon)).slice(0,AREA_MAX).map(p=>p.id)}
+function idsAround(id,km=4){const c=region&&region.pads.find(p=>p.id===id);if(!c)return[];return shownPads().filter(p=>padDist(p,c.lat,c.lon)<=km).sort((x,y)=>padDist(x,c.lat,c.lon)-padDist(y,c.lat,c.lon)).slice(0,AREA_MAX).map(p=>p.id)}
 async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.pads.find(p=>p.id===id)).filter(Boolean);if(!entries.length)throw Error('No pads in this area');
  const raw=await Promise.all(entries.map(e=>fetchPad(e.id)));
- if(data&&pad)selectPad('');exitRack(true);rackLayer.replaceChildren();well=null;stage=null;interval=null;hover=null;
  // copies: the scene writes points, colours and caches onto its pads
- const d={pads:raw.map(p=>structuredClone(p))};data=d;
+ let pads=raw.map(p=>structuredClone(p));if(chartedOnly()){pads.forEach(p=>p.wells=p.wells.filter(w=>w.well.curves));pads=pads.filter(p=>p.wells.length);if(!pads.length)throw Error('No wells with treatment charts in this area')}
+ if(data&&pad)selectPad('');exitRack(true);rackLayer.replaceChildren();well=null;stage=null;interval=null;hover=null;
+ const d={pads};data=d;
  const lat0=d.pads.reduce((a,p)=>a+p.lat,0)/d.pads.length,lon0=d.pads.reduce((a,p)=>a+p.lon,0)/d.pads.length;
  const xy=(lon,lat)=>[(lon-lon0)*111320*Math.cos(lat0*Math.PI/180),(lat-lat0)*111320];d.xy=xy;
  while(padMenu.options.length>1)padMenu.remove(1);

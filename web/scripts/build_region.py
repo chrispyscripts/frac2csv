@@ -263,8 +263,9 @@ def main():
                  "ns": [round(s[3], 1) for s in kept], "ew": [round(s[4], 1) for s in kept]}
             intervals = [{"n": s["n"], "top_m": s["top_m"], "base_m": s["base_m"], "date": s["date"],
                           "source": "BCER hydraulic fracture"} for s in fr["stages"] if s["top_m"] is not None]
-            rows.append({"well": w, "trajectory": t, "stages": fr["stages"], "depth_intervals": intervals})
             curves = curves_in(wa)
+            # the 3D view keeps to wells with curves unless asked for every well
+            rows.append({"well": {**w, "curves": curves}, "trajectory": t, "stages": fr["stages"], "depth_intervals": intervals})
             map_w = {"wa": wa, "name": w["name"], "uwi": w["uwi"], "td": w["td_m"], "tvd": w["tvd_m"],
                      "lateral": w["lateral_m"], "lat": w["lat"], "lon": w["lon"], "stations": len(st),
                      "path": plan_path(w, t), "stages": curves, "ports": len(intervals), "logs": 0,
@@ -298,9 +299,11 @@ def main():
 
     # Gundy's pads: the underground file split per pad, and its map entries as built
     for gp in ug["pads"]:
+        sp = next(p for p in gundy_set["pads"] if p["id"] == gp["id"])
+        got = {str(m["wa"]): m.get("stages") or 0 for m in sp["wells"]}
+        gp = {**gp, "wells": [{**x, "well": {**x["well"], "curves": got.get(str(x["well"]["wa"]), 0)}} for x in gp["wells"]]}
         json.dump({**gp, "set": "gundy"}, open(os.path.join(_DATA, "region", "pads", f"{gp['id']}.json"), "w"), separators=(",", ":"))
         ws = [x["well"] for x in gp["wells"]]
-        sp = next(p for p in gundy_set["pads"] if p["id"] == gp["id"])
         index.append({"id": gp["id"], "name": gp["name"], "set": "gundy", "lat": gp["lat"], "lon": gp["lon"],
                       "wells": len(ws), "field": "Gundy", "operator": "Tourmaline Oil Corp.",
                       "years": [min(w["year"] for w in ws), max(w["year"] for w in ws)],

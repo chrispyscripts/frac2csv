@@ -80,10 +80,11 @@
 </div>
 <div class="legend">
   <div class="row"><span class="l"></span> lateral with stage data loaded</div>
-  <div class="row"><span class="l thin"></span> lateral, survey only</div>
+  <div class="row" id="survey-only"><span class="l thin"></span> lateral, survey only</div>
   <div class="row"><span class="d"></span> pad (surface location)</div>
   <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:#c9d3dc"></span> permitted well-site area (BCER)</div>
   <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:#ff5fa2"></span> earthquakes since 2013 (NRCan)</label>
+  <label class="row qk"><input type="checkbox" id="charted"> only wells with treatment charts</label>
 </div>
 
 <script>
@@ -110,7 +111,8 @@ map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 // can finish before or after the map is ready without missing the event
 const mapReady = new Promise(resolve => map.on("load", resolve));
 
-const SETS = [];          // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
+const ALL_SETS = [];      // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
+let SETS = [];            // ALL_SETS as shown: only the charted wells and their pads, unless every well is asked for
 let AREAS = { type: "FeatureCollection", features: [] };   // BCER well-site permit areas (pad footprints)
 const WELL_BY_WA = {}, PAD_BY_ID = {}, PAD_INFO = {};
 const openPads = new Set();
@@ -123,14 +125,38 @@ async function load() {
       try { const a = await fetch("data/pads/" + s.set + "-areas.geojson"); if (a.ok) AREAS.features.push(...(await a.json()).features); } catch (e) {}
       const d = await (await fetch("data/pads/" + s.file)).json();
       d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
-      SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
+      ALL_SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
     } catch (e) {}
   }
   // operator, field and years per pad, from the region index the 3D view also reads
   try { for (const p of (await (await fetch("data/region/index.json")).json()).pads) PAD_INFO[p.id] = p; } catch (e) {}
   try { demoAreas((await (await fetch("data/region/featured.json")).json()).areas); } catch (e) {}
+  applyFilter();
   render();
 }
+
+// For now the map keeps to wells whose treatment charts are in, so every well
+// shown opens onto its full data; unticking the legend's box shows every well.
+// The 3D view reads the same setting when it next opens.
+let chartedOnly = true;
+try { chartedOnly = localStorage.getItem("stratum.allWells") !== "1"; } catch (e) {}
+window.stratumWells = { chartedOnly: () => chartedOnly };
+function applyFilter() {
+  SETS = ALL_SETS.map(S => ({ ...S, pads: !chartedOnly ? S.pads
+    : S.pads.map(p => ({ ...p, wells: p.wells.filter(w => w.stages) })).filter(p => p.wells.length) }));
+  for (const S of SETS) for (const p of S.pads) PAD_BY_ID[p.id] = p;
+  document.getElementById("charted").checked = chartedOnly;
+  document.getElementById("survey-only").hidden = chartedOnly;
+}
+document.getElementById("charted").addEventListener("change", e => {
+  chartedOnly = e.target.checked;
+  try { localStorage.setItem("stratum.allWells", chartedOnly ? "0" : "1"); } catch (err) {}
+  applyFilter();
+  const f = features();
+  for (const [id, data] of [["laterals", f.lines], ["toes", f.toes], ["pads", f.pads]]) { const src = map.getSource(id); if (src) src.setData(data); }
+  if (popup) popup.remove();
+  updateLabels(); sidebar(); if (DEMO.length) demoAreas(DEMO);
+});
 
 function features() {
   const lines = [], toes = [], pads = [];
@@ -249,7 +275,9 @@ function openPad(p, lngLat) {
   if (popup) popup.remove();
   const info = PAD_INFO[p.id] || {};
   const yrs = info.years ? (info.years[0] === info.years[1] ? info.years[0] : info.years.join("–")) : null;
-  const facts = [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null].filter(Boolean);
+  const facts = (chartedOnly
+    ? [`${p.wells.length} wells with charts${info.wells > p.wells.length ? ` (of ${info.wells})` : ""}`, info.operator, yrs]
+    : [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null]).filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat || [p.lon, p.lat])
     .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts">
       <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack">Wine rack</button>
@@ -284,15 +312,19 @@ function openWell(p, lngLat) {
 }
 
 // the demo's prepared areas: each opens straight into its pads in 3D
+let DEMO = [];
 function demoAreas(areas) {
+  DEMO = areas;
   const box = document.getElementById("demo");
-  box.innerHTML = `<div class="dh">Demo areas · 10 pads each, everything gathered</div>`;
+  box.innerHTML = `<div class="dh">Demo areas · everything gathered</div>`;
   for (const a of areas) {
     const ps = a.pads.map(id => PAD_INFO[id]).filter(Boolean);
     const wells = ps.reduce((n, p) => n + p.wells, 0), curves = ps.reduce((n, p) => n + (p.curves || 0), 0);
     const b = document.createElement("button");
     b.type = "button";
-    b.innerHTML = `<b></b><span></span><span>${ps.length} pads · ${wells} wells · ${curves} with curves</span>`;
+    b.innerHTML = `<b></b><span></span><span>${chartedOnly
+      ? `${ps.filter(p => p.curves).length} pads · ${curves} wells with charts`
+      : `${ps.length} pads · ${wells} wells · ${curves} with curves`}</span>`;
     b.querySelector("b").textContent = a.name;
     b.querySelector("span").textContent = a.blurb;
     b.addEventListener("click", () => {
@@ -310,9 +342,10 @@ function sidebar() {
   const all = SETS.flatMap(s => s.pads);
   const nWells = all.reduce((m, p) => m + p.wells.length, 0);
   const nCurves = all.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0);
-  document.getElementById("sub").textContent = SETS.length
-    ? `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells · ${nCurves} with treatment curves`
-    : "no pads built yet";
+  const nAll = ALL_SETS.reduce((m, S) => m + S.pads.reduce((n, p) => n + p.wells.length, 0), 0);
+  document.getElementById("sub").textContent = !SETS.length ? "no pads built yet" : chartedOnly
+    ? `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells with charts (of ${nAll.toLocaleString()})`
+    : `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells · ${nCurves} with treatment curves`;
   const b = map.getBounds(), c = map.getCenter(), k = Math.cos(c.lat * Math.PI / 180);
   const near = p => Math.hypot(p.lat - c.lat, (p.lon - c.lng) * k);
   const inView = all.filter(p => b.contains([p.lon, p.lat])).sort((x, y) => near(x) - near(y));
