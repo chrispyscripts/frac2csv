@@ -408,6 +408,46 @@
   .stagerule .sr-sep { flex:0 0 1px; align-self:stretch; background:var(--line);
                        margin:0 4px; }
   .stagerule .sr-var { font-size:11px; color:var(--mut); }
+  /* DRAFT (#767): the per-stage summary assembled from Liberty's stage-keyed
+     sheets. A prototype to react to, so it says so on its face. */
+  .stagesum { margin:8px 18px 0; border:1px solid var(--line); border-radius:8px;
+              background:var(--panel); }
+  .stagesum > summary { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+              padding:6px 10px; cursor:pointer; list-style:none; font-size:12px;
+              user-select:none; }
+  .stagesum > summary::-webkit-details-marker { display:none; }
+  .stagesum > summary::before { content:"\25B8"; color:var(--mut); font-size:11px;
+              width:10px; }
+  .stagesum[open] > summary::before { content:"\25BE"; }
+  .stagesum[open] > summary { border-bottom:1px solid var(--line); }
+  .stagesum .ss-h { font-weight:600; }
+  .stagesum .ss-sub { font-family:var(--mono); font-size:11px; color:var(--mut); }
+  .stagesum .ss-draft { margin-left:auto; padding:0 6px; border-radius:4px;
+              border:1px dashed var(--carmine); color:var(--carmine);
+              font-size:10px; font-weight:700; letter-spacing:.08em; }
+  .stagesum .ss-body { padding:8px 10px 10px; }
+  .stagesum .ss-note { font-size:11.5px; color:var(--mut); margin:0 0 8px; }
+  .stagesum .ss-note b { color:var(--ink); font-weight:600; }
+  .stagesum .ss-grid { display:grid; gap:10px;
+              grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); }
+  .stagesum .ss-sec { border:1px solid var(--line); border-radius:7px;
+              background:var(--panel2); padding:6px 9px 7px; min-width:0; }
+  .stagesum .ss-sec h4 { display:flex; align-items:baseline; gap:6px;
+              font-size:10px; font-weight:700; letter-spacing:.07em;
+              text-transform:uppercase; color:var(--mut); margin:0 0 4px; }
+  .stagesum .ss-pg { margin-left:auto; font:inherit; font-family:var(--mono);
+              font-size:10px; font-weight:400; letter-spacing:0; text-transform:none;
+              color:var(--mut); background:none; border:1px solid var(--line);
+              border-radius:5px; padding:0 5px; cursor:pointer; }
+  .stagesum .ss-pg:hover { color:var(--carmine); border-color:var(--carmine); }
+  .stagesum dl { display:grid; grid-template-columns:minmax(0, 1fr) auto;
+              gap:1px 10px; margin:0; font-size:11.5px; }
+  .stagesum dt { color:var(--mut); overflow:hidden; text-overflow:ellipsis;
+              white-space:nowrap; }
+  .stagesum dd { margin:0; font-family:var(--mono); color:var(--ink);
+              text-align:right; font-variant-numeric:tabular-nums; }
+  .stagesum dd.nil { color:var(--mut); }
+  .stagesum .ss-miss { font-size:11.5px; color:var(--mut); font-style:italic; }
   .legendrow { display:flex; align-items:flex-start; gap:14px; padding:2px 18px 10px; }
   /* Controls that appear and disappear between stages keep their box, so the
      row stays put instead of reflowing under the cursor. visibility also
@@ -844,6 +884,8 @@ so they are not exported">Delete</button>
           <div class="legend" id="pv-legend"></div>
         </div>
         <div class="timewarn" id="timewarn" hidden></div>
+        <!-- DRAFT (#767): this stage's row from each Liberty stage sheet -->
+        <details class="stagesum" id="stagesum" hidden></details>
         <div class="canvaswrap" id="graphwrap"><canvas id="graph" width="1120" height="440"></canvas></div>
         <div class="stagerule" id="stagerule" hidden></div>
         <div class="canvaswrap" id="origwrap" hidden>
@@ -2421,6 +2463,7 @@ function setPreviewMode(mode) {
   $("stagerule").hidden = isSum || isTable;
   if (isTable) $("timewarn").hidden = true;
   if (isSum || isTable) $("origwrap").hidden = true;
+  if (isSum || isTable) $("stagesum").hidden = true;     // a stage's own panel
   $("sumwrap").hidden = !isSum;
 }
 
@@ -2474,6 +2517,7 @@ function renderStageRule(item) {
 function showStage(entry, well, item) {
   setPreviewMode("graph");
   renderStageRule(item);
+  renderStageSummary(entry, item);      // DRAFT (#767)
   const M = item.meta;
   // the full file name, not the UWI — the UWI is already in the sub-line and
   // several files can share one
@@ -2523,6 +2567,198 @@ function showStage(entry, well, item) {
   renderDlbar(well);
   pushStacked();      // the stacked window follows whatever is on screen here
   updateTableBtn();
+}
+
+// ---------- Stage summary: DRAFT prototype for #767 ----------
+//
+// Carmine, #767: "assemble the drop down of summary stage data from many pages
+// of multi stage tables lets start with LIB type". Liberty prints its
+// wellbore, pressure, proppant and fluid sheets as grids keyed on the stage
+// number (liberty_summary.parse_stage_sheets, published by pipeline.py as
+// "... Summary (Liberty)" tables). This lays the selected chart's row from
+// each of them out above the chart, one small section per sheet.
+//
+// A first shape for the client to react to, not a finished view, and the panel
+// says DRAFT on its face. It only READS the tables the file already has:
+// nothing here changes a table, a chart or an export. Kept to new functions
+// plus one line in showStage and one in setPreviewMode, so it is easy to move
+// or rip out once the real shape is agreed.
+
+// Which Liberty stage sheet a table is, by the title pipeline.py publishes it
+// under, or null for every other table (other providers' tables never match).
+function stageSheetKind(title) {
+  const t = String(title || "");
+  if (!/\(Liberty\)\s*$/.test(t)) return null;
+  if (/^Wellbore Summary\b/i.test(t)) return { kind: "wellbore", label: "Wellbore", order: 0 };
+  if (/^Pressure Summary\b/i.test(t)) return { kind: "pressure", label: "Pressure", order: 1 };
+  if (/^Proppant Summary\b/i.test(t)) return { kind: "proppant", label: "Proppant", order: 2 };
+  if (/^Fluid Summary\b/i.test(t)) return { kind: "fluid", label: "Fluid", order: 3 };
+  return null;
+}
+
+// The stage NUMBER a chart key or a sheet's Stage cell stands for. A chart key
+// carries qualifiers the sheets never print — "4 (2)" is a second chart for
+// stage 4, "4 Plug Slip" an aborted run of it — and a cell can arrive as "04"
+// or as a number. The leading number is what joins them, read the way stageNum
+// already sorts the stage list: the first integer in the name. null when there
+// is no number at all ("?"), so such a chart joins nothing.
+function stageJoinNum(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return Number.isInteger(v) && v >= 0 ? v : null;
+  const m = String(v).match(/\d+/);
+  return m ? +m[0] : null;
+}
+
+// -> { n, charts:[label], sections:[...] } or null when the filing carries
+// none of Liberty's stage sheets. `label` is the selected chart's name and
+// `labels` every chart's, so several charts on one stage can be said out loud.
+// A section is { kind, label, title, pages, fields, nrows, first, last }:
+// fields is [{ name, value }] for the matching row, or null when the sheet
+// has no row for this stage — reported, never hidden.
+function stageSummary(tables, groups, label, labels) {
+  const sheets = [];
+  for (const t of tables || []) {
+    const k = t && stageSheetKind(t.title);
+    if (!k || !Array.isArray(t.columns) || !Array.isArray(t.rows)) continue;
+    if (sheets.some(s => s.kind === k.kind)) continue;     // one per sheet
+    sheets.push({ ...k, table: t });
+  }
+  if (!sheets.length) return null;
+  sheets.sort((a, b) => a.order - b.order);
+  const n = stageJoinNum(label);
+  const charts = n === null ? []
+    : (labels || []).filter(l => stageJoinNum(l) === n).map(String);
+  const sections = sheets.map(s => {
+    const cols = s.table.columns;
+    // By the time a table reaches the Lab, pipeline.py has put UWI in front
+    // of Stage and joined Stage Label / Date / Start Time in after it, from
+    // the CHARTS (_join_stage_meta). Those are the same in every section and
+    // are not what the sheet printed, so the panel leaves them out.
+    let ki = cols.findIndex(c => /^\s*stage(\s*no\.?)?\s*$/i.test(String(c)));
+    if (ki < 0) ki = 0;
+    const skip = new Set([ki]);
+    cols.forEach((c, i) => {
+      if (/^\s*(uwi|stage label|date|start time)\s*$/i.test(String(c))) skip.add(i);
+    });
+    // the pages the sheet was printed on, from the Summary view's own groups
+    // (the table result itself does not carry them)
+    const pages = [];
+    for (const g of groups || [])
+      if (g && g.kind === s.kind)
+        for (const p of g.pages || []) if (!pages.includes(p)) pages.push(p);
+    const nums = s.table.rows.map(r => r && stageJoinNum(r[ki]))
+      .filter(x => x !== null);
+    const rows = n === null ? []
+      : s.table.rows.filter(r => r && stageJoinNum(r[ki]) === n);
+    const fields = rows.length
+      ? cols.map((c, i) => ({ name: String(c), value: rows[0][i] }))
+            .filter((_f, i) => !skip.has(i))
+      : null;
+    return { kind: s.kind, label: s.label, title: s.table.title, pages, fields,
+             nrows: rows.length,
+             first: nums.length ? Math.min(...nums) : null,
+             last: nums.length ? Math.max(...nums) : null };
+  });
+  return { n, charts, sections };
+}
+
+function stageSumPages(pages) {
+  if (!pages.length) return "";
+  const lo = Math.min(...pages), hi = Math.max(...pages);
+  return pages.length === 1 ? `p. ${lo}`
+    : hi - lo + 1 === pages.length ? `pp. ${lo}–${hi}` : `pp. ${pages.join(", ")}`;
+}
+
+function renderStageSummary(entry, item) {
+  const box = $("stagesum");
+  const file = entry && entry.name;
+  const label = item && item.type === "stage" ? String(stageLabel(item, file)) : "";
+  const labels = ((entry && entry.secItems) || [])
+    .filter(it => it.type === "stage").map(it => String(stageLabel(it, file)));
+  const S = item && item.type === "stage"
+    ? stageSummary(entry._tables, entry.summary, label, labels) : null;
+  if (!S) { box.hidden = true; box.innerHTML = ""; return; }
+
+  if (!box.dataset.ready) {          // once: the open/closed choice, and clicks
+    box.dataset.ready = "1";
+    try { box.open = localStorage.getItem("f2c.stageSumOpen") === "1"; }
+    catch (e) { /* private mode — it just starts closed */ }
+    box.addEventListener("toggle", () => {
+      try { localStorage.setItem("f2c.stageSumOpen", box.open ? "1" : "0"); }
+      catch (e) { /* not remembered, nothing else lost */ }
+    });
+    box.addEventListener("click", ev => {
+      const b = ev.target.closest(".ss-pg");
+      if (!b || !current) return;
+      ev.preventDefault();
+      stageSumOpenPage(current.entry, b.dataset.kind, +b.dataset.page);
+    });
+  }
+
+  const E = escHtml;
+  const have = S.sections.filter(s => s.fields).length;
+  const head = S.n === null
+    ? `chart ${E(label)} · no stage number`
+    : `stage ${S.n} · ${have} of ${S.sections.length} sheet`
+      + `${S.sections.length > 1 ? "s" : ""} print it`;
+  const notes = [];
+  if (S.n === null)
+    notes.push(`This chart's name (<b>${E(label)}</b>) carries no stage number, `
+      + `so it cannot be matched to a row of the stage sheets.`);
+  else if (S.charts.length > 1)
+    notes.push(`<b>${S.charts.length} charts</b> carry stage ${S.n} `
+      + `(${S.charts.map(E).join(", ")}). The sheets print one row per stage, `
+      + `so every one of them shows this same row.`);
+  else if (label.trim() !== String(S.n))
+    notes.push(`Matched on <b>${S.n}</b>, the stage number in this chart's `
+      + `name (${E(label)}).`);
+  const secs = S.sections.map(s => {
+    const pg = stageSumPages(s.pages);
+    const pgBtn = pg
+      ? `<button type="button" class="ss-pg" data-kind="${escAttr(s.kind)}" `
+        + `data-page="${s.pages[0]}" title="${escAttr(s.title)} — printed on `
+        + `${escAttr(pg)}. Click to see the page.">${E(pg)}</button>` : "";
+    let body;
+    if (s.fields) {
+      body = `<dl>` + s.fields.map(f => {
+        const nil = f.value === null || f.value === undefined || f.value === "";
+        return `<dt title="${escAttr(f.name)}">${E(f.name)}</dt>`
+          + `<dd${nil ? ' class="nil" title="blank on the sheet"' : ""}>`
+          + `${nil ? "—" : E(f.value)}</dd>`;
+      }).join("") + `</dl>`
+        + (s.nrows > 1 ? `<div class="ss-miss">${s.nrows} rows carry this `
+                         + `stage; showing the first.</div>` : "");
+    } else {
+      body = `<div class="ss-miss">Not printed for this stage`
+        + (s.first !== null ? ` — the sheet lists stages ${s.first}–${s.last}.`
+                            : ".")
+        + `</div>`;
+    }
+    return `<section class="ss-sec"><h4>${E(s.label)}${pgBtn}</h4>${body}</section>`;
+  }).join("");
+  box.innerHTML =
+    `<summary><span class="ss-h">Stage summary</span>`
+    + `<span class="ss-sub">${head}</span>`
+    + `<span class="ss-draft" title="Prototype for #767 — what it shows and `
+    + `where it sits are still to be agreed">DRAFT</span></summary>`
+    + `<div class="ss-body">`
+    + notes.map(x => `<p class="ss-note">${x}</p>`).join("")
+    + `<div class="ss-grid">${secs}</div></div>`;
+  box.hidden = false;
+}
+
+// "p. 125" in a section: open that sheet in the Summary view, on that page —
+// Carmine wants the TEXT sheet these values came from, not the image twin.
+function stageSumOpenPage(entry, kind, page) {
+  if (!entry || !entry.hasToggle) return;
+  const it = (entry.sumItems || []).find(x => x.type === "summary"
+    && x.group && x.group.kind === kind && (x.group.pages || []).includes(page));
+  if (!it) return;
+  entry.viewMode = "summary";
+  entry.items = entry.sumItems;
+  selectFile(entry);
+  it.pageIdx = it.group.pages.indexOf(page);
+  selectItem(entry, entry.well, it, it._row);
 }
 
 // ---------- "Our Terms": one curated table shape across every provider ----------
