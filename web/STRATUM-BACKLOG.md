@@ -47,8 +47,18 @@ each entry.
   Follow-ups: 10 wells have a printed log PDF only -- a validated PDF reader
   (draft in ~/stratum-lab/gamma_from_pdf_experimental.py) would make them
   measured; vendor normalisation would sharpen estimates.
-- **Found: GMMR = ground-motion monitoring reports** (miniSEED waveforms +
-  PDF) filed per well during fracs -- the per-pad seismic record. Not yet used.
+- **Engineering-grade seismicity** (2026-10-03). build_seismic.py merges the
+  BC Seismic Research Consortium's relocated catalogues (May 2022-Apr 2024,
+  ~250-600 m location error) over Earthquakes Canada, and matches each event to
+  the frac stage pumping nearby (Lab chart clocks / BCER frac start times, local
+  UTC-7). A control (dates shifted +-30/60 days) says ~68% of matches are
+  beyond chance; matches are labelled "coincides with", not cause, because
+  zipper fracs keep some stage pumping at all times. build_gmmr.py parses the
+  ground-motion monitoring reports (Spectraseis, Nanometrics) filed per well:
+  triggers, peak %g vs the 0.8 %g BCER threshold, felt reports, and the stages
+  pumping when each trigger fired. Shown in the pad panel (3D) and as markers on
+  the well's stage chart. Older relocated catalogues are PDF-only; GMMR
+  miniSEED waveforms are not drawn yet.
 
 ## Asked for, not started
 

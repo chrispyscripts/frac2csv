@@ -196,7 +196,8 @@ function render() {
     fetch("data/seismic/events.json").then(r => r.ok ? r.json() : null).then(q => {
       if (!q) return;
       const feats = q.rows.map(r => ({ type: "Feature", geometry: { type: "Point", coordinates: [r[2], r[1]] },
-        properties: { t: r[0].slice(0, 10), depth: r[3], mag: r[4], type: r[5], fixed: r[6], industry: r[7] } }));
+        properties: { t: r[0].slice(0, 16).replace("T", " ") + " UTC", depth: r[3], mag: r[4], type: r[5], fixed: r[6], industry: r[7],
+                      src: r[8], herr: r[9], derr: r[10], m: r[11] ? r[11].join("|") : "" } }));
       map.addSource("quakes", { type: "geojson", data: fc(feats) });
       map.addLayer({ id: "quakes", type: "circle", source: "quakes", layout: { visibility: "none" },
         paint: { "circle-radius": ["interpolate", ["linear"], ["get", "mag"], 0, 2, 2, 4, 3, 7, 4.6, 13],
@@ -208,7 +209,16 @@ function render() {
         const p = e.features[0].properties;
         if (popup) popup.remove();
         popup = new maplibregl.Popup({ closeButton: true, maxWidth: "300px" }).setLngLat(e.lngLat)
-          .setHTML(`<div class="pop"><b>M${p.mag} ${p.type} · ${p.t}</b><div class="facts">${p.fixed ? "depth not solved by the network" : "depth " + Number(p.depth).toFixed(1) + " km"}${p.industry ? "<br>suspected industry-related" : ""}<br>Earthquakes Canada (NRCan)</div></div>`).addTo(map);
+          // built from text nodes: the catalogue's fields are data, not markup
+          .setHTML(`<div class="pop"><b></b><div class="facts"></div></div>`).addTo(map);
+        const m = p.m ? p.m.split("|") : null;
+        popup.getElement().querySelector("b").textContent = `M${p.mag} ${p.type} · ${p.t}`;
+        popup.getElement().querySelector(".facts").innerText = [
+          p.src === "bcsrc" ? `relocated by the BC Seismic Research Consortium · ±${p.herr || "?"} m across, ±${p.derr || "?"} m deep` : "Earthquakes Canada (NRCan) · km-scale location",
+          p.fixed ? "depth not solved by the network" : `depth ${Number(p.depth).toFixed(1)} km below sea level`,
+          p.industry ? "catalogue: suspected industry-related" : null,
+          m ? `coincides with the frac of WA ${m[0]}: stage ${m[1]} ${m[2] === "after" ? "had ended " + m[3] + " min before" : "was pumping"}, ${m[4]} km away` : null,
+        ].filter(Boolean).join("\n");
       });
     }).catch(() => {});
     map.on("mouseenter", "pads", () => map.getCanvas().style.cursor = "pointer");

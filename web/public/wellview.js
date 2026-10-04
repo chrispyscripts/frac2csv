@@ -30,6 +30,7 @@ let sel = 0;
 let view = { t0: 0, t1: 1 };   // seconds into the selected stage
 let hoverT = null, drag = null;
 let hidden = new Set();
+let QUAKES = [];       // earthquakes the seismic build matched to this well's stages
 try { hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* private mode */ }
 
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–'
@@ -48,6 +49,7 @@ function buildStages(d) {
   const units = d.units || {};
   return (d.stages || []).filter(s => s.series).map(s => {
     const clock0 = s.date && s.start ? new Date(`${s.date}T${s.start}`).getTime() : NaN;
+    const utc0 = s.date && s.start ? Date.parse(`${s.date}T${s.start.slice(0, 8)}-07:00`) : NaN;
     const channels = [];
     for (const def of SERIES) {
       const src = s.series[def.k];
@@ -63,7 +65,7 @@ function buildStages(d) {
     }
     const n = Math.max(0, ...channels.map(c => c.values.length));
     return { label: String(s.label), n, dsec: s.step_s || 1, date: s.date || '', start: s.start || '',
-             clock0: isFinite(clock0) ? clock0 : null, top_m: s.top_m, base_m: s.base_m,
+             clock0: isFinite(clock0) ? clock0 : null, utc0: isFinite(utc0) ? utc0 : null, top_m: s.top_m, base_m: s.base_m,
              placed: !!s.placed, minutes: s.minutes, channels };
   }).filter(s => s.channels.length)
     .sort((a, b) => (parseFloat(a.label) - parseFloat(b.label)) || (a.label < b.label ? -1 : 1));
@@ -122,9 +124,34 @@ async function load() {
     return;
   }
   renderSteps();
+  loadQuakes();
   const want = new URLSearchParams(location.search).get('stage');
   const i = want != null ? STAGES.findIndex(s => s.label === want) : -1;
   selectStage(i >= 0 ? i : 0);
+}
+
+// quakes are an extra: the page works without them
+async function loadQuakes() {
+  try {
+    const q = await (await fetch('data/seismic/events.json')).json();
+    QUAKES = q.rows.filter(r => r[11] && r[11][0] === String(WA).padStart(5, '0'))
+      .map(r => ({ t: Date.parse(r[0]), mag: r[4], src: r[8], herr: r[9], stage: String(r[11][1]), rel: r[11][2],
+                   mins: r[11][3], km: r[11][4], dz: r[11][5] }));
+  } catch (e) { QUAKES = []; }
+  // the pad's own accelerometer: triggers fired while one of this well's stages pumped
+  try {
+    const g = await (await fetch('data/seismic/gmmr.json')).json(), me = String(WA).padStart(5, '0'), seen = new Set();
+    for (const r of Object.values(g)) for (const x of r.triggers || []) for (const [wa, st] of x.pumping || []) {
+      const k = x.t + st;
+      if (wa === me && !seen.has(k)) { seen.add(k); QUAKES.push({ t: Date.parse(x.t), stage: String(st), gm: x.pga_pct_g, vendor: r.vendor }); }
+    }
+  } catch (e) { /* no reports */ }
+  if (!QUAKES.length) return;
+  document.querySelectorAll('#wc-steps button').forEach((b, i) => {
+    const n = QUAKES.filter(q => q.stage === STAGES[i].label).length;
+    if (n) { b.classList.add('qk'); b.title += ` · ${n} earthquake${n > 1 ? 's' : ''} coincide`; }
+  });
+  renderInfo(); drawChart();
 }
 
 function renderSteps() {
@@ -165,6 +192,10 @@ function renderInfo() {
   if (st.date) bits.push(`${st.date} ${st.start.slice(0, 5)}`);
   bits.push(`${fmt(tMax(st) / 60)} min`);
   if (st.top_m != null) bits.push(`${fmt(st.top_m, 1)}${st.base_m != null && st.base_m !== st.top_m ? '–' + fmt(st.base_m, 1) : ''} m MD${st.placed ? ' (placed by number)' : ''}`);
+  const qs = QUAKES.filter(q => q.stage === st.label);
+  const eq = qs.filter(q => q.gm == null), gm = qs.filter(q => q.gm != null);
+  if (eq.length) bits.push(`<span class="wc-qk">${eq.length} earthquake${eq.length > 1 ? 's' : ''} coincide (largest M${Math.max(...eq.map(q => q.mag || 0))})</span>`);
+  if (gm.length) bits.push(`<span class="wc-qk">pad accelerometer triggered (${Math.max(...gm.map(q => q.gm))} %g)</span>`);
   $('wc-stageinfo').innerHTML = bits.join(' · ');
 }
 
@@ -292,6 +323,28 @@ function drawChart() {
     ctx.strokeStyle = c.color; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.stroke();
   }
   ctx.restore();
+
+  // earthquakes that coincided with this stage, at the moment they happened
+  if (st.utc0 != null) {
+    ctx.save(); ctx.font = '11px ui-monospace,Menlo,monospace'; ctx.textAlign = 'left';
+    QUAKES.filter(q => q.stage === st.label).forEach((q, k) => {
+      const t = (q.t - st.utc0) / 1000;
+      if (t < view.t0 || t > view.t1) return;
+      const x = X(t);
+      ctx.strokeStyle = '#ff5fa2'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, T); ctx.lineTo(Math.round(x) + .5, T + plotH); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = '#ff5fa2';
+      ctx.beginPath(); ctx.arc(x, T + 6, 4 + Math.max(0, q.mag || 0) * 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd6e7';
+      const label = q.gm != null ? `ground motion at pad · ${q.gm} %g${q.gm >= 0.8 ? ' (over BCER threshold)' : ''}`
+        : `M${q.mag} · ${q.km} km` + (q.src === 'bcsrc' ? (q.herr ? ` ±${(q.herr / 1000).toFixed(1)}` : '') : ' (catalogue, km-scale)');
+      // near the right edge the label goes on the line's left
+      const flip = x + 8 + ctx.measureText(label).width > L + plotW;
+      ctx.textAlign = flip ? 'right' : 'left';
+      ctx.fillText(label, flip ? x - 8 : x + 8, T + 12 + k * 13);
+    });
+    ctx.restore();
+  }
 
   // hover: a rule and the reading of every shown curve at that sample
   if (hoverT != null && vis.length) {

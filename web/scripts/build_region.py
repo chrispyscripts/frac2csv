@@ -133,6 +133,7 @@ def read_fracs(was):
             types = [r.get(f"PROPPANT TYPE{i}", "").strip() for i in range(1, 5)]
             stages.append({
                 "n": int(num(n) or 0), "label": n, "date": iris_date(r["COMPLTN DATE"]),
+                "start": (r.get("FRAC START TIME") or "").strip()[:8],    # local, as filed
                 "top_m": num(r["COMPLTN TOP DEPTH (m)"]), "base_m": num(r["COMPLTN BASE DEPTH (m)"]),
                 "proppant_t": round(sum(p for p in prop if p), 2) if any(prop) else None,
                 "proppant_types": ", ".join(t for t, p in zip(types, prop) if t and p) or None,
@@ -279,7 +280,7 @@ def main():
             else:
                 doc = {"v": 2, "well": w, "pad": {"id": p["id"], "name": p["name"], "lat": p["lat"], "lon": p["lon"]},
                        "file": None, "units": {}, "stages": [], "logs": [], "notes": [],
-                       "bcer_stages": [{**s, "placed": False, "start": "", "clock_chart": False, "minutes": 0,
+                       "bcer_stages": [{"start": "", **s, "placed": False, "clock_chart": False, "minutes": 0,
                                         "step_s": 0, "page": None, "series": {}, "peaks": {},
                                         "notes": ["filed with the BCER; treatment curves await the Lab export"]}
                                        for s in fr["stages"]]}
