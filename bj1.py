@@ -557,6 +557,42 @@ def _letters(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+_STAGE_QUAL = re.compile(r"-\s*Stage\s*(\d+(?:\.\d+)?)"
+                         r"(?:\s*([A-Za-z][A-Za-z0-9. ]{0,19}))?\s*$")
+# ...and the same description set off by a DASH: 01251 titles its two charts
+# of stage 4 "- Stage 04 - Plug Slip" and "- Stage 04 - Re-attempt", which the
+# pattern above does not match, so both came out as stage "4" and pipeline
+# could only number them "4" and "4 (2)" with a note that nothing printed
+# tells them apart — when the titles do. Tried ONLY where the pattern above
+# finds nothing, so no title it reads changes key. The description may carry
+# a hyphen ("Re-Attempt") or open with an ordinal ("1st Re-Attempt"), and has
+# to hold a word: "- Stage 10 - 2" is not a description.
+_STAGE_DASH_QUAL = re.compile(r"-\s*Stage\s*(\d+(?:\.\d+)?)\s*[-–—]\s*"
+                              r"([A-Za-z0-9][A-Za-z0-9.\- ]{0,29}?)\s*$")
+
+
+def _qualified_stage(title, stage):
+    """The stage key with the title's printed description kept: "6" under
+    "... - Stage 06 Plug Slip" -> "6 Plug Slip", "4" under "... - Stage 04 -
+    Re-attempt" -> "4 Re-attempt", "10" under "... - Stage 10.1" -> "10.1".
+    Unchanged unless the title's number is the one `stage` already holds."""
+    ms = _STAGE_QUAL.search(title)
+    if ms is None:
+        ms = _STAGE_DASH_QUAL.search(title)
+        if ms is not None and not re.search(r"[A-Za-z]{2}", ms.group(2)):
+            ms = None
+    if ms is None:
+        return stage
+    head, _dot, sub = ms.group(1).partition(".")
+    key = str(int(head)) + (f".{sub}" if sub else "")
+    qual = " ".join((ms.group(2) or "").split())
+    if qual:
+        key += " " + qual
+    if stage == str(int(head)) and key != stage:
+        return key
+    return stage
+
+
 def _start_date(first_label, t_lo):
     """The calendar day of the chart's START, as 'YYYY-MM-DD' — or None when
     the first label's own day is not a real date.
@@ -624,16 +660,7 @@ def extract_page(page, sample_sec=1.0):
     # hold only plain word/number text, and the number must be the one already
     # read above, or nothing changes. The space before the word is optional —
     # the operators also type "Stage 36.2HRF" with no gap.
-    ms = re.search(r"-\s*Stage\s*(\d+(?:\.\d+)?)"
-                   r"(?:\s*([A-Za-z][A-Za-z0-9. ]{0,19}))?\s*$", title)
-    if ms:
-        head, _dot, sub = ms.group(1).partition(".")
-        stage = str(int(head)) + (f".{sub}" if sub else "")
-        qual = " ".join((ms.group(2) or "").split())
-        if qual:
-            stage += " " + qual
-        if meta.stage == str(int(head)) and stage != meta.stage:
-            meta.stage = stage
+    meta.stage = _qualified_stage(title, meta.stage)
 
     # time axis: slanted "Mon-DD HH:MM" labels; right bbox edge sits on
     # the gridline they annotate
