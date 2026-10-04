@@ -593,6 +593,95 @@ def _qualified_stage(title, stage):
     return stage
 
 
+_DAYS_IN = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30,
+            7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+_YEAR_SECS = 372 * 86400        # twelve 31-day months: the label clock's year
+_HALF_YEAR = 186 * 86400
+
+
+def _line_residual(pts):
+    """RMS seconds off the best straight time-vs-x line through (secs, x)."""
+    if len(pts) < 3:
+        return 0.0
+    t = np.array([p[0] for p in pts], float)
+    x = np.array([p[1] for p in pts], float)
+    A = np.vstack([np.ones_like(x), x]).T
+    coef, *_ = np.linalg.lstsq(A, t, rcond=None)
+    return float(np.sqrt(np.mean((A @ coef - t) ** 2)))
+
+
+def _calendar_clock(tpts, daytags, tlabels):
+    """Put "Mon-DD HH:MM" labels on the real calendar.
+
+    Each label is clocked as (month*31 + day) days, which runs straight
+    within a month and across the end of a 31-day one, but jumps at the end
+    of any other: "Nov-30 23:45" to "Dec-01 00:00" was two days and fifteen
+    minutes, the time fit bent, and 01793 stage 11 read as starting 19:34 and
+    lasting 837 minutes — an 80-minute chart. A synthetic chart over Apr-30,
+    or over Feb-28 in a common year, failed outright on "implausible
+    duration".
+
+    The year is not on the chart, so no calendar date can be built here. It
+    does not need to be: across a month end, every label of the later month
+    moves back by the days the earlier month is short of 31. February is 28
+    or 29 days. A "Feb-29" label settles it; otherwise the labels do, because
+    they sit on evenly spaced gridlines — whichever length puts them on one
+    straight line is the year's.
+
+    A new year ("Dec-31" .. "Jan-01") is unwrapped here too, by the same rule
+    as before (push the new-year side up one 372-day clock year); it used to
+    be done after the misread filter, which dropped one side of the year end
+    as off the line first.
+
+    tpts, daytags and tlabels are parallel here, one entry per clock label,
+    each carrying the same seconds. A page with no clock labels, or labels
+    in one month, comes back exactly as it went in.
+    """
+    if not daytags or len(daytags) != len(tpts):
+        return tpts, daytags, tlabels
+    secs = [d[0] for d in daytags]
+    # new year first, so the months below run in calendar order
+    lo = min(secs)
+    if max(secs) - lo > _HALF_YEAR:
+        secs = [s + _YEAR_SECS if s - lo < _HALF_YEAR else s for s in secs]
+    order = sorted(range(len(secs)), key=lambda i: secs[i])
+    months = []
+    for i in order:
+        m = daytags[i][1]
+        if not months or months[-1] != m:
+            months.append(m)
+    if len(months) > 1:
+        has_29 = any(mo == 2 and d == 29 for _s, mo, d in daytags)
+        for a, b in zip(months, months[1:]):
+            if b != a % 12 + 1:
+                continue                      # not consecutive: leave it
+            first_b = min(secs[i] for i in range(len(secs))
+                          if daytags[i][1] == b and secs[i] >= min(
+                              secs[j] for j in range(len(secs))
+                              if daytags[j][1] == a))
+            if a == 2 and not has_29:
+                cands = []
+                for dim in (28, 29):
+                    short = (31 - dim) * 86400
+                    trial = [s - short if s >= first_b else s for s in secs]
+                    cands.append((_line_residual(
+                        [(trial[i], tpts[i][1]) for i in range(len(trial))]), dim))
+                dim = min(cands)[1]
+            elif a == 2:
+                dim = 29
+            else:
+                dim = _DAYS_IN[a]
+            short = (31 - dim) * 86400
+            if short:
+                secs = [s - short if s >= first_b else s for s in secs]
+    if secs == [d[0] for d in daytags]:
+        return tpts, daytags, tlabels
+    tpts = [(s, x, cy) for s, (_o, x, cy) in zip(secs, tpts)]
+    daytags = [(s, mo, d) for s, (_o, mo, d) in zip(secs, daytags)]
+    tlabels = [(s, lab) for s, (_o, lab) in zip(secs, tlabels)]
+    return tpts, daytags, tlabels
+
+
 def _start_date(first_label, t_lo):
     """The calendar day of the chart's START, as 'YYYY-MM-DD' — or None when
     the first label's own day is not a real date.
@@ -686,6 +775,11 @@ def extract_page(page, sample_sec=1.0):
             # different because of typesetting
             tlabels.append((secs, f"{mon}-{int(day):02d} "
                                   f"{int(hh):02d}:{mm}"))
+    # The label clock counts every month as 31 days. Put it on the real
+    # calendar BEFORE anything fits a line through it — including the misread
+    # filter below, which would otherwise throw away one side of every month
+    # end as off the line.
+    tpts, daytags, tlabels = _calendar_clock(tpts, daytags, tlabels)
     if ocr and len(tpts) >= 3:
         # A label read off the ink can be misread, and one misread minute
         # tilts a least-squares clock across the whole chart. The labels
