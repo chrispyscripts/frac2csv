@@ -572,13 +572,57 @@ def _draw_upright(groups, scale):
             gutter * scale)
 
 
+def _read_bands(img, bands, gutter, psm):
+    """{band index: [(x0, text, conf)]} — one tesseract call over a stack."""
+    try:
+        boxes = ar.ocr_boxes(img.astype(int), psm=psm, whitelist="")
+    except Exception:
+        boxes = []
+    words = {gi: [] for gi, _a, _b in bands}
+    for b in boxes:
+        t = (b.get("text") or "").strip()
+        if not t:
+            continue
+        cy = (b["y0"] + b["y1"]) / 2.0
+        for gi, y0, y1 in bands:
+            if y0 - gutter / 2 <= cy < y1 + gutter / 2:
+                words[gi].append((b["x0"], t, b["conf"]))
+                break
+    return words
+
+
+def _string_of(ws):
+    """(text, conf) of one string's words."""
+    ws = sorted(ws)
+    t = " ".join(w[1] for w in ws)
+    t = re.sub(r"(?<=m)[*?\u00b3](?=/|\)|$)", "3", t)
+    t = t.replace("\u2014", "-").replace("\u2013", "-")
+    # The string is as sure as its least sure WORD — but a lone symbol is
+    # not a word anyone keys on. BJ titles its wells "Well Ø", tesseract
+    # reads the Ø as "@" at confidence 15 on some pages and 83 on others,
+    # and the minimum over every word threw away 01247 p222's whole title.
+    alnum = [w[2] for w in ws if any(ch.isalnum() for ch in w[1])]
+    conf = min(alnum) if alnum else min((w[2] for w in ws), default=-1.0)
+    return t, conf
+
+
+# A string the stacked read is unsure of is read again ON ITS OWN. Tesseract
+# reads a stack as one block, so what it makes of one line depends on the
+# lines around it: 01250 p305's title came back "...-17Wé6 - Well C" at 51
+# once its neighbours' tick labels read whole, and "...-17W6" at 92 when they
+# did not. Alone, as a single line, it reads the same every time.
+_OUTLINE_REREAD_BELOW = 80.0
+_OUTLINE_REREAD_MAX = 12          # per page: a bound on the extra calls
+
+
 def outline_spans(page, accept=None):
     """[{text, rect, dir, n, color, conf}] for a page whose labels are outlines.
 
     `rect` is the INK box of the string in page space (unrotated, as
     get_drawings reports it) — tighter than a PDF span's line box, which
     callers that place labels on gridlines must allow for. `conf` is the
-    lowest word confidence in the string, -1 when nothing read.
+    lowest confidence of any word in the string that holds a letter or a
+    digit, -1 when nothing read.
 
     `accept(groups)` is the caller's own cheap look at the geometry before
     any OCR is paid for; a page it refuses comes back [] and is remembered.
@@ -594,32 +638,18 @@ def outline_spans(page, accept=None):
         if groups and len(groups) <= OUTLINE_MAX_GROUPS and available() \
                 and (accept is None or accept(groups)):
             img, bands, gutter = _draw_upright(groups, OUTLINE_SCALE)
-            try:
-                boxes = ar.ocr_boxes(img.astype(int), psm=6, whitelist="")
-            except Exception:
-                boxes = []
-            words = {gi: [] for gi, _a, _b in bands}
-            for b in boxes:
-                t = (b.get("text") or "").strip()
-                if not t:
-                    continue
-                cy = (b["y0"] + b["y1"]) / 2.0
-                for gi, y0, y1 in bands:
-                    if y0 - gutter / 2 <= cy < y1 + gutter / 2:
-                        words[gi].append((b["x0"], t, b["conf"]))
-                        break
-            for gi, g in enumerate(groups):
-                ws = sorted(words[gi])
-                t = " ".join(w[1] for w in ws)
-                t = re.sub(r"(?<=m)[*?³](?=/|\)|$)", "3", t)
-                t = t.replace("—", "-").replace("–", "-")
-                # The string is as sure as its least sure WORD — but a lone
-                # symbol is not a word anyone keys on. BJ titles its wells
-                # "Well Ø", tesseract reads the Ø as "@" at confidence 15 on
-                # some pages and 83 on others, and the minimum over every
-                # word threw away 01247 p222's whole title over it.
-                alnum = [w[2] for w in ws if any(ch.isalnum() for ch in w[1])]
-                conf = min(alnum) if alnum else min((w[2] for w in ws), default=-1.0)
+            words = _read_bands(img, bands, gutter, psm=6)
+            read = [_string_of(words[gi]) for gi in range(len(groups))]
+            # longest first: a title outranks a stray tick when the bound bites
+            again = sorted((gi for gi, (t, c) in enumerate(read)
+                            if c < _OUTLINE_REREAD_BELOW and groups[gi]["n"] >= 2),
+                           key=lambda gi: -groups[gi]["n"])
+            for gi in again[:_OUTLINE_REREAD_MAX]:
+                im1, b1, g1 = _draw_upright([groups[gi]], OUTLINE_SCALE)
+                t1, c1 = _string_of(_read_bands(im1, b1, g1, psm=7)[0])
+                if c1 > read[gi][1]:
+                    read[gi] = (t1, c1)
+            for g, (t, conf) in zip(groups, read):
                 out.append({"text": t, "rect": fitz.Rect(g["rect"]),
                             "dir": g["dir"], "n": g["n"],
                             "color": g["color"], "conf": conf})
