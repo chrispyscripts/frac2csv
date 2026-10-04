@@ -12,7 +12,9 @@ release -- in a process of its own with a time limit, writing
 <out>/<WA>/<pdf name>-seconds.csv plus the stage tables the Lab finds. A PDF
 leaves a .done marker (status, stages, seconds taken) whether or not it read,
 so a batch stopped at any point picks up where it left off. One line per PDF
-goes to <out>/progress.log.
+goes to <out>/progress.log. A PDF over the time limit (--limit, 1800 s) is
+marked timed out; run again with --retry-timeouts and a longer --limit to
+give those another go.
 """
 import argparse
 import csv
@@ -37,18 +39,30 @@ def one(lab, pdf, out_dir):
                       "seconds": round(time.time() - t0, 1)}))
 
 
+def done(args, marker):
+    """A PDF already tried; with --retry-timeouts one that ran out of time isn't."""
+    if not os.path.exists(marker):
+        return False
+    if args.retry_timeouts:
+        try:
+            return json.load(open(marker)).get("status") != "timeout"
+        except ValueError:
+            return False
+    return True
+
+
 def run(args, row):
     wa, pdf = row
     out_dir = os.path.join(args.out, wa)
     base = os.path.splitext(os.path.basename(pdf))[0]
     marker = os.path.join(out_dir, base + ".done")
-    if os.path.exists(marker):
+    if done(args, marker):
         return None
     os.makedirs(out_dir, exist_ok=True)
     t0 = time.time()
     try:
         p = subprocess.run([sys.executable, __file__, "--one", pdf, "--lab", args.lab, "--out", out_dir],
-                           capture_output=True, text=True, timeout=LIMIT_S)
+                           capture_output=True, text=True, timeout=args.limit)
         last = (p.stdout.strip().splitlines() or [""])[-1]
         res = json.loads(last) if p.returncode == 0 and last.startswith("{") else \
             {"status": "error", "error": (p.stderr.strip().splitlines() or ["no output"])[-1][:300]}
@@ -69,12 +83,14 @@ def main():
     ap.add_argument("--jobs")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--one")
+    ap.add_argument("--limit", type=int, default=LIMIT_S, help="seconds before a PDF is recorded as timed out")
+    ap.add_argument("--retry-timeouts", action="store_true", help="read again the PDFs that timed out before")
     a = ap.parse_args()
     if a.one:
         return one(a.lab, a.one, a.out)
     rows = [(r["WA"].zfill(5), r["PDF"]) for r in csv.DictReader(open(a.jobs), delimiter="\t")]
     os.makedirs(a.out, exist_ok=True)
-    todo = [r for r in rows if not os.path.exists(os.path.join(a.out, r[0], os.path.splitext(os.path.basename(r[1]))[0] + ".done"))]
+    todo = [r for r in rows if not done(a, os.path.join(a.out, r[0], os.path.splitext(os.path.basename(r[1]))[0] + ".done"))]
     with open(os.path.join(a.out, "progress.log"), "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} batch {os.path.basename(a.jobs)}: {len(rows)} PDFs, {len(todo)} to read, {a.workers} workers\n")
     with ThreadPoolExecutor(a.workers) as ex:
