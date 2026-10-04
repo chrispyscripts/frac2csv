@@ -29,8 +29,8 @@ each entry.
   summaries. The map lists the pads in view and opens 3D / wine rack from a
   pad's popup; Change View opens 3D on the pads in view (nearest 30). Wells
   without Lab curves show their filed stages as a table.
-  Pending: the 2TB drive's Lab CSVs for ~113 more region wells (drive was
-  unplugged), and gamma beyond Gundy (eLibrary LAS fetch).
+  The 2TB drive's Lab CSVs added 113 more region wells' curves (199 in all).
+  Pending: gamma beyond Gundy (eLibrary LAS fetch).
 
 ## Asked for, not started
 
