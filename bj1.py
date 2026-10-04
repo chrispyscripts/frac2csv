@@ -7,6 +7,7 @@ spans beside them (a shared axis names two series in one span). Legend
 names are black text with a colored dash stroke to the left, so the
 color↔series map comes from the dash nearest each name (Canyon-style).
 """
+import datetime
 import re
 from collections import defaultdict
 
@@ -556,6 +557,33 @@ def _letters(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+def _start_date(first_label, t_lo):
+    """The calendar day of the chart's START, as 'YYYY-MM-DD' — or None when
+    the first label's own day is not a real date.
+
+    `first_label` is (secs, year, month, day) of the earliest clock label and
+    `t_lo` the first curve point, both on the label clock (day*86400 + time of
+    day, see extract_page). The date used to be the first label's day while
+    the start time is the first curve point's, so a chart whose curves begin
+    just before a "00:00" label came out dated a day late: 00730 stage 06
+    prints "Jul-28 00:00" as its first label and its pressure is already up
+    at 23:58 — read as 2024-07-28 23:58:04, a day after it ran and after
+    stage 07 (Jul-28 04:18). The day is the label's day moved by however many
+    midnights lie between that label and the start, counted on the real
+    calendar, so the day before "Jul-01 00:00" is Jun 30 and the day before
+    "Jan-01 00:00" is in the year before. A chart that starts on its first
+    label's day — every chart whose curves start after that label and before
+    the next midnight — keeps exactly the date it had.
+    """
+    secs0, year, mon, day = first_label
+    shift = int(t_lo // 86400) - int(secs0 // 86400)
+    try:
+        d = datetime.date(year, mon, day) + datetime.timedelta(days=shift)
+    except (ValueError, OverflowError):
+        return None
+    return d.isoformat()
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, {name: values}, {name: unit})"""
     spans = _spans(page)
@@ -682,11 +710,15 @@ def extract_page(page, sample_sec=1.0):
                    for s, mo, d in daytags]
         tlabels = [(s + YEAR, lab) if s - lo < 186 * 86400 else (s, lab)
                    for s, lab in tlabels]
-    # year is absent from the chart — resolve it from the document's tables
+    # year is absent from the chart — resolve it from the document's tables.
+    # This is the FIRST LABEL's day; once the curves are read it is moved to
+    # the day the chart actually starts on (see _start_date, below).
+    first_label = None
     if daytags:
-        _, start_mon, start_day = min(daytags)
+        secs0, start_mon, start_day = min(daytags)
         year = _resolve_year(page.parent, start_mon, start_day)
         meta.date = f"{year:04d}-{start_mon:02d}-{start_day:02d}"
+        first_label = (secs0, year, start_mon, start_day)
 
     # A stage can be charted twice with the SAME printed title — a zoomed
     # detail view beside the full treatment, or two genuinely separate
@@ -1017,7 +1049,9 @@ def extract_page(page, sample_sec=1.0):
     meta.start_time = (f"{int(day_sec // 3600):02d}:"
                        f"{int(day_sec % 3600 // 60):02d}:"
                        f"{int(day_sec % 60):02d}")
-    samples = np.arange(int(n / sample_sec)) * sample_sec
+    if first_label is not None and not jobmaster:
+        meta.date = _start_date(first_label, t_lo) or meta.date
+    samples =np.arange(int(n / sample_sec)) * sample_sec
     data = {name: _resample(t - t_lo, v, samples)
             for name, (t, v) in series.items()}
     # printed axis range per curve, so the Lab's y axis matches the report;
