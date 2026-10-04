@@ -1,0 +1,743 @@
+<!doctype html>
+<!-- Carmine's Lab view, copied from lab/public/ on main (e88c15d, v1.11.27) for Stratum's well page. Unpatched: it already falls back to
+     a parent frame when it has no opener.
+     Refresh by copying the Lab's file again and re-applying the patch named here. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stacked charts — Carmine's Lab</title>
+<style>
+  /* Same palette and type as the Lab window it hangs off. Light only — the
+     dark theme was removed there, and a second one here would be a second
+     set of canvas colours to keep in step. */
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  body { background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .top { display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;
+         padding:11px 18px; border-bottom:1px solid var(--line);
+         position:sticky; top:0; background:var(--bg); z-index:5; }
+  .top .meta { flex:1 1 260px; min-width:0; }
+  .wordmark { font-size:13px; font-weight:700; letter-spacing:-0.01em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .title { font-size:14px; font-weight:600; margin-top:1px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .tools { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+         color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+         padding:3px 10px; cursor:pointer; }
+  .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn:disabled { opacity:.35; pointer-events:none; }
+  .pglbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
+  .charts { padding:12px 18px 22px; }
+  .chartblock { margin-bottom:12px; }
+  .chartblock.off { opacity:.42; }
+  .chead { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
+  .chead .nm { font-size:13px; font-weight:600; flex-shrink:0; }
+  .chead .nm i { display:inline-block; width:14px; height:3px; border-radius:2px;
+                 vertical-align:middle; margin-right:6px; }
+  .chead .nm .u { color:var(--mut); font-weight:400; font-size:11.5px; }
+  .chead .rng { font-size:11px; color:var(--mut); font-family:var(--mono);
+                flex-shrink:0; }
+  .chead .ro { font-size:11.5px; color:var(--mut); font-family:var(--mono);
+               margin-left:auto; text-align:right; min-height:17px;
+               overflow:hidden; white-space:nowrap; }
+  .chead .ro b { color:var(--ink); }
+  canvas { width:100%; display:block; background:var(--panel);
+           border:1px solid var(--line); border-radius:8px; }
+  .charts canvas { cursor:crosshair; }
+  .msg { color:var(--mut); font-size:13px; padding:56px 24px; text-align:center;
+         max-width:56ch; margin:0 auto; }
+  .foot { color:var(--mut); font-size:11.5px; padding:0 18px 22px; }
+  .foot b { color:var(--carmine); }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="meta">
+      <div class="wordmark">Carmine's Lab &mdash; stacked charts</div>
+      <div class="title" id="title">&mdash;</div>
+      <div class="sub" id="sub">Waiting for the Lab window&hellip;</div>
+    </div>
+    <div class="tools">
+      <span class="pglbl" id="pglbl"></span>
+      <button type="button" class="btn" id="interp"
+              title="Bridge gaps in a curve with a straight line. Raster charts
+lose samples wherever curves cross, and the gaps break the trace. Bridged
+spans are drawn dashed — they are drawn, not measured.">Interpolate</button>
+      <button type="button" class="btn" id="missing"
+              title="Shade what is NOT measured. Two things break a trace and
+they look identical once drawn: a gap, where the chart has no ink to read, and
+a FLAT RUN, where something that is not the curve — a horizontal rule — was
+read as if it were. Gaps shade grey, flat runs carmine.">Missing Data</button>
+      <button type="button" class="btn" id="fitdata"
+              title="Scale each chart to the values in THIS file rather than to
+the axis the sheet prints. A printed axis is the same on every stage — a conc
+axis of 0..1000 whether the stage peaked at 950 or at 40 — so a small stage
+drawn against it sits in the bottom tenth of its row. Off, every chart is drawn
+against the axis its source page prints.">Fit to data</button>
+      <button type="button" class="btn" id="openpdf"
+              title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
+    </div>
+  </div>
+
+  <div class="charts" id="charts"></div>
+  <div class="msg" id="msg">Pick a stage in the Lab window &mdash; this view follows it.</div>
+  <div class="foot" id="foot">Linked to the Lab window: cycling stages there
+    (&uarr;/&darr;, or clicking a stage) redraws this view.</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+// Same-origin by construction — this page is only ever opened by the Lab.
+// file:// gives origin "null", which is not a valid postMessage target, so
+// fall back to "*" there rather than silently dropping every message.
+const ORIGIN = (location.origin && location.origin !== "null") ? location.origin : "*";
+
+// Plot padding. L/R are shared by every chart,
+// so one time position is one x position all the way down the window.
+const PAD = { L: 64, R: 14, T: 10, B: 10 };
+const AXIS_H = 28;        // extra bottom room on the last chart for time labels
+const ROW_H = 384;        // css px per chart body. 256 originally, doubled to
+                          // 512 at Carmine's ask, then back a quarter to 384
+                          // at his ask again: 512 reads well on one channel
+                          // but pushes the next one off screen, and comparing
+                          // two traces means having both in view. A channel
+                          // still gets a quarter of its own axis range in most
+                          // stages, which is why 256 was too tight — the part
+                          // being read sat in a band a few dozen pixels tall
+const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
+            ink: "#14181d", mut: "#697077" };
+
+const state = {
+  channels: [], n: 0, dsec: 1, tMax: 1, t0: 0, t1: 1, clock0: null,
+  page: null, pageCount: 0,
+  hoverT: null, haveStage: false,
+  // Which of the Lab's stage-level states is on screen here. seq is the Lab's
+  // own monotonic counter; id names the same thing in words (file · chart) so
+  // "which stage is this?" has an answer that does not depend on counting.
+  seq: -1, id: "",
+};
+let blocks = [];          // { c, el, cv, ro, last }
+let raf = null;
+
+const esc = s => String(s).replace(/[&<>"]/g,
+  ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+const p2 = n => String(n).padStart(2, "0");
+const round2 = v => Math.round(v * 100) / 100;
+function fmtV(v) {
+  if (v == null || !isFinite(v)) return "—";
+  const a = Math.abs(v);
+  // A frame edge read at -0.0004 printed as "-0.00", which reads as a sign
+  // error rather than as the zero it is.
+  if (a < 0.005) return "0";
+  return a >= 10 ? v.toFixed(0) : a >= 1 ? v.toFixed(1) : v.toFixed(2);
+}
+// The Lab's own two time formats, re-stated here because a function cannot
+// cross a window boundary. Both are small and must read the same as the
+// combined chart, so they are kept deliberately identical.
+function fmtTime(t) {
+  const span = state.t1 - state.t0, m = t / 60;
+  if (span < 120) return m.toFixed(2) + "m";
+  if (span < 1200) return m.toFixed(1) + "m";
+  return Math.round(m) + "m";
+}
+function fmtClock(t) {
+  const s = Math.round(t);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60;
+  return "t+" + h + ":" + p2(m) + ":" + p2(ss);
+}
+function stamp(t) {
+  if (state.clock0 == null) return fmtClock(t);
+  const d = new Date(state.clock0 + t * 1000);
+  return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
+}
+
+// ---------- talking to the Lab window ----------
+// The Lab is normally our opener. Fall back to a parent frame for the case
+// where this page is embedded rather than popped (and where a browser hands
+// back a window with no opener), and to nothing at all when we are on our own
+// — the Lab pushes to its own handle either way, so a missing back-channel
+// costs only the handshake and the Open-PDF button.
+function lab() {
+  try {
+    if (window.opener && !window.opener.closed) return window.opener;
+  } catch (e) { /* cross-origin or gone */ }
+  if (window.parent && window.parent !== window) return window.parent;
+  return null;
+}
+function toLab(msg) {
+  const o = lab();
+  try { if (o) o.postMessage(msg, ORIGIN); } catch (e) { /* gone */ }
+}
+// The link is reconciled, not merely received. Three rules:
+//
+//   1. Never draw a payload older than the one already on screen. A stage
+//      message that overtakes its successor would put the previous chart's
+//      numbers under the current chart's name, which is worse than showing
+//      nothing — it is a wrong answer that looks like a right one.
+//   2. Say what was applied. The Lab re-sends until this window confirms the
+//      seq it should be showing, so a push that never lands is not permanent.
+//   3. Ask. On load, on regaining focus, on noticing a follow-up that belongs
+//      to a newer stage, and on a slow tick. This is the half the old link did
+//      not have: when the LAB was reloaded, its new context had no handle to
+//      this window, nothing was ever pushed again, and this view sat on a
+//      stale chart indefinitely while still printing "Linked to the Lab
+//      window". Now any message from here re-adopts the handle.
+function ack() {
+  toLab({ type: "stacked:applied", seq: state.seq, id: state.id });
+}
+let askedAt = -1e9;
+function askLab() {
+  // One ask per gesture. focus and visibilitychange both fire when a window
+  // comes forward, and the Lab's answer is a whole stage's samples.
+  const now = performance.now();
+  if (now - askedAt < 400) return;
+  askedAt = now;
+  toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
+}
+// Is this stage payload news? Older is dropped outright; the same state again
+// is a re-send, which only needs acking.
+function fresher(d) {
+  if (typeof d.seq !== "number") return true;      // a Lab that doesn't stamp
+  if (d.seq < state.seq) return false;
+  if (d.seq === state.seq && (d.id || "") === state.id) { ack(); return false; }
+  return true;
+}
+// A view or page stamped for a stage this window has not got means a stage
+// message went missing. Ask, rather than paint it over the wrong charts.
+function forThisStage(d) {
+  if (typeof d.seq !== "number") return true;
+  if (d.seq === state.seq) return true;
+  if (d.seq > state.seq) askLab();
+  return false;
+}
+
+window.addEventListener("message", e => {
+  if (ORIGIN !== "*" && e.origin !== ORIGIN) return;
+  const d = e.data;
+  if (!d || typeof d.type !== "string") return;
+  if (d.type === "stacked:stage") { if (fresher(d)) applyStage(d); }
+  else if (d.type === "stacked:none") { if (fresher(d)) applyNone(d); }
+  else if (d.type === "stacked:view") applyView(d);
+  else if (d.type === "stacked:page") applyPage(d);
+});
+$("missing").addEventListener("click", () => {
+  showMissing = !showMissing;
+  localStorage.setItem("f2c.missing", showMissing ? "1" : "0");
+  $("missing").classList.toggle("on", showMissing);
+  build();                     // the header line changes with it
+});
+$("fitdata").addEventListener("click", () => {
+  fitData = !fitData;
+  localStorage.setItem("f2c.fitdata", fitData ? "1" : "0");
+  $("fitdata").classList.toggle("on", fitData);
+  applyScale();
+  build();                     // the header line names the scale in use
+});
+$("interp").addEventListener("click", () => {
+  interp = !interp;
+  localStorage.setItem("f2c.interp", interp ? "1" : "0");
+  $("interp").classList.toggle("on", interp);
+  build();                     // the header line changes with it
+});
+
+// Announce ourselves on load. This is what makes the order not matter: opened
+// before a stage is picked, opened after one is, or reloaded by hand — the Lab
+// answers a ready with the stage that is on screen right now.
+toLab({ type: "stacked:ready" });
+// Coming back to this window is the moment its numbers are about to be read,
+// so it is the moment to make sure they are the selected stage's.
+window.addEventListener("focus", askLab);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) askLab();
+});
+
+// If the Lab is closed, say so instead of leaving a stale chart that silently
+// stops following anything.
+setInterval(() => {
+  const gone = !lab();
+  $("foot").innerHTML = gone
+    ? "<b>The Lab window is closed</b> — this view is frozen at the last stage it received."
+    : "Linked to the Lab window: cycling stages there (↑/↓, or clicking a stage) redraws this view.";
+  $("openpdf").disabled = gone;
+  // Say where we are. The Lab answers only when that is not where IT is, so
+  // at rest this costs one small message every second and a half and nothing
+  // comes back — and it is how a Lab that has been reloaded finds this window
+  // again without anyone having to reopen it.
+  if (!gone) toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
+}, 1500);
+
+// ---------- incoming state ----------
+function applyNone(d) {
+  d = d || {};
+  if (typeof d.seq === "number") state.seq = d.seq;
+  state.id = d.id || "";
+  state.haveStage = false;
+  state.channels = []; blocks = []; state.hoverT = null;
+  state.page = null; state.pageCount = 0;
+  $("charts").innerHTML = "";
+  $("msg").hidden = false;
+  $("msg").textContent = "Pick a stage in the Lab window — this view follows it.";
+  $("title").textContent = "—";
+  $("sub").textContent = "no stage selected";
+  $("pglbl").textContent = "";
+  document.title = "Stacked charts — Carmine's Lab";
+}
+
+function applyStage(d) {
+  // The seq moves first: everything below belongs to THIS stage, and a page
+  // or view stamped for an older one must be rejected from here on.
+  if (typeof d.seq === "number") state.seq = d.seq;
+  state.id = d.id || "";
+  state.haveStage = true;
+  state.channels = d.channels || [];
+  applyScale();
+  state.n = d.n; state.dsec = d.dsec || 1; state.tMax = d.tMax || 1;
+  state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
+  state.page = d.page; state.pageCount = d.pageCount || 0;
+  state.hoverT = null;
+  $("title").textContent = d.title || "";
+  $("sub").textContent = d.sub || "";
+  document.title = (d.title || "Stacked charts") + " — stacked";
+  updatePageLbl();
+  $("msg").hidden = state.channels.length > 0;
+  if (!state.channels.length)
+    $("msg").textContent = "This stage has no channels to plot.";
+  build();
+  ack();
+}
+
+function applyView(d) {
+  if (!forThisStage(d)) return;
+  if (!state.haveStage) return;
+  state.t0 = d.t0; state.t1 = d.t1;
+  schedule();
+}
+
+// The page number still matters — it labels the window and drives Open PDF —
+// but this view no longer renders the sheet, so the Lab sends the number only.
+// The seq is what ties it to the charts above it: a page belonging to the
+// stage before this one is dropped rather than printed over the current one.
+function applyPage(d) {
+  if (!forThisStage(d)) return;
+  state.page = d.page != null ? d.page : state.page;
+  if (d.pageCount != null) state.pageCount = d.pageCount;
+  // Older Labs shipped the rendered sheet with it; release anything that
+  // still arrives rather than leaving the bitmap alive.
+  if (d.bmp && d.bmp.close) { try { d.bmp.close(); } catch (e) { /* noop */ } }
+  updatePageLbl();
+}
+
+function updatePageLbl() {
+  $("pglbl").textContent = state.page ? ("PDF p." + state.page) : "";
+  $("openpdf").disabled = !state.page || !lab();
+  $("interp").classList.toggle("on", interp);
+  $("missing").classList.toggle("on", showMissing);
+  $("fitdata").classList.toggle("on", fitData);
+}
+
+// ---------- layout ----------
+// Gaps come from the raster tracer: where two curves cross, the pixels of one
+// are the pixels of the other, and neither can be followed through the
+// overlap. The samples either side are real, so a straight line between them
+// is the honest reading of what happened in between — but it is still a line
+// we drew, not a value the chart printed, so bridges are DASHED and the header
+// says how much of the curve is bridge. Nothing here touches the exported CSV:
+// a gap stays an empty cell there.
+let interp = localStorage.getItem("f2c.interp") === "1";
+let showMissing = localStorage.getItem("f2c.missing") === "1";
+// Default ON. The printed axis is what the source page draws against, which is
+// the right answer when you are checking a trace against the sheet, and the
+// wrong one when you are reading the trace itself: it is the same axis on every
+// stage of the file, so the stage that peaked at a twentieth of it gets a
+// twentieth of its row (Carmine, 2026-09-13).
+let fitData = localStorage.getItem("f2c.fitdata") !== "0";
+
+// Round a top-of-axis up to a number worth printing beside a gridline.
+function niceCeil(v) {
+  if (!(v > 0) || !isFinite(v)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v)));
+  const f = v / e;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+}
+
+// The range a chart is drawn against, from the data it actually holds.
+//
+// Anchored at zero rather than at the minimum. A minimum-to-maximum fit would
+// fill the row more completely, and for a channel that sits flat it fills it
+// with NOISE: a rate holding 14.0 +/- 0.05 would be drawn as a mountain range,
+// which is exactly the misreading the flat-run shading exists to prevent. Zero
+// to the data's own top keeps the magnitude honest and still gives the trace
+// the height of the row. Below zero only when the data actually goes there.
+function dataScale(c) {
+  if (c.dataLo == null || c.dataHi == null ||
+      !isFinite(c.dataLo) || !isFinite(c.dataHi)) return null;
+  const lo = Math.min(0, c.dataLo);
+  const hi = Math.max(c.dataHi, lo + 1e-9);
+  return { lo, hi: lo + (niceCeil(hi - lo) || 1) };
+}
+
+// Put the chosen scale where the drawing code already looks for it, keeping
+// the printed one so the switch is reversible without another round trip.
+function applyScale() {
+  for (const c of state.channels) {
+    if (c.pLo === undefined) { c.pLo = c.lo; c.pHi = c.hi; }
+    const d = fitData ? dataScale(c) : null;
+    c.lo = d ? d.lo : c.pLo;
+    c.hi = d ? d.hi : c.pHi;
+    c.fitted = !!d;
+  }
+}
+
+// what fraction of a channel's samples are missing, and the longest run
+function gapStats(vals) {
+  let missing = 0, longest = 0, run = 0;
+  for (let i = 0; i < vals.length; i++) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { missing++; run++; if (run > longest) longest = run; }
+    else run = 0;
+  }
+  return { missing, longest, pct: vals.length ? 100 * missing / vals.length : 0 };
+}
+
+// A run of samples all sitting on ONE value, across a stretch of the chart.
+//
+// This is what a horizontal rule traced as data looks like, and it is the
+// thing that is impossible to see in a list of numbers. 01350 page 226 came
+// out with 44% of its WH Prop Conc samples at exactly 698.29, spread from
+// sample 9 to 3019 — the full width of the plot — against a report that
+// prints a maximum of 504. The same 698.29 turns up on five pages of a
+// different well. A curve does not do that; a rule does.
+//
+// Tolerance is relative to the channel's own span, so a genuinely flat
+// pressure hold is not mistaken for a rule: what is caught is a value that
+// does not move AT ALL while time passes.
+const FLAT_MIN_FRAC = 0.06;      // shorter than this is a plateau, not a rule
+function flatRuns(vals, lo, hi) {
+  const span = Math.abs((hi ?? 1) - (lo ?? 0)) || 1;
+  const tol = span * 1e-4;
+  const out = [];
+  let i = 0;
+  const need = Math.max(12, Math.round(vals.length * FLAT_MIN_FRAC));
+  while (i < vals.length) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { i++; continue; }
+    let j = i + 1;
+    while (j < vals.length && vals[j] != null && isFinite(vals[j])
+           && Math.abs(vals[j] - v) <= tol) j++;
+    if (j - i >= need) out.push([i, j, v]);
+    i = j > i ? j : i + 1;
+  }
+  return out;
+}
+
+// [start, end) runs of samples with nothing in them
+function gapRuns(vals) {
+  const out = [];
+  let i = 0;
+  while (i < vals.length) {
+    const v = vals[i];
+    if (v != null && isFinite(v)) { i++; continue; }
+    let j = i;
+    while (j < vals.length && (vals[j] == null || !isFinite(vals[j]))) j++;
+    out.push([i, j]);
+    i = j;
+  }
+  return out;
+}
+
+// "44% flat at 698.29" — the sentence that names the fault outright.
+function flatNote(c) {
+  const runs = flatRuns(c.values || [], c.lo, c.hi);
+  if (!runs.length) return "";
+  let held = 0, biggest = runs[0];
+  for (const r of runs) {
+    held += r[1] - r[0];
+    if (r[1] - r[0] > biggest[1] - biggest[0]) biggest = r;
+  }
+  const pct = 100 * held / Math.max(1, (c.values || []).length);
+  return " · " + pct.toFixed(0) + "% flat at " + fmtV(biggest[2]);
+}
+
+function build() {
+  const host = $("charts");
+  host.innerHTML = "";
+  blocks = state.channels.map((c, i) => {
+    const gs = gapStats(c.values);
+    const el = document.createElement("div");
+    el.className = "chartblock" + (c.off ? " off" : "");
+    el.innerHTML =
+      '<div class="chead">' +
+        '<span class="nm"><i style="background:' + esc(c.color) + '"></i>' +
+          esc(c.name) + (c.unit ? ' <span class="u">' + esc(c.unit) + "</span>" : "") +
+        "</span>" +
+        '<span class="rng">' + fmtV(c.lo) + " – " + fmtV(c.hi) +
+          (c.fitted ? " · this file"
+                    : (c.printed ? " · chart axis" : " · auto")) +
+          (c.off ? " · hidden in the Lab" : "") +
+          (gs.missing
+            ? " · " + gs.pct.toFixed(1) + "% missing" +
+              (interp ? " (bridged, longest " + gs.longest + ")" : "")
+            : "") +
+          (showMissing ? flatNote(c) : "") + "</span>" +
+        '<span class="ro"></span>' +
+      "</div><canvas></canvas>";
+    host.appendChild(el);
+    return { c, el, cv: el.querySelector("canvas"),
+             ro: el.querySelector(".ro"), last: i === state.channels.length - 1 };
+  });
+  layout();
+}
+
+function layout() {
+  for (const b of blocks) {
+    const h = ROW_H + (b.last ? AXIS_H : 0);
+    b.cv.style.height = h + "px";
+    sizeCanvas(b.cv, h);
+  }
+  drawAll();
+}
+
+// Canvas at device resolution, drawn in CSS pixels.
+function sizeCanvas(cv, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = Math.max(80, cv.clientWidth || cv.parentNode.clientWidth);
+  cv.width = Math.round(cssW * dpr);
+  cv.height = Math.round(cssH * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, W: cssW, H: cssH };
+}
+
+// ---------- drawing ----------
+function schedule() {
+  if (raf) return;
+  raf = requestAnimationFrame(() => { raf = null; drawAll(); });
+}
+
+function drawAll() {
+  for (const b of blocks) drawChart(b);
+  updateReadouts();
+}
+
+function xOf(t, W) {
+  const span = Math.max(1e-9, state.t1 - state.t0);
+  return PAD.L + (t - state.t0) / span * (W - PAD.L - PAD.R);
+}
+
+function drawChart(b) {
+  const cv = b.cv, dpr = window.devicePixelRatio || 1;
+  const W = cv.width / dpr, H = cv.height / dpr;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const bot = H - PAD.B - (b.last ? AXIS_H : 0);
+  const plotH = bot - PAD.T, plotW = W - PAD.L - PAD.R;
+  if (plotH <= 4 || plotW <= 4) return;
+  const c = b.c;
+  const span = Math.max(1e-9, c.hi - c.lo);
+  const yOf = v => PAD.T + (1 - (v - c.lo) / span) * plotH;
+
+  // grid + per-chart value scale
+  g.strokeStyle = C.grid; g.lineWidth = 1;
+  g.fillStyle = C.axisText;
+  g.font = "10.5px ui-monospace,Menlo,monospace";
+  g.textAlign = "right"; g.textBaseline = "middle";
+  for (let f = 0; f <= 1.0001; f += 0.25) {
+    const y = Math.round(PAD.T + (1 - f) * plotH) + 0.5;
+    g.beginPath(); g.moveTo(PAD.L, y); g.lineTo(W - PAD.R, y); g.stroke();
+    g.fillText(fmtV(c.lo + (c.hi - c.lo) * f), PAD.L - 6, y);
+  }
+  g.beginPath();
+  for (let f = 0; f <= 1.0001; f += 0.25) {
+    const x = Math.round(PAD.L + f * plotW) + 0.5;
+    g.moveTo(x, PAD.T); g.lineTo(x, bot);
+  }
+  g.stroke();
+
+  // the curve, decimated to about two samples per pixel
+  const vals = c.values;
+  const len = vals.length;
+  const i0 = Math.max(0, Math.floor(state.t0 / state.dsec));
+  const i1 = Math.min(len - 1, Math.ceil(state.t1 / state.dsec));
+  const step = Math.max(1, Math.floor((i1 - i0) / (2 * plotW)));
+  g.save();
+  g.beginPath(); g.rect(PAD.L, 0, plotW, bot); g.clip();
+
+  // What is NOT measured here, shaded under the curve.
+  //
+  // Two faults look identical once a trace is drawn: a GAP, where the chart
+  // had no ink to read, and a FLAT RUN, where something that is not the curve
+  // was read as if it were. The second is the dangerous one — it exports a
+  // number, and a number is believed. Separate colours because the answer is
+  // different: a gap is honest and a flat run is wrong.
+  if (showMissing && c.values && c.values.length) {
+    const n = c.values.length;
+    const xAt = k => PAD.L + (k / Math.max(1, n - 1)) * plotW;
+    g.save();
+    for (const [a, b] of gapRuns(c.values)) {
+      g.fillStyle = "rgba(105,112,119,0.13)";
+      g.fillRect(xAt(a), PAD.T, Math.max(1.5, xAt(b) - xAt(a)), plotH);
+    }
+    for (const [a, b, v] of flatRuns(c.values, c.lo, c.hi)) {
+      g.fillStyle = "rgba(163,22,49,0.13)";
+      g.fillRect(xAt(a), PAD.T, Math.max(1.5, xAt(b) - xAt(a)), plotH);
+      const y = PAD.T + (1 - (v - c.lo) / ((c.hi - c.lo) || 1)) * plotH;
+      g.strokeStyle = "#a31631"; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.beginPath(); g.moveTo(xAt(a), y); g.lineTo(xAt(b), y); g.stroke();
+      g.setLineDash([]);
+    }
+    g.restore();
+  }
+
+  g.strokeStyle = c.color; g.lineWidth = 1.4;
+  g.lineJoin = "round";
+  g.beginPath();
+  let pen = false, prev = null;
+  const bridges = [];
+  for (let i = i0; i <= i1; i += step) {
+    const v = vals[i];
+    if (v == null || !isFinite(v)) { pen = false; continue; }
+    const x = xOf(i * state.dsec, W), y = yOf(v);
+    if (pen) g.lineTo(x, y);
+    else {
+      g.moveTo(x, y);
+      // first real sample after a gap — remember the span to bridge
+      if (interp && prev) bridges.push([prev.x, prev.y, x, y]);
+      pen = true;
+    }
+    prev = { x, y };
+  }
+  g.stroke();
+  // Bridges last and dashed, so a drawn span never reads as a measured one.
+  if (bridges.length) {
+    g.setLineDash([4, 3]);
+    g.globalAlpha = 0.8;
+    g.beginPath();
+    for (const [ax, ay, bx, by] of bridges) { g.moveTo(ax, ay); g.lineTo(bx, by); }
+    g.stroke();
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+  }
+  g.restore();
+
+  // shared time axis, printed under the bottom chart only
+  if (b.last) {
+    g.strokeStyle = C.grid;
+    g.beginPath(); g.moveTo(PAD.L, bot + 0.5); g.lineTo(W - PAD.R, bot + 0.5); g.stroke();
+    g.fillStyle = C.axisText; g.textAlign = "center"; g.textBaseline = "top";
+    g.font = "11px ui-monospace,Menlo,monospace";
+    for (let f = 0; f <= 1.0001; f += 0.25) {
+      const t = state.t0 + f * (state.t1 - state.t0);
+      const x = PAD.L + f * plotW;
+      g.fillText(stamp(t), x, bot + 5);
+      if (state.clock0 != null) {
+        const d = new Date(state.clock0 + t * 1000);
+        g.globalAlpha = .62;
+        g.fillText(d.getFullYear() + "-" + p2(d.getMonth() + 1) + "-" + p2(d.getDate()),
+                   x, bot + 17);
+        g.globalAlpha = 1;
+      } else {
+        g.globalAlpha = .62;
+        g.fillText(fmtTime(t), x, bot + 17);
+        g.globalAlpha = 1;
+      }
+    }
+  }
+
+  // crosshair + the sample under it
+  if (state.hoverT != null && state.hoverT >= state.t0 && state.hoverT <= state.t1) {
+    const x = xOf(state.hoverT, W);
+    g.strokeStyle = C.crosshair; g.lineWidth = 1;
+    g.setLineDash([4, 3]);
+    g.beginPath(); g.moveTo(x, PAD.T); g.lineTo(x, bot); g.stroke();
+    g.setLineDash([]);
+    const v = sampleAt(c, state.hoverT);
+    if (v != null) {
+      g.fillStyle = c.color;
+      g.beginPath(); g.arc(x, yOf(v), 3.2, 0, 7); g.fill();
+    }
+  }
+}
+
+function sampleAt(c, t) {
+  const i = Math.round(t / state.dsec);
+  if (i < 0 || i >= c.values.length) return null;
+  const v = c.values[i];
+  return (v == null || !isFinite(v)) ? null : v;
+}
+
+// Per-chart readout, as the original demo had: the value on THIS chart at the
+// cursor, next to that chart's own title.
+function updateReadouts() {
+  const t = state.hoverT;
+  for (const b of blocks) {
+    if (t == null) { b.ro.textContent = ""; continue; }
+    const v = sampleAt(b.c, t);
+    b.ro.innerHTML = stamp(t) + (state.clock0 != null ? " · " + fmtClock(t) : "") +
+      " · <b>" + (v == null ? "—" : round2(v)) + "</b>" +
+      (v != null && b.c.unit ? " " + esc(b.c.unit) : "");
+  }
+}
+
+// ---------- interaction ----------
+// Every chart here shares ONE time axis, so a wheel over any of them zooms
+// all of them. The Lab owns the window, so the child asks rather than
+// diverging: it applies the change locally for an immediate response, then
+// posts it, and the Lab's echo is idempotent.
+$("charts").addEventListener("wheel", e => {
+  const cv = e.target.closest("canvas");
+  if (!cv || !state.haveStage || !blocks.length) return;
+  e.preventDefault();
+  const r = cv.getBoundingClientRect();
+  const W = r.width, span = Math.max(1e-9, state.t1 - state.t0);
+  const frac = (e.clientX - r.left - PAD.L) / Math.max(1, W - PAD.L - PAD.R);
+  let t = state.t0 + Math.min(1, Math.max(0, frac)) * span;
+  const z = Math.pow(1.0015, e.deltaY);
+  let t0 = t - (t - state.t0) * z, t1 = t + (state.t1 - t) * z;
+  const minSpan = (state.dsec || 1) * 10;
+  if (t1 - t0 < minSpan) { const c = (t0 + t1) / 2; t0 = c - minSpan / 2; t1 = c + minSpan / 2; }
+  state.t0 = Math.max(0, t0);
+  state.t1 = Math.min(state.tMax != null ? state.tMax : t1,
+                      Math.max(t1, state.t0 + minSpan));
+  schedule();
+  toLab({ type: "stacked:zoom", t0: state.t0, t1: state.t1 });
+}, { passive: false });
+
+$("charts").addEventListener("mousemove", e => {
+  const cv = e.target.closest("canvas");
+  if (!cv || !blocks.length) return;
+  const r = cv.getBoundingClientRect();
+  const x = e.clientX - r.left, W = r.width;
+  if (x < PAD.L || x > W - PAD.R) {
+    if (state.hoverT != null) { state.hoverT = null; schedule(); }
+    return;
+  }
+  const span = state.t1 - state.t0;
+  state.hoverT = state.t0 + (x - PAD.L) / (W - PAD.L - PAD.R) * span;
+  schedule();
+});
+$("charts").addEventListener("mouseleave", () => {
+  if (state.hoverT != null) { state.hoverT = null; schedule(); }
+});
+// The Lab owns the PDF bytes (and the blob URL it already made for them), so
+// ask it to open the page rather than shipping the file over here twice.
+$("openpdf").addEventListener("click", () => toLab({ type: "stacked:openpdf" }));
+
+let rz = null;
+window.addEventListener("resize", () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { layout(); }, 120);
+});
+</script>
+</body>
+</html>

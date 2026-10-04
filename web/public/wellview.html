@@ -3,65 +3,55 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stratum — Well view</title>
+<title>Stratum — Well charts</title>
 <link rel="stylesheet" href="wellview.css">
 </head>
 <body>
-<div class="wv">
-  <header class="wv-head">
+<div class="wc">
+  <header class="wc-head">
     <div>
-      <div class="wv-title" id="wv-name">Loading…</div>
-      <div class="wv-sub" id="wv-ident"></div>
+      <div class="wc-title" id="wc-name">Loading…</div>
+      <div class="wc-sub" id="wc-ident"></div>
     </div>
-    <div class="wv-tools">
-      <button id="wv-back" type="button">← Back</button>
-      <button id="wv-reset" type="button">Reset view</button>
-      <button id="wv-follow" type="button" aria-pressed="false">Follow stage</button>
-      <button id="wv-add" type="button">Add to compare</button>
-      <button id="wv-compare" type="button">Compare ↗</button>
+    <div class="wc-tools">
+      <button id="wc-back" type="button">← Back</button>
+      <button id="wc-add" type="button">Add to compare</button>
+      <button id="wc-compare" type="button">Compare ↗</button>
     </div>
   </header>
 
-  <div class="wv-body">
-    <div class="wv-left">
-      <div class="wv-stage3d">
-        <canvas id="wv-canvas" tabindex="0"
-                aria-label="Surveyed well path in three dimensions. Use the stage navigator to move between stages."></canvas>
-        <div class="wv-badge" id="wv-badge"></div>
-        <div class="wv-hint">Drag to orbit · Shift-drag or right-drag to pan · Scroll to zoom · Click a stage marker to select</div>
-      </div>
-
-      <div class="wv-nav">
-        <button id="wv-prev" type="button">‹ Prev</button>
-        <button id="wv-next" type="button">Next ›</button>
-        <button id="wv-play" type="button" aria-pressed="false">Play</button>
-        <div class="wv-steps" id="wv-steps" role="group" aria-label="Stages for this well"></div>
-      </div>
-
-      <div class="wv-graphs">
-        <div class="wv-graph">
-          <canvas id="wv-g1"></canvas>
-          <div class="lab" id="wv-g1-lab">Treating pressure · slurry rate</div>
-          <div class="empty" id="wv-g1-empty" hidden></div>
-        </div>
-        <div class="wv-graph">
-          <canvas id="wv-g2"></canvas>
-          <div class="lab" id="wv-g2-lab">Proppant concentration</div>
-          <div class="empty" id="wv-g2-empty" hidden></div>
-        </div>
-        <div class="wv-nav">
-          <button id="wv-gzoom" type="button">Reset graph zoom</button>
-          <div class="wv-legend" id="wv-legend"></div>
-        </div>
-      </div>
+  <div class="wc-bar">
+    <div class="wc-tabs" role="tablist" aria-label="Chart view">
+      <button role="tab" id="tab-chart" aria-controls="pane-chart" aria-selected="true">Stage chart</button>
+      <button role="tab" id="tab-stacked" aria-controls="pane-stacked" aria-selected="false" tabindex="-1">Stacked</button>
+      <button role="tab" id="tab-frac" aria-controls="pane-frac" aria-selected="false" tabindex="-1">FracView</button>
     </div>
-
-    <aside class="wv-side" id="wv-side"></aside>
+    <div class="wc-stagenav">
+      <button id="wc-prev" type="button" aria-label="Previous stage">‹</button>
+      <div class="wc-steps" id="wc-steps" role="group" aria-label="Stages for this well"></div>
+      <button id="wc-next" type="button" aria-label="Next stage">›</button>
+    </div>
   </div>
 
-  <div class="wv-foot" id="wv-foot"></div>
+  <main class="wc-main">
+    <section class="wc-pane" id="pane-chart" role="tabpanel" aria-labelledby="tab-chart">
+      <div class="wc-chartbar">
+        <div class="wc-stageinfo" id="wc-stageinfo"></div>
+        <div class="wc-legend" id="wc-legend" role="group" aria-label="Curves: click to hide, double-click to isolate"></div>
+        <button id="wc-zoomreset" type="button" hidden>Reset zoom</button>
+      </div>
+      <div class="wc-plot">
+        <canvas id="wc-canvas" tabindex="0" aria-label="Treatment curves for the selected stage. Scroll to zoom, drag to pan, double-click to reset."></canvas>
+        <div class="wc-empty" id="wc-empty" hidden></div>
+      </div>
+      <div class="wc-hint">Scroll to zoom · Drag to pan · Double-click to reset · Click a curve name to hide it, double-click to isolate it · ← → change stage</div>
+    </section>
+    <section class="wc-pane" id="pane-stacked" role="tabpanel" aria-labelledby="tab-stacked" hidden></section>
+    <section class="wc-pane" id="pane-frac" role="tabpanel" aria-labelledby="tab-frac" hidden></section>
+  </main>
+
+  <footer class="wc-foot" id="wc-foot"></footer>
 </div>
-<div class="wv-tip" id="wv-tip"></div>
 <script src="wellview.js"></script>
 </body>
 </html>

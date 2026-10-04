@@ -1,0 +1,1767 @@
+<!doctype html>
+<!-- Carmine's Lab view, copied from lab/public/ on main (e88c15d, v1.11.27) for Stratum's well page. STRATUM PATCH: every
+     window.opener send goes through host(), which falls back to the parent frame.
+     Refresh by copying the Lab's file again and re-applying the patch named here. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FracView — Carmine's Lab</title>
+<style>
+  /* Same palette and type as the Lab window it hangs off — see stacked.html. */
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34;
+    --warn:#b45309;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  body { background:var(--bg); color:var(--ink);
+         font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .top { display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+         padding:10px 18px; border-bottom:1px solid var(--line);
+         position:sticky; top:0; background:var(--bg); z-index:5; }
+  .meta { flex:1 1 240px; min-width:0; }
+  .wordmark { font-size:13px; font-weight:700; letter-spacing:-0.01em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .title { font-size:14px; font-weight:600; margin-top:1px;
+           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px; }
+  .tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .fld { display:flex; align-items:center; gap:5px; font-size:11.5px; color:var(--mut); }
+  select { font:inherit; font-size:12px; padding:3px 6px; border-radius:6px;
+           border:1px solid var(--line); background:var(--panel); color:var(--ink);
+           max-width:230px; }
+  .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+         color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+         padding:3px 10px; cursor:pointer; }
+  .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn:disabled { opacity:.35; pointer-events:none; }
+  .wrap { padding:12px 18px 20px; }
+  /* The key used to be painted in the top-right of the plot, where the hover
+     readout lands — at 22px that box sat straight on top of it. Out here it
+     collides with nothing and the channels become real buttons. */
+  .chankey { display:flex; flex-wrap:wrap; gap:6px 10px; margin:0 0 9px;
+             align-items:flex-start; }
+  .chankey .ck { display:flex; flex-direction:column; align-items:stretch;
+                 gap:3px; }
+  .chankey .gain { display:flex; align-items:center; gap:5px; padding:0 3px; }
+  .chankey .gain input { flex:1; width:78px; height:12px; margin:0;
+                         accent-color:var(--carmine); cursor:ew-resize; }
+  .chankey .gain b { font:600 10px var(--mono); color:var(--mut);
+                     min-width:30px; text-align:right; font-variant-numeric:
+                     tabular-nums; cursor:pointer; }
+  /* The typed axis max, under the slider that does the same job by hand. */
+  .chankey .axis { display:flex; align-items:center; gap:4px; padding:1px 3px 0; }
+  .chankey .axis input { flex:1; width:100%; min-width:0; height:16px; margin:0;
+                         font:600 10px var(--mono); color:var(--ink);
+                         text-align:right; border:1px solid var(--line);
+                         border-radius:4px; background:var(--panel2);
+                         padding:0 4px; font-variant-numeric:tabular-nums; }
+  .chankey .axis input:focus { outline:none; border-color:var(--carmine); }
+  .chankey .axis input.custom { border-color:var(--carmine); color:var(--carmine); }
+  .chankey .axis span { font:600 9px var(--mono); color:var(--mut); }
+  .chankey .ck.off .gain,
+  .chankey .ck.off .axis { opacity:.3; pointer-events:none; }
+  .chankey button { display:inline-flex; align-items:center; gap:6px;
+                    font:inherit; font-size:11.5px; font-weight:600;
+                    cursor:pointer; border:1px solid var(--line);
+                    border-radius:999px; padding:3px 11px 3px 8px;
+                    background:var(--panel); color:var(--ink); }
+  .chankey button i { width:11px; height:11px; border-radius:3px; flex-shrink:0; }
+  .chankey button:hover { border-color:var(--carmine); }
+  .chankey button.off { color:var(--mut); background:var(--panel2);
+                        text-decoration:line-through; }
+  .chankey button.off i { opacity:.28; }
+  canvas { width:100%; display:block; background:var(--panel);
+           border:1px solid var(--line); border-radius:8px; }
+  .hint { font-size:11.5px; color:var(--mut); margin-top:8px; line-height:1.7; }
+  .hint b { color:var(--ink); font-weight:600; }
+  .hint kbd { font-family:var(--mono); font-size:11px; background:var(--panel2);
+              border:1px solid var(--line); border-radius:4px; padding:0 4px; }
+  .msg { color:var(--mut); font-size:13px; padding:64px 24px; text-align:center;
+         max-width:60ch; margin:0 auto; }
+  .state { font-size:11.5px; font-family:var(--mono); }
+  .state.dirty { color:var(--warn); font-weight:600; }
+  .state.clean { color:var(--ok); }
+  /* Zoom moved off the wheel — the wheel pans now — so it needs somewhere to
+     live that is reachable without a keyboard. */
+  .zoomctl { position:fixed; right:20px; bottom:20px; z-index:20;
+             display:flex; flex-direction:column; gap:6px; }
+  .zoomctl button { width:36px; height:36px; font:inherit; font-size:19px;
+                    font-weight:700; line-height:1; cursor:pointer;
+                    border:1px solid var(--line); border-radius:9px;
+                    background:var(--panel); color:var(--ink);
+                    box-shadow:0 1px 5px rgba(20,24,29,.14); }
+  .zoomctl button:hover { border-color:var(--carmine); color:var(--carmine); }
+  .zoomctl button:active { background:var(--panel2); }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="meta">
+    <div class="wordmark">FracView</div>
+    <div class="title" id="title">Waiting for the Lab…</div>
+    <div class="sub" id="sub"></div>
+  </div>
+  <div class="tools" id="tools" hidden>
+    <span class="fld">Go to
+      <select id="jump" title="Zoom straight to one stage"></select>
+    </span>
+    <span class="fld">Span
+      <select id="span" title="How many stages fill the window">
+        <option value="1">Single</option>
+        <option value="3">3 Wells</option>
+        <option value="all" selected>All</option>
+      </select>
+    </span>
+    <span class="fld">Time
+      <select id="timemode" title="Real Time spaces the stages by the clock, so
+the wait between them is visible at its full length. Plot by row closes those
+gaps and labels the axis with the row number of the exported CSV.">
+        <option value="real">Real Time</option>
+        <option value="row">Plot by row</option>
+      </select>
+    </span>
+    <span class="fld">View
+      <select id="viewmode" title="Channels draws the curves. Sequence draws one
+line: the stage's position in the well against the clock. Laid out correctly
+that is a single ascending staircase, so anything that runs backwards is a
+stage whose date or time is wrong.">
+        <option value="channels">Channels</option>
+        <option value="sequence">Sequence</option>
+      </select>
+    </span>
+    <span class="fld">Caption
+      <select id="captionmode" title="What labels each band: its position in the
+well, or the name the report prints on it">
+        <option value="number">Stage number</option>
+        <option value="label">Stage label</option>
+      </select>
+    </span>
+    <span class="fld">Colours
+      <select id="scheme" title="How the stage bands are tinted">
+        <option value="alt">Alternating</option>
+        <option value="spectrum">Spectrum</option>
+        <option value="mono">Mono</option>
+        <option value="contrast">High contrast</option>
+        <option value="rainbow">Rainbow</option>
+      </select>
+    </span>
+    <button type="button" class="btn" id="adjust" title="Drag the boundary between two stages to move where one ends and the next begins">Adjust</button>
+    <button type="button" class="btn" id="trim" title="Drag across the chart to cut a span out of the data">Trim</button>
+    <button type="button" class="btn" id="undo" title="Undo the last edit">Undo</button>
+    <button type="button" class="btn" id="reset" title="Throw away every edit and go back to what was extracted">Reset</button>
+    <span class="state clean" id="state">no edits</span>
+  </div>
+</div>
+
+<div class="wrap" id="wrap" hidden>
+  <div class="chankey" id="chankey"></div>
+  <canvas id="cv" height="560"></canvas>
+  <div class="hint">
+    <b>Scroll</b> to move along the well, <b>drag</b> to pan, and zoom with the
+    <b>+ / −</b> buttons bottom right (or ctrl/⌘ + scroll).
+    <b>Click a stage</b> to highlight it here and bring the Lab's graph and the
+    stacked window to the same one. <b>Double-click</b> inside a stage to split it
+    there — a stage labelled as a range like <kbd>1-30</kbd> numbers its pieces
+    <kbd>1</kbd>…<kbd>30</kbd> as you split it.
+    <b>Adjust</b> mode drags the boundary between two stages to move where one ends
+    and the next begins. <b>Trim</b> mode drags out a span to cut — grey while you
+    are dragging, and once it lands you can still drag either edge to fine-tune;
+    <b>Click a channel</b> in the strip above the chart to switch it off, and
+    again to bring it back. Click inside a cut to put it back.
+    <b>Fill Gaps</b> drags out a span where the trace was LOST and bridges the
+    holes in it with a straight line — only holes with a real reading on both
+    sides, so a curve resting at zero or one that has not started yet is left
+    alone. Every edit lands on the Lab's graphs and on the exported CSV.
+  </div>
+</div>
+
+<div class="zoomctl" id="zoomctl" hidden>
+  <button type="button" id="zoomin" title="Zoom in">+</button>
+  <button type="button" id="zoomout" title="Zoom out">&minus;</button>
+</div>
+
+<div class="msg" id="msg">
+  Pick a well in the Lab — FracView follows whatever is selected there.
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// Bind through this, never straight onto $(id).
+//
+// d15cf0d deleted FracView's Undo and Reset buttons from the markup and left
+// their handlers behind. Those bind at TOP LEVEL, so `$("undo")` came back
+// null and the TypeError took out every statement below it — including
+// hello(), the last line in the file and the only thing that tells the Lab
+// this window exists. FracView then waited forever, on every well and every
+// provider, with the Lab sitting behind it holding the data. One missing
+// button turned the whole view dark, and nothing on screen said why.
+//
+// So: warn, and carry on. A control whose element is gone is one broken
+// control; it must never again be able to silence the window.
+function bind(id, ev, fn) {
+  const node = $(id);
+  if (!node) { console.warn(`FracView: no #${id} to bind "${ev}" to`); return; }
+  node.addEventListener(ev, fn);
+}
+
+// ---------- what the parent sent, and what we have done to it ----------
+// `well` is read-only: the stages exactly as extracted. `edits` is the whole
+// of our output — a per-stage absolute [a,b] window plus a list of cut spans.
+// Keeping the edit as a WINDOW over the original samples rather than as a
+// mutated copy of them is what makes every operation reversible and what lets
+// the parent apply the same edit to the graph and to the CSV from one rule.
+let well = null;             // {file, uwi, stages:[{key,label,t0,dsec,n,channels}]}
+let edits = null;            // {bounds:[ms...], labels:[...], cuts:[{a,b}]}
+let undoStack = [];
+let view = { a: 0, b: 1 };   // visible absolute span, ms
+let mode = "";               // "" | "adjust" | "trim"
+let selIdx = -1;             // the stage highlighted here and on the Lab
+let justDragged = false;     // so the click that ends a drag is not also acted on
+// Channels switched off from the key, by name — same idea as the Lab's legend.
+// Held by NAME rather than index because the channel list is rebuilt whenever a
+// well arrives, and an index would silently point at a different curve.
+//
+// And held ACROSS wells. Carmine cycles through a folder with this window
+// open; turning the same two channels off on all forty files, one file at a
+// time, is not a setting, it is a chore. Names are already the key, so the
+// choice carries over on its own once we stop wiping it — and it is written
+// down, so it survives closing the window too.
+const hiddenChans = new Set(function () {
+  try { return JSON.parse(localStorage.getItem("f2c.fvHidden") || "[]"); }
+  catch (e) { return []; }
+}());
+function saveHidden() {
+  try { localStorage.setItem("f2c.fvHidden",
+        JSON.stringify([...hiddenChans])); } catch (e) {}
+}
+// How far each channel is stretched up its own axis, by NAME, 1 = untouched.
+//
+// Every curve here is drawn against its own maximum across the well, so a
+// channel that spends the job at a tenth of its peak is a tenth of the plot
+// tall and its shape cannot be read beside the others. This multiplies that
+// channel and only that channel, in THIS window — it is a way of looking, not
+// an edit, so it changes no value, no export and nothing the Lab holds.
+//
+// Kept by name and written down for the same reason hiddenChans is: Carmine
+// cycles a folder with this window open, and setting the same stretch on forty
+// files one file at a time is a chore, not a setting.
+const chanGain = new Map(function () {
+  try { return Object.entries(JSON.parse(
+      localStorage.getItem("f2c.fvGain") || "{}")); }
+  catch (e) { return []; }
+}());
+// Symmetric about 1 on purpose: 1/8 and 8 put "untouched" exactly halfway
+// along the travel, so the handle sitting centred MEANS untouched.
+const GAIN_MIN = 0.125, GAIN_MAX = 8;
+const gainOf = nm => {
+  const g = +chanGain.get(nm);
+  return (isFinite(g) && g > 0) ? Math.min(GAIN_MAX, Math.max(GAIN_MIN, g)) : 1;
+};
+function saveGain() {
+  try {
+    const o = {};
+    for (const [k, v] of chanGain) if (+v !== 1) o[k] = +v;
+    localStorage.setItem("f2c.fvGain", JSON.stringify(o));
+  } catch (e) {}
+}
+// A slider moving linearly from 0.25 to 8 spends most of its travel above 2,
+// which is the part nobody wants. Geometric, so one notch is one ratio
+// wherever the handle is and 1.0 sits in the middle.
+const SLIDER_N = 240;
+function gainToPos(g) {
+  return Math.round(SLIDER_N *
+    (Math.log(g / GAIN_MIN) / Math.log(GAIN_MAX / GAIN_MIN)));
+}
+function posToGain(p) {
+  const g = GAIN_MIN * Math.pow(GAIN_MAX / GAIN_MIN, p / SLIDER_N);
+  // Three decimals, not two: at the quiet end of the travel 0.125 rounded to
+  // 0.13, which is 4% adrift and leaves barely a dozen distinct settings
+  // below 1x. The readout still prints two.
+  return Math.abs(g - 1) < 0.04 ? 1 : Math.round(g * 1000) / 1000;
+}
+// The number the slider is really setting: a channel is drawn against its own
+// max divided by the gain (see the draw, `MAXES.get(name) / gainOf(name)`), so
+// the axis top IS that quotient. Typing 80 for a pressure is the same gesture
+// as hunting for 1.25x on the handle, and it is the one an engineer already
+// has in mind — the slider stays for sweeping, the box for saying exactly.
+const axisMaxOf = nm => (MAXES.get(nm) || 1) / gainOf(nm);
+const fmtAxis = v => !isFinite(v) || v <= 0 ? ""
+  : v >= 100 ? String(Math.round(v))
+  : v >= 10 ? (Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, "")
+  : String(Math.round(v * 100) / 100);
+const fmtGain = g => (g === 1 ? "1\u00d7"
+  : (g < 10 ? g.toFixed(2).replace(/\.?0+$/, "") : String(Math.round(g))) + "\u00d7");
+
+let keySig = "";            // so the strip is rebuilt only when it changes
+
+function renderKey(names) {
+  const sig = names.join("|") + "\u0000" + scheme + "\u0000" + selIdx +
+              "\u0000" + [...hiddenChans].sort().join(",");
+  if (sig === keySig) return;
+  keySig = sig;
+  const host = $("chankey");
+  host.innerHTML = "";
+  names.forEach((nm, ni) => {
+    const cell = document.createElement("div");
+    cell.className = "ck" + (hiddenChans.has(nm) ? " off" : "");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = hiddenChans.has(nm) ? "off" : "";
+    b.title = hiddenChans.has(nm) ? "Show this channel" : "Hide this channel";
+    const sw = document.createElement("i");
+    sw.style.background = curveColor(nm, ni, Math.max(0, selIdx));
+    b.appendChild(sw);
+    b.appendChild(document.createTextNode(nm));
+    b.addEventListener("click", () => {
+      if (hiddenChans.has(nm)) hiddenChans.delete(nm); else hiddenChans.add(nm);
+      saveHidden();
+      keySig = "";                 // force the strip to restyle
+      draw();
+    });
+    cell.appendChild(b);
+
+    // The stretch for this channel, under its own switch.
+    const row = document.createElement("div");
+    row.className = "gain";
+    const sl = document.createElement("input");
+    sl.type = "range"; sl.min = "0"; sl.max = String(SLIDER_N); sl.step = "1";
+    sl.value = String(gainToPos(gainOf(nm)));
+    sl.title = "Stretch " + nm + " up its own axis, in this window only. " +
+               "Double-click the number to put it back to 1x.";
+    const out = document.createElement("b");
+    out.textContent = fmtGain(gainOf(nm));
+    out.title = "Back to 1x";
+    // input, not change: the curve follows the handle while it is dragged.
+    // The key is NOT rebuilt here — rebuilding it mid-drag would replace the
+    // slider under the mouse and drop the gesture — so keySig is left alone
+    // and only the readout and the canvas are touched.
+    // The same setting, typed. Declared before the slider's handler so both
+    // can keep the other honest: drag the handle and the number follows,
+    // type a number and the handle moves to it.
+    const axRow = document.createElement("div");
+    axRow.className = "axis";
+    const ax = document.createElement("input");
+    ax.type = "text";
+    ax.inputMode = "decimal";
+    ax.spellcheck = false;
+    ax.title = "Top of " + nm + "'s axis, in this window only. Type a value "
+             + "and press Enter; empty it to go back to the channel's own max.";
+    const syncAx = () => {
+      ax.value = fmtAxis(axisMaxOf(nm));
+      ax.classList.toggle("custom", gainOf(nm) !== 1);
+    };
+    syncAx();
+
+    sl.addEventListener("input", () => {
+      const g = posToGain(+sl.value);
+      if (g === 1) chanGain.delete(nm); else chanGain.set(nm, g);
+      out.textContent = fmtGain(g);
+      syncAx();
+      saveGain();
+      draw();
+    });
+    const reset = () => {
+      chanGain.delete(nm);
+      sl.value = String(gainToPos(1));
+      out.textContent = fmtGain(1);
+      syncAx();
+      saveGain();
+      draw();
+    };
+    // An axis top is only reachable as far as the gain travels: the handle
+    // spans 0.125x..8x, so a channel peaking at 60 can be asked for a top
+    // between 7.5 and 480. A value outside that is clamped rather than
+    // refused, and the box shows what it actually got — a silent no-op would
+    // read as the box not working.
+    const commit = () => {
+      const raw = ax.value.trim().replace(/,/g, "");
+      if (raw === "") { reset(); return; }
+      const want = parseFloat(raw);
+      if (!isFinite(want) || want <= 0) { syncAx(); return; }
+      const base = MAXES.get(nm) || 1;
+      const g = Math.min(GAIN_MAX, Math.max(GAIN_MIN, base / want));
+      if (Math.abs(g - 1) < 1e-9) chanGain.delete(nm); else chanGain.set(nm, g);
+      sl.value = String(gainToPos(gainOf(nm)));
+      out.textContent = fmtGain(gainOf(nm));
+      syncAx();
+      saveGain();
+      draw();
+    };
+    ax.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); ax.blur(); }
+      else if (e.key === "Escape") { syncAx(); ax.blur(); }
+      // The window listens for keys to step stages; typing 2 in here must not
+      // also move the chart.
+      e.stopPropagation();
+    });
+    ax.addEventListener("change", commit);
+    ax.addEventListener("blur", commit);
+    out.addEventListener("click", reset);
+    sl.addEventListener("dblclick", reset);
+    row.appendChild(sl); row.appendChild(out);
+    cell.appendChild(row);
+    axRow.appendChild(ax);
+    cell.appendChild(axRow);
+    host.appendChild(cell);
+  });
+}
+let captionMode = localStorage.getItem("f2c.fvCaption") || "number";
+let scheme = "alt";
+let hover = null;            // {x, t}
+let drag = null;             // {kind:"pan"|"bound"|"cut", ...}
+
+const CH_COLORS = { "Tr Press": "#a31631", "Slurry Rate": "#1f6feb",
+                    "WH Prop Conc": "#1e7a34", "BH Prop Conc": "#7a4fd6" };
+const FALLBACK = ["#a31631", "#1f6feb", "#1e7a34", "#7a4fd6", "#b45309"];
+
+// The hover readout gets a band of its own above the plot.
+//
+// It used to be drawn at PAD.t + 2, which is INSIDE the plot: a 30px white
+// box sitting on top of the first 30px of every curve, right where the
+// pressure peaks are. Reading the row number cost you the data underneath
+// it. The band is reserved whether or not the box is showing, so the plot
+// does not resize as the pointer comes and goes.
+const HOVER_H = 34;
+const PAD = { l: 54, r: 14, t: 26 + HOVER_H, b: 34 };
+
+// ---------- two ways to lay the stages along x ----------
+// Everything — bounds, cuts, every sample — is held in REAL absolute
+// time, and always has been. The mode changes only where a moment is DRAWN, so
+// switching it cannot disturb an edit: it is a lens, not a different dataset.
+//
+// Real Time is the clock: hours of waiting between stages show up as hours of
+// empty axis, which is the point of it. Plot by row closes those gaps so each
+// stage takes the width of its own duration and the shapes can be compared
+// side by side.
+let timeMode = localStorage.getItem("f2c.fvTime") || "real";
+// Channels or the stage-sequence line. Carmine checks our CSVs in FracPrep by
+// plotting STAGE against time: right, it is one ascending staircase, and a
+// stage whose clock is wrong drops out of the line where nothing else would
+// show it. 00495 is the case — 66 stages, and 3B alone dated 2023-11-02
+// 04:51, before stage 1 begins. Reviewed one stage at a time that is
+// invisible; on this graph it is the only thing you see.
+let viewMode = localStorage.getItem("f2c.fvView") || "channels";
+
+// How x is spaced. Plot by row closes the idle gaps, which is right for
+// comparing stage shapes and wrong for the Sequence view: that view exists to
+// judge the clock, and a clock with its waits removed is not one. So Sequence
+// always reads real time, whatever the Time control says.
+function spacing() { return viewMode === "sequence" ? "real" : timeMode; }
+let dispMap = [];        // per stage: real [a,b] -> display [da,db]
+
+// A stage's band runs from its own start to the NEXT stage's start, so the
+// wait between two stages already sits INSIDE the earlier band — there is no
+// gap between bounds to close. What Plot by row removes is that idle tail: the
+// stretch after a stage's last sample and before the next one begins.
+function buildDispMap() {
+  dispMap = [];
+  let d = 0;
+  for (let i = 0; i < nStages(); i++) {
+    const a = edits.bounds[i], b = edits.bounds[i + 1];
+    const src = well.stages[edits.origin ? edits.origin[i] : i];
+    // where this stage's samples actually stop
+    //
+    // Computed in BOTH modes now. Real Time used to set hi = b and return
+    // early, because the only consumer was Plot by row, which needed it to
+    // know what to collapse. But it is also the edge where a stage's readings
+    // end and the wait begins — and Real Time is the mode that has to draw
+    // that wait. With hi = b there was no wait to find: every band ran to the
+    // next stage's start and the void was indistinguishable from pumping.
+    const hi = src ? Math.min(b, src.t0 + src.n * src.dsec * 1000) : b;
+    if (spacing() === "real") { dispMap.push({ a, b, hi, da: a, db: b }); continue; }
+    const wdt = Math.max(1000, hi - a);
+    dispMap.push({ a, b, hi, da: d, db: d + wdt });
+    d += wdt;
+  }
+}
+// real -> display. Outside the stages the mapping continues linearly, so a
+// sample that sits just past the last boundary still draws where it belongs.
+function toDisp(t) {
+  if (spacing() === "real" || !dispMap.length) return t;
+  if (t < dispMap[0].a) return dispMap[0].da + (t - dispMap[0].a);
+  for (const m of dispMap) {
+    if (t < m.hi) return m.da + (t - m.a);
+    if (t < m.b) return m.db;          // idle tail collapses to the band's end
+  }
+  const L = dispMap[dispMap.length - 1];
+  return L.db + Math.max(0, t - L.hi);
+}
+function fromDisp(x) {
+  if (spacing() === "real" || !dispMap.length) return x;
+  if (x < dispMap[0].da) return dispMap[0].a + (x - dispMap[0].da);
+  for (const m of dispMap) if (x < m.db) return m.a + (x - m.da);
+  const L = dispMap[dispMap.length - 1];
+  return L.hi + (x - L.db);
+}
+
+// ---------- where a moment lands in the exported CSV ----------
+// Carmine reads a feature off this chart and then goes hunting for it in the
+// CSV, so the number on the axis has to be the CSV's OWN line number, not a
+// sample index. wellCSV writes the header, then the units row, then every
+// stage block in order, one line per sample — so the first reading of the
+// well is line 3, and Excel's row numbers agree because the xlsx MAIN sheet
+// is built from the same model.
+//
+// Built from the SAME arithmetic applyFvEdits exports with: the samples of
+// any source stage falling inside the edited band, ordered by absolute time.
+// That is what makes a boundary drag move the row numbers exactly as far as
+// it moves the export, instead of the axis and the file disagreeing.
+//
+// Cuts are deliberately NOT subtracted. A trimmed span is blanked rather than
+// deleted — applyFvEdits pushes null and says why — so those lines are still
+// in the file and still hold their row numbers.
+const CSV_HEADER_ROWS = 2;          // head + unit_row, per wellCSV
+let rowMap = [];
+
+function buildRowMap() {
+  rowMap = [];
+  if (!well) return;
+  let base = CSV_HEADER_ROWS;
+  for (let i = 0; i < nStages(); i++) {
+    const a = edits.bounds[i], b = edits.bounds[i + 1];
+    const parts = [];
+    for (const st of well.stages) {
+      const step = (st.dsec || 1) * 1000;
+      if (st.t0 + st.n * step <= a || st.t0 >= b) continue;
+      const j0 = Math.max(0, Math.ceil((a - st.t0) / step));
+      const j1 = Math.min(st.n, Math.ceil((b - st.t0) / step));
+      if (j1 > j0) parts.push({ t0: st.t0, step, j0, j1, base: 0 });
+    }
+    parts.sort((x, y) => (x.t0 + x.j0 * x.step) - (y.t0 + y.j0 * y.step));
+    let n = 0;
+    for (const p of parts) { p.base = n; n += p.j1 - p.j0; }
+    rowMap.push({ a, b, base, parts, n });
+    base += n;
+  }
+}
+
+// absolute time -> 1-based CSV line, or 0 where nothing is exported.
+// 0 is the honest answer in a stage's idle tail: the chart still draws that
+// span in Real Time, and no line of the file corresponds to it.
+function rowAt(t) {
+  for (const m of rowMap) {
+    if (t < m.a || t >= m.b) continue;
+    for (const p of m.parts) {
+      const j = Math.floor((t - p.t0) / p.step);
+      if (j >= p.j0 && j < p.j1) return m.base + p.base + (j - p.j0) + 1;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+// The stage's OWN printed date. Never derived from t0: where the sheets carry
+// no clock the stages sit on a synthetic axis, and a date read back off that
+// would be invented — which is the whole reason `synthetic` is sent over.
+function printedDay(t) {
+  const st = srcAt(t);
+  if (st && st.date) return st.date;
+  // A stage flagged `made` printed no clock and was PLACED after the one
+  // before it. Its position is ours, so a day read off it is ours too.
+  if (st && st.made) return "";
+  return well && well.synthetic ? "" : fmtDay(t);
+}
+
+// ---------- stage geometry ----------
+// A stage's samples live on its own clock: sample j is at t0 + j*dsec seconds.
+// `bounds` holds one absolute cut point per stage START, so bounds[i] is where
+// stage i begins and bounds[i+1] where it ends. That is n+1 numbers for n
+// stages, which is what makes a boundary drag a single-number edit.
+function rawBounds(w) {
+  const b = [];
+  for (const st of w.stages) b.push(st.t0);
+  const last = w.stages[w.stages.length - 1];
+  b.push(last.t0 + last.n * last.dsec * 1000);
+  return b;
+}
+function freshEdits(w) {
+  return { bounds: rawBounds(w), labels: w.stages.map(s => s.label),
+           origin: w.stages.map((_, i) => i), cuts: [] };
+}
+function nStages() { return edits.bounds.length - 1; }
+function stageSpan(i) { return { a: edits.bounds[i], b: edits.bounds[i + 1] }; }
+
+// Which ORIGINAL stage a moment belongs to — the source of its samples. After
+// a boundary move or a split the edited stage i no longer lines up with the
+// extracted stage i, so drawing and export both have to ask this rather than
+// assume the index still matches.
+function srcAt(t) {
+  for (const st of well.stages) {
+    const end = st.t0 + st.n * st.dsec * 1000;
+    if (t >= st.t0 && t < end) return st;
+  }
+  return null;
+}
+function inCut(t) {
+  for (const c of edits.cuts) if (t >= c.a && t < c.b) return true;
+  return false;
+}
+function markDirty() {
+  const n = edits.cuts.length;
+  const moved = edits.bounds.length !== well.stages.length + 1 ||
+                edits.bounds.some((v, i) => v !== rawBounds(well)[i]);
+  const el = $("state");
+  if (!n && !moved) { el.textContent = "no edits"; el.className = "state clean"; }
+  else {
+    const bits = [];
+    if (moved) bits.push(`${nStages()} stages`);
+    if (n) bits.push(`${n} cut${n > 1 ? "s" : ""}`);
+    el.textContent = "edited · " + bits.join(" · ");
+    el.className = "state dirty";
+  }
+  const ub = $("undo");
+  if (ub) ub.disabled = !undoStack.length;
+  sendEdits();
+}
+function pushUndo() {
+  undoStack.push(JSON.stringify(edits));
+  if (undoStack.length > 60) undoStack.shift();
+}
+
+// ---------- colours ----------
+// Spreading the hues evenly across the wheel put NEIGHBOURS closest together:
+// at 30 stages consecutive bands were 12 degrees apart and read as one long
+// gradient, which is the opposite of what the colour is for. Stepping by the
+// golden angle instead puts every stage far from the one before it and still
+// never repeats a hue until the wheel is densely packed.
+const GOLDEN_ANGLE = 137.508;
+function stageHue(i) {
+  return (scheme === "rainbow")
+    ? (i * GOLDEN_ANGLE) % 360
+    : (i * 360 / Math.max(1, nStages())) % 360;
+}
+function bandFill(i) {
+  if (scheme === "mono") return i % 2 ? "#f3f4f6" : "#fafafa";
+  if (scheme === "contrast") return i % 2 ? "#e8edf5" : "#fdf4e3";
+  if (scheme === "spectrum") return `hsl(${stageHue(i).toFixed(0)} 62% 95%)`;
+  // Rainbow puts the colour on the CURVES, so the band behind them stays
+  // near-white — tinting both would leave the ink competing with its backdrop.
+  if (scheme === "rainbow") return `hsl(${stageHue(i).toFixed(0)} 60% 98%)`;
+  return i % 2 ? "#f6f7f9" : "#ffffff";     // alternating, the default
+}
+function bandEdge(i) {
+  if (scheme === "spectrum" || scheme === "rainbow")
+    return `hsl(${stageHue(i).toFixed(0)} 55% 62%)`;
+  return "#c9ced6";
+}
+// In every scheme but Rainbow a channel keeps one colour the length of the
+// well, so a curve can be followed across a boundary. Rainbow trades that for
+// the other reading: which stage a piece of ink belongs to, at a glance.
+function curveColor(name, ni, si) {
+  if (scheme !== "rainbow")
+    return CH_COLORS[name] || FALLBACK[ni % FALLBACK.length];
+  const l = [34, 50, 64][ni % 3];       // channels stay apart inside one stage
+  return `hsl(${stageHue(si).toFixed(0)} 74% ${l}%)`;
+}
+
+// ---------- drawing ----------
+function chanMax() {
+  // One scale per channel across the WHOLE well, not per stage. A stage
+  // rescaled to its own peak looks like every other stage, which is exactly
+  // the shape information you need to see a boundary in the wrong place.
+  const m = new Map();
+  for (const st of well.stages)
+    for (const c of st.channels) {
+      let mx = m.get(c.name) || 0;
+      for (let i = 0; i < c.values.length; i++) {
+        const v = c.values[i];
+        if (isFinite(v) && v > mx) mx = v;
+      }
+      m.set(c.name, mx);
+    }
+  return m;
+}
+let MAXES = new Map();
+
+function fit() {
+  const cv = $("cv"), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = 560;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+const X = (t, w) => PAD.l + (toDisp(t) - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
+const T = (x, w) => fromDisp(view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a));
+
+// The stretch between one stage's last reading and the next stage's first.
+//
+// Drawn rather than left blank, because blank is ambiguous: empty axis could
+// equally be a stage whose curves failed to trace. Hatching says the space is
+// accounted for and holds nothing, and the duration says how much of the job
+// it was — which on a real well is most of it. 00440 waits 34 hours between
+// stages 6 and 7.
+function drawVoid(ctx, x0, x1, plotH, tFrom, tTo) {
+  const wdt = x1 - x0;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, PAD.t, wdt, plotH); ctx.clip();
+  ctx.fillStyle = "rgba(105,112,119,0.05)";
+  ctx.fillRect(x0, PAD.t, wdt, plotH);
+  ctx.strokeStyle = "rgba(105,112,119,0.16)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = x0 - plotH; x < x1; x += 9) {     // 45°, so it reads as "none"
+    ctx.moveTo(x, PAD.t + plotH);
+    ctx.lineTo(x + plotH, PAD.t);
+  }
+  ctx.stroke();
+  const label = fmtSpan(tTo - tFrom) + " · no readings";
+  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+  if (wdt > ctx.measureText(label).width + 14) {
+    ctx.fillStyle = "rgba(255,255,255,0.82)";
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillRect(x0 + (wdt - tw) / 2, PAD.t + plotH / 2 - 9, tw, 16);
+    ctx.fillStyle = "#697077";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x0 + wdt / 2, PAD.t + plotH / 2 + 3);
+    ctx.textAlign = "left";
+  }
+  ctx.restore();
+}
+
+function fmtSpan(ms) {
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60), rm = mins % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function fmtClock(ms) {
+  const d = new Date(ms), p = n => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function fmtDay(ms) {
+  const d = new Date(ms), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function draw() {
+  if (!well) return;
+  buildDispMap();          // bounds move with every edit
+  buildRowMap();           // ...and so do the row numbers
+  // Plot by row prints row number over clock, so the axis needs a second line
+  PAD.b = spacing() === "row" ? 48 : 34;
+  const { ctx, w, h } = fit();
+  const plotW = w - PAD.l - PAD.r, plotH = h - PAD.t - PAD.b;
+  ctx.clearRect(0, 0, w, h);
+
+  // stage bands
+  for (let i = 0; i < nStages(); i++) {
+    const s = stageSpan(i);
+    const x0 = Math.max(PAD.l, X(s.a, w)), x1 = Math.min(w - PAD.r, X(s.b, w));
+    if (x1 <= PAD.l || x0 >= w - PAD.r) continue;
+    // A band runs to the NEXT stage's start, so the wait between two stages
+    // sits INSIDE the earlier one. Tinted end to end, a 30-minute stage
+    // followed by a six-hour wait was drawn as a six-hour stage — the void
+    // took the previous stage's colour and its number, and Real Time read as
+    // though the pumps never stopped.
+    //
+    // So the tint stops where the READINGS stop. What follows is nobody's
+    // stage: no colour, no caption, and its own hatch saying there is nothing
+    // recorded here. The BOUNDARY does not move — bounds[i+1] is still the
+    // next stage's start and still what a drag edits — only the paint changes.
+    //
+    // dispMap already knows where a stage's samples end: `hi` is the number
+    // Plot by row collapses to, and it is exactly the edge wanted here.
+    const m = dispMap[i] || null;
+    const xh = m ? Math.min(x1, Math.max(x0, X(Math.min(m.hi, s.b), w))) : x1;
+    ctx.fillStyle = bandFill(i);
+    ctx.fillRect(x0, PAD.t, xh - x0, plotH);
+    if (xh < x1 - 0.5) drawVoid(ctx, xh, x1, plotH, m ? m.hi : s.a, s.b);
+    if (i === selIdx) {                 // the stage the Lab is showing
+      ctx.fillStyle = "rgba(163,22,49,0.07)";
+      ctx.fillRect(x0, PAD.t, xh - x0, plotH);
+      ctx.strokeStyle = "rgba(163,22,49,0.5)"; ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0 + 0.75, PAD.t + 0.75, xh - x0 - 1.5, plotH - 1.5);
+    }
+    // POSITION first, printed name second.
+    //
+    // A Liberty well prints a Treatment plot and a Chemical plot for each
+    // stage, so the printed names arrive in pairs — 00627 captions its bands
+    // "4 4 5 5 6 6 …" and there is nothing to tell one band from its twin,
+    // nor any way to ask for the one in between. The position is unique by
+    // construction, so it leads; the printed name rides behind it when the
+    // band is wide enough to hold it.
+    if (x1 - x0 > 13) {
+      ctx.save();
+      // Clipped to BELOW the readout band, so a long caption can never
+      // bleed up into it.
+      ctx.beginPath(); ctx.rect(x0, HOVER_H, x1 - x0, PAD.t - HOVER_H); ctx.clip();
+      ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
+      const printedName = String(edits.labels[i] || "");
+      const pos = captionMode === "label" && printedName
+        ? printedName : String(i + 1);
+      ctx.fillStyle = i === selIdx ? "#a31631" : "#14181d";
+      ctx.fillText(pos, x0 + 4, PAD.t - 9);
+      let cx = x0 + 6 + ctx.measureText(pos).width;
+      // The stage's own date, from the sheet — a job runs across days and the
+      // axis only prints the day it starts on, so which day a stage belongs to
+      // was not readable anywhere. Emphasised when it differs from the stage
+      // before it, which is where a day boundary actually falls.
+      const src = well.stages[edits.origin ? edits.origin[i] : i];
+      const d = src && src.date ? String(src.date) : "";
+      if (d && x1 - x0 > 46) {
+        const prevSrc = i > 0
+          ? well.stages[edits.origin ? edits.origin[i - 1] : i - 1] : null;
+        const isNewDay = !prevSrc || String(prevSrc.date || "") !== d;
+        ctx.font = (isNewDay ? "600 " : "") +
+                   "10px ui-monospace,Menlo,Consolas,monospace";
+        ctx.fillStyle = isNewDay ? "#a31631" : "#9aa1aa";
+        ctx.fillText(d, cx, PAD.t - 9);
+        cx += ctx.measureText(d).width + 6;
+        ctx.font = "600 11px ui-monospace,Menlo,Consolas,monospace";
+      }
+      const printed = captionMode === "label" ? "" : printedName;
+      if (printed && printed !== pos && x1 - x0 > 40) {
+        ctx.fillStyle = "#9aa1aa";
+        ctx.fillText(printed, cx, PAD.t - 9);
+      }
+      ctx.restore();
+    }
+  }
+
+  // cuts, over the bands and under the ink
+  for (const c of edits.cuts) {
+    void 0;
+    const x0 = Math.max(PAD.l, X(c.a, w)), x1 = Math.min(w - PAD.r, X(c.b, w));
+    if (x1 <= x0) continue;
+    ctx.fillStyle = "rgba(163,22,49,0.13)";
+    ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+    ctx.strokeStyle = "rgba(163,22,49,0.55)"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = x0 - plotH; x < x1; x += 7) {
+      ctx.moveTo(Math.max(x0, x), PAD.t + Math.max(0, x0 - x));
+      ctx.lineTo(Math.min(x1, x + plotH), PAD.t + Math.min(plotH, plotH - Math.max(0, (x + plotH) - x1)));
+    }
+    ctx.stroke();
+    if (mode === "trim") {              // the edges are draggable in trim mode
+      ctx.fillStyle = "#a31631";
+      for (const x of [x0, x1]) ctx.fillRect(x - 2.5, PAD.t + plotH / 2 - 9, 5, 18);
+    }
+  }
+
+  // the span being dragged out right now — grey, because it is not an edit yet
+  if (drag && drag.kind === "cut") {
+    const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b);
+    const x0 = Math.max(PAD.l, X(a, w)), x1 = Math.min(w - PAD.r, X(b, w));
+    if (x1 > x0) {
+      ctx.fillStyle = "rgba(105,112,119,0.22)";
+      ctx.fillRect(x0, PAD.t, x1 - x0, plotH);
+      ctx.strokeStyle = "rgba(105,112,119,0.7)"; ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(x0 + 0.5, PAD.t + 0.5, x1 - x0 - 1, plotH - 1);
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#14181d";
+      ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+      ctx.textAlign = "center";
+      const secs = Math.round((b - a) / 1000);
+      if (x1 - x0 > 46) ctx.fillText(`${secs}s`, (x0 + x1) / 2, PAD.t + plotH / 2);
+      ctx.textAlign = "left";
+    }
+  }
+
+  // frame
+  ctx.strokeStyle = "#e3e5e8"; ctx.lineWidth = 1;
+  ctx.strokeRect(PAD.l + 0.5, PAD.t + 0.5, plotW - 1, plotH - 1);
+
+  if (viewMode === "sequence") {
+    drawSequence(ctx, w, h, plotW, plotH);
+    renderKey([]);
+    drawTimeAxis(ctx, w, h, plotW, plotH);
+    drawHover(ctx, w, h, plotH);
+    return;
+  }
+
+  // curves — one polyline per channel per source stage, drawn in absolute time
+  const names = [];
+  for (const st of well.stages) for (const c of st.channels)
+    if (!names.includes(c.name)) names.push(c.name);
+
+  // Clipped to the plot from here on. Until the per-channel stretch existed
+  // every value was at most its channel's maximum, so nothing could leave the
+  // frame; a gain above 1 is a deliberate instruction to run a curve off the
+  // top, and the part that leaves must not be painted over the time axis or
+  // the hover readout.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(PAD.l, PAD.t, plotW, plotH); ctx.clip();
+  for (let ni = 0; ni < names.length; ni++) {
+    const name = names[ni];
+    if (hiddenChans.has(name)) continue;
+    // The channel's own maximum across the well, divided by this window's
+    // stretch for it: a 2x gain halves the value that reaches the top.
+    const mx = (MAXES.get(name) || 1) / gainOf(name);
+    ctx.lineWidth = 1.25;
+    // Two passes once anything is cut: the whole curve faintly FIRST, so a
+    // committed cut still shows the data it is taking out, then the surviving
+    // curve solid on top. Drawing the cut span as a plain gap meant the one
+    // thing you needed to see to fine-tune the edges — what is inside them —
+    // was the thing that disappeared the moment you let go of the mouse.
+    for (const ghost of (edits.cuts.length ? [true, false] : [false])) {
+    ctx.globalAlpha = ghost ? 0.22 : 1;
+    for (const st of well.stages) {
+      const ch = st.channels.find(c => c.name === name);
+      if (!ch) continue;
+      const step = st.dsec * 1000;
+      // Only the samples inside the view, and never more than one per pixel.
+      //
+      // view.a/view.b are DISPLAY coordinates, and st.t0 is real time. Those
+      // are the same thing in Real Time and NOT in Plot by row, where the idle
+      // is collapsed — comparing them there produced an empty window and drew
+      // no curves at all. Row mode maps a display span onto a piecewise, non
+      // monotonic set of real intervals, so there is no single real window to
+      // clip against: take the whole stage and let the stride decimate it and
+      // the clip discard what is off screen.
+      let j0 = 0, j1 = ch.values.length - 1;
+      if (spacing() === "real") {
+        j0 = Math.max(0, Math.floor((view.a - st.t0) / step) - 1);
+        j1 = Math.min(j1, Math.ceil((view.b - st.t0) / step) + 1);
+      }
+      if (j1 <= j0) continue;
+      const stride = Math.max(1, Math.floor((j1 - j0) / Math.max(1, plotW * 2)));
+      // `si` walks forward with t instead of being searched for per sample —
+      // at 30 stages and a few thousand plotted points the search version was
+      // the most expensive thing in the frame.
+      let si = 0;
+      while (si + 1 < nStages() && st.t0 + j0 * step >= edits.bounds[si + 1]) si++;
+      ctx.strokeStyle = curveColor(name, ni, si);
+      ctx.beginPath();
+      let pen = false;
+      for (let j = j0; j <= j1; j += stride) {
+        const t = st.t0 + j * step;
+        while (si + 1 < nStages() && t >= edits.bounds[si + 1]) {
+          si++;
+          if (scheme === "rainbow") {    // close the run, restart in the new hue
+            if (pen) ctx.stroke();
+            ctx.beginPath(); ctx.strokeStyle = curveColor(name, ni, si);
+            pen = false;
+          }
+        }
+        const v = ch.values[j];
+        // solid pass: a cut is a gap, so what you see is what exports.
+        // ghost pass: draw straight through it — that IS the point.
+        if (!ghost && inCut(t)) { pen = false; continue; }
+        if (!isFinite(v)) { pen = false; continue; }
+        const x = X(t, w);
+        const y = PAD.t + plotH - (v / mx) * (plotH - 6) - 3;
+        if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    }
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  // boundaries — the draggable bit
+  for (let i = 0; i < edits.bounds.length; i++) {
+    const x = X(edits.bounds[i], w);
+    if (x < PAD.l - 2 || x > w - PAD.r + 2) continue;
+    const isEnd = i === 0 || i === edits.bounds.length - 1;
+    const near = hover && Math.abs(hover.x - x) < 9 && mode === "adjust";
+    ctx.strokeStyle = near ? "#a31631" : (isEnd ? "#9aa1aa" : bandEdge(i));
+    ctx.lineWidth = near ? 2.5 : 1.5;
+    ctx.setLineDash(isEnd ? [3, 3] : []);
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
+    ctx.setLineDash([]);
+    if (!isEnd && mode === "adjust") {   // grab handle, only when it grabs
+      ctx.fillStyle = near ? "#a31631" : bandEdge(i);
+      ctx.fillRect(x - 3, PAD.t + plotH / 2 - 9, 6, 18);
+    }
+  }
+
+  drawTimeAxis(ctx, w, h, plotW, plotH);
+  // channel key
+  renderKey(names);
+
+  drawHover(ctx, w, h, plotH);
+}
+
+// ---------- the Sequence view: position against the clock -----------------
+//
+// One line. Y is the stage's position in the well — the same number the CSV's
+// STAGE column carries — and X is the clock. Laid out correctly that is a
+// single ascending staircase: each stage sits a step above the one before it
+// and further along in time. A stage whose date or time is wrong leaves the
+// line, and there is nowhere for it to hide.
+//
+// This is the check Carmine runs on our exports in FracPrep, and it earns its
+// place: 00495 has 66 stages and exactly one of them, 3B, is dated
+// 2023-11-02 04:51 — before stage 1 starts. Stage by stage that is invisible.
+// Here it is a line running two days backwards.
+//
+// Note it is drawn against `edits.bounds`, so a boundary you drag moves this
+// line too — it diagnoses what would be exported, not what was extracted.
+// The staircase is stage NUMBER against the clock, and the number has to come
+// from the filing — not from where the stage ended up on the axis.
+//
+// This used to plot `i + 1`, the drawn position. The Lab orders the stages by
+// their clock before sending them, so drawn position IS time order and the
+// line could only ever ascend: a stage dated out of order moved itself into
+// place and the view reported a consistent clock. 00495's 3B — the well this
+// view was built for — read clean. `seq` is now the position the FILING
+// prints, so a stage sitting where its clock says while carrying a number
+// from somewhere else draws the step backwards that says so.
+function seqPoints() {
+  const out = [];
+  for (let i = 0; i < nStages(); i++) {
+    const m = dispMap[i];
+    if (!m) continue;
+    const src = well.stages[edits.origin ? edits.origin[i] : i];
+    out.push({ i, seq: (src && src.seq) || i + 1,
+               label: String((edits.labels && edits.labels[i]) != null
+                             ? edits.labels[i] : i + 1),
+               a: m.a, hi: Math.max(m.a, Math.min(m.hi, m.b)) });
+  }
+  return out;
+}
+
+// Which steps run backwards: the next stage begins before this one's readings
+// ended. Kept apart from the drawing so the rule can be tested against real
+// wells rather than eyeballed on a canvas.
+// The same threshold the Lab's stage list uses, and for the same reason: a
+// stage's START is printed and read, its END is start + samples x interval,
+// an estimate. Flagging any overlap at all flags the estimate's own error —
+// 28 of 38 stages on Canyon 00151, none of them over 5.9 minutes. Sanjel
+// 00020 is why it is a proportion: 10-20 minute slop on 110-minute stages
+// sits beside 812- and 1061-minute overlaps that are real.
+const SEQ_OVERLAP_FRAC = 0.35;
+// MILLISECONDS. buildDispMap computes hi as t0 + n * dsec * 1000, so these
+// axes are in ms — writing this in seconds would have left the floor a
+// thousand times too small and the fix doing nothing.
+const SEQ_OVERLAP_FLOOR = 15 * 60 * 1000;
+
+function seqBreaks(pts) {
+  const out = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    // Two ways the line can fault, and they are NOT the same complaint. A
+    // LOWER number than the stage before it is read straight off the filing
+    // and needs no tolerance. An overlap is measured against an estimated
+    // end, so it has to clear the estimate's own slop first.
+    const inverted = pts[k + 1].seq < pts[k].seq;
+    const over = pts[k].hi - pts[k + 1].a;
+    const dur = Math.max(0, (pts[k + 1].hi || 0) - (pts[k + 1].a || 0));
+    const overlapped = over > Math.max(SEQ_OVERLAP_FLOOR, dur * SEQ_OVERLAP_FRAC);
+    if (inverted || overlapped) out.push(k);
+  }
+  return out;
+}
+
+// Which stage a break is ABOUT, and what kind of break it is.
+//
+// The two faults do not have the same culprit. A NUMBER inversion is
+// unambiguous: the earlier-drawn stage carries the higher number, the clock
+// put it first, and that stage is the odd one out. An OVERLAP is not — stage
+// 40's readings running past stage 41's start looks identical to stage 41
+// beginning before stage 40 finished, and nothing in the two timestamps says
+// which of them is wrong. Naming one is a guess, and it guessed wrong on
+// 00082: Carmine read the flag as pointing at 41 when the stage he wanted was
+// 40 (#616), having just seen it name stage 23 correctly on an inversion.
+//
+// So an overlap names BOTH. That is the whole of what is known from the two
+// timestamps, and it cannot be off by one.
+function seqFault(pts, k) {
+  const a = pts[k], b = pts[k + 1];
+  if (b.seq < a.seq) return { kind: "inversion", labels: [a.label], at: a.a };
+  return { kind: "overlap", labels: [a.label, b.label], at: b.a };
+}
+
+function drawSequence(ctx, w, h, plotW, plotH) {
+  const pts = seqPoints();
+  if (!pts.length) return;
+  const top = PAD.t + 6, bot = PAD.t + plotH - 6;
+  const maxSeq = pts.length;
+  const Y = seq => bot - (maxSeq <= 1 ? 0 : (seq - 1) / (maxSeq - 1)) * (bot - top);
+
+  // gridlines at round positions, so a step can be read off as a number
+  const step = Math.max(1, Math.round(maxSeq / 8));
+  ctx.font = "10px ui-monospace,Menlo,Consolas,monospace";
+  ctx.textAlign = "right";
+  for (let n = 1; n <= maxSeq; n += step) {
+    const y = Y(n);
+    ctx.strokeStyle = "#eceef1";
+    ctx.beginPath(); ctx.moveTo(PAD.l, y); ctx.lineTo(w - PAD.r, y); ctx.stroke();
+    ctx.fillStyle = "#9aa1aa";
+    ctx.fillText(String(n), PAD.l - 5, y + 3);
+  }
+  ctx.textAlign = "left";
+
+  // the staircase: a tread across each stage's readings, a riser to the next
+  const breaks = new Set(seqBreaks(pts));
+  const back = breaks.size;
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k], nx = pts[k + 1];
+    const y = Y(p.seq);
+    const xa = X(p.a, w), xb = X(p.hi, w);
+    ctx.strokeStyle = "#1f6feb"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(Math.max(xa + 1, xb), y); ctx.stroke();
+    if (!nx) continue;
+    // A riser that leans BACKWARDS is the whole point of this view: the next
+    // stage begins before this one ended. Drawn in the flag colour and
+    // counted, because a picture that shows a fault without naming it still
+    // leaves someone to notice it.
+    const goesBack = breaks.has(k);
+    ctx.strokeStyle = goesBack ? "#a31631" : "#1f6feb";
+    ctx.lineWidth = goesBack ? 2.5 : 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.max(xa + 1, xb), y);
+    ctx.lineTo(X(nx.a, w), Y(nx.seq));
+    ctx.stroke();
+    if (goesBack) {                       // ring the stage that broke the line
+      ctx.fillStyle = "rgba(163,22,49,0.16)";
+      const bx = Math.min(X(nx.a, w), xb), bw = Math.abs(xb - X(nx.a, w));
+      ctx.fillRect(bx, PAD.t, Math.max(2, bw), plotH);
+    }
+  }
+
+  ctx.font = "600 12px ui-monospace,Menlo,Consolas,monospace";
+  ctx.fillStyle = back ? "#a31631" : "#1e7a34";
+  const bk = back ? Math.min(...breaks) : -1;
+  const f = bk < 0 ? null : seqFault(pts, bk);
+  const at = f ? `${fmtDay(f.at)} ${fmtClock(f.at)}` : "";
+  // see seqFault: an overlap names both stages, because which of the two is
+  // wrong is not in the timestamps
+  const desc = !f ? ""
+      : f.kind === "inversion"
+        ? `stage ${f.labels[0]} is out of step with the clock, at ${at}`
+        : `stages ${f.labels[0]} and ${f.labels[1]} overlap, at ${at}`;
+  ctx.fillText(back
+      ? (back === 1 ? desc : `${back} breaks in the line — the first is ${desc}`)
+      : "every stage follows the one before it — the clock is consistent",
+    PAD.l + 6, PAD.t + 14);
+  ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+}
+
+// Where the clock turns around.
+//
+// The axis is real elapsed time, so a stage that starts before the one printed
+// ahead of it DRAWS to the left of it — out of step with its own number. That
+// is the fault, physically: the eye lands on stage 12 sitting between 4 and 5.
+// What the picture cannot say on its own is WHEN, and "when" is the thing that
+// gets typed into the correction. So each turnaround gets a rule at the moment
+// it lands on, carrying the date and time to read off.
+function drawJumps(ctx, w, plotH) {
+  const js = (well && well.jumps) || [];
+  if (!js.length) return;
+  ctx.save();
+  ctx.font = "600 10.5px ui-monospace,Menlo,Consolas,monospace";
+  for (const j of js) {
+    const x = X(j.tTo, w);
+    if (x < PAD.l - 1 || x > w - PAD.r + 1) continue;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = "#a31631"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const tag = `\u21b0 ${j.to} \u00b7 ${fmtDay(j.tTo)} ${fmtClock(j.tTo)}`;
+    const tw = ctx.measureText(tag).width + 10;
+    // right of the rule, unless that runs off the plot
+    const left = x + 4 + tw > w - PAD.r;
+    const bx = left ? x - 4 - tw : x + 4;
+    const by = PAD.t + plotH - 19;
+    ctx.fillStyle = "#a31631";
+    ctx.fillRect(bx, by, tw, 15);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "left";
+    ctx.fillText(tag, bx + 5, by + 11);
+  }
+  ctx.restore();
+}
+
+// The time axis and the footer under it. Pulled out of draw() so the
+// Sequence view can share them — it swaps what is drawn INSIDE the plot,
+// not the clock along the bottom.
+function drawTimeAxis(ctx, w, h, plotW, plotH) {
+  // time axis
+  ctx.fillStyle = "#697077"; ctx.font = "11px ui-monospace,Menlo,Consolas,monospace";
+  ctx.textAlign = "center";
+  const span = view.b - view.a;
+  const step = niceStep(span / Math.max(2, Math.floor(plotW / 96)));
+  const first = Math.ceil(view.a / step) * step;
+  for (let dt = first; dt <= view.b; dt += step) {
+    const t = fromDisp(dt);          // label the real clock at that position
+    const x = X(t, w);
+    ctx.strokeStyle = "#eceef1";
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
+    if (spacing() === "row") {
+      // The row leads, because it is the number being carried to the CSV; the
+      // clock stays under it, because a row on its own says nothing about when.
+      const r = rowAt(t);
+      ctx.fillStyle = "#14181d";
+      ctx.fillText(r ? String(r) : "—", x, h - 31);
+      ctx.fillStyle = "#697077";
+      ctx.fillText(fmtClock(t), x, h - 19);
+    } else {
+      ctx.fillText(fmtClock(t), x, h - 18);
+    }
+  }
+  drawJumps(ctx, w, plotH);
+
+  ctx.textAlign = "left";
+  ctx.fillStyle = "#697077";
+  const foot = [];
+  // The day comes off the stage's printed date, so it is still right on a file
+  // whose stages were laid end to end for want of a clock.
+  const day = printedDay(fromDisp(view.a));
+  if (day) foot.push(day);
+  if (well.synthetic)
+    foot.push("no printed clock — stages laid end to end, so this axis is not a wall clock");
+  else {
+    // Placed stages: the axis is a real clock everywhere EXCEPT these, and a
+    // reader who is not told cannot see which spans they are.
+    const S = (well.stages || []);
+    const placed = S.filter(st => st.made === "placed").length;
+    const pushed = S.filter(st => st.made === "pushed").length;
+    if (placed) foot.push(placed === 1
+      ? "1 stage printed no clock — placed after the stage before it"
+      : `${placed} stages printed no clock — placed after the stage before them`);
+    // Not a missing clock: a REPEATED one. Saying "no clock" here would be
+    // wrong about a sheet that prints a time, so it gets its own line.
+    if (pushed) foot.push(pushed === 1
+      ? "1 stage repeats the timestamp before it — nudged clear so it can be seen"
+      : `${pushed} stages repeat the timestamp before them — nudged clear so `
+        + "they can be seen");
+  }
+  const js = (well.jumps || []);
+  if (js.length) foot.push(js.length === 1
+    ? `clock turns back at ${fmtDay(js[0].tTo)} ${fmtClock(js[0].tTo)} — `
+      + `stage ${js[0].to} starts before stage ${js[0].from}`
+    : `${js.length} backward jumps — first at ${fmtDay(js[0].tTo)} `
+      + `${fmtClock(js[0].tTo)}, stage ${js[0].to} before stage ${js[0].from}`);
+  if (spacing() === "row") foot.push("row = line in the exported CSV · gaps closed");
+  if (viewMode === "sequence") foot.push("stage position against the clock");
+  ctx.fillText(foot.join("   ·   "), PAD.l, h - 5);
+
+}
+
+// The crosshair and its readout box, shared by both views for the same
+// reason.
+function drawHover(ctx, w, h, plotH) {
+  // hover readout
+  if (hover && !drag) {
+    const x = X(hover.t, w);
+    ctx.strokeStyle = "rgba(20,24,29,0.35)"; ctx.lineWidth = 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
+    ctx.setLineDash([]);
+    const si = stageAtX(hover.t);
+    // Row first: this is the box read while pointing at a feature that then
+    // has to be found in the CSV. The clock and the day ride with it so the
+    // number can be checked against the file's own DATETIME column.
+    const hr = rowAt(hover.t);
+    const hday = printedDay(hover.t);
+    const bits = [];
+    if (hr) bits.push(`row ${hr}`);
+    bits.push(fmtClock(hover.t));
+    if (hday) bits.push(hday);
+    if (si >= 0) bits.push(`#${si + 1}` +
+      (edits.labels[si] && String(edits.labels[si]) !== String(si + 1)
+        ? ` (${edits.labels[si]})` : ""));
+    const label = bits.join("  ·  ");
+    // Twice the old size: this is the number being read off the chart while
+    // a boundary is placed, and 11px of it sat under the cursor. It now also
+    // carries the row and the day, so it steps down a size at a time rather
+    // than running off the plot — clamping alone would push the left edge
+    // under PAD.l and clip the row number, which is the part being read.
+    const avail = w - PAD.l - PAD.r;
+    let fpx = 22;
+    do {
+      ctx.font = `600 ${fpx}px ui-monospace,Menlo,Consolas,monospace`;
+      if (ctx.measureText(label).width + 18 <= avail) break;
+    } while ((fpx -= 2) >= 12);
+    const tw = Math.min(avail, ctx.measureText(label).width + 18);
+    const bx = Math.min(Math.max(PAD.l, x - tw / 2), w - PAD.r - tw);
+    const bh = fpx + 8;
+    // In the reserved band, top-aligned so a smaller font does not make the
+    // box wander vertically as the label grows and shrinks.
+    const by = Math.max(2, (HOVER_H - bh) / 2);
+    ctx.fillStyle = "rgba(255,255,255,0.94)";
+    ctx.fillRect(bx, by, tw, bh);
+    ctx.strokeStyle = "rgba(20,24,29,0.10)"; ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, tw - 1, bh - 1);
+    ctx.fillStyle = "#14181d";
+    ctx.fillText(label, bx + 9, by + bh - 8);
+  }
+}
+function niceStep(ms) {
+  const S = [1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5, 9e5, 18e5,
+             36e5, 72e5, 144e5, 288e5];
+  for (const s of S) if (ms <= s) return s;
+  return 288e5;
+}
+
+// ---------- view control ----------
+function setView(a, b) {
+  buildDispMap();
+  const all = { a: toDisp(edits.bounds[0]),
+                b: toDisp(edits.bounds[edits.bounds.length - 1]) };
+  const full = all.b - all.a || 1;
+  let span = Math.min(Math.max(b - a, 2000), full * 1.5);
+  let mid = (a + b) / 2;
+  view.a = mid - span / 2; view.b = mid + span / 2;
+  // keep at least a sliver of data on screen
+  if (view.a > all.b - span * 0.2) { view.a = all.b - span * 0.2; view.b = view.a + span; }
+  if (view.b < all.a + span * 0.2) { view.b = all.a + span * 0.2; view.a = view.b - span; }
+  draw();
+}
+function viewAll() {
+  buildDispMap();
+  const a = toDisp(edits.bounds[0]),
+        b = toDisp(edits.bounds[edits.bounds.length - 1]);
+  const pad = (b - a) * 0.02;
+  view.a = a - pad; view.b = b + pad; draw();
+}
+function zoomStages(centreIdx, count) {
+  if (count === "all") { viewAll(); return; }
+  const n = Number(count) || 1;
+  const i0 = Math.max(0, Math.min(centreIdx - Math.floor((n - 1) / 2), nStages() - n));
+  buildDispMap();
+  const a = toDisp(edits.bounds[Math.max(0, i0)]);
+  const b = toDisp(edits.bounds[Math.min(edits.bounds.length - 1, i0 + n)]);
+  const pad = (b - a) * 0.03;
+  view.a = a - pad; view.b = b + pad; draw();
+}
+function stageAtX(t) {
+  for (let i = 0; i < nStages(); i++) {
+    const s = stageSpan(i);
+    if (t >= s.a && t < s.b) return i;
+  }
+  return -1;
+}
+function fillJump() {
+  const sel = $("jump");
+  // Every entry is distinct even when the printed names repeat, which is what
+  // makes a band between two identically-named ones selectable at all.
+  sel.innerHTML = `<option value="">— stage —</option>` +
+    Array.from({ length: nStages() }, (_, i) => {
+      const printed = String(edits.labels[i] || "");
+      const txt = printed && printed !== String(i + 1)
+        ? `${i + 1}. ${printed}` : `${i + 1}`;
+      return `<option value="${i}">${escapeHtml(txt)}</option>`;
+    }).join("");
+}
+const escapeHtml = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// ---------- edits ----------
+// Splitting a stage whose label is a RANGE. This is the case FracView exists
+// for: Calfrac prints zones 1-30 on one sheet and the auto-split sometimes
+// finds none of the breaks, so the whole job arrives as a single stage called
+// "1-30". Numbering the pieces 1, 2, 3 … off that range is the difference
+// between a usable split and thirty stages called "1-30 (part 4)".
+// Renumber every piece that came out of ONE extracted stage. The numbering
+// is always derived from that stage's ORIGINAL printed label, never from the
+// labels already on screen — reading those back gave "1 (1) (2)" on the second
+// piece, because the first had been overwritten by the time it was read.
+function relabelOrigin(orig) {
+  const idx = [];
+  for (let i = 0; i < nStages(); i++) if (edits.origin[i] === orig) idx.push(i);
+  const base = String((well.stages[orig] && well.stages[orig].label) || orig + 1);
+  if (idx.length <= 1) { edits.labels[idx[0]] = base; return; }
+  const m = /^\s*(\d+)\s*[-–]\s*(\d+)(.*)$/.exec(base);
+  if (!m) {
+    idx.forEach((i, k) => { edits.labels[i] = `${base} (${k + 1})`; });
+    return;
+  }
+  // "1-30" is a Calfrac sheet holding zones 1 through 30. Splitting it is the
+  // job this window exists for, so the pieces take those zone numbers.
+  const lo = Number(m[1]), hi = Number(m[2]), suffix = m[3] || "";
+  idx.forEach((i, k) => {
+    const num = lo + k;
+    edits.labels[i] = num <= hi ? `${num}${suffix}`
+                                : `${hi}${suffix} (${num - hi + 1})`;
+  });
+}
+function splitAt(t) {
+  const i = stageAtX(t);
+  if (i < 0) return;
+  const s = stageSpan(i);
+  if (t - s.a < 2000 || s.b - t < 2000) return;   // too thin to be meant
+  pushUndo();
+  const orig = edits.origin[i];
+  edits.bounds.splice(i + 1, 0, t);
+  edits.labels.splice(i + 1, 0, edits.labels[i]);
+  edits.origin.splice(i + 1, 0, orig);
+  relabelOrigin(orig);
+  fillJump(); markDirty(); draw();
+}
+
+// ---------- talking to the Lab ----------
+// STRATUM PATCH: embedded in an iframe there is no opener, so talk to the
+// parent frame instead. The Lab's own pop-up still finds its opener first.
+function host() {
+  try { if (window.opener && !window.opener.closed) return window.opener; } catch (e) { /* gone */ }
+  return window.parent !== window ? window.parent : null;
+}
+let sendTimer = null;
+function sendEdits() {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => {
+    if (!host() || !well) return;
+    try {
+      host().postMessage({
+        type: "fv:edits", file: well.file,
+        bounds: edits.bounds.slice(), labels: edits.labels.slice(),
+        origin: edits.origin.slice(),
+        cuts: edits.cuts.map(c => ({ a: c.a, b: c.b })),
+      }, "*");
+    } catch (e) { /* the Lab went away — nothing to keep in step */ }
+  }, 90);
+}
+
+window.addEventListener("message", ev => {
+  const d = ev.data;
+  if (!d || typeof d !== "object") return;
+  if (d.type === "fv:none" || d.type === "fv:error") {
+    well = null;
+    // "Pick a well" is the right thing to say when nothing is selected and
+    // exactly the wrong thing when the Lab tried and failed: the two looked
+    // identical from here, so a broken well read as an idle window and
+    // nobody went looking for a cause.
+    $("msg").textContent = d.type === "fv:error"
+      ? `Could not build this well — ${d.error || "no reason given"}` +
+        (d.file ? ` (${d.file})` : "") + ". The Lab's console has the stack."
+      : "Pick a well in the Lab — FracView follows whatever is selected there.";
+    $("msg").hidden = false; $("wrap").hidden = true; $("tools").hidden = true;
+    $("zoomctl").hidden = true;
+    $("title").textContent = d.type === "fv:error" ? "Could not build this well"
+                                                   : "No well selected";
+    $("sub").textContent = "";
+    return;
+  }
+  // The Lab moved to a stage: highlight it here. Deliberately NOT routed
+  // through selectStage — that posts back, and the two windows would chase
+  // each other around the loop.
+  if (d.type === "fv:sel") {
+    if (!well || d.file !== well.file) return;
+    const i = d.label == null ? -1
+            : edits.labels.findIndex(l => String(l) === String(d.label));
+    selIdx = i;
+    $("jump").value = i >= 0 ? String(i) : "";
+    // Bring it into VIEW, the same way picking it from the dropdown does.
+    //
+    // This used to only set selIdx and redraw, so changing chart in the Lab
+    // highlighted the stage here without moving to it — and on a forty-stage
+    // well shown whole, that highlight is a sliver a few pixels wide. It read
+    // as the two windows not being linked at all (Carmine, 2026-09-14).
+    //
+    // Through zoomStages, so it obeys the Span selector he set: on "All" the
+    // view already shows everything and nothing jumps, which is right.
+    if (i >= 0) zoomStages(i, $("span").value || "1");
+    draw();
+    return;
+  }
+  if (d.type !== "fv:well") return;
+  // A re-push of the SAME well is a reconnect, not a new well.
+  //
+  // This window asks the Lab for its state on focus, so that a Lab which was
+  // reloaded can find it again. The answer is a full fv:well payload, and
+  // rebuilding on it threw away the span, the zoom, the selection and any
+  // hidden channel — so every time Carmine came back from another tab the
+  // view had reset to All and zoomed out. The ask is right; unconditionally
+  // starting over on the answer was not.
+  //
+  // Same file, same stage count: keep what is on screen. An edit in progress
+  // survives too, because `edits` is not touched.
+  const sameWell = !!(well && d.file === well.file &&
+                      (d.stages || []).length === (well.stages || []).length);
+  if (sameWell) {
+    well = d;
+    MAXES = chanMax();
+    $("title").textContent = d.file || "well";
+    draw();
+    return;
+  }
+  well = d;
+  MAXES = chanMax();
+  if (d.edits && d.edits.bounds && d.edits.bounds.length >= 2) {
+    const e = d.edits;
+    edits = { bounds: e.bounds.slice(), labels: e.labels.slice(),
+              // an edit saved before origins were tracked maps 1:1
+              origin: (e.origin && e.origin.length === e.bounds.length - 1)
+                      ? e.origin.slice()
+                      : e.bounds.slice(0, -1).map((_, i) => Math.min(i, d.stages.length - 1)),
+              cuts: (e.cuts || []).map(c => ({ a: c.a, b: c.b })) };
+  } else {
+    edits = freshEdits(d);
+  }
+  undoStack = [];
+  // hiddenChans is NOT cleared: which curves you want off is a preference
+  // about channels, not a fact about this well, and it used to reset on every
+  // file you opened.
+  keySig = "";
+  $("msg").hidden = true; $("wrap").hidden = false; $("tools").hidden = false;
+  $("zoomctl").hidden = false;
+  $("captionmode").value = captionMode;
+  $("viewmode").value = viewMode;
+  $("title").textContent = d.file || "well";
+  $("sub").textContent = `${d.stages.length} stages extracted` +
+    (d.uwi ? `  ·  ${d.uwi}` : "");
+  fillJump();
+  $("span").value = "all";
+  $("timemode").value = timeMode;
+  selIdx = -1;
+  viewAll();
+  markDirty();
+});
+
+// ---------- input ----------
+const cv = $("cv");
+function pos(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top, w: r.width };
+}
+function boundNear(x, w) {
+  if (mode !== "adjust") return -1;
+  for (let i = 1; i < edits.bounds.length - 1; i++)
+    if (Math.abs(X(edits.bounds[i], w) - x) < 9) return i;
+  return -1;
+}
+// Which committed cut edge is under the cursor. Trim used to be a one-shot —
+// drag it out and the only correction was to delete it and drag again — so a
+// span that wanted moving by two seconds meant redoing the whole gesture.
+function regionList() { return mode === "trim" ? edits.cuts : null; }
+function cutEdgeNear(x, w) {
+  const list = regionList();
+  if (!list) return null;
+  for (let i = 0; i < list.length; i++) {
+    if (Math.abs(X(list[i].a, w) - x) < 9) return { i, side: "a" };
+    if (Math.abs(X(list[i].b, w) - x) < 9) return { i, side: "b" };
+  }
+  return null;
+}
+function setMode(m) {
+  mode = (mode === m) ? "" : m;
+  $("adjust").classList.toggle("on", mode === "adjust");
+  $("trim").classList.toggle("on", mode === "trim");
+  cv.style.cursor = mode === "trim" ? "crosshair" : "grab";
+  draw();
+}
+
+// Tell the Lab which stage is being looked at, so its graph and the stacked
+// window land on the same one. Sent by label, not by index: a split has
+// already renumbered the stages here and the Lab matches on what it prints.
+function selectStage(i) {
+  if (i < 0 || i >= nStages()) return;
+  selIdx = i;
+  $("jump").value = String(i);
+  draw();
+  if (!host() || !well) return;
+  try {
+    host().postMessage({ type: "fv:select", file: well.file,
+                                index: i, label: String(edits.labels[i] || "") }, "*");
+  } catch (e) { /* the Lab went away */ }
+}
+
+// The wheel moves ALONG the well instead of zooming: on a job of forty
+// stages, getting from one end to the other by dragging is the thing you do
+// most, and a wheel that zoomed meant grabbing and shoving the plot each time.
+// Zoom is on the buttons, bottom right — and still on ctrl/⌘ + wheel, which is
+// what a trackpad pinch sends.
+function viewSpan() { return view.b - view.a; }
+function panBy(dx) { setView(view.a + dx, view.b + dx); }
+function zoomBy(f) {
+  const mid = (view.a + view.b) / 2, half = viewSpan() * f / 2;
+  setView(mid - half, mid + half);
+  $("span").value = "";
+}
+cv.addEventListener("wheel", e => {
+  if (!well) return;
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {                   // pinch / ctrl+wheel: zoom
+    const p = pos(e);
+    const at = view.a + (p.x - PAD.l) / (p.w - PAD.l - PAD.r) * viewSpan();
+    const f = Math.pow(1.0016, e.deltaY);
+    setView(at - (at - view.a) * f, at + (view.b - at) * f);
+    $("span").value = "";
+    return;
+  }
+  // both axes pan, so a trackpad's sideways swipe works as well as a wheel
+  const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+  panBy(d / 500 * viewSpan());
+}, { passive: false });
+bind("zoomin", "click", () => zoomBy(1 / 1.6));
+bind("zoomout", "click", () => zoomBy(1.6));
+
+cv.addEventListener("mousedown", e => {
+  if (!well) return;
+  const p = pos(e), t = T(p.x, p.w);
+  const edge = cutEdgeNear(p.x, p.w);
+  if (edge) {
+    pushUndo();
+    drag = { kind: "cutedge", ...edge, list: regionList(), moved: false };
+    return;
+  }
+  if (mode === "trim") { pushUndo(); drag = { kind: "cut", a: t, b: t }; return; }
+  const bi = boundNear(p.x, p.w);
+  if (bi > 0) { pushUndo(); drag = { kind: "bound", i: bi, moved: false }; return; }
+  drag = { kind: "pan", x: p.x, a: view.a, b: view.b, moved: false, down: p.x };
+});
+
+window.addEventListener("mousemove", e => {
+  if (!well) return;
+  const p = pos(e);
+  hover = { x: p.x, t: T(p.x, p.w) };
+  if (!drag) {
+    cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
+      : mode === "trim" ? "crosshair"
+      : boundNear(p.x, p.w) > 0 ? "col-resize" : "grab";
+    draw(); return;
+  }
+  if (drag.kind === "pan") {
+    if (Math.abs(p.x - drag.down) > 3) drag.moved = true;
+    const dt = (drag.x - p.x) / (p.w - PAD.l - PAD.r) * (drag.b - drag.a);
+    view.a = drag.a + dt; view.b = drag.b + dt;
+  } else if (drag.kind === "bound") {
+    // a boundary may not pass its neighbours — that would invert a stage
+    const lo = edits.bounds[drag.i - 1] + 1000, hi = edits.bounds[drag.i + 1] - 1000;
+    edits.bounds[drag.i] = Math.max(lo, Math.min(hi, T(p.x, p.w)));
+    drag.moved = true;
+  } else if (drag.kind === "cut") {
+    drag.b = T(p.x, p.w);
+  } else if (drag.kind === "cutedge") {
+    const c = (drag.list || edits.cuts)[drag.i];
+    const t = T(p.x, p.w);
+    if (drag.side === "a") c.a = Math.min(t, c.b - 500);
+    else c.b = Math.max(t, c.a + 500);
+    drag.moved = true;
+  }
+  draw();
+});
+
+window.addEventListener("mouseup", () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.kind === "cut") {
+    const a = Math.min(d.a, d.b), b = Math.max(d.a, d.b);
+    if (b - a > 1500) { edits.cuts.push({ a, b }); justDragged = true; markDirty(); }
+    else undoStack.pop();               // a click, not a drag — no edit made
+  } else if (d.kind === "bound" || d.kind === "cutedge") {
+    if (d.moved) { justDragged = true; markDirty(); } else undoStack.pop();
+  } else if (d.kind === "pan" && d.moved) {
+    justDragged = true;
+  }
+  draw();
+});
+
+cv.addEventListener("click", e => {
+  if (!well) return;
+  if (justDragged) { justDragged = false; return; }
+  const p = pos(e), t = T(p.x, p.w);
+  const list = regionList();             // click inside a span removes it
+  if (list) {
+    const i = list.findIndex(c => t >= c.a && t < c.b);
+    if (i >= 0) { pushUndo(); list.splice(i, 1); markDirty(); draw(); }
+    return;
+  }
+  selectStage(stageAtX(t));
+});
+
+cv.addEventListener("dblclick", e => {
+  if (!well || mode === "trim") return;
+  const p = pos(e);
+  splitAt(T(p.x, p.w));
+});
+cv.addEventListener("mouseleave", () => { hover = null; draw(); });
+
+bind("jump", "change", e => {
+  const i = Number(e.target.value);
+  if (!isFinite(i) || e.target.value === "") return;
+  zoomStages(i, $("span").value || "1");
+  selectStage(i);
+});
+// The wheel steps through the stage list while the pointer is over it.
+//
+// A native select only scrolls its list while it is OPEN; hovering a closed
+// one and turning the wheel scrolls the page behind it. On a well of eighty
+// stages, picking a neighbour meant opening the list and hunting, when the
+// wheel is already the gesture being used to move along the plot.
+//
+// passive:false because the page scroll has to be suppressed — without it
+// the Lab window scrolls underneath while the stage changes.
+$("jump").addEventListener("wheel", e => {
+  const sel = $("jump");
+  const n = sel.options.length;
+  if (!n) return;
+  e.preventDefault();
+  const at = sel.selectedIndex < 0 ? 0 : sel.selectedIndex;
+  const next = Math.max(0, Math.min(n - 1, at + (e.deltaY > 0 ? 1 : -1)));
+  if (next === sel.selectedIndex) return;      // already at an end
+  sel.selectedIndex = next;
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+}, { passive: false });
+
+bind("span", "change", e => {
+  const sel = $("jump").value;
+  const i = sel === "" ? Math.max(0, stageAtX((view.a + view.b) / 2)) : Number(sel);
+  zoomStages(i, e.target.value);
+});
+bind("captionmode", "change", e => {
+  captionMode = e.target.value;
+  localStorage.setItem("f2c.fvCaption", captionMode);
+  draw();
+});
+bind("scheme", "change", e => { scheme = e.target.value; draw(); });
+bind("viewmode", "change", e => {
+  viewMode = e.target.value;
+  localStorage.setItem("f2c.fvView", viewMode);
+  draw();
+});
+bind("timemode", "change", e => {
+  timeMode = e.target.value;
+  localStorage.setItem("f2c.fvTime", timeMode);
+  viewAll();                 // the axis means something different now
+});
+bind("adjust", "click", () => setMode("adjust"));
+bind("trim", "click", () => setMode("trim"));
+bind("undo", "click", () => {
+  if (!undoStack.length) return;
+  edits = JSON.parse(undoStack.pop());
+  fillJump(); markDirty(); draw();
+});
+bind("reset", "click", () => {
+  if (!well) return;
+  pushUndo();
+  edits = freshEdits(well);
+  selIdx = -1;
+  fillJump(); viewAll(); markDirty();
+});
+window.addEventListener("resize", () => draw());
+
+// Tell the Lab we exist. It may have been open before this window was, so the
+// handshake is ours to start — same reasoning as the stacked window.
+//
+// And keep asking. Asking ONCE is not enough: reload the Lab and its new
+// context holds no handle to this window, so nothing is ever pushed here
+// again. The stacked window learned this already — its own comment names the
+// same failure. Three occasions, debounced, because focus and
+// visibilitychange both fire on a single alt-tab.
+let askedAt = -1e9;
+function hello() {
+  const now = Date.now();
+  if (now - askedAt < 400) return;
+  askedAt = now;
+  if (host()) {
+    try { host().postMessage({ type: "fv:ready" }, "*"); } catch (e) { /* noop */ }
+  }
+}
+hello();
+setTimeout(hello, 250);
+window.addEventListener("focus", hello);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) hello(); });
+// Only while nothing is loaded. Once a well is on screen the Lab pushes on
+// every change, and a well that IS showing must not be rebuilt underneath an
+// edit in progress.
+setInterval(() => { if (!well) hello(); }, 2000);
+</script>
+</body>
+</html>

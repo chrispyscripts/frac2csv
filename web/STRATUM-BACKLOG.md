@@ -1,0 +1,41 @@
+# Stratum feature list
+
+Features Chris has asked for, in the order asked. Newest status at the top of
+each entry.
+
+## Done
+
+- **Gamma-coloured wells** (2026-10-03). Underground view, Colour: Pad | Gamma.
+  `web/scripts/build_gamma.py` → `data/gamma.json` from the eLibrary LAS files;
+  46 of 76 Gundy wells have a gamma log, the other 30 draw dashed.
+- **Well page = the Lab's charts** (2026-10-03). `wellview.html?wa=&stage=` is
+  now Stage chart (curves hide on click, isolate on double-click) | Stacked |
+  FracView. Stacked and FracView are the Lab's own pages copied into
+  `public/lab/` from main e88c15d; FracView carries one patch (host() falls back
+  to the parent frame), noted at the top of the file. The old 3D single-well
+  dashboard and its stage-reconciliation panel are gone from this page.
+
+## Asked for, not started
+
+- **Wine-rack view.** While orbiting the underground view, a button sits over
+  each pad's well ends (the toes). Pressing it turns the scene into a 2D
+  cross-section looking down the laterals: every well end of that pad placed by
+  its horizontal offset and true vertical depth, depths labelled, each end
+  clickable into that well's page (`wellview.html?wa=`).
+- **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and
+  perforation intervals for all ~5,800 fractured BC wells from the IRIS bulk
+  files already on disk (2–3 days, needs a pad/area picker in 3D); gamma via an
+  eLibrary LAS fetch (~11 GB, ~1 day); treatment curves need ~11,000 completion
+  PDFs through the Lab (~600–950 CPU-hours, 1–2 weeks with QA, partial
+  coverage by vendor).
+
+## Suggested, not asked for
+
+- **Induced seismicity near each pad.** Public: BCER seismicity map (ML ≥ 1.5)
+  and Geoscience BC's annual event CSV. Would draw as events by time and depth
+  in the underground view.
+- **Full-resolution curves.** The well page draws the ~350-point series in
+  `data/wells/<WA>.json`; the Lab's 1-second exports for all 76 Gundy wells are
+  in `exports/bc-gundy-cluster/lab-seconds/` (1.2 GB as CSV) if spikes matter.
+- **logs_from_las.py misses GAM / MWD_GAMMA / MG1C**, so `well.html`'s GR track
+  lacks 8 wells that `build_gamma.py` reads.
