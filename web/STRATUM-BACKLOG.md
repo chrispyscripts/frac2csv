@@ -59,6 +59,10 @@ each entry.
   pumping when each trigger fired. Shown in the pad panel (3D) and as markers on
   the well's stage chart. Older relocated catalogues are PDF-only; GMMR
   miniSEED waveforms are not drawn yet.
+- **Only wells with charts, for now** (2026-10-04). The map, the 3D view and the
+  wine rack show only the wells whose Lab treatment curves are in (1,040 of
+  2,917; 154 of 495 pads). The legend's "only wells with treatment charts" box
+  is on by default and remembered per browser; untick it for every well.
 
 ## Asked for, not started
 
