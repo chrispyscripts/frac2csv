@@ -39,6 +39,60 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.34</h2>
+    <ul>
+      <li><b>Canyon: the 2017 Painted Pony and UGRBC sheets now read (#771,
+        #772, #773).</b> These did not stop working in a new version. They
+        never worked: 00203 failed the same way on every build from 1.5.0 on.
+        Canyon drew these sheets&rsquo; legend differently. The coloured
+        sample beside each name is a filled box instead of a short line, and
+        the legend sits just above the panel title. The reader found the
+        panels and both axes, then could not tell which colour was which
+        curve, and gave up on every page</li>
+      <li><b>434 Canyon chart pages that failed now read, and 19 files that
+        gave nothing now give charts.</b> Every chart page reads on all eleven
+        files in the reports: 00203 35 of 35, 00213 24, 00301 25, 00302 18,
+        00303 23, 00313 21, 00314 22, 00322 20, 00344 27, 00345 23, 00352 17.
+        <b>The 1,716 Canyon pages that already read come out exactly as
+        before</b>, compared curve by curve</li>
+      <li><b>Two faults these sheets exposed are fixed with them.</b> The
+        black curves were picking up the axis tick marks and the frame&rsquo;s
+        corners: 00203 stage 1&rsquo;s Bottom Hole read 0 to 81 MPa where the
+        chart draws 36 to 69. And one 00301 stage prints its times in pairs,
+        which left it with no clock. It now reads 13:00 to 17:20</li>
+      <li><b>Still not reading: the older Canyon layout</b> with the legend
+        block across the top of the page. That is 188 pages on 5 files and
+        needs a reader of its own</li>
+      <li><b>BJ: the nine &ldquo;no extractable data&rdquo; files in #774
+        now read, 415 charts where there were none.</b> Ovintiv&rsquo;s 2025
+        Tower Lake pad (01247 to 01254) and Swan Lake (00730). They were
+        flattened before filing: every letter on the chart pages is drawn as
+        a shape, so the pages carry no text at all. The clock, the stage title
+        and the axis numbers are now rebuilt from those shapes and read by
+        text recognition. Only a page with no text and a slanted row of clock
+        labels takes this route. Every other page reads exactly as before,
+        checked chart by chart on 11 files that already worked</li>
+      <li><b>Per file:</b> 00730 44 charts, 01247 45, 01248 39, 01249 50,
+        01250 38, 01251 43, 01252 51, 01253 67, 01254 38. 01247 has no stage 7
+        and 01249 no stage 12 because neither filing charts them. The extra
+        charts are separately titled re-pumps, plug slips and HRF runs. Three
+        of the 415 are dated a day late, each starting just before a midnight
+        label: 00730 stages 6 and 25, 01249 stage 34</li>
+      <li><b>Liberty: the per-stage summary sheets now come out as tables
+        (#767).</b> WELLBORE SUMMARY, the PRESSURE SUMMARY grid, the PROPPANT
+        SUMMARY grid and FLUID SUMMARY, one row per stage, each read from the
+        text page and not the picture page. Checked against the printed pages
+        on 26 Liberty filings, and on all 17 proppant grids the printed Grand
+        Total equals the sum of the rows. Liberty charts are unchanged. These
+        tables are what the summary dropdown will be built on</li>
+      <li><b>The build now pins its libraries.</b> Each Windows build had
+        been taking whatever version of its PDF library was newest that day.
+        This one uses exactly the versions v1.11.33 did, now held there</li>
+      <li><b>Which templates this release touches: Canyon and BJ charts, and
+        the Liberty summary tables.</b> Every other template reads exactly as
+        it did under v1.11.33</li>
+    </ul>
+
     <h2>v1.11.33</h2>
     <ul>
       <li><b>FracView: &ldquo;adjust&rdquo; no longer pulls data backwards or
