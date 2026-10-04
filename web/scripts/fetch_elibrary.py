@@ -22,7 +22,11 @@ import fetch_bc_wellfiles as fb  # noqa: E402
 
 
 def fetch_well(wa, out, comp, las):
-    names = fb.index_filenames(wa)
+    try:
+        names = fb.index_filenames(wa)
+    except Exception:
+        return {"wa": wa, "listed": None, "wanted": [], "got": [], "failed": ["index lookup failed"],
+                "t": time.strftime("%Y-%m-%d %H:%M:%S")}
     wanted = [n for n in names if (comp and "_COMP_" in n.upper() and n.upper().endswith(".PDF"))
               or (las and n.upper().endswith(".LAS"))]
     got, failed = [], []
@@ -39,8 +43,11 @@ def fetch_well(wa, out, comp, las):
                 if os.path.exists(dest) and os.path.getsize(dest) > 0:
                     got.append(remote)
                     continue
-                r = fb.curl(["-o", dest, f"{fb.FTP}/{well_dir}/{remote}"], timeout=900)
-                if r.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 200:
+                try:
+                    r = fb.curl(["-o", dest, f"{fb.FTP}/{well_dir}/{remote}"], timeout=900)
+                except Exception:          # a stalled transfer: drop it, keep going
+                    r = None
+                if r is not None and r.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 200:
                     got.append(remote)
                 else:
                     failed.append(remote)
