@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stratum — Well section</title>
+<link rel="stylesheet" href="wellsection.css">
+</head>
+<body>
+<div class="ws">
+  <header class="ws-head">
+    <div class="ws-id">
+      <div class="ws-title" id="ws-name">Loading…</div>
+      <div class="ws-sub" id="ws-sub"></div>
+    </div>
+    <div class="ws-tools">
+      <div class="ws-seg" role="group" aria-label="Extent">
+        <button type="button" data-mode="well" aria-pressed="true">Whole well</button>
+        <button type="button" data-mode="lateral" aria-pressed="false">Lateral</button>
+      </div>
+      <div class="ws-seg" role="group" aria-label="Colour the lateral by">
+        <button type="button" data-color="stages" aria-pressed="true">Stages</button>
+        <button type="button" data-color="gamma" aria-pressed="false">Gamma</button>
+      </div>
+      <button type="button" id="ws-charts">Charts →</button>
+      <button type="button" id="ws-pop" hidden title="Open in its own window, to keep beside the map or the charts">Pop out ↗</button>
+      <button type="button" id="ws-dock" hidden title="Put the section back under the map">↙ Dock</button>
+      <button type="button" id="ws-close" hidden aria-label="Close the well section">×</button>
+    </div>
+  </header>
+  <main class="ws-main" id="ws-main">
+    <svg id="ws-svg" role="img" aria-labelledby="ws-name"></svg>
+    <div class="ws-tip" id="ws-tip" hidden></div>
+    <div class="ws-empty" id="ws-empty" hidden></div>
+    <div class="ws-note" id="ws-note" role="status" hidden></div>
+  </main>
+  <footer class="ws-foot" id="ws-foot"></footer>
+</div>
+<script src="wellsection.js"></script>
+</body>
+</html>

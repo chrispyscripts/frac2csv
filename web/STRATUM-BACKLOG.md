@@ -63,6 +63,20 @@ each entry.
   wine rack show only the wells whose Lab treatment curves are in (1,040 of
   2,917; 154 of 495 pads). The legend's "only wells with treatment charts" box
   is on by default and remembered per browser; untick it for every well.
+- **View well: the whole well in 2D** (2026-10-04). A highlighted "View well" in
+  a well's map popup and in the 3D view's well panel opens `wellsection.html`:
+  a vertical section from the pad's surface location to TD along the line to
+  the toe, with the build, heel, lateral, every filed stage as a tick at its
+  measured depth (teal = treatment curves in, slate = filed only), gamma along
+  the lateral and as a track under it, KB / sea level / ASL axis. Whole well
+  (fitted, depth stretch labelled) or Lateral (depth stretched so undulation and
+  toe-up/down show). Hover reads MD, TVD, ASL, gamma and the stage's pump data;
+  click a stage for its charts. It docks under the map (drag the grip to size
+  it; it comes back after Back) or in the 3D view's bottom panel in place of the
+  pad data (× returns it). Pop out ↗ moves it into its own window that follows
+  the selected well and the stage on the charts page (BroadcastChannel
+  `stratum-section`, addressed to the main page by id and acknowledged); ↙ Dock
+  puts it back under the map, and the charts page has "Section ↗" too.
 
 ## Asked for, not started
 

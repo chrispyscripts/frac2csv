@@ -20,6 +20,7 @@ const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:nul
   addEventListener:noop,ready:Promise.resolve(),button:element(),
   map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}},
   colorBy:'pad',NEUTRAL:'#d6e6ee',GAMMA_NONE:'#6b8290',GAMMA_INK:['#000','#111'],setColor:async m=>{c.colorBy=m},
+  sectionOn:false,padUrl:()=>'pad.html?embedded=1',
   rack:null,rackEntry:null,rackHover:null,placeRackButtons:noop,enterRack:noop,exitRack(){c.rack=null},loadArea:async()=>{},areaTitle:'Test area · Below the surface',showQuakes:false,areaName:''
 };
 vm.createContext(c);

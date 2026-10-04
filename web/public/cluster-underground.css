@@ -25,3 +25,4 @@
 .ug-quake{border-left:3px solid #ff5fa2;padding-left:8px}#underground #ug-quakes[aria-pressed=true]{background:#5a1f3c;border-color:#ff5fa2;color:#ffe3ef}
 .ug-gest i{border-top:2px dashed #d57f00!important}.rk-end circle.rk-est{stroke:#fef1d0;stroke-dasharray:3 3;stroke-width:1.5}
 .ug-gmmr{margin:8px 0;padding:8px 0;border-top:1px solid #263c48;font-size:11.5px;color:#a3bac6;line-height:1.5}.ug-gmmr .ug-hot{color:#ffb3cf;font-weight:600}.ug-gtrig{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#c9dbe3}.ug-felt{color:#ffd6e7;margin-top:3px}
+#underground .ug-viewwell{display:block;width:100%;margin:9px 0 5px;background:#246358;border-color:#64e8ce;color:#f2fffc;font-weight:650;box-shadow:0 0 16px #5ee2d033}#underground .ug-viewwell:hover{background:#2b7466}

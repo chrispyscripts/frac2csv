@@ -121,6 +121,7 @@ async function load() {
     }
     ['tab-stacked', 'tab-frac', 'wc-prev', 'wc-next'].forEach(id => { $(id).disabled = true; });
     document.querySelector('.wc-stagenav').hidden = true; document.querySelector('.wc-hint').hidden = true;
+    announceSection();
     return;
   }
   renderSteps();
@@ -184,6 +185,7 @@ function selectStage(i, from) {
   if (from !== 'fv') fvSel();
   const q = new URLSearchParams(location.search); q.set('stage', st.label);
   history.replaceState(history.state, '', '?' + q);
+  announceSection();
 }
 
 function renderInfo() {
@@ -569,6 +571,30 @@ $('wc-back').onclick = () => {
     ? `pad.html?set=${encodeURIComponent(String(W.pad.id).replace(/-\d+$/, ''))}&pad=${encodeURIComponent(W.pad.id)}`
     : 'map.html';
 };
+// the well section window (wellsection.html, popped out): it follows the well
+// and stage on screen here, and a stage clicked there selects it here. Messages
+// to this page carry its id (ME) and are acknowledged, so the section can tell
+// when its main window has gone.
+const secChan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-section') : null;
+const ME = Math.random().toString(36).slice(2);
+function announceSection() {
+  if (secChan) secChan.postMessage({ type: 'show', wa: WA, stage: STAGES[sel] ? STAGES[sel].label : null, from: ME, page: 'charts' });
+}
+$('wc-section').onclick = () => {
+  const st = STAGES[sel];
+  const w = window.open(`wellsection.html?wa=${encodeURIComponent(WA)}${st ? '&stage=' + encodeURIComponent(st.label) : ''}&owner=${ME}&page=charts`,
+    'stratum-section', 'popup,width=1280,height=620');
+  if (w) announceSection();
+};
+if (secChan) secChan.onmessage = e => {
+  const m = e.data || {};
+  if (m.type !== 'open-stage' || m.to !== ME || !m.wa) return;
+  secChan.postMessage({ type: 'ack', id: m.id });
+  const i = String(m.wa) === WA && m.label != null ? STAGES.findIndex(s => s.label === String(m.label)) : -1;
+  if (i >= 0) selectStage(i);
+  else if (String(m.wa) !== WA) location.href = `wellview.html?wa=${encodeURIComponent(m.wa)}${m.label ? '&stage=' + encodeURIComponent(m.label) : ''}`;
+};
+
 // the compare window: wells are handed over through localStorage, so the window
 // can be reloaded or opened cold, and announced on a BroadcastChannel so one
 // that is already open picks the well up straight away

@@ -64,7 +64,18 @@
   .legend .qk { cursor:pointer; color:var(--ink); }
   .legend .qk input { margin:0; accent-color:#ff5fa2; }
   .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
-  @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; } }
+  /* the well section docked along the bottom (wellsection-host.js) */
+  #ws-dock { position:fixed; left:0; right:0; bottom:0; height:var(--ws-h, 42vh); z-index:7; background:#0b1620;
+             border-top:1px solid #29404c; box-shadow:0 -10px 28px #0009; }
+  #ws-dock iframe { width:100%; height:100%; border:0; display:block; }
+  #ws-dock .ws-grip { position:absolute; top:-6px; left:0; right:0; height:12px; cursor:ns-resize; z-index:1; }
+  #ws-dock .ws-grip::after { content:""; position:absolute; left:50%; top:3px; width:44px; height:4px; margin-left:-22px; border-radius:2px; background:#3d5a68; }
+  #ws-dock .ws-grip:hover::after, #ws-dock .ws-grip:focus-visible::after { background:#5ee2d0; }
+  body.ws-docked #map { bottom:var(--ws-h, 42vh); }
+  body.ws-docked .side { bottom:calc(var(--ws-h, 42vh) + 12px); }
+  .pop .acts .view { background:#246358; border-color:#64e8ce; color:#f2fffc; box-shadow:0 0 14px #5ee2d033; }
+  @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; }
+    body.ws-docked .side { bottom:auto; max-height:calc(100% - var(--ws-h, 42vh) - 24px); } }
 </style>
 </head>
 <body>
@@ -304,8 +315,12 @@ function openWell(p, lngLat) {
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
     .setLngLat(lngLat)
     .setHTML(`<div class="pop"><b>${p.name}</b><div class="facts">${p.uwi ? p.uwi + " · " : ""}WA ${p.wa}<br>${facts.join(" · ")}</div>
-              <a class="btn" href="wellview.html?wa=${encodeURIComponent(p.wa)}">Show Data →</a></div>`)
+              <div class="acts"><button type="button" class="view">View well</button>
+              <a href="wellview.html?wa=${encodeURIComponent(p.wa)}">Charts →</a></div></div>`)
     .addTo(map);
+  // the whole well in 2D, docked below (or in its popped-out window); an open section follows the selection
+  popup.getElement().querySelector(".view").addEventListener("click", () => { if (window.stratumSection) window.stratumSection.view(p.wa); });
+  if (window.stratumSection) window.stratumSection.follow(p.wa);
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
   if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }
@@ -377,5 +392,6 @@ load();
 <script src="grids.js"></script>
 <link rel="stylesheet" href="cluster-underground.css">
 <script src="cluster-underground.js"></script>
+<script src="wellsection-host.js"></script>
 </body>
 </html>

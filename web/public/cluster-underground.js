@@ -89,12 +89,18 @@ function focusInterval(w,d){well=w;interval=d;goal.target=d.point.slice();goal.s
 function fit(p){const points=(p?[p]:data.pads).flatMap(p=>p.wells.flatMap(w=>w.points));const min=[0,1,2].map(i=>Math.min(...points.map(q=>q[i]))),max=[0,1,2].map(i=>Math.max(...points.map(q=>q[i])));goal.target=min.map((v,i)=>(v+max[i])/2);
  const c=Math.cos(camera.yaw),s=Math.sin(camera.yaw),cp=Math.cos(camera.pitch),sp=Math.sin(camera.pitch);const projected=points.map(q=>{const x=q[0]-goal.target[0],y=q[1]-goal.target[1],z=q[2]-goal.target[2];return [x*c-z*s,y*cp-(x*s+z*c)*sp]});const lo=[0,1].map(i=>Math.min(...projected.map(q=>q[i]))),hi=[0,1].map(i=>Math.max(...projected.map(q=>q[i])));goal.scale=Math.max(.015,Math.min((width-(width>640?370:240))/(hi[0]-lo[0]),(height-230)/(hi[1]-lo[1]))*.9);camera.pan=[(width>640?145:85)-(lo[0]+hi[0])/2*goal.scale,15+(lo[1]+hi[1])/2*goal.scale];}
 
+// the bottom panel shows the locked pad's data, or a well's section (wellsection-host.js) when asked
+let sectionOn=false;
+const padUrl=()=>'pad.html?set='+encodeURIComponent(pad.set||'region')+'&pad='+encodeURIComponent(pad.id)+'&embedded=1';
+const section={available:()=>active&&!!pad,showing:()=>sectionOn&&active&&!!pad,frame:()=>padPage,
+ show:src=>{sectionOn=true;padPage.title='Well section';padPage.src=src},
+ hide:()=>{if(!sectionOn)return;sectionOn=false;if(pad){padPage.title='Pad data';padPage.src=padUrl()}}};
 function selectPad(id){
  const next=data.pads.find(p=>p.id===id)||null;
  if(pad&&next&&next!==pad)return;
  if(rack&&rack!==next)exitRack(true);   // a rack belongs to one pad; leaving the pad closes it
- if(next&&!pad){entryCamera=structuredClone(camera);pad=next;overlay.classList.add('pad-data');padPage.src='pad.html?set='+encodeURIComponent(pad.set||'region')+'&pad='+encodeURIComponent(pad.id)+'&embedded=1';padPage.hidden=false;returnButton.hidden=false;padMenu.disabled=true;overlay.querySelector('#ug-all').hidden=true;overlay.querySelector('.ug-title').textContent=pad.name+' · Pad data';resize();}
- if(!next){pad=null;padPage.hidden=true;returnButton.hidden=true;overlay.classList.remove('pad-data');padMenu.disabled=false;overlay.querySelector('#ug-all').hidden=false;overlay.querySelector('.ug-title').textContent=areaTitle;resize();}
+ if(next&&!pad){entryCamera=structuredClone(camera);pad=next;overlay.classList.add('pad-data');sectionOn=false;padPage.title='Pad data';padPage.src=padUrl();padPage.hidden=false;returnButton.hidden=false;padMenu.disabled=true;overlay.querySelector('#ug-all').hidden=true;overlay.querySelector('.ug-title').textContent=pad.name+' · Pad data';resize();}
+ if(!next){pad=null;sectionOn=false;padPage.hidden=true;returnButton.hidden=true;overlay.classList.remove('pad-data');padMenu.disabled=false;overlay.querySelector('#ug-all').hidden=false;overlay.querySelector('.ug-title').textContent=areaTitle;resize();}
  padMenu.value=pad?.id||'';well=pad?.wells[0]||null;stage=null;interval=null;hover=null;tip.style.display='none';fit(pad);renderPanel();
 }
 function returnToCluster(){if(!pad)return;const saved=entryCamera;selectPad('');if(saved){Object.assign(camera,structuredClone(saved));goal.scale=saved.scale;goal.target=saved.target.slice();}entryCamera=null;returnButton.hidden=true;canvas.focus();}
@@ -103,6 +109,7 @@ returnButton.onclick=()=>{exitRack(true);returnToCluster()};
 function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.flatMap(p=>p.wells),nS=all.reduce((n,w)=>n+(w.stages||[]).length,0),nI=all.reduce((n,w)=>n+w.depth_intervals.length,0),nG=all.filter(w=>w.gv).length;content.innerHTML=`<div class="ug-stat">${all.length} wells · ${fmt(nS)} stage summaries · ${fmt(nI)} stage depths</div>Click a pad marker to lock on to it, or press its Wine rack button. Other pads stay visible.<p>Stage summaries and depths are as filed with the BCER. Open a well for its treatment charts where the Lab has read its frac report.</p>`+(colorBy==='gamma'&&gamma?`<p>Gamma ray is drawn along ${nG} of these wells (${all.filter(w=>w.gest).length} of them estimated from offset logs, dashed). Hover a well for its reading; lock a pad and pick a well for its full log.</p>`:'')+(showQuakes&&data.quakes?quakeSummary():'');return;}
  const select=document.createElement('select');select.setAttribute('aria-label','Select well');pad.wells.forEach(w=>{const o=document.createElement('option');o.value=w.well.wa;o.textContent='WA '+w.well.wa+' · '+w.stages.length+' stages';select.append(o)});select.value=well.well.wa;select.onchange=()=>{well=pad.wells.find(w=>w.well.wa===select.value);stage=null;interval=null;renderPanel()};content.append(select);
  const title=document.createElement('div');title.textContent=well.well.name;content.append(title);
+ if(window.stratumSection){const vw=document.createElement('button');vw.type='button';vw.className='ug-viewwell';vw.textContent='View well';vw.title='The whole well in 2D, below; pop it out to keep it beside this view';vw.onclick=()=>window.stratumSection.view(well.well.wa,stage?stage.label:null);content.append(vw);window.stratumSection.follow(well.well.wa,stage?stage.label:null)}
  const W_=well.well,facts=[W_.operator,W_.formation,W_.year,W_.cum_gas_e3m3!=null?fmt(W_.cum_gas_e3m3)+' e³m³ gas to date':null,W_.refracs?W_.refracs+' later completion'+(W_.refracs>1?'s':'')+' on file':null].filter(Boolean);if(facts.length){const f=document.createElement('div');f.className='ug-facts';f.textContent=facts.join(' · ');content.append(f)}
  if(colorBy==='gamma')gammaPanel(well);
  gmmrPanel(pad);
@@ -168,13 +175,13 @@ function gammaWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,GAMMA
  ctx.setLineDash([]);ctx.globalAlpha=1;ctx.lineCap='butt';
  if(bright)for(let i=1;i<w.gv.length;i+=3)if(w.gv[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
 function resize(){width=overlay.clientWidth;height=canvas.clientHeight;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=height*d;ctx.setTransform(d,0,0,d,0,0)}
-async function openArea(ids,opts={}){button.disabled=true;button.textContent='Loading…';
+async function openArea(ids,opts={}){button.disabled=true;button.textContent='Loading…';if(window.stratumSection)window.stratumSection.closeMapDock();
  try{await loadArea(ids);if(opts.title){areaTitle=opts.title+' · Below the surface';overlay.querySelector('.ug-title').textContent=areaTitle}areaName=opts.title||'';active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();selectPad('');camera.scale=goal.scale*.75;cancelAnimationFrame(raf);draw();
   if(opts.pad){selectPad(opts.pad);if(opts.rack&&pad)enterRack(pad)}else overlay.querySelector('#ug-all').focus();button.textContent='Change View'}
  catch(e){button.textContent='Retry Change View';console.error(e)}finally{button.disabled=false}}
 button.onclick=()=>openArea(areaIds());
 // for the map: open 3D on the pads around one pad, locked to it, or straight into its wine rack
-window.stratum3D={open:(padId,opts={})=>openArea(idsAround(padId),{pad:padId,rack:!!opts.rack}),openArea:(ids,opts={})=>openArea(ids,opts),ready:regionReady};
+window.stratum3D={section,open:(padId,opts={})=>openArea(idsAround(padId),{pad:padId,rack:!!opts.rack}),openArea:(ids,opts={})=>openArea(ids,opts),ready:regionReady};
 function close(){exitRack(true);active=false;cancelAnimationFrame(raf);overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');overlay.inert=true;positionButton();button.focus()}
 overlay.querySelector('#ug-back').onclick=close;overlay.querySelector('#ug-all').onclick=()=>selectPad('');overlay.querySelector('#ug-reset').onclick=()=>{camera.yaw=-.5;camera.pitch=.4;fit(pad)};padMenu.onchange=()=>selectPad(padMenu.value);
 window.addEventListener('resize',()=>{resize();if(active&&!rack)fit(pad);renderRack()});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(rack)exitRack();else if(pad)returnToCluster();else close()}});
@@ -264,7 +271,7 @@ function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.strin
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
  pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
  stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,rack:rack?rack.id:null,rackEntry,area:data?data.pads.map(p=>p.id):null,areaName,
- panelScroll:overlay.querySelector('.ug-panel').scrollTop,
+ panelScroll:overlay.querySelector('.ug-panel').scrollTop,section:sectionOn,
  surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}}))}catch(e){}}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
 addEventListener('pagehide',ugSave);
@@ -277,6 +284,7 @@ overlay.querySelector('#ug-back').addEventListener('click',ugClear);
  if(s.colorBy==='gamma')await setColor('gamma');
  selectPad(s.pad||'');
  if(s.wa&&pad){const w=pad.wells.find(x=>x.well&&x.well.wa===s.wa);if(w){well=w;stage=w.stages.find(x=>x.label===s.stage)||null;interval=w.depth_intervals.find(x=>x.n===s.interval)||null;renderPanel()}}
+ if(s.section&&pad&&well&&window.stratumSection)window.stratumSection.view(well.well.wa,stage?stage.label:null);
  if(s.entryCamera)entryCamera=structuredClone(s.entryCamera);
  overlay.querySelector('.ug-panel').scrollTop=s.panelScroll||0;
  if(s.surface)map.jumpTo(s.surface);
