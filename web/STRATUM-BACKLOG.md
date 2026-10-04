@@ -15,14 +15,15 @@ each entry.
   changes): FracView gets host() so it can talk to a parent frame, and both get
   Stratum's dark theme and the stage chart's curve colours. The old 3D single-well
   dashboard and its stage-reconciliation panel are gone from this page.
+- **Wine-rack view** (2026-10-03). A "Wine rack" button rides on each pad's
+  cluster of toes in the underground view; it turns the camera to look down the
+  laterals and opens a 2D section of that pad: each well end placed by offset
+  across the pad and toe TVD, its lateral traced behind it, coloured by pad or
+  by lateral median gamma, hover for spacing to the nearest end, click to open
+  the well's charts. Back from the well page lands in the rack again.
 
 ## Asked for, not started
 
-- **Wine-rack view.** While orbiting the underground view, a button sits over
-  each pad's well ends (the toes). Pressing it turns the scene into a 2D
-  cross-section looking down the laterals: every well end of that pad placed by
-  its horizontal offset and true vertical depth, depths labelled, each end
-  clickable into that well's page (`wellview.html?wa=`).
 - **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and
   perforation intervals for all ~5,800 fractured BC wells from the IRIS bulk
   files already on disk (2–3 days, needs a pad/area picker in 3D); gamma via an

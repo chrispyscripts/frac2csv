@@ -30,7 +30,7 @@ function gammaBucket(v){const s=gamma.scale;return Math.max(0,Math.min(GAMMA_N-1
 function attachGamma(g){gamma=g;const bin=g.bin_m;data.pads.forEach(p=>p.wells.forEach(w=>{const x=g.wells[String(w.well.wa).padStart(5,'0')];if(!x)return;w.gmd0=x.md0;w.gbin=bin;w.gv=x.v;w.gruns=x.runs;w.gpts=x.v.concat([null]).map((_,i)=>pointAt(w,x.md0+i*bin));w.gby=GAMMA_INK.map(()=>[]);x.v.forEach((v,i)=>{if(v!=null)w.gby[gammaBucket(v)].push(i)})}));renderLegend();}
 function renderLegend(){const L=overlay.querySelector('.ug-legend');if(!gamma){L.hidden=true;return}const s=gamma.scale,n=Object.keys(gamma.wells).length,none=Object.keys(gamma.missing).length;
  L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone"><i></i>No gamma log · ${none} wells</div><div class="ug-gfoot">${n} of ${n+none} wells have a gamma LAS in the BCER eLibrary. Scale spans the laterals (P2–P98).</div>`;L.hidden=colorBy!=='gamma';}
-async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}colorBy=m;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));renderLegend();if(data)renderPanel();}
+async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}colorBy=m;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));renderLegend();if(data)renderPanel();renderRack();}
 overlay.querySelectorAll('.ug-color button').forEach(b=>b.onclick=()=>setColor(b.dataset.color));
 function pointAt(w,md){const t=w.trajectory;let i=t.md.findIndex(m=>m>=md);if(i<0)i=t.md.length-1;if(i===0)return w.points[0];const a=w.points[i-1],b=w.points[i],v=(md-t.md[i-1])/(t.md[i]-t.md[i-1]||1);return a.map((x,k)=>x+(b[k]-x)*v);}
 function focusInterval(w,d){well=w;interval=d;goal.target=d.point.slice();goal.scale=Math.max(goal.scale,.45);camera.pan=[width>640?145:70,0];renderPanel();}
@@ -40,12 +40,13 @@ function fit(p){const points=(p?[p]:data.pads).flatMap(p=>p.wells.flatMap(w=>w.p
 function selectPad(id){
  const next=data.pads.find(p=>p.id===id)||null;
  if(pad&&next&&next!==pad)return;
+ if(rack&&rack!==next)exitRack(true);   // a rack belongs to one pad; leaving the pad closes it
  if(next&&!pad){entryCamera=structuredClone(camera);pad=next;overlay.classList.add('pad-data');padPage.src='pad.html?set=gundy&pad='+encodeURIComponent(pad.id)+'&embedded=1';padPage.hidden=false;returnButton.hidden=false;padMenu.disabled=true;overlay.querySelector('#ug-all').hidden=true;overlay.querySelector('.ug-title').textContent=pad.name+' · Pad data';resize();}
  if(!next){pad=null;padPage.hidden=true;returnButton.hidden=true;overlay.classList.remove('pad-data');padMenu.disabled=false;overlay.querySelector('#ug-all').hidden=false;overlay.querySelector('.ug-title').textContent='Gundy · Below the surface';resize();}
  padMenu.value=pad?.id||'';well=pad?.wells[0]||null;stage=null;interval=null;hover=null;tip.style.display='none';fit(pad);renderPanel();
 }
 function returnToCluster(){if(!pad)return;const saved=entryCamera;selectPad('');if(saved){Object.assign(camera,structuredClone(saved));goal.scale=saved.scale;goal.target=saved.target.slice();}entryCamera=null;returnButton.hidden=true;canvas.focus();}
-returnButton.onclick=returnToCluster;
+returnButton.onclick=()=>{exitRack(true);returnToCluster()};
 
 function renderPanel(){content.replaceChildren();if(!pad){content.innerHTML='<div class="ug-stat">76 wells · 3,156 stage summaries · 3,172 depth intervals</div>Click any surface pad marker to focus its wine rack. Other pads remain visible.<p>All 76 wells have summaries and measured depth intervals.</p>'+(colorBy==='gamma'&&gamma?`<p>Gamma ray is drawn along ${Object.keys(gamma.wells).length} wells from their LAS logs. Hover a well for its reading; lock a pad and pick a well for its full log.</p>`:'');return;}
  const select=document.createElement('select');select.setAttribute('aria-label','Select well');pad.wells.forEach(w=>{const o=document.createElement('option');o.value=w.well.wa;o.textContent='WA '+w.well.wa+' · '+w.stages.length+' stages';select.append(o)});select.value=well.well.wa;select.onchange=()=>{well=pad.wells.find(w=>w.well.wa===select.value);stage=null;interval=null;renderPanel()};content.append(select);
@@ -82,8 +83,9 @@ function draw(){if(!active)return;raf=requestAnimationFrame(draw);camera.scale+=
  const wells=data.pads.flatMap(p=>p.wells).sort((a,b)=>project(a.points.at(-1))[2]-project(b.points.at(-1))[2]);
  // In gamma mode colour means gamma only: pads, toes and intervals go neutral.
  const g=colorBy==='gamma',ink=c=>g?NEUTRAL:c;
- wells.forEach(w=>{const selected=w===well,bright=!pad||w.pad===pad;if(g)gammaWell(w,selected,bright);else path(w.points,w.pad.color,selected?3.5:bright?1.7:1,bright?.88:.25);const q=project(w.points.at(-1));ctx.beginPath();ctx.arc(q[0],q[1],selected?4:2,0,Math.PI*2);ctx.fillStyle=ink(w.pad.color);ctx.globalAlpha=bright?1:.18;ctx.fill();ctx.globalAlpha=1;if(bright)hits.push({x:q[0],y:q[1],w,p:w.pad,r:8});w.depth_intervals.forEach(d=>{const a=project(d.point),on=interval===d||hover?.d===d,s=on?4:g?1.2:1.7;ctx.globalAlpha=bright?(g&&!on?.55:1):.22;ctx.fillStyle=on?'#ffffff':ink(w.pad.color);ctx.fillRect(a[0]-s,a[1]-s,s*2,s*2);ctx.globalAlpha=1;if(bright)hits.push({x:a[0],y:a[1],w,p:w.pad,d,r:5})});});
+ wells.forEach(w=>{const selected=w===well,bright=!pad||w.pad===pad;if(g)gammaWell(w,selected,bright);else path(w.points,w.pad.color,selected?3.5:bright?1.7:1,bright?.88:.25);const q=project(w.points.at(-1)),lit=rackHover===w.pad;ctx.beginPath();ctx.arc(q[0],q[1],selected?4:lit?5:2,0,Math.PI*2);ctx.fillStyle=lit?'#5ee2d0':ink(w.pad.color);ctx.globalAlpha=bright?1:.18;ctx.fill();ctx.globalAlpha=1;if(bright)hits.push({x:q[0],y:q[1],w,p:w.pad,r:8});w.depth_intervals.forEach(d=>{const a=project(d.point),on=interval===d||hover?.d===d,s=on?4:g?1.2:1.7;ctx.globalAlpha=bright?(g&&!on?.55:1):.22;ctx.fillStyle=on?'#ffffff':ink(w.pad.color);ctx.fillRect(a[0]-s,a[1]-s,s*2,s*2);ctx.globalAlpha=1;if(bright)hits.push({x:a[0],y:a[1],w,p:w.pad,d,r:5})});});
  const labels=[];data.pads.forEach(p=>{const q=project(p.point),selectable=!pad||p===pad,pc=ink(p.color);ctx.globalAlpha=selectable?1:.18;const on=p===pad||hover?.p===p;ctx.beginPath();ctx.arc(q[0],q[1],on?10:7,0,Math.PI*2);ctx.fillStyle=on?'#e6fff7':pc;ctx.shadowColor=pc;ctx.shadowBlur=on?20:8;ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle='#b4ebef';ctx.lineWidth=1;ctx.stroke();ctx.fillStyle=on?'#e6fff7':pc;ctx.font=(on?'600 ':'')+'12px system-ui';let ly=q[1];while(labels.some(l=>Math.abs(l.x-q[0])<115&&Math.abs(l.y-ly)<20))ly+=22;labels.push({x:q[0],y:ly});if(ly!==q[1]){ctx.beginPath();ctx.moveTo(q[0]+7,q[1]);ctx.lineTo(q[0]+14,ly);ctx.strokeStyle=pc;ctx.stroke();}ctx.fillText(p.name,q[0]+14,ly+4);if(selectable){hits.push({x:q[0],y:q[1],p,r:15});hits.push({x:q[0]+55,y:ly,p,r:14,label:true});}ctx.globalAlpha=1;});
+ placeRackButtons();
 }
 // The whole path dashed in slate first: where there is no reading (no LAS, or above
 // the first logged depth) that is what shows; logged bins are stroked over it.
@@ -94,13 +96,86 @@ function gammaWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,GAMMA
  if(bright)for(let i=1;i<w.gv.length;i+=3)if(w.gv[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
 function resize(){width=overlay.clientWidth;height=canvas.clientHeight;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=height*d;ctx.setTransform(d,0,0,d,0,0)}
 button.onclick=async()=>{button.disabled=true;button.textContent='Loading…';try{await ready;active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();selectPad('');camera.scale=goal.scale*.75;draw();overlay.querySelector('#ug-all').focus()}catch(e){button.textContent='Retry Change View';console.error(e)}finally{button.disabled=false;if(active)button.textContent='Change View'}};
-function close(){active=false;cancelAnimationFrame(raf);overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');overlay.inert=true;button.focus()}
+function close(){exitRack(true);active=false;cancelAnimationFrame(raf);overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');overlay.inert=true;button.focus()}
 overlay.querySelector('#ug-back').onclick=close;overlay.querySelector('#ug-all').onclick=()=>selectPad('');overlay.querySelector('#ug-reset').onclick=()=>{camera.yaw=-.5;camera.pitch=.4;fit(pad)};padMenu.onchange=()=>selectPad(padMenu.value);
-window.addEventListener('resize',()=>{resize();if(active)fit(pad)});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(pad)returnToCluster();else close()}});
+window.addEventListener('resize',()=>{resize();if(active&&!rack)fit(pad);renderRack()});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(rack)exitRack();else if(pad)returnToCluster();else close()}});
 canvas.oncontextmenu=e=>e.preventDefault();canvas.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,pan:e.shiftKey||e.button===2};canvas.setPointerCapture(e.pointerId);tip.style.display='none'};
 canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+hover.w.gv[hover.g]+' API':hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries':hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
 canvas.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)<5){const hit=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);if(hit&&(!pad||hit.p===pad)){if(!pad)selectPad(hit.p.id);if(hit.w){well=hit.w;if(hit.d)focusInterval(well,hit.d);else renderPanel()}}}drag=null};canvas.onpointercancel=()=>drag=null;canvas.onpointerleave=()=>{hover=null;tip.style.display='none'};
 canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,Math.min(2,goal.scale*Math.exp(-e.deltaY*.0015)))},{passive:false});
+
+// ---------- Wine rack ----------
+// A pad seen end-on: the camera turns to look straight down the laterals, then
+// the scene becomes a 2D section across the pad, every well end placed by its
+// offset across the pad and its true vertical depth -- the gun-barrel view an
+// engineer reads spacing and landing benches off. Each end opens its well page.
+let rack=null,rackEntry=null,rackHover=null,tweenRaf=0;
+const rackLayer=document.createElement('div');rackLayer.className='ug-rackbtns';overlay.append(rackLayer);
+const rackView=document.createElement('section');rackView.className='ug-rack';rackView.hidden=true;rackView.setAttribute('aria-label','Wine rack: the pad\'s well ends by offset and depth');
+rackView.innerHTML='<div class="ug-rack-head"><button type="button" class="ug-rack-back">← 3D view</button><div><div class="ug-rack-title"></div><div class="ug-rack-sub"></div></div><div class="ug-rack-key"></div></div><svg role="group"></svg>';
+overlay.append(rackView);
+const SVGNS='http://www.w3.org/2000/svg',svgEl=(tag,attrs,parent)=>{const e=document.createElementNS(SVGNS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.append(e);return e};
+// Per pad, once: the laterals' mean bearing, and each well's lateral and toe in
+// the section plane. Across-pad offset uses the same axis the camera's screen x
+// has once it faces down that bearing, so the turn hands over without a jump.
+function rackGeom(p){if(p.rack)return p.rack;
+ const ws=p.wells.map(w=>{const heel=w.well.heel_md||0,md=w.trajectory.md,lat=w.points.filter((q,j)=>md[j]>=heel);return {w,lat:lat.length>1?lat:w.points.slice(-2),toe:w.points.at(-1)}});
+ let dx=0,dz=0;ws.forEach(o=>{const a=o.lat[0],b=o.lat.at(-1),L=Math.hypot(b[0]-a[0],b[2]-a[2])||1;dx+=(b[0]-a[0])/L;dz+=(b[2]-a[2])/L});
+ const yaw=Math.atan2(dx,dz),c=Math.cos(yaw),s=Math.sin(yaw),u=q=>q[0]*c-q[2]*s;
+ ws.forEach(o=>{o.trace=o.lat.map(q=>[u(q),-q[1]]);o.end=[u(o.toe),-o.toe[1]];});
+ const mid=ws.reduce((a,o)=>a+o.end[0],0)/ws.length;ws.forEach(o=>{o.end[0]-=mid;o.trace.forEach(q=>q[0]-=mid)});
+ ws.forEach(o=>{let best=null;ws.forEach(k=>{if(k===o)return;const h=k.end[0]-o.end[0],v=k.end[1]-o.end[1],d=Math.hypot(h,v);if(!best||d<best.d)best={d,h:Math.abs(h),v:Math.abs(v),k}});o.nn=best});
+ return p.rack={yaw,az:(yaw*180/Math.PI+360)%360,ws,toeMid:[0,1,2].map(i=>ws.reduce((a,o)=>a+o.toe[i],0)/ws.length)};}
+function lateralGamma(w){if(!w.gv)return null;const heel=w.well.heel_md||0,v=w.gv.filter((x,i)=>x!=null&&w.gmd0+(i+.5)*w.gbin>=heel).sort((a,b)=>a-b);return v.length?v[Math.floor(v.length/2)]:null}
+function bottleInk(o){if(colorBy!=='gamma')return o.w.pad.color;const g=lateralGamma(o.w);return g==null?null:GAMMA_INK[gammaBucket(g)]}
+// The buttons ride on each pad's cluster of toes as the scene turns; ones that
+// would land on each other step down, the way the pad labels do.
+function placeRackButtons(){if(!data)return;const placed=[];data.pads.forEach(p=>{let b=p.rackBtn;if(!b){b=p.rackBtn=document.createElement('button');b.type='button';b.className='ug-rackbtn';b.onclick=()=>enterRack(p);b.onmouseenter=b.onfocus=()=>{rackHover=p};b.onmouseleave=b.onblur=()=>{if(rackHover===p)rackHover=null};rackLayer.append(b)}
+ const on=active&&!rack&&(!pad||p===pad),q=on?project(rackGeom(p).toeMid):null,vis=on&&q[0]>20&&q[0]<width-20&&q[1]>90&&q[1]<height-30;b.hidden=!vis;if(!vis)return;
+ b.textContent=pad?'Wine rack ▸':'Wine rack · '+p.name.replace(/^.*pad /i,'pad ');let y=q[1]+12;while(placed.some(l=>Math.abs(l.x-q[0])<130&&Math.abs(l.y-y)<30))y+=30;placed.push({x:q[0],y});b.style.transform=`translate(${Math.round(q[0])}px,${Math.round(y)}px) translateX(-50%)`;});}
+function tweenCamera(to,ms,done){cancelAnimationFrame(tweenRaf);if(!ms){camera.yaw=to.yaw;camera.pitch=to.pitch;if(done)done();return}const from={yaw:camera.yaw,pitch:camera.pitch},t0=performance.now();
+ const step=now=>{const k=ms?Math.min(1,(now-t0)/ms):1,e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;camera.yaw=from.yaw+(to.yaw-from.yaw)*e;camera.pitch=from.pitch+(to.pitch-from.pitch)*e;if(k<1)tweenRaf=requestAnimationFrame(step);else if(done)done()};tweenRaf=requestAnimationFrame(step);}
+function enterRack(p,instant){if(!data||rack)return;if(!pad)selectPad(p.id);if(pad!==p)return;const g=rackGeom(p);
+ rack=p;rackHover=null;rackEntry={yaw:camera.yaw,pitch:camera.pitch,scale:goal.scale,target:goal.target.slice()};
+ let y=g.yaw;while(y-camera.yaw>Math.PI)y-=2*Math.PI;while(y-camera.yaw<-Math.PI)y+=2*Math.PI;   // the short way round
+ goal.target=g.toeMid.slice();tip.style.display='none';
+ tweenCamera({yaw:y,pitch:0},instant?0:750,()=>{if(rack!==p)return;overlay.classList.add('racking');rackView.hidden=false;renderRack();if(!instant)rackView.querySelector('.ug-rack-back').focus()});}
+function exitRack(quiet){if(!rack)return;rack=null;overlay.classList.remove('racking');rackView.hidden=true;tip.style.display='none';const e=rackEntry;rackEntry=null;if(!e||quiet){cancelAnimationFrame(tweenRaf);return}goal.target=e.target;goal.scale=e.scale;tweenCamera({yaw:e.yaw,pitch:e.pitch},600);canvas.focus();}
+rackView.querySelector('.ug-rack-back').onclick=()=>exitRack();
+function niceStep(span,n){const raw=span/n,e=Math.pow(10,Math.floor(Math.log10(raw)));return [1,2,2.5,5,10].map(m=>m*e).find(s=>s>=raw)||10*e}
+function renderRack(){if(!rack)return;const p=rack,g=rackGeom(p),svg=rackView.querySelector('svg');svg.replaceChildren();
+ // on a phone the header wraps to several rows: start below whatever it takes
+ rackView.style.top=innerWidth<=640?(overlay.querySelector('.ug-head').getBoundingClientRect().bottom+8)+'px':'';
+ const W=svg.clientWidth,H=svg.clientHeight;if(!W||!H)return;svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+ const P={l:78,r:24,t:18,b:54},pw=W-P.l-P.r,ph=H-P.t-P.b;
+ // framed on the ends, not the whole laterals: a lateral that drifts off the
+ // pad's bearing would otherwise widen the section and crush the rack flat
+ const xs=g.ws.map(o=>o.end[0]),ys=g.ws.map(o=>o.end[1]);
+ let x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);const mx=Math.max(30,(x1-x0)*.04),my=Math.max(8,(y1-y0)*.06);x0-=mx;x1+=mx;y0-=my;y1+=my;
+ // inner room in pixels, not metres: the labels under the deepest end and the
+ // half-bottle at each side need the same space whatever the pad's spread
+ const small=W<520,R=small?8:12,ix=R+18,it=R+8,ib=small?R+20:R+36,X=v=>P.l+ix+(v-x0)/(x1-x0)*(pw-2*ix),Y=v=>P.t+it+(v-y0)/(y1-y0)*(ph-it-ib),ex=((ph-it-ib)/(y1-y0))/((pw-2*ix)/(x1-x0));
+ const grid=svgEl('g',{class:'rk-grid'},svg),ys2=niceStep(y1-y0,6),xs2=niceStep(x1-x0,7);
+ for(let v=Math.ceil(y0/ys2)*ys2;v<=y1;v+=ys2){svgEl('line',{x1:P.l,x2:P.l+pw,y1:Y(v),y2:Y(v)},grid);svgEl('text',{x:P.l-8,y:Y(v)+4,'text-anchor':'end'},grid).textContent=fmt(v)+' m'}
+ for(let v=Math.ceil(x0/xs2)*xs2;v<=x1;v+=xs2){svgEl('line',{x1:X(v),x2:X(v),y1:P.t,y2:P.t+ph,class:v===0?'rk-zero':''},grid);svgEl('text',{x:X(v),y:P.t+ph+18,'text-anchor':'middle'},grid).textContent=(v>0?'+':v<0?'−':'')+fmt(Math.abs(v))+' m'}
+ svgEl('text',{x:P.l+pw/2,y:H-8,'text-anchor':'middle',class:'rk-axis'},svg).textContent=small?'Across the pad · looking toward '+Math.round(g.az)+'°':'Across the pad, looking down the laterals toward '+Math.round(g.az)+'° (toe ends facing you)';
+ svgEl('text',{x:14,y:P.t+ph/2,'text-anchor':'middle',class:'rk-axis',transform:`rotate(-90 14 ${P.t+ph/2})`},svg).textContent='True vertical depth';
+ // laterals first, faint, so the ends sit on top of them
+ const clip='rk-clip-'+p.id;svgEl('rect',{x:P.l,y:P.t,width:pw,height:ph},svgEl('clipPath',{id:clip},svg));
+ const traces=svgEl('g',{class:'rk-traces','clip-path':`url(#${clip})`},svg);g.ws.forEach(o=>{const ink=bottleInk(o)||GAMMA_NONE;svgEl('polyline',{points:o.trace.map(q=>X(q[0]).toFixed(1)+','+Y(q[1]).toFixed(1)).join(' '),stroke:ink},traces)});
+ const labels=[],ends=svgEl('g',{class:'rk-ends'},svg);
+ g.ws.slice().sort((a,b)=>a.end[1]-b.end[1]).forEach(o=>{const w=o.w,cx=X(o.end[0]),cy=Y(o.end[1]),ink=bottleInk(o);
+  const a=svgEl('a',{href:'wellview.html?wa='+encodeURIComponent(w.well.wa),class:'rk-end'+(w===well?' on':''),'aria-label':`${w.well.name}, WA ${w.well.wa}, toe at ${fmt(o.end[1])} metres true vertical depth. Open its charts.`},ends);
+  svgEl('circle',{cx,cy,r:R,fill:ink||'#0b1620',class:ink?'':'rk-none'},a);
+  const lh=small?13:26,bw=small?36:46;let ly=cy+R+15;const box=l=>labels.some(b=>Math.abs(b.x-cx)<bw&&Math.abs(b.y-l)<lh);if(box(ly))ly=cy-R-(small?6:18);labels.push({x:cx,y:ly});
+  svgEl('text',{x:cx,y:ly,'text-anchor':'middle',class:'rk-wa'},a).textContent=w.well.wa;if(!small)svgEl('text',{x:cx,y:ly+12,'text-anchor':'middle',class:'rk-tvd'},a).textContent=fmt(o.end[1])+' m';
+  a.addEventListener('pointerenter',e=>{const nn=o.nn,gm=lateralGamma(w);tip.innerHTML='';[[w.well.name,'b'],[`WA ${w.well.wa} · toe ${fmt(o.end[1])} m TVD · lateral ${fmt(w.well.lateral_m)} m`],nn?[`Nearest end: WA ${nn.k.w.well.wa}, ${fmt(nn.h)} m across, ${fmt(nn.v)} m vertical`]:null,gm!=null?[`Lateral gamma median ${gm} API`]:null,['Click to open its charts']].filter(Boolean).forEach(([t,b])=>{const d=document.createElement(b||'div');d.textContent=t;if(b)d.style.display='block';tip.append(d)});tip.style.display='block';const r=overlay.getBoundingClientRect();tip.style.left=Math.min(r.width-270,e.clientX-r.left+16)+'px';tip.style.top=Math.min(r.height-110,e.clientY-r.top+16)+'px'});
+  a.addEventListener('pointerleave',()=>{tip.style.display='none'});});
+ const n=g.ws.length;
+ rackView.querySelector('.ug-rack-title').textContent=p.name+' · Wine rack';
+ rackView.querySelector('.ug-rack-sub').textContent=`${n} well ends · toes ${fmt(Math.min(...g.ws.map(o=>o.end[1])))}–${fmt(Math.max(...g.ws.map(o=>o.end[1])))} m TVD · vertical exaggeration ×${ex.toFixed(1)}`;
+ const key=rackView.querySelector('.ug-rack-key');key.replaceChildren();if(colorBy==='gamma'&&gamma){key.innerHTML=`<span>Lateral median gamma</span><i style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></i><span>${gamma.scale.lo}–${gamma.scale.hi} API</span><span class="rk-nonekey">no log</span>`}else key.textContent='Click a well end to open its charts';
+}
 
 // Leaving for a well view and coming back should land where you were, not at the
 // default cluster. The camera, the focused pad and the selected well are stashed
@@ -109,7 +184,7 @@ const UG_KEY='stratum.underground';
 function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.stringify({
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
  pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
- stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,
+ stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,rack:rack?rack.id:null,rackEntry,
  panelScroll:overlay.querySelector('.ug-panel').scrollTop,
  surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}}))}catch(e){}}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
@@ -128,6 +203,7 @@ overlay.querySelector('#ug-back').addEventListener('click',ugClear);
  camera.yaw=s.yaw;camera.pitch=s.pitch;camera.scale=s.scale;
  camera.pan=s.pan.slice();camera.target=s.target.slice();
  goal.scale=s.scale;goal.target=s.target.slice();
+ if(s.rack&&pad&&pad.id===s.rack){enterRack(pad,true);if(s.rackEntry)rackEntry=s.rackEntry}
  draw();button.textContent='Change View';
 })();
 })();
