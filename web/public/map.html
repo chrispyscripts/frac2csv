@@ -54,7 +54,15 @@
                                     padding:6px 10px; font:600 12.5px/1 -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; text-decoration:none; }
   .pop .acts button:hover, .pop .acts a:hover { border-color:#5ee2d0; }
   .pop .acts .go { background:#246358; border-color:#64e8ce; color:#f2fffc; }
+  .demo { padding:8px 8px 4px; border-bottom:1px solid var(--line); display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .demo .dh { grid-column:1/-1; color:var(--mut); font-size:12px; padding:0 4px; }
+  .demo button { text-align:left; background:#132433; color:var(--ink); border:1px solid #2c4456; border-radius:9px; padding:7px 9px; font:inherit; cursor:pointer; }
+  .demo button:hover { border-color:#5ee2d0; }
+  .demo button b { display:block; font-size:13px; }
+  .demo button span { display:block; color:var(--mut); font-size:11px; line-height:1.35; margin-top:2px; }
   .side .inview { color:var(--mut); font-size:12px; padding:6px 6px 2px; }
+  .legend .qk { cursor:pointer; color:var(--ink); }
+  .legend .qk input { margin:0; accent-color:#ff5fa2; }
   .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
   @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; } }
 </style>
@@ -66,6 +74,7 @@
     <h1>Stratum</h1>
     <div class="sub" id="sub">loading pads…</div>
   </header>
+  <div class="demo" id="demo" hidden></div>
   <div class="body" id="pads"></div>
   <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D or its wine rack; zoom to 12+ and <b>Change View</b> opens 3D for what you see.</footer>
 </div>
@@ -74,6 +83,7 @@
   <div class="row"><span class="l thin"></span> lateral, survey only</div>
   <div class="row"><span class="d"></span> pad (surface location)</div>
   <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:#c9d3dc"></span> permitted well-site area (BCER)</div>
+  <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:#ff5fa2"></span> earthquakes since 2013 (NRCan)</label>
 </div>
 
 <script>
@@ -118,6 +128,7 @@ async function load() {
   }
   // operator, field and years per pad, from the region index the 3D view also reads
   try { for (const p of (await (await fetch("data/region/index.json")).json()).pads) PAD_INFO[p.id] = p; } catch (e) {}
+  try { demoAreas((await (await fetch("data/region/featured.json")).json()).areas); } catch (e) {}
   render();
 }
 
@@ -181,6 +192,25 @@ function render() {
       map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
       map.on("click", id, e => openWell(e.features[0].properties, e.lngLat));
     }
+    // earthquakes: Natural Resources Canada's catalog, off until asked for
+    fetch("data/seismic/events.json").then(r => r.ok ? r.json() : null).then(q => {
+      if (!q) return;
+      const feats = q.rows.map(r => ({ type: "Feature", geometry: { type: "Point", coordinates: [r[2], r[1]] },
+        properties: { t: r[0].slice(0, 10), depth: r[3], mag: r[4], type: r[5], fixed: r[6], industry: r[7] } }));
+      map.addSource("quakes", { type: "geojson", data: fc(feats) });
+      map.addLayer({ id: "quakes", type: "circle", source: "quakes", layout: { visibility: "none" },
+        paint: { "circle-radius": ["interpolate", ["linear"], ["get", "mag"], 0, 2, 2, 4, 3, 7, 4.6, 13],
+                 "circle-color": "#ff5fa2", "circle-opacity": .35, "circle-stroke-color": "#ff5fa2", "circle-stroke-width": 1 } }, "laterals-halo");
+      const box = document.getElementById("qk");
+      box.addEventListener("change", () => map.setLayoutProperty("quakes", "visibility", box.checked ? "visible" : "none"));
+      map.on("click", "quakes", e => {
+        if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
+        const p = e.features[0].properties;
+        if (popup) popup.remove();
+        popup = new maplibregl.Popup({ closeButton: true, maxWidth: "300px" }).setLngLat(e.lngLat)
+          .setHTML(`<div class="pop"><b>M${p.mag} ${p.type} · ${p.t}</b><div class="facts">${p.fixed ? "depth not solved by the network" : "depth " + Number(p.depth).toFixed(1) + " km"}${p.industry ? "<br>suspected industry-related" : ""}<br>Earthquakes Canada (NRCan)</div></div>`).addTo(map);
+      });
+    }).catch(() => {});
     map.on("mouseenter", "pads", () => map.getCanvas().style.cursor = "pointer");
     map.on("mouseleave", "pads", () => map.getCanvas().style.cursor = "");
     map.on("click", "pads", e => openPad(PAD_BY_ID[e.features[0].properties.id], e.lngLat));
@@ -241,6 +271,27 @@ function openWell(p, lngLat) {
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
   if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }
+}
+
+// the demo's prepared areas: each opens straight into its pads in 3D
+function demoAreas(areas) {
+  const box = document.getElementById("demo");
+  box.innerHTML = `<div class="dh">Demo areas · 10 pads each, everything gathered</div>`;
+  for (const a of areas) {
+    const ps = a.pads.map(id => PAD_INFO[id]).filter(Boolean);
+    const wells = ps.reduce((n, p) => n + p.wells, 0), curves = ps.reduce((n, p) => n + (p.curves || 0), 0);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = `<b></b><span></span><span>${ps.length} pads · ${wells} wells · ${curves} with curves</span>`;
+    b.querySelector("b").textContent = a.name;
+    b.querySelector("span").textContent = a.blurb;
+    b.addEventListener("click", () => {
+      map.jumpTo({ center: [a.center[1], a.center[0]], zoom: 12.3 });
+      if (window.stratum3D) window.stratum3D.openArea(a.pads, { title: a.name });
+    });
+    box.append(b);
+  }
+  box.hidden = false;
 }
 
 const LIST_MAX = 60;

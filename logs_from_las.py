@@ -39,7 +39,9 @@ def read_las(path):
                 if m:
                     null = float(m.group(1))
             elif sec == "C":
-                m = re.match(r"\s*([A-Za-z0-9_:\-]+)\s*\.([A-Za-z0-9/%]*)", line)
+                # any mnemonic up to the first dot: a curve line that fails to
+                # parse would shift every later column onto the wrong data
+                m = re.match(r"\s*([^\s.]+)\s*\.(\S*)", line)
                 if m:
                     curves.append((m.group(1).upper(), m.group(2)))
             elif sec == "A":

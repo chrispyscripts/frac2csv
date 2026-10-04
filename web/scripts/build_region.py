@@ -228,6 +228,13 @@ def main():
                      "lat": sum(w["lat"] for w in ws) / len(ws), "lon": sum(w["lon"] for w in ws) / len(ws),
                      "members": members})
 
+    # two pads in one legal subdivision would share a name: number the later ones
+    seen = defaultdict(int)
+    for p in sorted(pads, key=lambda p: p["id"]):
+        seen[p["name"]] += 1
+        if seen[p["name"]] > 1:
+            p["name"] = f"{p['name']} ({seen[p['name']]})"
+
     os.makedirs(os.path.join(_DATA, "region", "pads"), exist_ok=True)
     index, map_pads, made = [], [], 0
     have_well_file = {f[:-5] for f in os.listdir(os.path.join(_DATA, "wells")) if f[:-5].isdigit()}

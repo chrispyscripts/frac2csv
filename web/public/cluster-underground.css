@@ -22,3 +22,5 @@
 .rk-wa{fill:#e7f4fa;font-size:11px;font-weight:600}.rk-tvd{fill:#93adb9;font-size:10px}
 @media(max-width:640px){#underground.racking .ug-panel,#underground.racking .ug-pad-page{display:none}.ug-rack{left:12px;right:12px;top:118px;bottom:16px}#underground.pad-data .ug-rack{bottom:16px}.ug-rack-key{margin-left:0}.ug-rack-key i{width:60px}.rk-end:hover circle,.rk-end:focus-visible circle{r:11px}}
 .ug-facts{color:#93adb9;font-size:11.5px;margin:2px 0 6px;line-height:1.5}
+.ug-quake{border-left:3px solid #ff5fa2;padding-left:8px}#underground #ug-quakes[aria-pressed=true]{background:#5a1f3c;border-color:#ff5fa2;color:#ffe3ef}
+.ug-gest i{border-top:2px dashed #d57f00!important}.rk-end circle.rk-est{stroke:#fef1d0;stroke-dasharray:3 3;stroke-width:1.5}

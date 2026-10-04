@@ -2,14 +2,14 @@
 'use strict';
 const button=document.createElement('button');button.id='change-view';button.textContent='Change View';button.setAttribute('aria-label','Change View to underground cluster');document.body.append(button);
 const overlay=document.createElement('section');overlay.id='underground';overlay.setAttribute('aria-label','Underground cluster explorer');overlay.setAttribute('aria-hidden','true');overlay.inert=true;
-overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false">Gamma</button></div><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
+overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false">Gamma</button></div><button id="ug-quakes" type="button" aria-pressed="false" title="Earthquakes since 2013 (Earthquakes Canada)">Quakes</button><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
 document.body.append(overlay);
 const padPage=document.createElement('iframe');padPage.className='ug-pad-page';padPage.title='Pad data';padPage.hidden=true;overlay.append(padPage);
 const returnButton=document.createElement('button');returnButton.id='ug-return';returnButton.textContent='← Back to underground';returnButton.hidden=true;overlay.querySelector('.ug-tools').prepend(returnButton);
 
 const canvas=overlay.querySelector('canvas'),ctx=canvas.getContext('2d'),tip=overlay.querySelector('.ug-tip'),padMenu=overlay.querySelector('select'),content=overlay.querySelector('#ug-content');
 let entryCamera=null;
-let data=null,active=false,pad=null,well=null,stage=null,interval=null,hits=[],hover=null,width=0,height=0,drag=null,raf=0,colorBy='pad',gamma=null;
+let data=null,active=false,pad=null,well=null,stage=null,interval=null,hits=[],hover=null,width=0,height=0,drag=null,raf=0,colorBy='pad',gamma=null,quakes=null,showQuakes=false;
 const camera={yaw:-.5,pitch:.4,scale:.085,target:[0,-1000,0],pan:[110,20]},goal={scale:.085,target:[0,-1000,0]};
 // Gamma ray, one amber hue: dark for low API (cleaner rock) up to cream for high
 // (shalier). The darkest step still clears 2.3:1 on the lightest part of the
@@ -20,7 +20,7 @@ function positionButton(){const r=document.querySelector('.legend').getBoundingC
 map.on('zoom',positionButton);map.on('moveend',positionButton);new ResizeObserver(positionButton).observe(document.querySelector('.legend'));positionButton();
 // The region: every pad's position, so the 3D view can take whichever pads the
 // map is showing. A pad's wells are fetched only when an area containing it opens.
-let region=null,areaTitle='Below the surface';
+let region=null,areaTitle='Below the surface',areaName='';
 const regionReady=fetch('data/region/index.json').then(r=>{if(!r.ok)throw Error('Unable to load the region');return r.json()}).then(d=>{region=d;positionButton();return d});
 const padCache=new Map(),AREA_MAX=30;
 function fetchPad(id){if(!padCache.has(id))padCache.set(id,fetch('data/region/pads/'+encodeURIComponent(id)+'.json').then(r=>{if(!r.ok)throw Error('pad '+id);return r.json()}));return padCache.get(id)}
@@ -36,7 +36,7 @@ async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.
  // copies: the scene writes points, colours and caches onto its pads
  const d={pads:raw.map(p=>structuredClone(p))};data=d;
  const lat0=d.pads.reduce((a,p)=>a+p.lat,0)/d.pads.length,lon0=d.pads.reduce((a,p)=>a+p.lon,0)/d.pads.length;
- const xy=(lon,lat)=>[(lon-lon0)*111320*Math.cos(lat0*Math.PI/180),(lat-lat0)*111320];
+ const xy=(lon,lat)=>[(lon-lon0)*111320*Math.cos(lat0*Math.PI/180),(lat-lat0)*111320];d.xy=xy;
  while(padMenu.options.length>1)padMenu.remove(1);
  d.pads.forEach((p,i)=>{p.color=PAD_COLORS[i%PAD_COLORS.length];const [x,z]=xy(p.lon,p.lat);p.point=[x,0,z];p.wells.forEach(w=>{const [wx,wz]=xy(w.well.lon,w.well.lat),t=w.trajectory;w.points=t.md.map((m,j)=>[wx+t.ew[j],-t.tvd[j],wz+t.ns[j]]).filter(q=>q.every(Number.isFinite));w.pad=p;w.depth_intervals=(w.depth_intervals||[]).filter(d=>d.top_m!=null).map(d=>({...d,point:pointAt(w,(d.top_m+(d.base_m??d.top_m))/2)}));});const opt=document.createElement('option');opt.value=p.id;opt.textContent=p.name+' · '+p.wells.length+' wells';padMenu.append(opt);});
  // the grid reaches past the furthest well, and down past the deepest
@@ -46,15 +46,35 @@ async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.
  overlay.querySelector('.ug-title').textContent=areaTitle;
  overlay.querySelector('.ug-sub').textContent=`${d.pads.length} pads / ${d.pads.reduce((n,p)=>n+p.wells.length,0)} surveyed well paths · metres`;
  if(gamma)attachGamma(gamma);
+ if(quakes)attachQuakes();
  return d;}
+// ---------- Earthquakes ----------
+// Natural Resources Canada's catalog. Each event is a ring on the surface at its
+// epicentre, sized by magnitude; where the network solved a depth a dashed line
+// drops to it (more than half are reported at a fixed 1, 5 or 10 km and get no
+// line). Each is checked against the frac jobs drawn here: a well whose stages
+// ran from a day before to a week before the event, within 5 km, is named.
+const quakesReady=fetch('data/seismic/events.json').then(r=>r.ok?r.json():null).then(q=>{quakes=q;if(data)attachQuakes()}).catch(e=>console.warn('quakes',e));
+const DAY=864e5;
+function attachQuakes(){if(!quakes||!data||!data.xy)return;
+ const wells=data.pads.flatMap(p=>p.wells).map(w=>{const ds=(w.stages||[]).map(s=>Date.parse(s.date)).filter(isFinite);if(!ds.length||!w.points.length)return null;const m=w.points[Math.floor(w.points.length*.75)];return {w,from:Math.min(...ds),to:Math.max(...ds)+DAY,x:m[0],z:m[2]}}).filter(Boolean);
+ data.quakes=quakes.rows.map(r=>{const [x,z]=data.xy(r[2],r[1]);return {t:Date.parse(r[0]),date:r[0].slice(0,10),x,z,depth:r[3]*1000,mag:r[4],type:r[5],fixed:!!r[6],industry:!!r[7]}}).filter(e=>Math.abs(e.x)<=data.gridR&&Math.abs(e.z)<=data.gridR);
+ for(const e of data.quakes){let best=null;for(const f of wells){const d=Math.hypot(f.x-e.x,f.z-e.z);if(d>5000||e.t<f.from-DAY||e.t>f.to+7*DAY)continue;if(!best||d<best.d)best={d,f}}
+  if(best){const days=Math.round((e.t-best.f.to)/DAY);e.near=`${days<=0?'during':days+' day'+(days>1?'s':'')+' after'} the frac of WA ${best.f.w.well.wa} (${best.f.w.pad.name}), ${(best.d/1000).toFixed(1)} km away`}}}
+function drawQuakes(){for(const e of data.quakes||[]){const s=project([e.x,0,e.z]),r=3+Math.max(0,e.mag)*2.6;
+  if(!e.fixed){const h=project([e.x,-e.depth,e.z]);ctx.setLineDash([2,3]);ctx.strokeStyle='#ff5fa2';ctx.globalAlpha=.55;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(s[0],s[1]);ctx.lineTo(h[0],h[1]);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=.9;ctx.fillStyle='#ff5fa2';ctx.beginPath();ctx.arc(h[0],h[1],2.2,0,Math.PI*2);ctx.fill();}
+  ctx.globalAlpha=e.near?.5:.22;ctx.fillStyle='#ff5fa2';ctx.beginPath();ctx.arc(s[0],s[1],r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=e.near?1:.75;ctx.strokeStyle='#ff5fa2';ctx.lineWidth=e.near?1.8:1;ctx.stroke();ctx.globalAlpha=1;
+  hits.push({x:s[0],y:s[1],q:e,r:Math.max(6,r)});}}
+overlay.querySelector('#ug-quakes').onclick=async e=>{showQuakes=!showQuakes;e.currentTarget.setAttribute('aria-pressed',String(showQuakes));await quakesReady;if(data&&!data.quakes)attachQuakes();renderPanel()};
+
 // Gamma is an extra layer: if it fails to load, the view still opens in pad colours.
 const gammaReady=fetch('data/gamma.json').then(r=>r.ok?r.json():null).then(g=>{if(g){gamma=g;if(data)attachGamma(g)}}).catch(e=>console.warn('gamma layer',e)).then(()=>{if(!gamma){const b=overlay.querySelector('[data-color=gamma]');b.disabled=true;b.title='Gamma data unavailable'}});
 function gammaBucket(v){const s=gamma.scale;return Math.max(0,Math.min(GAMMA_N-1,Math.round((v-s.lo)/(s.hi-s.lo)*(GAMMA_N-1))))}
 // Each bin becomes one segment of the path between its two MD edges; segments are
 // grouped by colour once here so a frame strokes one path per colour, not per bin.
-function attachGamma(g){gamma=g;const bin=g.bin_m;if(data)data.pads.forEach(p=>p.wells.forEach(w=>{const x=g.wells[String(w.well.wa).padStart(5,'0')];if(!x)return;w.gmd0=x.md0;w.gbin=bin;w.gv=x.v;w.gruns=x.runs;w.gpts=x.v.concat([null]).map((_,i)=>pointAt(w,x.md0+i*bin));w.gby=GAMMA_INK.map(()=>[]);x.v.forEach((v,i)=>{if(v!=null)w.gby[gammaBucket(v)].push(i)})}));renderLegend();}
-function renderLegend(){const L=overlay.querySelector('.ug-legend');if(!gamma){L.hidden=true;return}const s=gamma.scale,all=data?data.pads.flatMap(p=>p.wells):[],n=all.filter(w=>w.gv).length,none=all.length-n;
- L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone"><i></i>No gamma log · ${none} wells</div><div class="ug-gfoot">${n} of ${n+none} wells here have a gamma log loaded (so far the Gundy cluster's LAS files from the BCER eLibrary). Scale spans the laterals (P2–P98).</div>`;L.hidden=colorBy!=='gamma';}
+function attachGamma(g){gamma=g;const bin=g.bin_m;if(data)data.pads.forEach(p=>p.wells.forEach(w=>{const x=g.wells[String(w.well.wa).padStart(5,'0')];if(!x)return;w.gmd0=x.md0;w.gbin=bin;w.gv=x.v;w.gruns=x.runs;w.gest=!!x.estimated;w.gfrom=x.from||[];w.gpts=x.v.concat([null]).map((_,i)=>pointAt(w,x.md0+i*bin));w.gby=GAMMA_INK.map(()=>[]);x.v.forEach((v,i)=>{if(v!=null)w.gby[gammaBucket(v)].push(i)})}));renderLegend();}
+function renderLegend(){const L=overlay.querySelector('.ug-legend');if(!gamma){L.hidden=true;return}const s=gamma.scale,all=data?data.pads.flatMap(p=>p.wells):[],n=all.filter(w=>w.gv&&!w.gest).length,est=all.filter(w=>w.gest).length,none=all.length-n-est,E=gamma.estimate;
+ L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone ug-gest"><i></i>Estimated from offset logs · ${est} wells</div><div class="ug-gnone"><i></i>No gamma · ${none} wells</div><div class="ug-gfoot">${n} measured (LAS logs from the BCER eLibrary)${est&&E?`; ${est} estimated: neighbours' gamma at the same subsea depth, smoothed to ${E.smoothed_m} m. Tested on ${E.tested} logged wells, an estimate's lateral level is off by ${E.level_mae} API on average`:''}. Scale spans the laterals (P2–P98).</div>`;L.hidden=colorBy!=='gamma';}
 async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}colorBy=m;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));renderLegend();if(data)renderPanel();renderRack();}
 overlay.querySelectorAll('.ug-color button').forEach(b=>b.onclick=()=>setColor(b.dataset.color));
 function pointAt(w,md){const t=w.trajectory;let i=t.md.findIndex(m=>m>=md);if(i<0)i=t.md.length-1;if(i===0)return w.points[0];const a=w.points[i-1],b=w.points[i],v=(md-t.md[i-1])/(t.md[i]-t.md[i-1]||1);return a.map((x,k)=>x+(b[k]-x)*v);}
@@ -73,7 +93,7 @@ function selectPad(id){
 function returnToCluster(){if(!pad)return;const saved=entryCamera;selectPad('');if(saved){Object.assign(camera,structuredClone(saved));goal.scale=saved.scale;goal.target=saved.target.slice();}entryCamera=null;returnButton.hidden=true;canvas.focus();}
 returnButton.onclick=()=>{exitRack(true);returnToCluster()};
 
-function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.flatMap(p=>p.wells),nS=all.reduce((n,w)=>n+(w.stages||[]).length,0),nI=all.reduce((n,w)=>n+w.depth_intervals.length,0),nG=all.filter(w=>w.gv).length;content.innerHTML=`<div class="ug-stat">${all.length} wells · ${fmt(nS)} stage summaries · ${fmt(nI)} stage depths</div>Click a pad marker to lock on to it, or press its Wine rack button. Other pads stay visible.<p>Stage summaries and depths are as filed with the BCER. Open a well for its treatment charts where the Lab has read its frac report.</p>`+(colorBy==='gamma'&&gamma?`<p>Gamma ray is drawn along ${nG} of these wells from their LAS logs. Hover a well for its reading; lock a pad and pick a well for its full log.</p>`:'');return;}
+function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.flatMap(p=>p.wells),nS=all.reduce((n,w)=>n+(w.stages||[]).length,0),nI=all.reduce((n,w)=>n+w.depth_intervals.length,0),nG=all.filter(w=>w.gv).length;content.innerHTML=`<div class="ug-stat">${all.length} wells · ${fmt(nS)} stage summaries · ${fmt(nI)} stage depths</div>Click a pad marker to lock on to it, or press its Wine rack button. Other pads stay visible.<p>Stage summaries and depths are as filed with the BCER. Open a well for its treatment charts where the Lab has read its frac report.</p>`+(colorBy==='gamma'&&gamma?`<p>Gamma ray is drawn along ${nG} of these wells (${all.filter(w=>w.gest).length} of them estimated from offset logs, dashed). Hover a well for its reading; lock a pad and pick a well for its full log.</p>`:'')+(showQuakes&&data.quakes?quakeSummary():'');return;}
  const select=document.createElement('select');select.setAttribute('aria-label','Select well');pad.wells.forEach(w=>{const o=document.createElement('option');o.value=w.well.wa;o.textContent='WA '+w.well.wa+' · '+w.stages.length+' stages';select.append(o)});select.value=well.well.wa;select.onchange=()=>{well=pad.wells.find(w=>w.well.wa===select.value);stage=null;interval=null;renderPanel()};content.append(select);
  const title=document.createElement('div');title.textContent=well.well.name;content.append(title);
  const W_=well.well,facts=[W_.operator,W_.formation,W_.year,W_.cum_gas_e3m3!=null?fmt(W_.cum_gas_e3m3)+' e³m³ gas to date':null,W_.refracs?W_.refracs+' later completion'+(W_.refracs>1?'s':'')+' on file':null].filter(Boolean);if(facts.length){const f=document.createElement('div');f.className='ug-facts';f.textContent=facts.join(' · ');content.append(f)}
@@ -86,17 +106,19 @@ function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.fl
 }
 // The selected well's gamma as a log strip along MD: bar height and colour are both
 // the reading, so the strip reads without the legend. Hover it for a value.
-function gammaPanel(w){const box=document.createElement('div');box.className='ug-gamma';content.append(box);const head=document.createElement('div');head.className='ug-glabel';head.textContent='Gamma ray · API';box.append(head);
+function quakeSummary(){const q=data.quakes,n=q.length,ind=q.filter(e=>e.industry).length,near=q.filter(e=>e.near).length,big=n?Math.max(...q.map(e=>e.mag)):0;
+ return `<p class="ug-quake"><b>${n} earthquakes</b> here since 2013 (Earthquakes Canada)${n?`, largest M${big}; ${ind} labelled industry-related; <b>${near}</b> within a week of a frac job on a well here, within 5 km`:''}. Ring size is magnitude; a dashed line drops to the depth where the network solved one.</p>`}
+function gammaPanel(w){const box=document.createElement('div');box.className='ug-gamma';content.append(box);const head=document.createElement('div');head.className='ug-glabel';head.textContent='Gamma ray · API'+(w.gest?' · estimated':'');box.append(head);
  if(!w.gv){box.append('No gamma log filed with the BCER for this well; its path is dashed.');return}
  const td=w.trajectory.md.at(-1),heel=w.well.heel_md||0,mdAt=i=>w.gmd0+(i+.5)*w.gbin,logged=w.gv.map((v,i)=>v==null?null:mdAt(i)).filter(m=>m!=null);
- const lat=w.gv.filter((v,i)=>v!=null&&mdAt(i)>=heel).sort((a,b)=>a-b),q=f=>lat.length?lat[Math.floor(f*(lat.length-1))]:null;
+ const lat=w.gv.filter((v,i)=>v!=null&&mdAt(i)>=heel).sort((a,b)=>a-b),q=f=>lat.length?(w.gest?'~':'')+lat[Math.floor(f*(lat.length-1))]:null;
  const cv=document.createElement('canvas');cv.setAttribute('role','img');cv.setAttribute('aria-label','Gamma ray against measured depth, '+fmt(logged[0])+' to '+fmt(logged.at(-1))+' m');box.append(cv);
  const read=document.createElement('div');read.className='ug-gread';read.textContent='Hover the strip for a reading';box.append(read);
  const dl=document.createElement('dl');[['Lateral median',q(.5)==null?'–':q(.5)+' API'],['Lateral P10–P90',q(.1)==null?'–':q(.1)+'–'+q(.9)+' API'],['Logged',fmt(logged[0])+'–'+fmt(logged.at(-1))+' m MD']].forEach(([k,v])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;dl.append(dt,dd)});box.append(dl);
- const src=document.createElement('div');src.className='ug-gsrc';src.textContent=w.gruns.map(r=>r.mnemonic+' · '+r.file).join(' + ');box.append(src);
+ const src=document.createElement('div');src.className='ug-gsrc';src.textContent=w.gest?'No gamma log was filed for this well. Estimated from '+w.gfrom.map(f=>'WA '+f.wa+' ('+f.km+' km)').join(', ')+' at the same subsea depth, smoothed; expect its level to be within about '+(gamma.estimate?.level_mae??'?')+' API, and no detail along the lateral.':w.gruns.map(r=>r.mnemonic+' · '+r.file).join(' + ');box.append(src);
  const W=cv.clientWidth||230,H=74,base=H-14,d=devicePixelRatio||1;cv.width=W*d;cv.height=H*d;const c=cv.getContext('2d');c.setTransform(d,0,0,d,0,0);const X=md=>md/td*W;
  c.strokeStyle='#29404c';c.beginPath();c.moveTo(0,base+.5);c.lineTo(W,base+.5);c.stroke();
- w.gv.forEach((v,i)=>{if(v==null)return;const x0=X(w.gmd0+i*w.gbin),h=Math.min(1,v/200)*(base-4);c.fillStyle=GAMMA_INK[gammaBucket(v)];c.fillRect(x0,base-h,Math.max(1,X(w.gbin)),h)});
+ c.globalAlpha=w.gest?.55:1;w.gv.forEach((v,i)=>{if(v==null)return;const x0=X(w.gmd0+i*w.gbin),h=Math.min(1,v/200)*(base-4);c.fillStyle=GAMMA_INK[gammaBucket(v)];c.fillRect(x0,base-h,Math.max(1,X(w.gbin)),h)});c.globalAlpha=1;
  if(heel){c.strokeStyle='#93adb9';c.setLineDash([2,3]);c.beginPath();c.moveTo(X(heel)+.5,2);c.lineTo(X(heel)+.5,base);c.stroke();c.setLineDash([]);}
  if(interval){c.fillStyle='#ffffff';c.fillRect(X(interval.top_m),base+1,Math.max(2,X(interval.base_m-interval.top_m)),3)}
  c.fillStyle='#93adb9';c.font='10px system-ui';c.textBaseline='bottom';c.fillText('0 m',0,H);c.textAlign='right';c.fillText(fmt(td)+' m MD',W,H);if(heel){c.textAlign='center';c.fillText('heel',Math.min(W-60,Math.max(20,X(heel))),H)}
@@ -106,6 +128,7 @@ function project(q){const x=q[0]-camera.target[0],y=q[1]-camera.target[1],z=q[2]
 function path(points,color,lineWidth,alpha=1){ctx.beginPath();points.forEach((q,i)=>{const a=project(q);i?ctx.lineTo(a[0],a[1]):ctx.moveTo(a[0],a[1])});ctx.strokeStyle=color;ctx.lineWidth=lineWidth;ctx.globalAlpha=alpha;ctx.stroke();ctx.globalAlpha=1;}
 function draw(){if(!active)return;raf=requestAnimationFrame(draw);camera.scale+=(goal.scale-camera.scale)*.11;camera.target=camera.target.map((v,i)=>v+(goal.target[i]-v)*.1);ctx.clearRect(0,0,width,height);hits=[];
  const GR=data.gridR||6000,GD=data.gridD||3000,GS=GR>12000?2000:1000;for(let d=0;d<=GD;d+=1000){for(let a=-GR;a<=GR;a+=GS){path([[a,-d,-GR],[a,-d,GR]],'#397082',.6,d===0?.22:.09);path([[-GR,-d,a],[GR,-d,a]],'#397082',.6,d===0?.22:.09)}const t=project([-GR*.6,-d,0]);ctx.fillStyle='#7695a5';ctx.font='11px monospace';ctx.fillText(d+' m TVD',t[0],t[1]);}
+ if(showQuakes&&data.quakes)drawQuakes();
  const wells=data.pads.flatMap(p=>p.wells).sort((a,b)=>project(a.points.at(-1))[2]-project(b.points.at(-1))[2]);
  // In gamma mode colour means gamma only: pads, toes and intervals go neutral.
  const g=colorBy==='gamma',ink=c=>g?NEUTRAL:c;
@@ -117,23 +140,24 @@ function draw(){if(!active)return;raf=requestAnimationFrame(draw);camera.scale+=
 // the first logged depth) that is what shows; logged bins are stroked over it.
 function gammaWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,GAMMA_NONE,selected?1.8:1.1,bright?.85:.2);ctx.setLineDash([]);if(!w.gpts)return;
  const P=w.gpts.map(project);ctx.lineCap='round';ctx.lineWidth=selected?4.5:bright?2.4:1.2;ctx.globalAlpha=bright?.96:.22;
+ if(w.gest){ctx.setLineDash([7,5]);ctx.lineCap='butt';ctx.globalAlpha*=.8}
  w.gby.forEach((ix,k)=>{if(!ix.length)return;ctx.beginPath();ix.forEach(i=>{ctx.moveTo(P[i][0],P[i][1]);ctx.lineTo(P[i+1][0],P[i+1][1])});ctx.strokeStyle=GAMMA_INK[k];ctx.stroke()});
- ctx.globalAlpha=1;ctx.lineCap='butt';
+ ctx.setLineDash([]);ctx.globalAlpha=1;ctx.lineCap='butt';
  if(bright)for(let i=1;i<w.gv.length;i+=3)if(w.gv[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
 function resize(){width=overlay.clientWidth;height=canvas.clientHeight;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=height*d;ctx.setTransform(d,0,0,d,0,0)}
 async function openArea(ids,opts={}){button.disabled=true;button.textContent='Loading…';
- try{await loadArea(ids);active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();selectPad('');camera.scale=goal.scale*.75;cancelAnimationFrame(raf);draw();
+ try{await loadArea(ids);if(opts.title){areaTitle=opts.title+' · Below the surface';overlay.querySelector('.ug-title').textContent=areaTitle}areaName=opts.title||'';active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();selectPad('');camera.scale=goal.scale*.75;cancelAnimationFrame(raf);draw();
   if(opts.pad){selectPad(opts.pad);if(opts.rack&&pad)enterRack(pad)}else overlay.querySelector('#ug-all').focus();button.textContent='Change View'}
  catch(e){button.textContent='Retry Change View';console.error(e)}finally{button.disabled=false}}
 button.onclick=()=>openArea(areaIds());
 // for the map: open 3D on the pads around one pad, locked to it, or straight into its wine rack
-window.stratum3D={open:(padId,opts={})=>openArea(idsAround(padId),{pad:padId,rack:!!opts.rack}),ready:regionReady};
+window.stratum3D={open:(padId,opts={})=>openArea(idsAround(padId),{pad:padId,rack:!!opts.rack}),openArea:(ids,opts={})=>openArea(ids,opts),ready:regionReady};
 function close(){exitRack(true);active=false;cancelAnimationFrame(raf);overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');overlay.inert=true;positionButton();button.focus()}
 overlay.querySelector('#ug-back').onclick=close;overlay.querySelector('#ug-all').onclick=()=>selectPad('');overlay.querySelector('#ug-reset').onclick=()=>{camera.yaw=-.5;camera.pitch=.4;fit(pad)};padMenu.onchange=()=>selectPad(padMenu.value);
 window.addEventListener('resize',()=>{resize();if(active&&!rack)fit(pad);renderRack()});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(rack)exitRack();else if(pad)returnToCluster();else close()}});
 canvas.oncontextmenu=e=>e.preventDefault();canvas.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,pan:e.shiftKey||e.button===2};canvas.setPointerCapture(e.pointerId);tip.style.display='none'};
-canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+hover.w.gv[hover.g]+' API':hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries':hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
-canvas.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)<5){const hit=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);if(hit&&(!pad||hit.p===pad)){if(!pad)selectPad(hit.p.id);if(hit.w){well=hit.w;if(hit.d)focusInterval(well,hit.d);else renderPanel()}}}drag=null};canvas.onpointercancel=()=>drag=null;canvas.onpointerleave=()=>{hover=null;tip.style.display='none'};
+canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.q?`M${hover.q.mag} ${hover.q.type} · ${hover.q.date} · ${hover.q.fixed?'depth not solved':'depth '+(hover.q.depth/1000).toFixed(1)+' km'}${hover.q.industry?' · suspected industry-related':''}${hover.q.near?' · '+hover.q.near:''}`:hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+(hover.w.gest?'~':'')+hover.w.gv[hover.g]+' API'+(hover.w.gest?' (estimated from WA '+hover.w.gfrom.map(f=>f.wa).join(', ')+')':''):hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries':hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
+canvas.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)<5){const hit=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);if(hit&&!hit.q&&(!pad||hit.p===pad)){if(!pad)selectPad(hit.p.id);if(hit.w){well=hit.w;if(hit.d)focusInterval(well,hit.d);else renderPanel()}}}drag=null};canvas.onpointercancel=()=>drag=null;canvas.onpointerleave=()=>{hover=null;tip.style.display='none'};
 canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,Math.min(2,goal.scale*Math.exp(-e.deltaY*.0015)))},{passive:false});
 
 // ---------- Wine rack ----------
@@ -198,10 +222,10 @@ function renderRack(){if(!rack)return;const p=rack,g=rackGeom(p),svg=rackView.qu
  const labels=[],ends=svgEl('g',{class:'rk-ends'},svg);
  g.ws.slice().sort((a,b)=>a.end[1]-b.end[1]).forEach(o=>{const w=o.w,cx=X(o.end[0]),cy=Y(o.end[1]),ink=bottleInk(o);
   const a=svgEl('a',{href:'wellview.html?wa='+encodeURIComponent(w.well.wa),class:'rk-end'+(w===well?' on':''),'aria-label':`${w.well.name}, WA ${w.well.wa}, toe at ${fmt(o.end[1])} metres true vertical depth. Open its charts.`},ends);
-  svgEl('circle',{cx,cy,r:R,fill:ink||'#0b1620',class:ink?'':'rk-none'},a);
+  svgEl('circle',{cx,cy,r:R,fill:ink||'#0b1620',class:ink?(colorBy==='gamma'&&w.gest?'rk-est':''):'rk-none'},a);
   const lh=small?13:26,bw=small?36:46;let ly=cy+R+15;const box=l=>labels.some(b=>Math.abs(b.x-cx)<bw&&Math.abs(b.y-l)<lh);if(box(ly))ly=cy-R-(small?6:18);labels.push({x:cx,y:ly});
   svgEl('text',{x:cx,y:ly,'text-anchor':'middle',class:'rk-wa'},a).textContent=w.well.wa;if(!small)svgEl('text',{x:cx,y:ly+12,'text-anchor':'middle',class:'rk-tvd'},a).textContent=fmt(o.end[1])+' m';
-  a.addEventListener('pointerenter',e=>{const nn=o.nn,gm=lateralGamma(w);tip.innerHTML='';[[w.well.name,'b'],[`WA ${w.well.wa} · toe ${fmt(o.end[1])} m TVD · lateral ${fmt(w.well.lateral_m)} m`],nn?[`Nearest end: WA ${nn.k.w.well.wa}, ${fmt(nn.h)} m across, ${fmt(nn.v)} m vertical`]:null,gm!=null?[`Lateral gamma median ${gm} API`]:null,['Click to open its charts']].filter(Boolean).forEach(([t,b])=>{const d=document.createElement(b||'div');d.textContent=t;if(b)d.style.display='block';tip.append(d)});tip.style.display='block';const r=overlay.getBoundingClientRect();tip.style.left=Math.min(r.width-270,e.clientX-r.left+16)+'px';tip.style.top=Math.min(r.height-110,e.clientY-r.top+16)+'px'});
+  a.addEventListener('pointerenter',e=>{const nn=o.nn,gm=lateralGamma(w);tip.innerHTML='';[[w.well.name,'b'],[`WA ${w.well.wa} · toe ${fmt(o.end[1])} m TVD · lateral ${fmt(w.well.lateral_m)} m`],nn?[`Nearest end: WA ${nn.k.w.well.wa}, ${fmt(nn.h)} m across, ${fmt(nn.v)} m vertical`]:null,gm!=null?[`Lateral gamma median ${w.gest?'~':''}${gm} API${w.gest?' (estimated)':''}`]:null,['Click to open its charts']].filter(Boolean).forEach(([t,b])=>{const d=document.createElement(b||'div');d.textContent=t;if(b)d.style.display='block';tip.append(d)});tip.style.display='block';const r=overlay.getBoundingClientRect();tip.style.left=Math.min(r.width-270,e.clientX-r.left+16)+'px';tip.style.top=Math.min(r.height-110,e.clientY-r.top+16)+'px'});
   a.addEventListener('pointerleave',()=>{tip.style.display='none'});});
  const n=g.ws.length;
  rackView.querySelector('.ug-rack-title').textContent=p.name+' · Wine rack';
@@ -216,7 +240,7 @@ const UG_KEY='stratum.underground';
 function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.stringify({
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
  pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
- stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,rack:rack?rack.id:null,rackEntry,area:data?data.pads.map(p=>p.id):null,
+ stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,rack:rack?rack.id:null,rackEntry,area:data?data.pads.map(p=>p.id):null,areaName,
  panelScroll:overlay.querySelector('.ug-panel').scrollTop,
  surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}}))}catch(e){}}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
@@ -225,6 +249,7 @@ overlay.querySelector('#ug-back').addEventListener('click',ugClear);
 (async()=>{let s=null;try{s=JSON.parse(sessionStorage.getItem(UG_KEY)||'null')}catch(e){}
  if(!s)return;ugClear();
  try{if(!s.area)return;await loadArea(s.area)}catch(e){return}
+ if(s.areaName){areaName=s.areaName;areaTitle=areaName+' · Below the surface';overlay.querySelector('.ug-title').textContent=areaTitle}
  active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();
  if(s.colorBy==='gamma')await setColor('gamma');
  selectPad(s.pad||'');

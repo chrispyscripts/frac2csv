@@ -1,0 +1,83 @@
+{
+ "v": 1,
+ "areas": [
+  {
+   "name": "Gundy",
+   "blurb": "Tourmaline \u00b7 the original cluster: gamma, Lab curves on every well",
+   "center": [
+    56.794,
+    -122.115
+   ],
+   "pads": [
+    "gundy-01",
+    "gundy-02",
+    "gundy-03",
+    "gundy-04",
+    "gundy-05",
+    "gundy-06",
+    "gundy-07",
+    "gundy-08"
+   ]
+  },
+  {
+   "name": "Town North",
+   "blurb": "PETRONAS \u00b7 Town field",
+   "center": [
+    56.979,
+    -122.178
+   ],
+   "pads": [
+    "region-31020",
+    "region-28758",
+    "region-37904",
+    "region-30370",
+    "region-29688",
+    "region-27232",
+    "region-26851",
+    "region-38850",
+    "region-38765",
+    "region-28902"
+   ]
+  },
+  {
+   "name": "Nig Creek",
+   "blurb": "CNRL and Tourmaline \u00b7 Nig Creek",
+   "center": [
+    57.107,
+    -121.7
+   ],
+   "pads": [
+    "region-33875",
+    "region-37395",
+    "region-34341",
+    "region-36336",
+    "region-41475",
+    "region-42038",
+    "region-39508",
+    "region-39476",
+    "region-38142",
+    "region-29262"
+   ]
+  },
+  {
+   "name": "Altares",
+   "blurb": "Pacific Canbriam \u00b7 Altares",
+   "center": [
+    56.345,
+    -121.963
+   ],
+   "pads": [
+    "region-27472",
+    "region-38561",
+    "region-43710",
+    "region-41428",
+    "region-37340",
+    "region-43193",
+    "region-30578",
+    "region-28526",
+    "region-28292",
+    "region-29799"
+   ]
+  }
+ ]
+}
