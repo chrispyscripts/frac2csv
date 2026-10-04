@@ -183,6 +183,33 @@ class TheShape(_Built):
         self.assertEqual([g["n"] for g in groups], [5, 5, 4])
         self.assertTrue(all(g["dir"] == (1.0, 0.0) for g in groups))
 
+    def test_an_unsure_string_is_read_again_alone(self):
+        # 01250 p305: the stacked read made the title "...-17Wé6" at 51 and
+        # detect lost the page; read alone, as one line, it is "...-17W6".
+        src = fitz.open()
+        page = src.new_page(width=300, height=100)
+        page.insert_text((20, 50), "100/01-26-080-17W6 - Stage 02", fontsize=8,
+                         fontname="helv")
+        doc = _outlined(page)
+        calls = []
+
+        def fake(img, psm=6, whitelist=""):
+            calls.append(psm)
+            h = img.shape[0]
+            text, conf = ("100/01-26-080-17Wé6", 51.0) if psm == 6 else \
+                ("100/01-26-080-17W6", 92.0)
+            return [{"text": text, "x0": 10, "x1": 50, "y0": h // 2 - 5,
+                     "y1": h // 2 + 5, "conf": conf, "line": (1, 1, 1)}]
+        real, avail = ocr_labels.ar.ocr_boxes, ocr_labels.available
+        ocr_labels.ar.ocr_boxes, ocr_labels.available = fake, (lambda: True)
+        try:
+            got = ocr_labels.outline_spans(doc[0])
+        finally:
+            ocr_labels.ar.ocr_boxes, ocr_labels.available = real, avail
+        self.assertEqual(calls, [6, 7])
+        self.assertEqual([(g["text"], g["conf"]) for g in got],
+                         [("100/01-26-080-17W6", 92.0)])
+
     def test_a_refused_page_costs_no_ocr(self):
         real = ocr_labels.ar.ocr_boxes
         calls = []
