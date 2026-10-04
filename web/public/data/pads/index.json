@@ -1,1 +1,14 @@
-{"v":1,"sets":[{"set":"gundy","file":"gundy.json","pads":8,"wells":76,"lat":56.79389750000001,"lon":-122.11542750000001,"name":"Gundy cluster"},{"set":"gundywest","file":"gundywest.json","pads":1,"wells":10,"lat":56.740091,"lon":-122.144657,"name":"Gundy Creek West cluster"}]}
+{
+ "v": 1,
+ "sets": [
+  {
+   "set": "region",
+   "file": "region.json",
+   "pads": 495,
+   "wells": 2917,
+   "lat": 56.84268049090907,
+   "lon": -121.97750813535349,
+   "name": "Gundy region (100 km)"
+  }
+ ]
+}

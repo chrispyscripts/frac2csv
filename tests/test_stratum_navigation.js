@@ -20,7 +20,7 @@ const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:nul
   addEventListener:noop,ready:Promise.resolve(),button:element(),
   map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}},
   colorBy:'pad',NEUTRAL:'#d6e6ee',GAMMA_NONE:'#6b8290',GAMMA_INK:['#000','#111'],setColor:async m=>{c.colorBy=m},
-  rack:null,rackEntry:null,rackHover:null,placeRackButtons:noop,enterRack:noop,exitRack(){c.rack=null}
+  rack:null,rackEntry:null,rackHover:null,placeRackButtons:noop,enterRack:noop,exitRack(){c.rack=null},loadArea:async()=>{},areaTitle:'Test area · Below the surface'
 };
 vm.createContext(c);
 vm.runInContext(between('function selectPad(id)','function renderPanel'),c);
@@ -44,7 +44,7 @@ c.colorBy='pad';
 const tail=between("const UG_KEY=",'(async()=>{let s=null');
 vm.runInContext(tail,c);c.ugSave();
 const saved=JSON.parse(objects.get('stratum.underground'));
-assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);assert.equal(saved.colorBy,'pad');assert.equal(saved.rack,null,'no wine rack open, none restored');
+assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);assert.equal(saved.colorBy,'pad');assert.deepEqual(plain(saved.area),['pad-0','pad-1'],'the open area is saved, so Back reloads the same pads');assert.equal(saved.rack,null,'no wine rack open, none restored');
 c.pad=null;c.well=null;c.entryCamera=null;c.camera={yaw:0,pitch:0,scale:1,target:[0,0,0],pan:[0,0]};c.draw=noop;
 const restore=source.slice(source.indexOf('(async()=>{let s=null'),source.lastIndexOf('})();'));
 (async()=>{

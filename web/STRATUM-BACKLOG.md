@@ -22,6 +22,16 @@ each entry.
   by lateral median gamma, hover for spacing to the nearest end, click to open
   the well's charts. Back from the well page lands in the rack again.
 
+- **100 km region around Gundy** (2026-10-03). `web/scripts/build_region.py`
+  builds every surveyed, fractured BC well within 100 km (2,917 wells, 495
+  pads) from the BCER bulk files: pads by surface location, per-pad files for
+  3D, the map's pad set, and a well file per well with its filed stage
+  summaries. The map lists the pads in view and opens 3D / wine rack from a
+  pad's popup; Change View opens 3D on the pads in view (nearest 30). Wells
+  without Lab curves show their filed stages as a table.
+  Pending: the 2TB drive's Lab CSVs for ~113 more region wells (drive was
+  unplugged), and gamma beyond Gundy (eLibrary LAS fetch).
+
 ## Asked for, not started
 
 - **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and

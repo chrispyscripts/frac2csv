@@ -49,6 +49,12 @@
   .legend .l { width:22px; height:0; border-top:3px solid #4d8dff; }
   .legend .l.thin { border-top-width:1.5px; opacity:.7; }
   .legend .d { width:10px; height:10px; border-radius:50%; background:#fff; }
+  .pop .acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .pop .acts button, .pop .acts a { background:#1b2a38; color:var(--ink); border:1px solid #33475a; border-radius:7px;
+                                    padding:6px 10px; font:600 12.5px/1 -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; text-decoration:none; }
+  .pop .acts button:hover, .pop .acts a:hover { border-color:#5ee2d0; }
+  .pop .acts .go { background:#246358; border-color:#64e8ce; color:#f2fffc; }
+  .side .inview { color:var(--mut); font-size:12px; padding:6px 6px 2px; }
   .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
   @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; } }
 </style>
@@ -61,7 +67,7 @@
     <div class="sub" id="sub">loading pads…</div>
   </header>
   <div class="body" id="pads"></div>
-  <footer>Laterals are drawn from each well's directional survey. Click a lateral for the well; <a href="pad.html">pad views</a>.</footer>
+  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D or its wine rack; zoom to 12+ and <b>Change View</b> opens 3D for what you see.</footer>
 </div>
 <div class="legend">
   <div class="row"><span class="l"></span> lateral with stage data loaded</div>
@@ -96,7 +102,8 @@ const mapReady = new Promise(resolve => map.on("load", resolve));
 
 const SETS = [];          // {set, name, pads:[{id, name, lat, lon, color, wells:[...]}]}
 let AREAS = { type: "FeatureCollection", features: [] };   // BCER well-site permit areas (pad footprints)
-const WELL_BY_WA = {};
+const WELL_BY_WA = {}, PAD_BY_ID = {}, PAD_INFO = {};
+const openPads = new Set();
 
 async function load() {
   let idx = { sets: [] };
@@ -105,10 +112,12 @@ async function load() {
     try {
       try { const a = await fetch("data/pads/" + s.set + "-areas.geojson"); if (a.ok) AREAS.features.push(...(await a.json()).features); } catch (e) {}
       const d = await (await fetch("data/pads/" + s.file)).json();
-      d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
+      d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
       SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
     } catch (e) {}
   }
+  // operator, field and years per pad, from the region index the 3D view also reads
+  try { for (const p of (await (await fetch("data/region/index.json")).json()).pads) PAD_INFO[p.id] = p; } catch (e) {}
   render();
 }
 
@@ -148,23 +157,20 @@ function render() {
     map.addSource("toes", { type: "geojson", data: f.toes });
     map.addSource("pads", { type: "geojson", data: f.pads });
     map.addLayer({ id: "laterals-halo", type: "line", source: "laterals",
-      paint: { "line-color": "#000", "line-width": ["case", [">", ["get", "stages"], 0], 5, 3.5], "line-opacity": .35 },
+      paint: { "line-color": "#000", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, ["case", [">", ["get", "stages"], 0], 5, 3.5]], "line-opacity": .35 },
       layout: { "line-cap": "round", "line-join": "round" } });
     map.addLayer({ id: "laterals", type: "line", source: "laterals",
-      paint: { "line-color": ["get", "color"], "line-width": ["case", [">", ["get", "stages"], 0], 3, 1.6],
+      paint: { "line-color": ["get", "color"], "line-width": ["interpolate", ["linear"], ["zoom"], 8, .6, 12, ["case", [">", ["get", "stages"], 0], 3, 1.6]],
                "line-opacity": ["case", [">", ["get", "stages"], 0], 1, .75] },
       layout: { "line-cap": "round", "line-join": "round" } });
     map.addLayer({ id: "toes", type: "circle", source: "toes",
-      paint: { "circle-radius": 3, "circle-color": ["get", "color"], "circle-stroke-color": "#0b1015", "circle-stroke-width": 1 } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, .8, 12, 3], "circle-color": ["get", "color"], "circle-stroke-color": "#0b1015", "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 0, 12, 1] } });
     map.addLayer({ id: "pads", type: "circle", source: "pads",
-      paint: { "circle-radius": 7, "circle-color": "#ffffff", "circle-stroke-color": ["get", "color"], "circle-stroke-width": 3 } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 11, 5, 14, 8], "circle-color": "#ffffff", "circle-stroke-color": ["get", "color"], "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 7, 1, 11, 2.5, 14, 3] } });
     // pad names as HTML markers: the raster base style carries no glyphs,
     // so a symbol layer cannot draw text here
-    for (const pf of f.pads.features) {
-      const el = document.createElement("div");
-      el.className = "padlabel"; el.textContent = pf.properties.name; el.style.color = pf.properties.color;
-      new maplibregl.Marker({ element: el, anchor: "top", offset: [0, 9] }).setLngLat(pf.geometry.coordinates).addTo(map);
-    }
+    map.on("moveend", () => { updateLabels(); sidebar(); });
+    updateLabels();
     const b = new maplibregl.LngLatBounds();
     for (const l of f.lines.features) for (const c of l.geometry.coordinates) b.extend(c);
     // leave room for the sidebar only when the map is wide enough to spare it
@@ -175,14 +181,46 @@ function render() {
       map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
       map.on("click", id, e => openWell(e.features[0].properties, e.lngLat));
     }
-    map.on("click", "pads", e => {
-      const p = e.features[0].properties;
-      const el = document.querySelector(`.pad[data-id="${p.id}"]`);
-      if (el) { el.classList.add("open"); el.scrollIntoView({ block: "nearest" }); }
-    });
+    map.on("mouseenter", "pads", () => map.getCanvas().style.cursor = "pointer");
+    map.on("mouseleave", "pads", () => map.getCanvas().style.cursor = "");
+    map.on("click", "pads", e => openPad(PAD_BY_ID[e.features[0].properties.id], e.lngLat));
+    sidebar();
   };
   mapReady.then(add);
-  sidebar();
+}
+
+const labelMarkers = new Map();
+function updateLabels() {
+  const b = map.getBounds();
+  const want = map.getZoom() >= 11.5 ? SETS.flatMap(s => s.pads).filter(p => b.contains([p.lon, p.lat])).slice(0, 150) : [];
+  const keep = new Set(want.map(p => p.id));
+  for (const [id, m] of labelMarkers) if (!keep.has(id)) { m.remove(); labelMarkers.delete(id); }
+  for (const p of want) {
+    if (labelMarkers.has(p.id)) continue;
+    const el = document.createElement("div");
+    el.className = "padlabel"; el.textContent = p.name; el.style.color = p.color;
+    labelMarkers.set(p.id, new maplibregl.Marker({ element: el, anchor: "top", offset: [0, 9] }).setLngLat([p.lon, p.lat]).addTo(map));
+  }
+}
+
+// a pad's popup is where navigation starts: its 3D area, its wine rack, its table
+function openPad(p, lngLat) {
+  if (!p) return;
+  if (popup) popup.remove();
+  const info = PAD_INFO[p.id] || {};
+  const yrs = info.years ? (info.years[0] === info.years[1] ? info.years[0] : info.years.join("–")) : null;
+  const facts = [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null].filter(Boolean);
+  popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat || [p.lon, p.lat])
+    .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts">
+      <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack">Wine rack</button>
+      <a href="pad.html?set=${encodeURIComponent(p.set)}&pad=${encodeURIComponent(p.id)}">Pad data</a></div></div>`).addTo(map);
+  const el = popup.getElement();
+  el.querySelector("b").textContent = p.name;
+  el.querySelector(".facts").textContent = facts.join(" · ");
+  el.querySelectorAll("[data-act]").forEach(btn => btn.addEventListener("click", () => {
+    popup.remove();
+    if (window.stratum3D) window.stratum3D.open(p.id, { rack: btn.dataset.act === "rack" });
+  }));
 }
 
 let popup = null;
@@ -205,24 +243,31 @@ function openWell(p, lngLat) {
   if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }
 }
 
+const LIST_MAX = 60;
 function sidebar() {
   const el = document.getElementById("pads");
-  const nWells = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.length, 0), 0);
-  const nStaged = SETS.reduce((n, s) => n + s.pads.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0), 0);
+  const all = SETS.flatMap(s => s.pads);
+  const nWells = all.reduce((m, p) => m + p.wells.length, 0);
+  const nCurves = all.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0);
   document.getElementById("sub").textContent = SETS.length
-    ? `${SETS.map(s => s.name).join(", ")} · ${SETS.reduce((n, s) => n + s.pads.length, 0)} pads · ${nWells} wells · ${nStaged} with stage summaries`
+    ? `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells · ${nCurves} with treatment curves`
     : "no pads built yet";
-  el.innerHTML = SETS.map(S => S.pads.map(p => `
-    <div class="pad" data-id="${p.id}">
+  const b = map.getBounds(), c = map.getCenter(), k = Math.cos(c.lat * Math.PI / 180);
+  const near = p => Math.hypot(p.lat - c.lat, (p.lon - c.lng) * k);
+  const inView = all.filter(p => b.contains([p.lon, p.lat])).sort((x, y) => near(x) - near(y));
+  const shown = inView.slice(0, LIST_MAX);
+  el.innerHTML = `<div class="inview">${inView.length ? `${inView.length} pad${inView.length > 1 ? "s" : ""} in view${inView.length > LIST_MAX ? ` · nearest ${LIST_MAX} listed` : ""}` : "No pads in view"}</div>` + shown.map(p => `
+    <div class="pad${openPads.has(p.id) ? " open" : ""}" data-id="${p.id}">
       <button type="button"><span><span class="sw" style="background:${p.color}"></span>${p.name}</span>
-        <span class="n">${p.wells.length} wells · ${p.wells.filter(w => w.stages).length} staged</span></button>
-      <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^TOURMALINE\s+HZ\s+/i, "")}
+        <span class="n">${p.wells.length} wells${p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} curves` : ""}</span></button>
+      <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^\S+(\s+\S+)?\s+HZ\s+/i, "")}
           <span class="m">${fmt(w.lateral)} m${w.ports ? ` · ${w.ports} stg` : ""}${w.stages ? ` · <b>curves</b>` : ""}${w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
-    </div>`).join("")).join("");
+    </div>`).join("");
   el.querySelectorAll(".pad > button").forEach(b => b.addEventListener("click", () => {
     const pad = b.parentElement; pad.classList.toggle("open");
-    const p = SETS.flatMap(s => s.pads).find(x => x.id === pad.dataset.id);
-    if (p) map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 12.5) });
+    if (pad.classList.contains("open")) openPads.add(pad.dataset.id); else openPads.delete(pad.dataset.id);
+    const p = PAD_BY_ID[pad.dataset.id];
+    if (p) { map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 12.5) }); openPad(p); }
   }));
   el.querySelectorAll(".pad li a").forEach(a => a.addEventListener("click", ev => {
     ev.preventDefault();

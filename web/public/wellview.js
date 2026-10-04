@@ -86,15 +86,39 @@ async function load() {
   $('wc-name').textContent = w.name || `WA ${WA}`;
   STAGES = buildStages(d);
   $('wc-ident').textContent = [`WA ${WA}`, w.uwi, d.pad && d.pad.name,
-    `${STAGES.length} of ${(d.stages || []).length} stages with treatment curves`].filter(Boolean).join(' · ');
+    STAGES.length ? `${STAGES.length} of ${(d.stages || []).length} stages with treatment curves`
+      : `${(d.bcer_stages || d.stages || []).length} stages filed · no treatment curves yet`].filter(Boolean).join(' · ');
   const steps = STAGES.map(s => s.dsec).sort((a, b) => a - b);
   $('wc-foot').textContent = STAGES.length
     ? `Curves: the Lab's read of ${d.file || 'the operator’s frac report'}, kept at ~${fmt(STAGES[0].n)} points a stage (one every ${steps[0]}–${steps[steps.length - 1]} s). Stacked and FracView are Carmine's Lab views, read-only here.`
     : '';
   if (!STAGES.length) {
-    $('wc-empty').textContent = 'No treatment curves have been extracted for this well yet.';
-    $('wc-empty').hidden = false;
+    // no curves yet: the stages as filed with the BCER still say what was pumped where
+    const filed = (d.bcer_stages || []).filter(s => s.top_m != null || s.avg_rate_m3_min != null)
+      .sort((a, b) => a.n - b.n);
+    const box = $('wc-empty');
+    box.hidden = false;
+    box.classList.toggle('wc-filed', filed.length > 0);
+    box.replaceChildren();
+    const p = document.createElement('p');
+    p.textContent = filed.length
+      ? `No treatment curves yet: the Lab has not read this well's frac report. These are its ${filed.length} stages as filed with the BCER.`
+      : 'No treatment curves have been extracted for this well yet.';
+    box.append(p);
+    if (filed.length) {
+      const cols = [['Stage', s => s.label], ['Date', s => s.date || '–'], ['Top–base MD (m)', s => s.top_m == null ? '–' : `${fmt(s.top_m, 1)}–${fmt(s.base_m, 1)}`],
+        ['Avg rate (m³/min)', s => fmt(s.avg_rate_m3_min, 2)], ['Avg P (MPa)', s => fmt(s.avg_pressure_mpa, 1)],
+        ['Max P (MPa)', s => fmt(s.max_pressure_mpa, 1)], ['Breakdown (MPa)', s => fmt(s.breakdown_mpa, 1)], ['ISIP (MPa)', s => fmt(s.isip_mpa, 1)],
+        ['Proppant (t)', s => fmt(s.proppant_t, 1)], ['Fluid (m³)', s => fmt(s.fluid_m3, 1)]];
+      const t = document.createElement('table');
+      t.innerHTML = '<thead><tr>' + cols.map(c => `<th>${c[0]}</th>`).join('') + '</tr></thead>';
+      const tb = document.createElement('tbody');
+      filed.forEach(s => { const tr = document.createElement('tr'); cols.forEach(c => { const td = document.createElement('td'); td.textContent = c[1](s); tr.append(td); }); tb.append(tr); });
+      t.append(tb); box.append(t);
+      $('wc-canvas').hidden = true;
+    }
     ['tab-stacked', 'tab-frac', 'wc-prev', 'wc-next'].forEach(id => { $(id).disabled = true; });
+    document.querySelector('.wc-stagenav').hidden = true; document.querySelector('.wc-hint').hidden = true;
     return;
   }
   renderSteps();

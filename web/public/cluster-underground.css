@@ -21,3 +21,4 @@
 .rk-end{cursor:pointer;outline:none}.rk-end circle{stroke:#0b1620;stroke-width:2;transition:r .15s}.rk-end circle.rk-none{stroke:#6b8290;stroke-dasharray:3 3;stroke-width:1.5}.rk-end:hover circle,.rk-end:focus-visible circle{r:15px;stroke:#e6fff7;stroke-width:2.5}.rk-end.on circle{stroke:#ffffff;stroke-width:3}
 .rk-wa{fill:#e7f4fa;font-size:11px;font-weight:600}.rk-tvd{fill:#93adb9;font-size:10px}
 @media(max-width:640px){#underground.racking .ug-panel,#underground.racking .ug-pad-page{display:none}.ug-rack{left:12px;right:12px;top:118px;bottom:16px}#underground.pad-data .ug-rack{bottom:16px}.ug-rack-key{margin-left:0}.ug-rack-key i{width:60px}.rk-end:hover circle,.rk-end:focus-visible circle{r:11px}}
+.ug-facts{color:#93adb9;font-size:11.5px;margin:2px 0 6px;line-height:1.5}
