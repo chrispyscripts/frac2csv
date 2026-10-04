@@ -10,9 +10,10 @@ each entry.
   46 of 76 Gundy wells have a gamma log, the other 30 draw dashed.
 - **Well page = the Lab's charts** (2026-10-03). `wellview.html?wa=&stage=` is
   now Stage chart (curves hide on click, isolate on double-click) | Stacked |
-  FracView. Stacked and FracView are the Lab's own pages copied into
-  `public/lab/` from main e88c15d; FracView carries one patch (host() falls back
-  to the parent frame), noted at the top of the file. The old 3D single-well
+  FracView. Stacked and FracView are the Lab's own pages, generated into
+  `public/lab/` by `web/scripts/sync_lab_views.py` (re-run it to pick up Lab
+  changes): FracView gets host() so it can talk to a parent frame, and both get
+  Stratum's dark theme and the stage chart's curve colours. The old 3D single-well
   dashboard and its stage-reconciliation panel are gone from this page.
 
 ## Asked for, not started
