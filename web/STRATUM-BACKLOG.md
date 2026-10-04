@@ -32,6 +32,24 @@ each entry.
   The 2TB drive's Lab CSVs added 113 more region wells' curves (199 in all).
   Pending: gamma beyond Gundy (eLibrary LAS fetch).
 
+- **Demo areas** (2026-10-03). Town North (PETRONAS), Nig Creek (CNRL +
+  Tourmaline), Altares (Canbriam), 10 pads each, plus Gundy; one click each
+  from the map's sidebar. Lab TXT lists for their PDFs in
+  `frac-pdf-extract/demo-lists/`. Overnight: `~/stratum-lab/run-clusters.sh`
+  reads them headless (lab_batch.py, Lab v1.11.33), imports, rebuilds and
+  publishes via `~/stratum-lab/after-clusters.sh`, then reads the rest of the
+  region's drive PDFs to `/Volumes/CnC-2TB-ssd/Stratum-Lab`.
+- **Earthquakes** (2026-10-03). Earthquakes Canada catalog (build_seismic.py),
+  Quakes toggle in 3D and on the map, matched to nearby frac jobs.
+- **Gamma for every demo well** (2026-10-03). LAS for the 216 demo wells that
+  filed one (eLibrary), every vendor mnemonic; the 97 with none get an offset
+  estimate (neighbours at the same subsea depth), drawn dashed and scored.
+  Follow-ups: 10 wells have a printed log PDF only -- a validated PDF reader
+  (draft in ~/stratum-lab/gamma_from_pdf_experimental.py) would make them
+  measured; vendor normalisation would sharpen estimates.
+- **Found: GMMR = ground-motion monitoring reports** (miniSEED waveforms +
+  PDF) filed per well during fracs -- the per-pad seismic record. Not yet used.
+
 ## Asked for, not started
 
 - **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and
