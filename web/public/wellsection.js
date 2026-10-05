@@ -501,7 +501,7 @@ new ResizeObserver(() => render()).observe($('ws-main'));
 function header() {
   const w = W.well;
   $('ws-name').textContent = w.name || `WA ${WA}`;
-  document.title = `Stratum — ${w.name || 'WA ' + WA} · section`;
+  document.title = `FracView — ${w.name || 'WA ' + WA} · section`;
   const n = W.stages.length;
   $('ws-sub').textContent = [`WA ${WA}`, w.uwi, w.operator, w.formation, W.td ? `TD ${fmt(W.td)} m MD` : null,
     w.tvd_m ? `${fmt(w.tvd_m)} m TVD` : null, w.lateral_m ? `lateral ${fmt(w.lateral_m)} m` : null,

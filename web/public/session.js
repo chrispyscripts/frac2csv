@@ -14,6 +14,8 @@
 // session has its state in place before the page reads it.
 (() => {
 'use strict';
+// FracView was Stratum: files saved under the old name still open
+const KIND = 'fracview-session', KINDS = [KIND, 'stratum-session'];
 const LIST_KEY = 'stratum.sessions', HAND = 'stratum.handoff.', PENDING = 'stratum.pendingWindows';
 const PAGES = /^(map|wellview|wellsection|compare|pad)\.html(\?[^#]*)?$/;
 const TOP = window.top === window;
@@ -60,7 +62,7 @@ function sessionState() {
 const isPopup = () => !!(window.toolbar && window.toolbar.visible === false);
 function snapshot() {
   const q = new URLSearchParams(location.search); q.delete('owner');
-  return { url: pagePath() + (String(q) ? '?' + q : ''), title: document.title.replace(/^Stratum\s*—\s*/, ''),
+  return { url: pagePath() + (String(q) ? '?' + q : ''), title: document.title.replace(/^(FracView|Stratum)\s*—\s*/, ''),
            name: /^stratum-[a-z]+$/.test(window.name) ? window.name : '', popup: isPopup(),
            rect: { x: screenX, y: screenY, w: innerWidth, h: innerHeight }, session: sessionState() };
 }
@@ -87,7 +89,7 @@ async function capture(name) {
   const others = await collect();
   const settings = {};
   keys(localStorage).filter(ours).forEach(k => { settings[k] = localStorage.getItem(k); });
-  return { kind: 'stratum-session', v: 1, name, saved: new Date().toISOString(), settings,
+  return { kind: KIND, v: 1, name, saved: new Date().toISOString(), settings,
            windows: [{ ...snapshot(), role: 'main' }, ...others.map(w => ({ ...w, role: 'window' }))] };
 }
 
@@ -109,7 +111,7 @@ const summary = s => s.windows.map(w => describe(w, s.settings)).join('  ·  ');
 
 // a session from a file is data from elsewhere: Stratum pages and stratum.* keys only
 function clean(s) {
-  if (!s || s.kind !== 'stratum-session' || !Array.isArray(s.windows)) throw Error('This is not a Stratum session file.');
+  if (!s || !KINDS.includes(s.kind) || !Array.isArray(s.windows)) throw Error('This is not a FracView session file.');
   const str = v => typeof v === 'string';
   const strings = o => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).filter(([k, v]) => ours(k) && str(v) && v.length < 2e6));
   const num = (v, lo, hi) => Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : null;
@@ -119,8 +121,8 @@ function clean(s) {
     return { role: w.role === 'main' ? 'main' : 'window', url: w.url.replace(/^\//, ''), title: str(w.title) ? w.title.slice(0, 200) : '',
              name: str(w.name) && /^stratum-[a-z]+$/.test(w.name) ? w.name : '', popup: !!w.popup, rect, session: strings(w.session) };
   });
-  if (!windows.length) throw Error('This session has no Stratum windows in it.');
-  return { kind: 'stratum-session', v: 1, name: str(s.name) && s.name.trim() ? s.name.trim().slice(0, 120) : 'Session',
+  if (!windows.length) throw Error('This session has no FracView windows in it.');
+  return { kind: KIND, v: 1, name: str(s.name) && s.name.trim() ? s.name.trim().slice(0, 120) : 'Session',
            saved: str(s.saved) ? s.saved : '', settings: strings(s.settings), windows };
 }
 
@@ -138,7 +140,7 @@ function download(session) {
   const slug = session.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'session';
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([JSON.stringify(session, null, 1)], { type: 'application/json' }));
-  a.download = `${slug}.stratum-session.json`;
+  a.download = `${slug}.fracview-session.json`;
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
@@ -261,7 +263,7 @@ function panel(entry) {
   close.onclick = () => dlg.close();
   dlg.append(
     el('header', null, el('h2', { textContent: entry ? 'Pick up where you left off' : 'Sessions' }),
-      el('div', { className: 'ss-sub', textContent: 'A session is every Stratum window that is open, where it sits, what it shows, and your settings.' })),
+      el('div', { className: 'ss-sub', textContent: 'A session is every FracView window that is open, where it sits, what it shows, and your settings.' })),
     entry ? '' : el('section', null, el('div', { className: 'ss-save' }, name, saveBtn, fileBtn)),
     el('section', null, ul), msg,
     el('footer', null, openFile, close));

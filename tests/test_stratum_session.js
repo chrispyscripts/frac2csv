@@ -37,8 +37,10 @@ assert.deepEqual(replaced,['/compare.html'],'the token leaves the address bar');
 
 // a file from elsewhere
 const clean=c.StratumSession.clean;
-assert.throws(()=>clean({kind:'other'}),/not a Stratum session/);
-assert.throws(()=>clean({kind:'stratum-session',windows:[{url:'https://evil.example/map.html'}]}),/no Stratum windows/);
+assert.throws(()=>clean({kind:'other'}),/not a FracView session/);
+assert.equal(clean({kind:'fracview-session',windows:[{url:'map.html'}]}).kind,'fracview-session','a FracView session file opens');
+assert.equal(clean({kind:'stratum-session',windows:[{url:'map.html'}]}).kind,'fracview-session','a file saved under the old name still opens');
+assert.throws(()=>clean({kind:'stratum-session',windows:[{url:'https://evil.example/map.html'}]}),/no FracView windows/);
 const s=clean({kind:'stratum-session',name:'  x  ',settings:{'stratum.allWells':'1','stratum.sessions':'[]','stratum.handoff.z':'{}','evil':'1','stratum.n':5},
   windows:[{url:'javascript:alert(1)'},{url:'//evil.example/map.html'},{url:'map.html?a=1#frag'},
            {role:'main',url:'/wellview.html?wa=1&stage=2',name:'_top',popup:true,rect:{x:1e9,y:-5,w:1,h:1e9},session:{'stratum.wellTab':'tab-frac','x':'y'}}]});

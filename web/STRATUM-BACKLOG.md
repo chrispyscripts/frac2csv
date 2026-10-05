@@ -1,4 +1,8 @@
-# Stratum feature list
+# FracView feature list
+
+FracView was called Stratum until 2026-10-05; code, storage keys and file
+names still say stratum (renaming them would sign everyone out and drop saved
+settings), only what people see changed.
 
 Features Chris has asked for, in the order asked. Newest status at the top of
 each entry.

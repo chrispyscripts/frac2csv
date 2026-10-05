@@ -46,7 +46,7 @@ $('form-code').onsubmit = async e => {
   if (body.password.length < 10) { say('Use a password of at least 10 characters.'); return; }
   if (body.password !== f.confirm.value) { say('The two passwords don’t match.'); f.confirm.select(); return; }
   busy(f, true); say('');
-  try { await call('signup', body); say('Done. Opening Stratum…', true); location.replace(next); }
+  try { await call('signup', body); say('Done. Opening FracView…', true); location.replace(next); }
   catch (err) { say(err.message); }
   finally { busy(f, false); }
 };

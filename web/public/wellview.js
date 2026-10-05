@@ -84,7 +84,7 @@ async function load() {
   }
   W = d;
   const w = d.well || {};
-  document.title = `Stratum — ${w.name || 'WA ' + WA}`;
+  document.title = `FracView — ${w.name || 'WA ' + WA}`;
   $('wc-name').textContent = w.name || `WA ${WA}`;
   STAGES = buildStages(d);
   $('wc-ident').textContent = [`WA ${WA}`, w.uwi, d.pad && d.pad.name,

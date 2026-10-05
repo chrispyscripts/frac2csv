@@ -29,7 +29,7 @@ function refuse(request, url, signedOut) {
     return new Response(null, { status: 302, headers: { Location: to.pathname + to.search, 'Cache-Control': 'no-store', ...extra } });
   }
   // data, scripts, the extractor's API: refused
-  return new Response('Sign in to Stratum first.', { status: 401, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...extra } });
+  return new Response('Sign in to FracView first.', { status: 401, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...extra } });
 }
 
 export default async function middleware(request) {
