@@ -11,15 +11,10 @@ const EMBED = Q.get('embedded') === '1';
 const ORIGIN = location.origin;
 const PREF_KEY = 'stratum.section';
 
-// gamma: the 3D view's amber ramp, dark for low API (cleaner rock) to cream for high
-const GAMMA_RAMP = ['#92500b', '#ac5c00', '#c36c00', '#d57f00', '#e29500', '#eaad4a', '#eec57e', '#f2dcb1', '#fef1d0'];
+// gamma in the colours chosen for every view (gamma-palettes.js), and the slate
+// the lateral is drawn in where there is none
+const gammaInk = (v, g) => window.StratumGamma.ink(v, g);
 const NEUTRAL = '#d6e6ee', BUILD = '#8fa9b5', CURVES = '#5ee2d0', FILED = '#6b8290', GR_MAX = 250;
-const rgb = s => [1, 3, 5].map(j => parseInt(s.slice(j, j + 2), 16));
-function gammaInk(v, lo, hi) {
-  const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * (GAMMA_RAMP.length - 1);
-  const i = Math.min(GAMMA_RAMP.length - 2, Math.floor(t)), f = t - i, a = rgb(GAMMA_RAMP[i]), b = rgb(GAMMA_RAMP[i + 1]);
-  return `rgb(${a.map((x, j) => Math.round(x + (b[j] - x) * f)).join(',')})`;
-}
 
 let WA = Q.get('wa') || '';
 let HI = Q.get('stage');        // the stage picked out, by label
@@ -114,7 +109,7 @@ function attachGamma() {
   const g = GAMMA && GAMMA.wells && GAMMA.wells[WA];
   W.gamma = g && Array.isArray(g.v) && g.v.some(v => v != null)
     ? { md0: g.md0, bin: GAMMA.bin_m || 5, v: g.v, estimated: !!g.estimated, from: g.from,
-        lo: (GAMMA.scale && GAMMA.scale.lo) || 70, hi: (GAMMA.scale && GAMMA.scale.hi) || 180 }
+        lo: (GAMMA.scale && GAMMA.scale.lo) || 70, hi: (GAMMA.scale && GAMMA.scale.hi) || 180, p50: GAMMA.scale ? GAMMA.scale.p50 : null }
     : null;
 }
 const gammaAt = md => {
@@ -237,7 +232,7 @@ function render() {
       const m0 = g.md0 + i * g.bin;
       if (m0 + g.bin < heel - 200) return;
       const a = at(m0), b = at(m0 + g.bin);
-      segs.push(`<line x1="${X(a.vs).toFixed(1)}" y1="${Y(a.tvd).toFixed(1)}" x2="${X(b.vs).toFixed(1)}" y2="${Y(b.tvd).toFixed(1)}" stroke="${gammaInk(v, g.lo, g.hi)}"/>`);
+      segs.push(`<line x1="${X(a.vs).toFixed(1)}" y1="${Y(a.tvd).toFixed(1)}" x2="${X(b.vs).toFixed(1)}" y2="${Y(b.tvd).toFixed(1)}" stroke="${gammaInk(v, g)}"/>`);
     });
     out.push(`<g stroke-width="5"${g.estimated ? ' stroke-dasharray="7 4"' : ''}>${segs.join('')}</g>`);
   }
@@ -297,7 +292,7 @@ function render() {
       const xa = X(Math.min(a.vs, b.vs)), xb = X(Math.max(a.vs, b.vs));
       if (xb < x0 || xa > x1) return;
       const h = Math.max(1, Math.min(1, v / GR_MAX) * track);
-      bars.push(`<rect x="${xa.toFixed(1)}" y="${(ty1 - h).toFixed(1)}" width="${Math.max(1, xb - xa + .4).toFixed(1)}" height="${h.toFixed(1)}" fill="${gammaInk(v, g.lo, g.hi)}"/>`);
+      bars.push(`<rect x="${xa.toFixed(1)}" y="${(ty1 - h).toFixed(1)}" width="${Math.max(1, xb - xa + .4).toFixed(1)}" height="${h.toFixed(1)}" fill="${gammaInk(v, g)}"/>`);
     });
     out.push(`<g clip-path="url(#clipx)"${g.estimated ? ' opacity=".75"' : ''}>${bars.join('')}</g>`);
     out.push(`<text class="chip" x="${x1 - 8}" y="${ty0 + 14}" text-anchor="end">gamma API${g.estimated ? ` · estimated from ${g.from && g.from.length ? g.from.length + ' offset log' + (g.from.length > 1 ? 's' : '') : 'offset logs'} (±15 API)` : ''}</text>`);
@@ -496,6 +491,7 @@ svg.addEventListener('keydown', e => {
   } else if (e.key === 'Enter' && i >= 0) openStage(W.stages[i]);
 });
 new ResizeObserver(() => render()).observe($('ws-main'));
+addEventListener('stratum:gammapalette', () => { setPressed(); render(); });
 
 // ---------- header and controls ----------
 function header() {
@@ -516,6 +512,13 @@ function header() {
 function setPressed() {
   document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
   document.querySelectorAll('[data-color]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color === colorBy)));
+  const pal = $('ws-palette');
+  if (pal) { pal.hidden = !(colorBy === 'gamma' && W && W.gamma); pal.value = window.StratumGamma.current(); }
+}
+{
+  const pal = $('ws-palette');
+  for (const [id, p] of Object.entries(window.StratumGamma.PALETTES)) { const o = document.createElement('option'); o.value = id; o.textContent = p.name; pal.append(o); }
+  pal.onchange = () => window.StratumGamma.set(pal.value);
 }
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode, color: colorBy })); } catch (e) { /* private mode */ } };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; savePrefs(); setPressed(); render(); });

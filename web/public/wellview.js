@@ -30,7 +30,8 @@ let sel = 0;
 let view = { t0: 0, t1: 1 };   // seconds into the selected stage
 let hoverT = null, drag = null;
 let hidden = new Set();
-let QUAKES = [];       // earthquakes the seismic build matched to this well's stages
+let QUAKES = [];       // earthquakes the seismic build matched to this well's stages, as the quake filter leaves them
+let QUAKES_ALL = [];   // ... and before it (quake-filter.js: the map's and 3D view's filter, one setting)
 try { hidden = new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (e) { /* private mode */ }
 
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–'
@@ -135,25 +136,32 @@ async function load() {
 async function loadQuakes() {
   try {
     const q = await (await fetch('data/seismic/events.json')).json();
-    QUAKES = q.rows.filter(r => r[11] && r[11][0] === String(WA).padStart(5, '0'))
+    QUAKES_ALL = q.rows.filter(r => r[11] && r[11][0] === String(WA).padStart(5, '0'))
       .map(r => ({ t: Date.parse(r[0]), mag: r[4], src: r[8], herr: r[9], stage: String(r[11][1]), rel: r[11][2],
-                   mins: r[11][3], km: r[11][4], dz: r[11][5] }));
-  } catch (e) { QUAKES = []; }
+                   mins: r[11][3], km: r[11][4], dz: r[11][5], fixed: !!r[6] || r[3] == null, matched: true }));
+  } catch (e) { QUAKES_ALL = []; }
   // the pad's own accelerometer: triggers fired while one of this well's stages pumped
   try {
     const g = await (await fetch('data/seismic/gmmr.json')).json(), me = String(WA).padStart(5, '0'), seen = new Set();
     for (const r of Object.values(g)) for (const x of r.triggers || []) for (const [wa, st] of x.pumping || []) {
       const k = x.t + st;
-      if (wa === me && !seen.has(k)) { seen.add(k); QUAKES.push({ t: Date.parse(x.t), stage: String(st), gm: x.pga_pct_g, vendor: r.vendor }); }
+      if (wa === me && !seen.has(k)) { seen.add(k); QUAKES_ALL.push({ t: Date.parse(x.t), stage: String(st), gm: x.pga_pct_g, vendor: r.vendor }); }
     }
   } catch (e) { /* no reports */ }
-  if (!QUAKES.length) return;
+  applyQuakeFilter();
+}
+// the filter speaks to catalogue earthquakes; the pad's own accelerometer triggers always show
+function applyQuakeFilter() {
+  const SQ = window.StratumQuakes;
+  QUAKES = QUAKES_ALL.filter(q => q.gm != null || !SQ || SQ.pass(q));
   document.querySelectorAll('#wc-steps button').forEach((b, i) => {
     const n = QUAKES.filter(q => q.stage === STAGES[i].label).length;
-    if (n) { b.classList.add('qk'); b.title += ` · ${n} earthquake${n > 1 ? 's' : ''} coincide`; }
+    b.classList.toggle('qk', n > 0);
+    b.title = b.title.replace(/ · \d+ earthquakes? coincides?$/, '') + (n ? ` · ${n} earthquake${n > 1 ? 's' : ''} coincide` : '');
   });
-  renderInfo(); drawChart();
+  if (STAGES.length) { renderInfo(); drawChart(); }
 }
+addEventListener('stratum:quakefilter', () => { if (QUAKES_ALL.length) applyQuakeFilter(); });
 
 function renderSteps() {
   const box = $('wc-steps');
@@ -198,6 +206,8 @@ function renderInfo() {
   const eq = qs.filter(q => q.gm == null), gm = qs.filter(q => q.gm != null);
   if (eq.length) bits.push(`<span class="wc-qk">${eq.length} earthquake${eq.length > 1 ? 's' : ''} coincide (largest M${Math.max(...eq.map(q => q.mag || 0))})</span>`);
   if (gm.length) bits.push(`<span class="wc-qk">pad accelerometer triggered (${Math.max(...gm.map(q => q.gm))} %g)</span>`);
+  const hid = QUAKES_ALL.filter(q => q.stage === st.label && q.gm == null).length - eq.length;
+  if (hid > 0) bits.push(`${hid} earthquake${hid > 1 ? 's' : ''} hidden by the quake filter`);
   $('wc-stageinfo').innerHTML = bits.join(' · ');
 }
 

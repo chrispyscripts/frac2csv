@@ -9,6 +9,7 @@
 <script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
 <link rel="stylesheet" href="grids.css">
 <script src="session.js"></script>
+<script src="quake-filter.js"></script>
 <script src="account.js"></script>
 <style>
   :root { --panel:#10161d; --ink:#e8eef4; --mut:#93a3b3; --line:#243040; --acc:#4d8dff;
@@ -69,6 +70,11 @@
   .side .inview { color:var(--mut); font-size:12px; padding:6px 6px 2px; }
   .legend .qk { cursor:pointer; color:var(--ink); }
   .legend .qk input { margin:0; accent-color:#ff5fa2; }
+  .legend .qk-f { padding-left:18px; gap:8px; }
+  .legend .qk-f button { background:#152936; color:var(--ink); border:1px solid #345260; border-radius:7px; padding:3px 9px;
+                          font:600 11.5px -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
+  .legend .qk-f button:hover, .legend .qk-f button:focus-visible { border-color:#ff5fa2; }
+  .legend .qk-f span { color:var(--mut); font-size:11.5px; max-width:180px; }
   .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
   /* the well section docked along the bottom (wellsection-host.js) */
   #ws-dock { position:fixed; left:0; right:0; bottom:0; height:var(--ws-h, 42vh); z-index:7; background:#0b1620;
@@ -105,6 +111,7 @@
   <div class="row"><span class="d"></span> pad (surface location)</div>
   <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:#c9d3dc"></span> permitted well-site area (BCER)</div>
   <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:#ff5fa2"></span> earthquakes since 2013 (NRCan)</label>
+  <div class="row qk-f" id="qk-frow" hidden><button type="button" id="qk-filter" aria-haspopup="dialog" aria-expanded="false">Filter quakes…</button><span id="qk-fnote"></span></div>
   <label class="row qk"><input type="checkbox" id="charted"> only wells with treatment charts</label>
 </div>
 
@@ -257,15 +264,28 @@ function render() {
     fetch("data/seismic/events.json").then(r => r.ok ? r.json() : null).then(q => {
       if (!q) return;
       const feats = q.rows.map(r => ({ type: "Feature", geometry: { type: "Point", coordinates: [r[2], r[1]] },
-        properties: { t: r[0].slice(0, 16).replace("T", " ") + " UTC", depth: r[3], mag: r[4], type: r[5], fixed: r[6], industry: r[7],
-                      src: r[8], herr: r[9], derr: r[10], m: r[11] ? r[11].join("|") : "" } }));
+        properties: { t: r[0].slice(0, 16).replace("T", " ") + " UTC", ms: Date.parse(r[0]), depth: r[3], mag: r[4], type: r[5],
+                      fixed: !!r[6] || r[3] == null, industry: r[7], src: r[8], herr: r[9], derr: r[10], m: r[11] ? r[11].join("|") : "" } }));
       map.addSource("quakes", { type: "geojson", data: fc(feats) });
       map.addLayer({ id: "quakes", type: "circle", source: "quakes", layout: { visibility: "none" },
         paint: { "circle-radius": ["interpolate", ["linear"], ["get", "mag"], 0, 2, 2, 4, 3, 7, 4.6, 13],
                  "circle-color": "#ff5fa2", "circle-opacity": .35, "circle-stroke-color": "#ff5fa2", "circle-stroke-width": 1 } }, "laterals-halo");
-      const box = document.getElementById("qk");
-      box.addEventListener("change", () => map.setLayoutProperty("quakes", "visibility", box.checked ? "visible" : "none"));
-      if (savedView && savedView.quakes) { box.checked = true; map.setLayoutProperty("quakes", "visibility", "visible"); }
+      const box = document.getElementById("qk"), frow = document.getElementById("qk-frow");
+      // the filter: dates, magnitudes, undetermined depths and more (quake-filter.js), shared with the 3D view and well charts
+      const SQ = window.StratumQuakes, days = q.rows.map(r => r[0].slice(0, 10)).sort(), mags = q.rows.map(r => r[4]).filter(m => m != null);
+      const bounds = { first: days[0], last: days[days.length - 1], magMin: Math.min(...mags), magMax: Math.max(...mags) };
+      const shown = f => `${q.rows.filter(r => SQ.pass(SQ.fromRow(r), f)).length.toLocaleString()} of ${q.rows.length.toLocaleString()} shown`;
+      const applyQuakeFilter = () => {
+        map.setFilter("quakes", SQ.mapFilter());
+        document.getElementById("qk-fnote").textContent = SQ.active() ? shown(SQ.get()) : "";
+        document.getElementById("qk-filter").textContent = SQ.active() ? "Filter quakes · on" : "Filter quakes…";
+      };
+      applyQuakeFilter();
+      addEventListener("stratum:quakefilter", applyQuakeFilter);
+      document.getElementById("qk-filter").addEventListener("click", e => SQ.panel(e.currentTarget, { bounds, count: shown }));
+      const showQuakes = on => { map.setLayoutProperty("quakes", "visibility", on ? "visible" : "none"); frow.hidden = !on; if (!on) SQ.close(); };
+      box.addEventListener("change", () => showQuakes(box.checked));
+      if (savedView && savedView.quakes) { box.checked = true; showQuakes(true); }
       map.on("click", "quakes", e => {
         if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
         const p = e.features[0].properties;
@@ -424,6 +444,7 @@ load();
 </script>
 <script src="grids.js"></script>
 <link rel="stylesheet" href="cluster-underground.css">
+<script src="gamma-palettes.js"></script>
 <script src="cluster-underground.js"></script>
 <script src="wellsection-host.js"></script>
 </body>

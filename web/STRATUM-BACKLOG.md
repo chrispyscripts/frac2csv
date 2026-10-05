@@ -113,6 +113,19 @@ each entry.
   `stratum.*` keys. No accounts yet: when sign-in arrives, the same session
   JSON can be stored per user.
 
+- **Gamma colour schemes** (2026-10-05). Amber, Viridis, Sand → shale (the log
+  convention) and Cool → warm (diverging on the lateral median: outliers jump).
+  One setting (`gamma-palettes.js`, localStorage `stratum.gammaPalette`) for the
+  3D view (swatches in its gamma legend), the wine rack (menu in its key) and
+  the well section (menu beside Stages | Gamma); every step clears 2.3:1 on the
+  dark ground. A change in one window recolours the others.
+- **Quake filter** (2026-10-05). Dates, magnitude min/max, hide undetermined
+  depths, only those coinciding with a stage, only relocated (BCSRC). One
+  setting (`quake-filter.js`, localStorage `stratum.quakeFilter`) for the map
+  ("Filter quakes…" under the earthquakes box), the 3D view ("Filter" beside
+  Quakes; its summary says what is filtered) and a well's charts (stages marked
+  and markers drawn by it; a stage notes quakes the filter hides). The pad's
+  accelerometer triggers are not filtered. Saved with sessions.
 - **Ellipsoid positions** (2026-10-05). Survey offsets become latitude and
   longitude on NAD83's ellipsoid (`web/scripts/geodesy.py`; region map paths,
   earthquake matching, gamma neighbours) instead of a flat 111,320 m per degree:
