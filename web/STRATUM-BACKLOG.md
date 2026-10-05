@@ -19,13 +19,19 @@ each entry.
   changes): FracView gets host() so it can talk to a parent frame, and both get
   Stratum's dark theme and the stage chart's curve colours. The old 3D single-well
   dashboard and its stage-reconciliation panel are gone from this page.
-- **Wine-rack view** (2026-10-03). A "Wine rack" button rides on each pad's
-  cluster of toes in the underground view; it turns the camera to look down the
-  laterals and opens a 2D section of that pad: each well end placed by offset
-  across the pad and toe TVD, its lateral traced behind it, coloured by pad or
-  by lateral median gamma, hover for spacing to the nearest end, click to open
-  the well's charts. Back from the well page lands in the rack again.
-
+- **Wine-rack view** (2026-10-03; rebuilt 2026-10-05). From the button on each
+  pad's toes in the 3D view. No 3D behind it any more: the canvas, the 3D panel
+  and its camera/quake controls step aside and the rack takes the width. Left
+  (above, on narrow screens): the pad from overhead, turned so its laterals run
+  left to right, with a straight line across them to drag along -- or the
+  slider, ▶ to play it heel to toe, ← → (shift for 250 m). Right: the section
+  across the pad at that line -- each well where it crosses, by offset across
+  the pad and TVD, labelled with the stage it is in there, coloured by pad or by
+  gamma at the line, with the spacing between neighbours along the top. Wells
+  drop in through their landing curve (dashed) as the line reaches them and drop
+  out past their toes; the frame stays fixed for the pad so wells move within
+  it. Click a well to view it below on that stage. The line's place is kept with
+  the 3D view (Back, sessions).
 - **100 km region around Gundy** (2026-10-03). `web/scripts/build_region.py`
   builds every surveyed, fractured BC well within 100 km (2,917 wells, 495
   pads) from the BCER bulk files: pads by surface location, per-pad files for
@@ -107,6 +113,12 @@ each entry.
   `stratum.*` keys. No accounts yet: when sign-in arrives, the same session
   JSON can be stored per user.
 
+- **Ellipsoid positions** (2026-10-05). Survey offsets become latitude and
+  longitude on NAD83's ellipsoid (`web/scripts/geodesy.py`; region map paths,
+  earthquake matching, gamma neighbours) instead of a flat 111,320 m per degree:
+  the test pad's toes now sit within ~2 m of a mapping package's bottom-hole
+  positions (were 6-9 m). Sources: surface from the BCER wells table, path and
+  toe from its directional survey (deepest drilling event).
 - **Private, invite-only** (2026-10-04). Every page, data file and the extractor
   need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
   anything is served); only `login.html` and `/api/auth` are open. Accounts are
