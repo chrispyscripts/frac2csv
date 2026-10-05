@@ -1,0 +1,10 @@
+{
+  "name": "stratum-web",
+  "private": true,
+  "type": "module",
+  "description": "Stratum on Vercel: static pages in public/, the sign-in middleware and account API (Node), the extractor API (Python).",
+  "dependencies": {
+    "@vercel/blob": "^2.8.0",
+    "@vercel/functions": "^3.9.11"
+  }
+}

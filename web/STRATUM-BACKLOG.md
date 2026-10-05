@@ -100,6 +100,20 @@ each entry.
   `stratum.*` keys. No accounts yet: when sign-in arrives, the same session
   JSON can be stored per user.
 
+- **Private, invite-only** (2026-10-04). Every page, data file and the extractor
+  need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
+  anything is served); only `login.html` and `/api/auth` are open. Accounts are
+  created with an invite code an admin makes on `admin.html` (Invites & accounts:
+  note, role, uses, expiry, copy code / invite link, withdraw; accounts list with
+  reset code and remove). Reset codes set a new password (no email needed).
+  Accounts and codes live as JSON in the private Vercel Blob store
+  `stratum-accounts` (dev: `stratum-accounts-dev`); passwords are scrypt; the
+  session is a signed `__Host-stratum` cookie (SESSION_SECRET), 14 days, and the
+  middleware re-checks the account hourly so a removed account is out within the
+  hour. The first admin came from STRATUM_BOOTSTRAP_CODE (works only while no
+  account exists). Later: per-user saved sessions on the server, rate limiting
+  on sign-in (Vercel Firewall), email for resets.
+
 ## Asked for, not started
 
 - **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and

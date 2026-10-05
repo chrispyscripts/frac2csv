@@ -1,0 +1,28 @@
+:root{--panel:#0d1924;--line:#29404c;--ink:#e7f4fa;--mut:#93adb9;--accent:#5ee2d0;--warn:#ffb48a}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:radial-gradient(ellipse at 60% 30%,#122b36,#080f18 75%) fixed #080f18;
+  color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+body{display:grid;place-items:center;min-height:100vh;padding:24px 16px}
+.card{width:100%;max-width:400px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px 26px 20px;
+  box-shadow:0 24px 60px #0008}
+h1{margin:0;font-size:24px;letter-spacing:-.4px}
+.lede{margin:4px 0 18px;color:var(--mut)}
+.tabs{display:flex;border:1px solid #345260;border-radius:10px;overflow:hidden;margin-bottom:16px}
+.tabs button{flex:1;background:#152936;border:0;color:var(--ink);padding:9px 10px;font:inherit;font-size:14px;cursor:pointer}
+.tabs button+button{border-left:1px solid #345260}
+.tabs button[aria-selected=true]{background:#246358;color:#f2fffc;font-weight:600}
+form{display:grid;gap:12px}
+label{display:grid;gap:5px;font-size:13px;color:var(--mut)}
+label .sub{font-size:12px;color:#6b8290}
+input{background:#0a141d;border:1px solid #345260;border-radius:9px;color:var(--ink);padding:10px 12px;font:inherit;font-size:15px;width:100%}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #5ee2d033}
+input[name=code]{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase}
+button.go{margin-top:4px;background:#246358;border:1px solid #64e8ce;color:#f2fffc;border-radius:10px;padding:11px;font:inherit;font-weight:650;cursor:pointer}
+button.go:hover{background:#2b7466}
+button.go:disabled{opacity:.6;cursor:default}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hint{margin:2px 0 0;color:var(--mut);font-size:12.5px}
+a{color:var(--accent)}
+.msg{min-height:1.4em;margin:14px 0 0;color:var(--warn);font-size:13.5px}
+.msg.ok{color:var(--accent)}
+[hidden]{display:none!important}

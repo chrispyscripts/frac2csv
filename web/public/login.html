@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Stratum — Sign in</title>
+<link rel="stylesheet" href="login.css">
+</head>
+<body>
+<main class="card">
+  <h1>Stratum</h1>
+  <p class="lede">Private. Sign in to see the wells.</p>
+
+  <div class="tabs" role="tablist" aria-label="Sign in or create an account">
+    <button type="button" role="tab" id="tab-in" aria-controls="form-in" aria-selected="true">Sign in</button>
+    <button type="button" role="tab" id="tab-code" aria-controls="form-code" aria-selected="false" tabindex="-1">I have a code</button>
+  </div>
+
+  <form id="form-in" role="tabpanel" aria-labelledby="tab-in" novalidate>
+    <label>Email <input name="email" type="email" autocomplete="username" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="go">Sign in</button>
+    <p class="hint">Forgot your password? Ask an admin for a reset code, then use <a href="#" data-to="code">I have a code</a>.</p>
+  </form>
+
+  <form id="form-code" role="tabpanel" aria-labelledby="tab-code" hidden novalidate>
+    <label>Invite or reset code <input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" required placeholder="XXXX-XXXX-XXXX"></label>
+    <label class="name">Your name <input name="name" autocomplete="name"></label>
+    <label>Email <input name="email" type="email" autocomplete="username" required></label>
+    <label>Password <input name="password" type="password" autocomplete="new-password" minlength="10" required>
+      <span class="sub">At least 10 characters</span></label>
+    <label>Confirm password <input name="confirm" type="password" autocomplete="new-password" required></label>
+    <button type="submit" class="go">Create account</button>
+    <p class="hint">Accounts are by invitation. A reset code sets a new password on your existing account (your name isn’t needed).</p>
+  </form>
+
+  <p class="msg" id="msg" role="alert"></p>
+</main>
+<script src="login.js"></script>
+</body>
+</html>
