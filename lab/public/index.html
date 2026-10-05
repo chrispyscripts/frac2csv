@@ -168,6 +168,9 @@
   .filtgrp input[type=range]:disabled { opacity:.4; }
   .filtamtlbl { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .filtthen { color:var(--mut); font-size:11.5px; }
+  .filtgate { display:inline-flex; align-items:center; gap:4px; font-size:12px;
+              color:var(--ink); white-space:nowrap; cursor:pointer; }
+  .filtgate input { accent-color:var(--carmine); margin:0; }
   .filtsrc { color:var(--mut); font-size:11.5px; white-space:nowrap; }
   .filtsrc.own { color:var(--carmine); }
   .filtsavewrap { position:relative; display:inline-block; }
@@ -824,6 +827,14 @@ one produced. Order matters: strip the spikes, then smooth."></select>
             <input type="range" id="filtamt2" min="0" max="100" step="1" value="0"
                    title="How hard the second filter works."></input>
             <span class="filtamtlbl" id="filtamtlbl2">off</span>
+            <label class="filtgate" id="filtgatewrap" title="Leave the curve exactly as it
+was read, and use the filtered value only where the trace jumps away from it
+by more than this much of its own axis. The spikes go; the fine detail stays.">
+              <input type="checkbox" id="filtgate"> only where it jumps</label>
+            <input type="range" id="filtgateamt" min="1" max="50" step="1" value="10"
+                   title="How far the trace has to jump from the filtered line, as a
+share of that curve's axis, before the filter is used there."></input>
+            <span class="filtamtlbl" id="filtgatelbl"></span>
             <span class="filtsrc" id="filtsrc"></span>
             <span class="filtsavewrap">
               <button type="button" class="btn" id="filtsave"
@@ -4147,6 +4158,78 @@ function drawYAxis(ctx, W, H) {
 // Shared by the graph and the ghost overlay on the original. The ghost is
 // only meaningful if it is plotted by the SAME math as the real curve — a
 // second implementation could drift and make a misaligned chart look right.
+// Where the jump gate used the filter: a band behind the curves over every
+// stretch any visible curve took the filtered value. A gated filter changes a
+// few places and leaves the rest exactly as read, so those few places have to
+// be findable — the readout says how much, the band says where.
+const GATE_BAND = "rgba(214,140,20,.16)";
+const GATE_RAW = "rgba(214,120,20,.9)";
+const GATE_TICK = "rgba(214,120,20,.95)";
+function drawGateBands(ctx, W, H) {
+  const { L, R, T, B } = GP;
+  const { t0, t1, dsec } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  const all = [];
+  gState.channels.forEach((c, ci) => {
+    if (!chanVisible(c, ci) || !c.__gateRuns) return;
+    for (const r of c.__gateRuns) all.push(r);
+  });
+  if (!all.length) return;
+  all.sort((p, q) => p[0] - q[0]);
+  const merged = [];
+  for (const r of all) {
+    const m = merged[merged.length - 1];
+    if (m && r[0] <= m[1]) m[1] = Math.max(m[1], r[1]); else merged.push([r[0], r[1]]);
+  }
+  ctx.save();
+  for (const [a, b] of merged) {
+    let xa = L + ((a * dsec) - t0) / span * plotW;
+    let xb = L + (((b - 1) * dsec) - t0) / span * plotW;
+    if (xb < L || xa > W - R) continue;
+    // A gated spike is often a few seconds on a two-hour stage — under a
+    // pixel. Widen it about its centre to at least 6px so it can be found,
+    // and mark it with a solid tick along the top edge of the plot, which
+    // stays legible at any zoom over any colour of curve.
+    const mid = (xa + xb) / 2, w = Math.max(6, xb - xa);
+    xa = Math.max(L, mid - w / 2); xb = Math.min(W - R, mid + w / 2);
+    ctx.fillStyle = GATE_BAND;
+    ctx.fillRect(xa, T, xb - xa, H - T - B);
+    ctx.fillStyle = GATE_TICK;
+    ctx.fillRect(xa, T, xb - xa, 5);
+  }
+  ctx.restore();
+}
+// And what it took out: the raw trace over each gated stretch, thin and
+// dashed, so the removed spike can be seen and judged rather than trusted.
+function drawGateRaw(ctx, c, ci, hi, i0, i1, step, W, H, am) {
+  const runs = c.__gateRuns;
+  if (!runs || !runs.length) return;
+  const base = c.__base;
+  if (!base) return;
+  const { L, R, T, B } = GP;
+  const { t0, t1, dsec } = gState;
+  const plotW = W - L - R, span = Math.max(1e-9, t1 - t0);
+  ctx.save();
+  ctx.strokeStyle = GATE_RAW;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([3, 2]);
+  ctx.globalAlpha = ((hi != null && hi !== ci) ? 0.3 : 0.8) * (am == null ? 1 : am);
+  for (const [a, b] of runs) {
+    const s0 = Math.max(a - 1, i0), s1 = Math.min(b, i1);
+    if (s1 < s0) continue;
+    ctx.beginPath();
+    let pen = false;
+    for (let i = s0; i <= s1; i += Math.max(1, Math.min(step, 2))) {
+      const v = base[i];
+      if (v == null || !isFinite(v)) { pen = false; continue; }
+      const x = L + ((i * dsec) - t0) / span * plotW;
+      const y = T + (1 - chanFrac(c, v)) * (H - T - B);
+      if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
   const { L, R, T, B } = GP;
   const { t0, t1, dsec } = gState;
@@ -4159,6 +4242,7 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
   // never be emptied. Blanking it IS the useful answer: it shows what the
   // source page alone says.
   if (!settings.ghostOurs) return;
+  if (!gState.isolate) drawGateBands(ctx, W, H);
   gState.channels.forEach((c, ci) => {
     if (!chanVisible(c, ci)) return;
     // Both the graph and the ghost place a value inside that curve's own
@@ -4185,6 +4269,7 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
       }
       ctx.stroke();
       ctx.globalAlpha = 1;
+      drawGateRaw(ctx, c, ci, hi, i0, i1, step, W, H, am);
     }
     // Stretches this curve never drew: the reader recovered them from under
     // a curve painted over it. They are readings — the column forced them —
@@ -5405,6 +5490,87 @@ function filtRun(values, spec) {
     out = filtApply(out, s.kind2, s.amount2);
   return out;
 }
+// ---- the jump gate: filter only where the trace jumps --------------------
+//
+// The spikes worth removing are drastic, and a filter strong enough to take
+// them also files off the fine detail everywhere else. So the filter can be
+// GATED: the curve keeps every raw sample, and takes the filtered value only
+// where the raw trace leaves the filtered line by more than `thr`.
+//
+// A spike rises and falls over several samples, and only its tip is past the
+// threshold, so taking the tip alone would leave its two shoulders standing
+// as smaller spikes. Each stretch that crosses `thr` therefore grows outward
+// while the trace is still more than a third of `thr` off the line, and the
+// whole spike goes as one. A null stays null.
+//
+// -> { values, runs } — runs is [[start, endExclusive], ...], the stretches
+// that took the filtered value, which the graph highlights.
+const GATE_GROW = 1 / 3;
+function filtGate(raw, filt, thr) {
+  const n = raw ? raw.length : 0;
+  const out = raw ? raw.slice() : [];
+  const runs = [];
+  if (!n || !filt || !(thr > 0)) return { values: out, runs };
+  const dev = i => {
+    const a = raw[i], b = filt[i];
+    if (a == null || b == null || !isFinite(a) || !isFinite(b)) return 0;
+    return Math.abs(a - b);
+  };
+  const low = thr * GATE_GROW;
+  let i = 0;
+  while (i < n) {
+    if (dev(i) <= thr) { i++; continue; }
+    let a = i, b = i + 1;
+    while (b < n && dev(b) > thr) b++;
+    while (a > 0 && dev(a - 1) > low) a--;
+    while (b < n && dev(b) > low) {
+      b++;
+      while (b < n && dev(b) > thr) b++;          // a second tip in the same spike
+    }
+    // A spike jumps away and COMES BACK; a step jumps and stays. A pump
+    // shutdown is data, and the smoothing filter rounds its corner, which
+    // puts the raw trace far off the filtered line right at the edge — so a
+    // stretch is only gated when the trace on its two sides sits at the same
+    // level, to within the threshold. At either end of the curve there is
+    // only one side to ask, and a stretch there is taken as a spike.
+    const before = gateLevel(raw, a - 1, -1), after = gateLevel(raw, b, 1);
+    const step = before != null && after != null && Math.abs(before - after) > thr;
+    if (!step) {
+      if (runs.length && a <= runs[runs.length - 1][1]) runs[runs.length - 1][1] = b;
+      else runs.push([a, b]);
+    }
+    i = b;
+  }
+  for (const [a, b] of runs)
+    for (let k = a; k < b; k++)
+      if (out[k] != null && isFinite(out[k]) && filt[k] != null) out[k] = filt[k];
+  return { values: out, runs };
+}
+// The level the trace sits at just outside a stretch: the median of up to
+// three finite samples walking away from `i` in direction `dir`, or null.
+function gateLevel(raw, i, dir) {
+  const xs = [];
+  for (let k = i; k >= 0 && k < raw.length && xs.length < 3; k += dir)
+    if (raw[k] != null && isFinite(raw[k])) xs.push(raw[k]);
+  if (!xs.length) return null;
+  xs.sort((p, q) => p - q);
+  return xs[(xs.length - 1) >> 1];
+}
+// Is the gate in force for this spec? Only on top of a filter: with both
+// filters off there is nothing to gate.
+function filtGated(spec) {
+  const s = spec || {};
+  return !!s.gate && Number(s.gatePct) > 0 && !filtIsOff(s);
+}
+// One channel through a spec, gate included. `span` is the height of that
+// curve's axis, which the gate's threshold is a share of — one slider then
+// means the same on a 0-8 m3/min rate as on a 0-1200 kg/m3 concentration.
+function filtRunGated(values, spec, span) {
+  const filt = filtRun(values, spec);
+  if (!filtGated(spec) || !(span > 0)) return { values: filt, runs: null };
+  return filtGate(values, filt, span * Number(spec.gatePct) / 100);
+}
+
 // Does this spec do anything at all? "Off" has to be a thing a stage can BE,
 // not just the absence of a setting — see filtSpecFor.
 function filtIsOff(spec) {
@@ -5583,7 +5749,8 @@ function filtCompanyKey() {
 // Kept as the name the UI shows, so a long source string does not have to be
 // spelled out twice.
 function filtProvider() { return filtReaderKey(); }
-const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0 };
+const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0,
+                   gate: false, gatePct: 10 };
 // A stage's own setting wins over the provider default: the default is where
 // you start, not something you cannot get out of.
 //
@@ -5615,8 +5782,24 @@ function filtClearStage(meta) {
   filtSave();
 }
 function filtSpecEq(a, b) {
-  return (a || FILT_OFF).kind === (b || FILT_OFF).kind
-      && Number((a || FILT_OFF).amount) === Number((b || FILT_OFF).amount);
+  const x = { ...FILT_OFF, ...(a || {}) }, y = { ...FILT_OFF, ...(b || {}) };
+  return x.kind === y.kind && Number(x.amount) === Number(y.amount)
+      && x.kind2 === y.kind2 && Number(x.amount2) === Number(y.amount2)
+      && !!x.gate === !!y.gate && Number(x.gatePct) === Number(y.gatePct);
+}
+// The height of a channel's axis, for the gate. The chart's printed axis when
+// the template reports one; otherwise the span of what was read.
+function filtGateSpan(c) {
+  try {
+    const r = axisRange(c);
+    if (r.printed && isFinite(r.hi - r.lo) && Math.abs(r.hi - r.lo) > 0)
+      return Math.abs(r.hi - r.lo);
+  } catch (e) { /* fall through to the data */ }
+  let lo = Infinity, hi = -Infinity;
+  for (const v of filtBase(c)) if (v != null && isFinite(v)) {
+    if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  return hi > lo ? hi - lo : 0;
 }
 
 // The unfiltered curve, captured once per channel.
@@ -5632,7 +5815,9 @@ function filtToChannels(channels, spec) {
   let n = 0;
   for (const c of channels || []) {
     const base = filtBase(c);
-    c.values = filtRun(base, s);
+    const g = filtRunGated(base, s, filtGated(s) ? filtGateSpan(c) : 0);
+    c.values = g.values;
+    c.__gateRuns = g.runs;
     c.__filt = filtIsOff(s) ? null : s;
     if (c.__filt) n++;
   }
@@ -5664,6 +5849,15 @@ function filtSyncUI() {
   $("filtsel2").hidden = !chained;
   $("filtamt2").hidden = !chained;
   $("filtamtlbl2").hidden = !chained;
+  // The gate, likewise only on top of a filter.
+  const gOn = !!spec.gate, gPct = Number(spec.gatePct) || FILT_OFF.gatePct;
+  $("filtgatewrap").hidden = !chained;
+  $("filtgateamt").hidden = !chained;
+  $("filtgatelbl").hidden = !chained;
+  $("filtgate").checked = gOn;
+  if (Number($("filtgateamt").value) !== gPct) $("filtgateamt").value = gPct;
+  $("filtgateamt").disabled = !gOn;
+  filtGateNote();
   // Which setting is in force, so "why is this chart filtered" has an answer
   // on the toolbar rather than in the Save menu.
   const src = filtSourceOf(gState.meta);
@@ -5680,6 +5874,23 @@ function filtSyncUI() {
     ? "This filter is already saved for this stage"
     : "Save this filter — for this stage, every stage in the file, or every "
       + "future file from this service provider";
+}
+// The gate's readout: the threshold, and how much of the chart it touched,
+// so "is it doing anything" has an answer without hunting the graph for it.
+function filtGateNote() {
+  const el = $("filtgatelbl");
+  if (!el) return;
+  const spec = gState.filt || FILT_OFF;
+  if (!spec.gate) { el.textContent = ""; return; }
+  let tot = 0, hit = 0;
+  for (const c of gState.channels || []) {
+    tot += (c.values || []).length;
+    for (const [a, b] of c.__gateRuns || []) hit += b - a;
+  }
+  const pct = Number(spec.gatePct) || FILT_OFF.gatePct;
+  el.textContent = `> ${pct}% of axis` + (tot && filtGated(spec)
+    ? ` \u00b7 filtered ${hit ? (100 * hit / tot < 0.1 ? "<0.1" : (100 * hit / tot).toFixed(1)) : 0}% of the trace`
+    : "");
 }
 // What the slider actually chose, in the units the workflow is written in.
 function filtWindowNote(spec) {
@@ -5698,6 +5909,7 @@ function filtPreview(spec) {
   filtPending = requestAnimationFrame(() => {
     filtPending = null;
     filtToChannels(gState.channels, gState.filt);
+    filtGateNote();
     redrawGraph(); buildLegend();
   });
 }
@@ -7694,6 +7906,8 @@ $("retraceundo").addEventListener("click", () => {
     amount: Number($("filtamt").value) || 0,
     kind2: $("filtsel2").value,
     amount2: Number($("filtamt2").value) || 0,
+    gate: $("filtgate").checked,
+    gatePct: Number($("filtgateamt").value) || FILT_OFF.gatePct,
   });
   // Picking a filter with the slider at zero would look broken — it is the one
   // setting where doing nothing is not what was asked for.
@@ -7718,6 +7932,12 @@ $("retraceundo").addEventListener("click", () => {
   $("filtamt2").addEventListener("input", () => {
     const spec = read();
     if (spec.kind2 === "none") spec.kind2 = "sg";
+    filtPreview(spec);
+  });
+  $("filtgate").addEventListener("change", () => filtPreview(read()));
+  $("filtgateamt").addEventListener("input", () => {
+    const spec = read();
+    spec.gate = true;                       // moving it means you want it
     filtPreview(spec);
   });
   $("filtsave").addEventListener("click", e => {
