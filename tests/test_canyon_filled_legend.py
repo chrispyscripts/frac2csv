@@ -53,7 +53,7 @@ def _text_at(page, cx, cy, s, size=8):
     page.insert_text((cx - w / 2, cy + size * 0.35), s, fontsize=size)
 
 
-def _page(filled=True, legend_above=True, paired=False):
+def _page(filled=True, legend_above=True, paired=False, tick_x0=43.2):
     doc = fitz.open()
     page = doc.new_page(width=612, height=792)
     page.insert_text((436.6, 24.6), "Ticket #:", fontsize=8)
@@ -80,7 +80,7 @@ def _page(filled=True, legend_above=True, paired=False):
     sh = page.new_shape()
     for v in range(0, 81, 10):
         _text_at(page, 35.0, _y(v), str(v))
-        sh.draw_line((43.2, _y(v)), (46.8, _y(v)))
+        sh.draw_line((tick_x0, _y(v)), (46.8 if tick_x0 < 45 else X0, _y(v)))
     sh.finish(color=BLACK, width=0.5, closePath=False)
     sh.commit()
     # time labels under the frame, 08:33 .. 10:43. 00301 p39 prints the
@@ -180,11 +180,23 @@ class LegendSampleChoice(unittest.TestCase):
         self.assertAlmostEqual(m.duration_min, 130.0, delta=1.5)
         self.assertEqual(set(data), {"Mainline", "Bottom Hole"})
 
+    def test_tick_marks_that_touch_the_frame_are_still_the_axis(self):
+        # 00009 / 00371 (#780, #781): ticks 76.13-78.84 on a frame edge at
+        # 78.84. They gave the black series a spike to the axis top at t=0.
+        doc, page = _page(tick_x0=45.5)
+        m, _s, data, _u = canyon.extract_page(page)
+        v = np.asarray(data["Bottom Hole"], float)
+        self.assertGreater(np.nanmin(v), 38.0)
+        self.assertLess(np.nanmax(v[:120]), 45.0)     # no spike at the start
+        self.assertEqual(m.start_time[:5], "08:33")
+
     def test_outside_the_frame(self):
         P = fitz.Point
         f = (X0, X1)
         self.assertTrue(canyon._outside(f, P(43.2, 200), P(46.8, 200)))
+        self.assertTrue(canyon._outside(f, P(45.5, 200), P(X0, 200)))   # touching
         self.assertFalse(canyon._outside(f, P(48.3, 200), P(49.0, 201)))
+        self.assertFalse(canyon._outside(f, P(X0, 200), P(X0 + 0.3, 200)))
         self.assertFalse(canyon._outside(None, P(43.2, 200), P(46.8, 200)))
 
 

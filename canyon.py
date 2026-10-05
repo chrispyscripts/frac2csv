@@ -108,18 +108,22 @@ def _frame_x(rules, y_lo, y_hi):
 
 
 def _outside(frame, p1, p2):
-    """Black ink wholly outside the plot frame is the axis's, not a curve's.
+    """Black ink that reaches outside the plot frame is the axis's, not a
+    curve's: a curve is drawn inside its frame and never leaves it.
 
-    The value axis's tick marks are short black horizontals just left of the
-    frame — 43.2-46.8 against a frame edge at 48.2 on 00203 — and a black
-    series took one point at every labelled value there: 00203's Bottom Hole
-    read 0-81 MPa where the chart draws 36-69, and each stage started 90
-    seconds before its own frame. Same shape as the time axis's ticks
-    (#629), on the other axis."""
+    The value axis's tick marks are short black horizontals left of the
+    frame, and a black series took one point at every labelled value there.
+    v1.11.34 dropped them only when they lay WHOLLY outside (00203's run
+    43.2-46.8 against a frame edge at 48.2). On 00009 and 00371 (#780, #781)
+    they run right up to it, 76.13-78.84 against an edge at 78.84, so they
+    stayed: Combined WH, exported as the Slurry Rate, started at the top of
+    its axis and fell to zero over the first 45 seconds of every chart — a
+    spike the page does not draw. Any end more than half a point outside the
+    frame now marks the segment as the axis's."""
     if frame is None:
         return False
     lo, hi = frame
-    return max(p1.x, p2.x) < lo - 0.5 or min(p1.x, p2.x) > hi + 0.5
+    return min(p1.x, p2.x) < lo - 0.5 or max(p1.x, p2.x) > hi + 0.5
 
 
 def _frame_cap(d, rules, verticals):
