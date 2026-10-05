@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FracView — Carmine's Lab</title>
+<title>Sequential — Carmine's Lab</title>
 <style>
   /* Same palette and type as the Lab window it hangs off — see stacked.html. */
   :root {
@@ -109,7 +109,7 @@
 
 <div class="top">
   <div class="meta">
-    <div class="wordmark">FracView</div>
+    <div class="wordmark">Sequential</div>
     <div class="title" id="title">Waiting for the Lab…</div>
     <div class="sub" id="sub"></div>
   </div>
@@ -193,7 +193,7 @@ well, or the name the report prints on it">
 </div>
 
 <div class="msg" id="msg">
-  Pick a well in the Lab — FracView follows whatever is selected there.
+  Pick a well — Sequential follows the well and stage open beside it.
 </div>
 
 <script>
@@ -1436,7 +1436,7 @@ window.addEventListener("message", ev => {
     $("msg").textContent = d.type === "fv:error"
       ? `Could not build this well — ${d.error || "no reason given"}` +
         (d.file ? ` (${d.file})` : "") + ". The Lab's console has the stack."
-      : "Pick a well in the Lab — FracView follows whatever is selected there.";
+      : "Pick a well — Sequential follows the well and stage open beside it.";
     $("msg").hidden = false; $("wrap").hidden = true; $("tools").hidden = true;
     $("zoomctl").hidden = true;
     $("title").textContent = d.type === "fv:error" ? "Could not build this well"

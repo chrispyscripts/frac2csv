@@ -4,7 +4,7 @@
 
 Stratum's well page embeds the Lab's own lab/public/stacked.html and
 lab/public/fracview.html (web/public/lab/), so they keep behaving exactly as
-they do beside the Lab. Two things have to change for that, and both are
+they do beside the Lab. Three things change for that, all
 applied here rather than by hand so a refresh from the Lab is one command:
 
   1. FracView talks only to window.opener. Embedded, there is none: every
@@ -16,6 +16,8 @@ applied here rather than by hand so a refresh from the Lab is one command:
      the script. Curves take the stage chart's colours, the selected stage
      Stratum's teal, and FracView's warnings (clock jumps, cuts) a lighter red
      that reads on dark.
+  3. Its name. In FracView (Stratum's name since 2026-10-05) the Lab's
+     FracView view is called Sequential, so the page says so.
 
 Every replacement asserts how many times it matched. If the Lab rewrites one
 of these lines the sync stops and names it, instead of shipping a page that
@@ -97,6 +99,11 @@ FRACVIEW = [
     ('"rgba(255,255,255,0.94)"', '"rgba(16,39,51,0.95)"', 1),
     ('"rgba(20,24,29,0.10)"', '"#5ccbb7"', 1),
     ('"rgba(20,24,29,0.35)"', '"rgba(231,244,250,0.35)"', 1),
+    # in FracView (the product) this view is called Sequential
+    ("<title>FracView — Carmine's Lab</title>", "<title>Sequential — Carmine's Lab</title>", 1),
+    ('<div class="wordmark">FracView</div>', '<div class="wordmark">Sequential</div>', 1),
+    ("Pick a well in the Lab — FracView follows whatever is selected there.",
+     "Pick a well — Sequential follows the well and stage open beside it.", 2),
 ]
 
 STACKED = [

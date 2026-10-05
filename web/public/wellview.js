@@ -92,7 +92,7 @@ async function load() {
       : `${(d.bcer_stages || d.stages || []).length} stages filed · no treatment curves yet`].filter(Boolean).join(' · ');
   const steps = STAGES.map(s => s.dsec).sort((a, b) => a - b);
   $('wc-foot').textContent = STAGES.length
-    ? `Curves: the Lab's read of ${d.file || 'the operator’s frac report'}, kept at ~${fmt(STAGES[0].n)} points a stage (one every ${steps[0]}–${steps[steps.length - 1]} s). Stacked and FracView are Carmine's Lab views, read-only here.`
+    ? `Curves: the Lab's read of ${d.file || 'the operator’s frac report'}, kept at ~${fmt(STAGES[0].n)} points a stage (one every ${steps[0]}–${steps[steps.length - 1]} s). Stacked and Sequential (the Lab's FracView) are Carmine's Lab views, read-only here.`
     : '';
   if (!STAGES.length) {
     // no curves yet: the stages as filed with the BCER still say what was pumped where
@@ -424,7 +424,7 @@ const HIDE = { stacked: '#openpdf,#pglbl{display:none!important}',
 function ensureFrame(kind) {
   if (frames[kind]) return;
   const f = document.createElement('iframe');
-  f.title = kind === 'stacked' ? 'Stacked charts' : 'FracView';
+  f.title = kind === 'stacked' ? 'Stacked charts' : 'Sequential: the whole job, stage after stage';
   f.src = kind === 'stacked' ? 'lab/stacked.html' : 'lab/fracview.html';
   f.addEventListener('load', () => {
     try {
