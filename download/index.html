@@ -39,6 +39,39 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.36</h2>
+    <ul>
+      <li><b>Trican 1: no more small spikes where the pressure climbs or
+        falls.</b> They were never on the chart. On a steep stretch each
+        column of the picture holds a tall run of the curve&rsquo;s ink, and
+        the reader took whichever end of it lay furthest from the trend &mdash;
+        which keeps a real peak&rsquo;s height, but on a steady climb flipped
+        between top and bottom from column to column. 47477 stage 43&rsquo;s
+        straight climb came out 1.7, 4.5, 10.2, 7.9, 3.0, 11.1, 21.3, 18.6; it
+        now reads 1.1, 2.5, 3.9, 5.4, 6.7 &hellip; as drawn</li>
+      <li><b>The end of a run is now taken only where the curve turns,</b> at a
+        peak or a trough. On 251 Trican 1 chart pages, the pressure, rate and
+        concentration maxima match the printed ones as well as before (pressure
+        within 2% on 201 pages, was 200), and the pressure samples standing off
+        their neighbours fall from 1,001 to 374</li>
+      <li><b>A third filter setting: &ldquo;only where it jumps&rdquo;.</b> Tick
+        it and the curve keeps every sample as read, taking the filtered value
+        only where the trace jumps further from the filtered line than the
+        slider says &mdash; a share of each curve&rsquo;s own axis, 1% to 50%.
+        The spikes go and the fine detail stays</li>
+      <li><b>A spike goes whole, shoulders and all; a real step is left
+        alone</b> &mdash; a spike jumps away and comes back, a shutdown jumps
+        and stays</li>
+      <li><b>You can see where it acted:</b> an amber band behind each filtered
+        stretch, a tick along the top edge so a short one is easy to find, and
+        the original trace drawn dashed over it. The readout says how much of
+        the trace it changed. It saves for one chart, the well, or the provider,
+        and the export carries it</li>
+      <li><b>Which templates this release touches: Trican 1 charts and the
+        Lab.</b> Every other template reads exactly as it did under
+        v1.11.35</li>
+    </ul>
+
     <h2>v1.11.35</h2>
     <ul>
       <li><b>Trican: the files that &ldquo;would not open&rdquo; now read (#777,
