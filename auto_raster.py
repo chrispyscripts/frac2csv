@@ -1196,6 +1196,9 @@ def _rolling_median(v, k):
     return out
 
 
+TURN_REACH = 4      # columns either side a turn is judged against
+
+
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
                     spike_run=SPIKE_RUN, glyphs=False, envelope=True,
                     swept_factor=None, edge_blank=False):
@@ -1329,11 +1332,30 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
     # which traces the envelope of the excursion instead of its centre. The
     # pen's own width is measured from this trace's own runs rather than
     # assumed, so a heavy line does not turn into a spike generator.
+    #
+    # envelope="turns" reads the extreme only where the curve TURNS. Plain
+    # envelope=True takes it wherever a run is taller than the pen, and a
+    # steady steep rise or fall is tall in every column: the curve enters at
+    # one end and leaves at the other, the 31-column reference lags it, and
+    # the end "further from the trend" flips between top and bottom from one
+    # column to the next. Trican 1 (layout B) 47477 stage 43's pressure, a
+    # rise that runs 1.8 -> 17.8 MPa, came out 0.6, 4.5, 10.2, 7.9, 3.0, 11.1,
+    # 21.3, 18.6 — a small spike every few seconds that the chart never drew
+    # (Carmine: "when the TR pressure goes up and down, the program is
+    # hallucinating small spikes"). Under "turns" a swept column takes its top
+    # only when that top reaches past both neighbours' (a peak), its bottom
+    # only when that reaches past both of theirs (a trough), and otherwise
+    # keeps the run's middle, which on a ramp IS the curve. The peak keeps
+    # the height the envelope was added for.
     heights = [h for rs in cols for _m, h, _lo, _hi in rs] if envelope else []
     if heights:
         pen = float(np.median(heights))
         swept = max(3.0, (SWEPT_FACTOR if swept_factor is None
                           else swept_factor) * pen)
+        turns = envelope == "turns"
+        if turns:
+            mid = py.copy()                 # each column's chosen run, middle
+        out = py.copy() if turns else py
         for cx, rs in enumerate(cols):
             if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
                 continue
@@ -1341,7 +1363,32 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
             if run is None or run[1] < swept:
                 continue
             lo, hi = float(run[2]), float(run[3])
-            py[cx] = lo if abs(lo - ref[cx]) > abs(hi - ref[cx]) else hi
+            if not turns:
+                py[cx] = lo if abs(lo - ref[cx]) > abs(hi - ref[cx]) else hi
+                continue
+            # Judged against the curve's MIDDLE line a few columns either
+            # side, not the next column's run: on a real, slightly noisy
+            # climb single columns keep looking like tiny peaks and troughs
+            # against their immediate neighbours (measured over 251 Trican 1
+            # pages that cut the hallucinated spikes by only a fifth). A real
+            # peak stands above the line on BOTH sides; a climb keeps going
+            # higher on one of them.
+            left = [mid[j] for j in range(cx - TURN_REACH, cx)
+                    if 0 <= j and np.isfinite(mid[j])]
+            right = [mid[j] for j in range(cx + 1, cx + 1 + TURN_REACH)
+                     if j < len(mid) and np.isfinite(mid[j])]
+            if not left or not right:
+                continue
+            peak = lo < min(left) and lo < min(right)       # rows grow downward
+            trough = hi > max(left) and hi > max(right)
+            if peak and not trough:
+                out[cx] = lo
+            elif trough and not peak:
+                out[cx] = hi
+            elif peak and trough:                          # a lone spike column
+                out[cx] = lo if abs(lo - ref[cx]) > abs(hi - ref[cx]) else hi
+        if turns:
+            py = out
     return py
 
 

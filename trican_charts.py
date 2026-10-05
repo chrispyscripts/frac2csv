@@ -1655,7 +1655,8 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
         traced[key] = {"label": label, "unit": unit, "axis": axis,
                        "cal": fits.get(axis), "sub": sub,
                        "cov": float(sub.any(axis=0).mean()),
-                       "py": ar.curve_positions(sub), "filled": 0}
+                       "py": ar.curve_positions(sub, envelope="turns"),
+                       "filled": 0}
     # The other half: this path recovered exactly one pair of the nine, WH
     # Prop Conc from under DH Prop Conc, hard-coded in that direction. Monitor
     # Pressure and WH Slurry Rate were never recovered at all, and the conc
