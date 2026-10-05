@@ -39,6 +39,7 @@ Writes web/public/data/seismic/events.json:
 """
 import argparse
 import bisect
+import sys
 import csv
 import glob
 import json
@@ -47,6 +48,9 @@ import os
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from geodesy import offset  # noqa: E402
 
 _WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA = os.path.join(_WEB, "public", "data")
@@ -162,13 +166,11 @@ def stage_windows():
             well, t = w["well"], w["trajectory"]
             wa = str(well["wa"]).zfill(5)
             elev = well.get("elev_m") or 0
-            c = math.cos(math.radians(well["lat"]))
-
             def at(md):
                 if md is None or not t["md"]:
                     return None
                 i = min(bisect.bisect_left(t["md"], md), len(t["md"]) - 1)
-                return (well["lat"] + t["ns"][i] / 111320.0, well["lon"] + t["ew"][i] / (111320.0 * c), t["tvd"][i] - elev)
+                return (*offset(well["lat"], well["lon"], t["ns"][i], t["ew"][i]), t["tvd"][i] - elev)
             stages = []
             path_w = os.path.join(_DATA, "wells", f"{wa}.json")
             lab = []

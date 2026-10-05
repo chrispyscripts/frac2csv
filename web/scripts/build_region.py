@@ -26,11 +26,15 @@ Writes, under web/public/data/:
 """
 import argparse
 import csv
+import sys
 import json
 import math
 import os
 from collections import defaultdict
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from geodesy import offset  # noqa: E402
 
 _WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA = os.path.join(_WEB, "public", "data")
@@ -250,9 +254,8 @@ def main():
         return sum(1 for s in d.get("stages") or [] if s.get("series"))
 
     def plan_path(w, t):
-        c = math.cos(math.radians(w["lat"]))
-        pts = list(zip(t["ns"], t["ew"]))
-        return [[round(w["lon"] + ew / (111320.0 * c), 6), round(w["lat"] + ns / 111320.0, 6)] for ns, ew in thin(pts, PATH_POINTS)]
+        pts = [offset(w["lat"], w["lon"], ns, ew) for ns, ew in thin(list(zip(t["ns"], t["ew"])), PATH_POINTS)]
+        return [[round(lo, 6), round(la, 6)] for la, lo in pts]
 
     for p in pads:
         rows = []

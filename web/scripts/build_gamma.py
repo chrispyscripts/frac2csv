@@ -38,6 +38,8 @@ import sys
 _WEB = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(_WEB))
 from logs_from_las import index_kind, read_las  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from geodesy import offset  # noqa: E402
 
 BIN_M = 5.0
 # Total gamma ray as each vendor names it. Raw counts (MG1, CPS) and spectral
@@ -127,8 +129,7 @@ def _well_geom(w):
     t, well = w["trajectory"], w["well"]
     md, tvd = list(t["md"]), list(t["tvd"])
     i = int(len(md) * 0.75)
-    lat = well["lat"] + t["ns"][i] / 111320.0
-    lon = well["lon"] + t["ew"][i] / (111320.0 * math.cos(math.radians(well["lat"])))
+    lat, lon = offset(well["lat"], well["lon"], t["ns"][i], t["ew"][i])
     return {"md": md, "tvd": tvd, "elev": well.get("elev_m") or 0, "lat": lat, "lon": lon,
             "td": md[-1], "pad": None}
 
