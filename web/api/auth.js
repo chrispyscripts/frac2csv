@@ -14,8 +14,8 @@
 //
 // Accounts and codes are JSON in a private Vercel Blob store (BLOB_READ_WRITE_TOKEN):
 // users/<sha256 of email>.json and invites/<code>.json. Passwords are scrypt hashes.
-// The very first account comes from STRATUM_BOOTSTRAP_CODE, an admin code that
-// only works while no account exists.
+// The first admin comes from STRATUM_BOOTSTRAP_CODE, a one-time admin code that
+// works until there is an admin (people invited earlier don't use it up).
 import { get, put, del, list, BlobPreconditionFailedError } from '@vercel/blob';
 import { createHash, randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
@@ -123,12 +123,12 @@ async function signup(b) {
   if (!email) return fail(400, 'Enter a valid email address.');
   const pwBad = passwordProblem(b.password); if (pwBad) return fail(400, pwBad);
 
-  // the first admin: a code set in Vercel, good only while there is no account at all
+  // the first admin: a code set in Vercel, used once, and only while there is no admin yet
   const boot = process.env.STRATUM_BOOTSTRAP_CODE && code === normCode(process.env.STRATUM_BOOTSTRAP_CODE);
   let inv = null;
   if (boot) {
-    const [{ blobs }, used] = await Promise.all([list({ prefix: 'users/', limit: 1 }), read(invitePath('_bootstrap'))]);
-    if (blobs.length || used) return fail(403, 'That code has already been used. Ask an admin for an invite.');
+    const [users, used] = await Promise.all([readAll('users/'), read(invitePath('_bootstrap'))]);
+    if (used || users.some(u => u.role === 'admin')) return fail(403, 'That code has already been used. Ask an admin for an invite.');
   } else {
     inv = await read(invitePath(code));
     const bad = inviteProblem(inv && inv.data); if (bad) { await sleep(300); return fail(403, bad); }

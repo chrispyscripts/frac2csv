@@ -343,9 +343,17 @@ function openWell(p, lngLat) {
               <div class="acts"><button type="button" class="view">View well</button>
               <a href="wellview.html?wa=${encodeURIComponent(p.wa)}">Charts →</a></div></div>`)
     .addTo(map);
-  // the whole well in 2D, docked below (or in its popped-out window); an open section follows the selection
-  popup.getElement().querySelector(".view").addEventListener("click", () => { if (window.stratumSection) window.stratumSection.view(p.wa); });
-  if (window.stratumSection) window.stratumSection.follow(p.wa);
+  // picking a well opens it whole in 2D, docked below (or in its popped-out window);
+  // View well brings it back after the dock was closed
+  const view = () => {
+    if (!window.stratumSection) return;
+    window.stratumSection.view(p.wa);
+    // the dock takes the bottom of the map: keep the picked well in sight above it
+    const pt = map.project(lngLat), h = map.getContainer().clientHeight;
+    if (pt.y > h - 70) map.panBy([0, pt.y - h * 0.55], { duration: 350 });
+  };
+  popup.getElement().querySelector(".view").addEventListener("click", view);
+  view();
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
   if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }

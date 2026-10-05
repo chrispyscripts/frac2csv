@@ -77,6 +77,9 @@ each entry.
   the selected well and the stage on the charts page (BroadcastChannel
   `stratum-section`, addressed to the main page by id and acknowledged); ↙ Dock
   puts it back under the map, and the charts page has "Section ↗" too.
+  Picking a well (map lateral, sidebar list, 3D click or the 3D well menu) now
+  opens this view straight away (2026-10-05); locking a pad still shows its pad
+  data until a well is picked, and View well reopens it after ×.
   Hovering a stage (or stepping with ← →) shows its stage chart as a
   thumbnail above it: the Lab's curves in the stage chart's names and colours,
   each on its own rounded scale, curves hidden on the charts page hidden here,
@@ -110,8 +113,8 @@ each entry.
   `stratum-accounts` (dev: `stratum-accounts-dev`); passwords are scrypt; the
   session is a signed `__Host-stratum` cookie (SESSION_SECRET), 14 days, and the
   middleware re-checks the account hourly so a removed account is out within the
-  hour. The first admin came from STRATUM_BOOTSTRAP_CODE (works only while no
-  account exists). Later: per-user saved sessions on the server, rate limiting
+  hour. The first admin comes from STRATUM_BOOTSTRAP_CODE (one use, and only
+  while no admin exists, so earlier invitees signing up first can't block it). Later: per-user saved sessions on the server, rate limiting
   on sign-in (Vercel Firewall), email for resets.
 
 ## Asked for, not started
