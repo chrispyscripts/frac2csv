@@ -280,6 +280,33 @@ class Continuous(unittest.TestCase):
             self.assertNotIn(c, results)
             self.assertFalse([r for r in results if r["meta"].get("continuous")])
 
+    def test_two_continuous_charts_in_one_filing(self):
+        # 00052, 00086, 00128 and 00155 (#777-#779) each close with TWO
+        # continuous pages. The second was tested against the first with
+        # `r not in dropped`, which compares the charts by VALUE, and two
+        # charts' sample arrays cannot be compared that way: "The truth value
+        # of an array with more than one element is ambiguous". The whole
+        # filing failed, and in the Lab that looked like the PDF not opening.
+        a = self.cont("07:17:00", 126)
+        b = self.cont("07:17:00", 126)
+        b["page"] = 121
+        results, notes = [self.s1, self.s2, a, b], []
+        pipeline._trican_continuous(results, notes)
+        self.assertEqual([r["page"] for r in results],
+                         [self.s1["page"], self.s2["page"]])
+        self.assertTrue(any("p119" in n and "p121" in n for n in notes), notes)
+
+    def test_three_one_of_them_kept_for_its_minutes(self):
+        a = self.cont("07:17:00", 126)
+        b = self.cont("07:17:00", 200)            # 74 min past stage 2
+        b["page"] = 121
+        c = self.cont("07:17:00", 126)
+        c["page"] = 123
+        results, notes = [self.s1, a, self.s2, b, c], []
+        pipeline._trican_continuous(results, notes)
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(r is self.s1 or r is self.s2 for r in results))
+
     def test_hand_over_ignores_continuous(self):
         c = self.cont("07:17:00", 126)
         c["meta"]["date"] = "2015-11-12"

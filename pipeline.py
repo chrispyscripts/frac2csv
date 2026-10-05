@@ -1454,7 +1454,9 @@ def _trican_continuous(results, notes):
         # So it is dropped here, once, where nothing downstream can miss it.
         # What it covered that no stage chart does is said in the notes rather
         # than shipped as a stage nobody asked for.
-        if r not in dropped:
+        # By identity: a chart is a dict of sample arrays, and `in` would
+        # compare two of them by value, which numpy refuses (#777-#779).
+        if not any(r is d for d in dropped):
             dropped.append(r)
         if why:
             kept.append((r["page"], why))
@@ -1467,8 +1469,10 @@ def _trican_continuous(results, notes):
             f"about a minute per pixel there, so they are coarser than the "
             f"rest of the stage")
     if dropped:
-        for r in dropped:
-            results.remove(r)
+        # by identity, for the same reason as above: list.remove compares
+        # by value until it meets the chart itself
+        gone = {id(r) for r in dropped}
+        results[:] = [x for x in results if id(x) not in gone]
         # The ones whose coverage we could prove. The rest get a line of their
         # own below saying what they alone carried, so saying "every minute is
         # on a stage chart" for those too would be false.
