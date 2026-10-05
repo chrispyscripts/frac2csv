@@ -77,6 +77,11 @@ each entry.
   the selected well and the stage on the charts page (BroadcastChannel
   `stratum-section`, addressed to the main page by id and acknowledged); ↙ Dock
   puts it back under the map, and the charts page has "Section ↗" too.
+  Hovering a stage (or stepping with ← →) shows its stage chart as a
+  thumbnail above it: the Lab's curves in the stage chart's names and colours,
+  each on its own rounded scale, curves hidden on the charts page hidden here,
+  with peaks, date/duration, what was pumped and the depth readout. In a short
+  dock it sits beside the stage instead; filed-only stages show their summary.
 - **Session files** (2026-10-04). "Sessions" (map sidebar, charts page) saves
   the whole workspace under a name: every open Stratum window (map, 3D view,
   charts, popped-out section, compare, pad pages), where each sits on screen,

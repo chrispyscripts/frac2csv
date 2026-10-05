@@ -85,6 +85,7 @@ function assemble(d, row) {
     seen.add(label);
     const a = +s.top_m, b = s.base_m != null && isFinite(s.base_m) ? +s.base_m : a, c = curves.get(label);
     stages.push({ label, top: Math.min(a, b), base: Math.max(a, b), mid: (a + b) / 2, curves: !!c,
+                  series: c ? c.series : null, step: c ? c.step_s || 1 : null,
                   date: s.date || (c && c.date) || '', start: String((c && c.start) || s.start || '').slice(0, 5),
                   proppant: s.proppant_t, fluid: s.fluid_m3, rate: s.avg_rate_m3_min, pmax: s.max_pressure_mpa,
                   minutes: c ? c.minutes : null });
@@ -105,7 +106,7 @@ function assemble(d, row) {
     const a = traj[i - 1], b = traj[i], dm = b.md - a.md;
     if (dm > 0 && (b.tvd - a.tvd) / dm < Math.cos(80 * Math.PI / 180)) { heel = a.md; break; }
   }
-  return { well: w, pad: d.pad || {}, traj, az, stages, heel, td: end ? end.md : w.td_m, gamma: null, nCurves: curves.size };
+  return { well: w, pad: d.pad || {}, traj, az, stages, heel, td: end ? end.md : w.td_m, gamma: null, nCurves: curves.size, units: d.units || {} };
 }
 
 function attachGamma() {
@@ -342,6 +343,9 @@ function drawHover() {
       if (bits.length) lines.push(`<span class="m">${bits.join(' · ')}</span>`);
       lines.push(s.curves ? 'Click for its treatment charts' : '<span class="m">Filed with the BCER; no curves yet</span>');
     }
+    if (s) { tip.hidden = true; showCard(s, [`MD ${fmt(hover.md)} m · TVD ${fmt(hover.tvd)} m${gr != null ? ` · GR ${fmt(gr)} API` : ''}`]); }
+    else {
+    hideCard();
     tip.innerHTML = lines.join('<br>');
     tip.hidden = false;
     const box = $('ws-main'), tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -350,9 +354,113 @@ function drawHover() {
     if (ty < 6) ty = hover.y + 16;
     if (ty + th > box.clientHeight - 6) ty = box.clientHeight - th - 6;
     tip.style.left = Math.max(6, tx) + 'px'; tip.style.top = ty + 'px';
-  } else tip.hidden = true;
+    }
+  } else {
+    tip.hidden = true;
+    // stepping through stages from the keyboard shows each one's card too
+    if (hiS && document.activeElement === $('ws-svg')) showCard(hiS, null); else hideCard();
+  }
   hl.innerHTML = out.join('');
   $('ws-svg').style.cursor = hover && hover.md >= G.heel - 1 && stageAt(hover.md) ? 'pointer' : 'crosshair';
+}
+
+// ---------- a stage's chart, above it ----------
+// The stage chart in miniature: the Lab's curves, named and coloured as on the
+// well's charts page (wellview.js SERIES), each on its own scale rounded up to a
+// readable top, and the curves hidden there hidden here too.
+const LAB_CURVES = [
+  { k: 'press', name: 'Tr Press', short: 'Press', color: '#f0555a' },
+  { k: 'rate', name: 'Slurry Rate', short: 'Rate', color: '#4f8ff7' },
+  { k: 'wh_conc', name: 'WH Prop Conc', short: 'WH conc', color: '#3fb950' },
+  { k: 'bh_conc', name: 'BH Prop Conc', short: 'BH conc', color: '#b87fd9' },
+  { k: 'bh_press', name: 'BH Press', short: 'BH press', color: '#39c5cf' },
+];
+const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+function niceCeil(v) {
+  if (!(v > 0)) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(v))), m = v / e;
+  for (const s of NICE_STEPS) if (m <= s + 1e-9) return s * e;
+  return 10 * e;
+}
+function hiddenCurves() { try { return new Set(JSON.parse(localStorage.getItem('stratum.hiddenCurves') || '[]')); } catch (e) { return new Set(); } }
+
+let cardFor = null;
+function showCard(s, readout) {
+  const card = $('ws-card'), r = $('ws-svg').getBoundingClientRect();
+  const ax = r.left + s.px, ay = r.top + s.py;
+  if (cardFor !== s) {
+    cardFor = s;
+    const bits = [s.date && `${s.date}${s.start ? ' ' + s.start : ''}`, s.series && s.step && `${fmt(curveMinutes(s))} min`].filter(Boolean);
+    card.querySelector('.ws-card-h').innerHTML = `<b>Stage ${esc(s.label)}</b><span>${fmt(s.top, 1)}${s.base !== s.top ? '–' + fmt(s.base, 1) : ''} m MD</span>`;
+    card.querySelector('.ws-card-d').textContent = bits.join(' · ');
+    const pumped = [s.proppant != null && `${fmt(s.proppant, 1)} t`, s.fluid != null && `${fmt(s.fluid)} m³`,
+      s.rate != null && `${fmt(s.rate, 1)} m³/min avg`, s.pmax != null && `max ${fmt(s.pmax, 1)} MPa`].filter(Boolean);
+    card.querySelector('.ws-card-p').textContent = pumped.join(' · ');
+  }
+  card.querySelector('.ws-card-r').innerHTML = (readout || []).join('<br>');
+  card.querySelector('.ws-card-f').textContent = s.curves ? 'Click for this stage’s charts' : 'Filed with the BCER; the Lab has not read its curves yet';
+  const cv = card.querySelector('canvas'), legend = card.querySelector('.ws-card-l');
+  cv.hidden = legend.hidden = !s.series;
+  card.classList.remove('below', 'side-r', 'side-l');
+  card.hidden = false;
+  // above the stage when the chart fits there, else below, else beside it (a short dock)
+  const rest = card.offsetHeight - (s.series ? cv.offsetHeight : 0);
+  const roomAbove = ay - 30 - rest - 4, roomBelow = innerHeight - ay - 24 - rest - 4, need = s.series ? 70 : 0;
+  const place = roomAbove >= need ? 'above' : roomBelow >= need ? 'below' : 'side';
+  if (s.series) {
+    const room = place === 'above' ? roomAbove : place === 'below' ? roomBelow : innerHeight - 8 - rest;
+    cv.style.height = Math.round(Math.max(40, Math.min(110, room))) + 'px';
+    drawThumb(cv, legend, s);
+  }
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let left, top;
+  if (place === 'side') {
+    const right = ax + 22 + cw <= innerWidth - 6;
+    left = right ? ax + 22 : ax - 22 - cw;
+    top = Math.max(4, Math.min(innerHeight - ch - 4, ay - ch / 2));
+    card.classList.add(right ? 'side-r' : 'side-l');
+    card.style.setProperty('--tipy', Math.max(12, Math.min(ch - 12, ay - top)) + 'px');
+  } else {
+    left = Math.max(6, Math.min(innerWidth - cw - 6, ax - cw / 2));
+    top = place === 'above' ? ay - 26 - ch : ay + 20;
+    if (place === 'below') card.classList.add('below');
+    card.style.setProperty('--tip', Math.max(14, Math.min(cw - 14, ax - left)) + 'px');
+  }
+  card.style.left = left + 'px'; card.style.top = top + 'px';
+}
+function hideCard() { $('ws-card').hidden = true; cardFor = null; }
+const curveMinutes = s => {
+  const n = Math.max(0, ...LAB_CURVES.map(c => Array.isArray(s.series[c.k]) ? s.series[c.k].length : 0));
+  return Math.max(1, n - 1) * s.step / 60;
+};
+function drawThumb(cv, legend, s) {
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const pad = 4, H = h - pad * 2;
+  g.strokeStyle = '#1a2c37'; g.lineWidth = 1;
+  for (const f of [0.25, 0.5, 0.75]) { const y = Math.round(pad + H * f) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+  const off = hiddenCurves(), shown = [];
+  for (const c of LAB_CURVES) {
+    const v = s.series[c.k];
+    if (!Array.isArray(v) || !v.some(x => x != null && isFinite(x))) continue;
+    const vals = v.filter(x => x != null && isFinite(x)), max = Math.max(...vals), top = niceCeil(max);
+    shown.push({ ...c, max, hidden: off.has(c.name) });
+    if (off.has(c.name)) continue;
+    g.strokeStyle = c.color; g.lineWidth = 1.5; g.lineJoin = 'round'; g.beginPath();
+    let pen = false;
+    v.forEach((x, i) => {
+      if (x == null || !isFinite(x)) { pen = false; return; }
+      const px = v.length > 1 ? i / (v.length - 1) * w : w / 2, py = pad + H - Math.max(0, Math.min(1, x / top)) * H;
+      if (pen) g.lineTo(px, py); else { g.moveTo(px, py); pen = true; }
+    });
+    g.stroke();
+  }
+  const u = W.units || {};
+  const unit = k => esc(String(u[k] || '').replace(/m3/g, 'm³'));
+  legend.innerHTML = (shown.length ? '<span class="m">peak</span>' : '')
+    + shown.map(c => `<span${c.hidden ? ' class="off" title="Hidden on the stage chart"' : ''}><i style="background:${c.color}"></i>${c.short} ${fmt(c.max, c.max < 100 ? 1 : 0)} ${unit(c.k)}</span>`).join('');
 }
 
 const svg = $('ws-svg');
@@ -371,6 +479,7 @@ svg.addEventListener('pointermove', e => {
   if (best !== hover) { hover = best; drawHover(); }
 });
 svg.addEventListener('pointerleave', () => { hover = null; drawHover(); });
+svg.addEventListener('blur', () => { if (!hover) hideCard(); });
 svg.addEventListener('click', () => {
   if (!hover || hover.md < G.heel - 1) return;
   const s = stageAt(hover.md);
@@ -382,6 +491,7 @@ svg.addEventListener('keydown', e => {
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
     e.preventDefault();
     const j = i < 0 ? 0 : Math.max(0, Math.min(W.stages.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
+    hover = null;                       // the keys take over from the pointer
     HI = W.stages[j].label; syncUrl(); render();
   } else if (e.key === 'Enter' && i >= 0) openStage(W.stages[i]);
 });

@@ -23,6 +23,7 @@ assert.equal(W.heel,d.well.heel_md,'heel from the well file');
 const curveLabels=new Set(d.stages.filter(s=>s.series&&Object.values(s.series).some(a=>Array.isArray(a)&&a.length)).map(s=>String(s.label)));
 assert(W.stages.length>0);
 assert.equal(W.stages.filter(s=>s.curves).length,curveLabels.size,'one curve mark per Lab stage');
+assert(W.stages.every(s=>!s.curves||(s.series&&Array.isArray(s.series.press)&&s.step>0)),'a stage with curves carries them, for its hover chart');
 for(let i=1;i<W.stages.length;i++){
   assert(W.stages[i].mid>=W.stages[i-1].mid,'stages in depth order');
   assert.equal(W.stages[i].z0,W.stages[i-1].z1,'hover zones meet without gaps');
