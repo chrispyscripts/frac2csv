@@ -39,6 +39,50 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.35</h2>
+    <ul>
+      <li><b>Trican: the files that &ldquo;would not open&rdquo; now read (#777,
+        #778, #779).</b> 00052, 00086, 00128 and 00155 were never a problem
+        with the PDF. The app crashed while reading them. These filings close
+        with two or more CONTINUOUS pages, which the app sets aside, and
+        setting aside the second one crashed it. In the Lab that looks like a
+        file that will not open. Now 00052 reads 26 charts, 00128 and 00155 32
+        each, 00086 17. Trican files that already read are unchanged, chart by
+        chart</li>
+      <li><b>00086 opens now but still reads poorly:</b> 12 of its chart pages
+        fail on an impossible 17-hour stage. That is its own fault, hidden
+        until now by the crash, and it is next</li>
+      <li><b>Canyon: no more false spike at the start of the Slurry Rate (#780,
+        #781).</b> The Slurry Rate is the black Combined WH curve, and the
+        value axis&rsquo;s tick marks run right up to the plot, so they were
+        read as points on it. It started at the top of its axis and fell to
+        zero over 45 seconds: 8 m&sup3;/min on 00009, 12 on 00371. The PDF
+        draws none of that</li>
+      <li><b>Every Canyon chart now starts where its plot begins,</b> a median
+        of 25 seconds later than before, since the tick marks had set the
+        start too. 00009 stage 1: 11:45:51 under a first label of 11:46, was
+        11:45:11. Apart from that every curve is what it was, within 1% of its
+        range, and the same charts and stages come out</li>
+      <li><b>BJ: a chart that starts just before midnight is dated the right
+        day.</b> One whose pumps came on at 23:58 under a first label of
+        &ldquo;00:00&rdquo; was dated the next day, a full day late. 13 charts
+        move to the right day on the files checked</li>
+      <li><b>BJ: a chart over the end of a short month reads.</b> Every month
+        was counted as 31 days. 01793 stage 11 read as 837 minutes from 19:34;
+        it runs 79 minutes from 22:43, and now says so. Charts over the end of
+        April or February read too. Across 6,367 BJ chart pages, only those
+        change</li>
+      <li><b>BJ: &ldquo;Stage 04 - Plug Slip&rdquo; keeps its name</b> instead
+        of becoming &ldquo;4 (2)&rdquo;. 9 charts on the files checked</li>
+      <li><b>A correction to 1.11.34&rsquo;s notes.</b> &ldquo;The older Canyon
+        layout, 188 pages on 5 files&rdquo; does not need a reader of its own.
+        Those files are page extracts of Sanjel filings, and the Sanjel reader
+        already reads them: 00013&rsquo;s extract gives 17 Sanjel charts</li>
+      <li><b>Which templates this release touches: Canyon, BJ and Trican
+        charts.</b> Every other template reads exactly as it did under
+        v1.11.34</li>
+    </ul>
+
     <h2>v1.11.34</h2>
     <ul>
       <li><b>Canyon: the 2017 Painted Pony and UGRBC sheets now read (#771,
