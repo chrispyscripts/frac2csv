@@ -32,6 +32,23 @@ const on = { press: true, rate: false, wh_conc: false, bh_conc: false,
 let wells = [];              // {wa, doc, colour, off:Set}
 let axis = 'md', shared = true;
 
+// this window's choices come back after a reload and with a saved session
+const VIEW_KEY = 'stratum.compareView';
+let offFor = {};             // curves switched off per well, until that well loads
+const viewState = () => ({ on: { ...on }, axis, shared,
+  off: { ...offFor, ...Object.fromEntries(wells.map(w => [w.wa, [...w.off]])) } });
+try {
+  const v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null');
+  if (v) {
+    for (const k of Object.keys(on)) if (typeof (v.on || {})[k] === 'boolean') on[k] = v.on[k];
+    if (v.axis === 'md' || v.axis === 'stage') axis = v.axis;
+    if (typeof v.shared === 'boolean') shared = v.shared;
+    if (v.off && typeof v.off === 'object') offFor = v.off;
+  }
+} catch (e) { /* private mode */ }
+addEventListener('pagehide', () => { try { sessionStorage.setItem(VIEW_KEY, JSON.stringify(viewState())); } catch (e) { /* private mode */ } });
+if (window.StratumSession) StratumSession.provide(() => ({ [VIEW_KEY]: JSON.stringify(viewState()) }));
+
 const num = v => (v == null || v === '' || Number.isNaN(+v)) ? null : +v;
 const fmt = (v, d = 0) => v == null ? '–' : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
@@ -48,7 +65,8 @@ async function addWell(wa) {
   let doc;
   try { doc = await (await fetch(`data/wells/${encodeURIComponent(wa)}.json`)).json(); }
   catch (e) { return; }
-  wells.push({ wa, doc, colour: COLOURS[wells.length % COLOURS.length], off: new Set() });
+  wells.push({ wa, doc, colour: COLOURS[wells.length % COLOURS.length], off: new Set(Array.isArray(offFor[wa]) ? offFor[wa] : []) });
+  delete offFor[wa];
   saveList(); renderAll();
 }
 
@@ -301,5 +319,8 @@ async function sync() {
   }
 }
 
+const axisInput = document.querySelector(`input[name=axis][value="${axis}"]`);
+if (axisInput) axisInput.checked = true;
+$('cmp-shared').checked = shared;
 (async () => { renderAll(); await sync(); })();
 })();

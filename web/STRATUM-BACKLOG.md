@@ -77,6 +77,23 @@ each entry.
   the selected well and the stage on the charts page (BroadcastChannel
   `stratum-section`, addressed to the main page by id and acknowledged); ↙ Dock
   puts it back under the map, and the charts page has "Section ↗" too.
+- **Session files** (2026-10-04). "Sessions" (map sidebar, charts page) saves
+  the whole workspace under a name: every open Stratum window (map, 3D view,
+  charts, popped-out section, compare, pad pages), where each sits on screen,
+  what each shows (3D camera/pad/well/stage/wine rack/section, map camera, open
+  pads, earthquakes, survey grids, docked section, compare channels/axis/scale,
+  chart tab), and the settings (charted-only filter, hidden curves, section
+  prefs and dock height, compare wells). Kept in this browser and downloadable
+  as `<name>.stratum-session.json`; "Open a session file…" loads one back.
+  Opening Stratum fresh offers the saved sessions first ("Pick up where you
+  left off"). Opening one turns this window into the saved main window and a
+  bar reopens the others where they were; a browser allows one window per click
+  unless pop-ups are allowed for the site. `web/public/session.js` (loaded in
+  every page's head) holds it: windows answer a save over BroadcastChannel
+  `stratum-session`, reopened windows get their state by a one-time
+  localStorage hand-off, and files are filtered to Stratum pages and
+  `stratum.*` keys. No accounts yet: when sign-in arrives, the same session
+  JSON can be stored per user.
 
 ## Asked for, not started
 

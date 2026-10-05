@@ -267,15 +267,18 @@ function renderRack(){if(!rack)return;const p=rack,g=rackGeom(p),svg=rackView.qu
 // default cluster. The camera, the focused pad and the selected well are stashed
 // for this tab only, and restored once, so a normal close still reopens clean.
 const UG_KEY='stratum.underground';
-function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.stringify({
+function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.stringify(ugState()))}catch(e){}}
+function ugState(){return({
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
  pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
  stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,rack:rack?rack.id:null,rackEntry,area:data?data.pads.map(p=>p.id):null,areaName,
- panelScroll:overlay.querySelector('.ug-panel').scrollTop,section:sectionOn,
- surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}}))}catch(e){}}
+ panelScroll:overlay.querySelector('.ug-panel').scrollTop,section:sectionOn,label:pad?pad.name:areaTitle.replace(/ · Below the surface$/,''),
+ surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}})}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
 addEventListener('pagehide',ugSave);
 overlay.querySelector('#ug-back').addEventListener('click',ugClear);
+// a saved session reads the 3D view as it is now (session.js)
+if(typeof window!=='undefined'&&window.StratumSession)StratumSession.provide(()=>({[UG_KEY]:active?JSON.stringify(ugState()):null}));
 (async()=>{let s=null;try{s=JSON.parse(sessionStorage.getItem(UG_KEY)||'null')}catch(e){}
  if(!s)return;ugClear();
  try{if(!s.area)return;await loadArea(s.area)}catch(e){return}

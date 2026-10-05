@@ -33,6 +33,10 @@ const MAX_LABEL_PX = 2600;  // bigger than this and the level's label is off-scr
 const MAX_MARKERS  = 220;   // a hard ceiling; nts_qtr would otherwise place thousands
 
 const on = { nts: true, dls: false };
+const GRID_KEY = 'stratum.grids';
+try { Object.assign(on, JSON.parse(sessionStorage.getItem(GRID_KEY) || '{}')); } catch (e) { /* private mode */ }
+const saveGrids = () => { try { sessionStorage.setItem(GRID_KEY, JSON.stringify(on)); } catch (e) { /* private mode */ } };
+if (window.StratumSession) StratumSession.provide(() => ({ [GRID_KEY]: JSON.stringify(on) }));
 let available = [];         // levels whose archive actually loaded
 
 // ---------------------------------------------------------------- layer setup
@@ -199,12 +203,12 @@ function control() {
   const row = document.createElement('div');
   row.className = 'gridtoggle';
   row.innerHTML = `<span class="lab">survey grid</span><span class="btns">
-    <button type="button" data-fam="nts" class="on">NTS</button>
-    <button type="button" data-fam="dls">DLS</button></span>`;
+    <button type="button" data-fam="nts" class="${on.nts ? 'on' : ''}">NTS</button>
+    <button type="button" data-fam="dls" class="${on.dls ? 'on' : ''}">DLS</button></span>`;
   box.append(row);
   row.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const fam = b.dataset.fam;
-    on[fam] = !on[fam];
+    on[fam] = !on[fam]; saveGrids();
     b.classList.toggle('on', on[fam]);
     for (const L of available) if (L.fam === fam) for (const pre of ['grid-', 'grid-hit-'])
       if (map.getLayer(pre + L.id))

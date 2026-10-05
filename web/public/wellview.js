@@ -588,6 +588,7 @@ $('wc-section').onclick = () => {
 };
 if (secChan) secChan.onmessage = e => {
   const m = e.data || {};
+  if (m.type === 'hello') { secChan.postMessage({ type: 'claim', from: ME, page: 'charts' }); return; }
   if (m.type !== 'open-stage' || m.to !== ME || !m.wa) return;
   secChan.postMessage({ type: 'ack', id: m.id });
   const i = String(m.wa) === WA && m.label != null ? STAGES.findIndex(s => s.label === String(m.label)) : -1;

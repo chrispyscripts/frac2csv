@@ -118,7 +118,10 @@
   if (chan) {
     chan.onmessage = e => {
       const m = e.data || {};
-      if (m.type === 'hello') { popHeard = true; if (m.wa) shown = { wa: String(m.wa), stage: shown.stage }; }
+      if (m.type === 'hello') {
+        popHeard = true; if (m.wa) shown = { wa: String(m.wa), stage: shown.stage };
+        chan.postMessage({ type: 'claim', from: ME, page: 'map' });   // e.g. a window reopened from a session
+      }
       else if (m.type === 'bye') popHeard = false;
       else if (m.to === ME && (m.type === 'open-stage' || m.type === 'dock')) {
         chan.postMessage({ type: 'ack', id: m.id });
@@ -131,7 +134,9 @@
     chan.postMessage({ type: 'claim', from: ME, page: 'map' });
   }
 
-  // the map's dock comes back with the page (the 3D view keeps its own)
+  // the map's dock comes back with the page (the 3D view keeps its own), and with a saved session
+  const dockState = () => docked === 'map' && !dock.hidden && shown.wa ? JSON.stringify(shown) : null;
+  if (window.StratumSession) StratumSession.provide(() => ({ [STATE_KEY]: dockState() }));
   addEventListener('pagehide', () => {
     try {
       if (docked === 'map' && !dock.hidden && shown.wa) sessionStorage.setItem(STATE_KEY, JSON.stringify(shown));

@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
 <link rel="stylesheet" href="grids.css">
+<script src="session.js"></script>
 <style>
   :root { --panel:#10161d; --ink:#e8eef4; --mut:#93a3b3; --line:#243040; --acc:#4d8dff;
           --mono:ui-monospace,Menlo,Consolas,monospace; }
@@ -17,7 +18,10 @@
   .side { position:absolute; top:12px; left:12px; bottom:12px; width:320px; max-width:calc(100% - 24px);
           background:rgba(16,22,29,.94); border:1px solid var(--line); border-radius:12px;
           display:flex; flex-direction:column; overflow:hidden; z-index:5; }
-  .side header { padding:12px 14px 8px; border-bottom:1px solid var(--line); }
+  .side header { padding:12px 14px 8px; border-bottom:1px solid var(--line); position:relative; }
+  .side header .ss-btn { position:absolute; top:10px; right:12px; background:#152936; color:var(--ink); border:1px solid #345260;
+                         border-radius:8px; padding:5px 10px; font:600 12.5px -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
+  .side header .ss-btn:hover, .side header .ss-btn:focus-visible { border-color:#5ee2d0; }
   .side h1 { margin:0; font-size:17px; letter-spacing:.01em; }
   .side .sub { color:var(--mut); font-family:var(--mono); font-size:12px; margin-top:2px; }
   .side .body { overflow:auto; padding:8px 8px 12px; }
@@ -83,6 +87,7 @@
 <div class="side">
   <header>
     <h1>Stratum</h1>
+    <button type="button" class="ss-btn" data-sessions title="Save every open Stratum window and your settings as a session, or open one">Sessions</button>
     <div class="sub" id="sub">loading pads…</div>
   </header>
   <div class="demo" id="demo" hidden></div>
@@ -127,6 +132,18 @@ let SETS = [];            // ALL_SETS as shown: only the charted wells and their
 let AREAS = { type: "FeatureCollection", features: [] };   // BCER well-site permit areas (pad footprints)
 const WELL_BY_WA = {}, PAD_BY_ID = {}, PAD_INFO = {};
 const openPads = new Set();
+
+// the map's view (camera, open pads, earthquakes) comes back after a reload, Back
+// from a well, or a saved session (session.js reads it live when saving)
+const VIEW_KEY = "stratum.mapView";
+let savedView = null;
+try { savedView = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null"); sessionStorage.removeItem(VIEW_KEY); } catch (e) {}
+if (savedView && Array.isArray(savedView.openPads)) savedView.openPads.forEach(id => openPads.add(id));
+let viewReady = false;
+const mapView = () => ({ center: map.getCenter().toArray(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(),
+                         quakes: document.getElementById("qk").checked, openPads: [...openPads] });
+addEventListener("pagehide", () => { if (viewReady) try { sessionStorage.setItem(VIEW_KEY, JSON.stringify(mapView())); } catch (e) {} });
+if (window.StratumSession) StratumSession.provide(() => ({ [VIEW_KEY]: viewReady ? JSON.stringify(mapView()) : null }));
 
 async function load() {
   let idx = { sets: [] };
@@ -223,7 +240,9 @@ function render() {
     for (const l of f.lines.features) for (const c of l.geometry.coordinates) b.extend(c);
     // leave room for the sidebar only when the map is wide enough to spare it
     const wide = map.getContainer().clientWidth > 760;
-    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 40, left: wide ? 360 : 24, right: wide ? 60 : 24 }, duration: 0, maxZoom: 13.5 });
+    if (savedView && Array.isArray(savedView.center)) map.jumpTo({ center: savedView.center, zoom: savedView.zoom, bearing: savedView.bearing || 0, pitch: savedView.pitch || 0 });
+    else if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 40, left: wide ? 360 : 24, right: wide ? 60 : 24 }, duration: 0, maxZoom: 13.5 });
+    viewReady = true;
     for (const id of ["laterals", "toes"]) {
       map.on("mouseenter", id, () => map.getCanvas().style.cursor = "pointer");
       map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
@@ -241,6 +260,7 @@ function render() {
                  "circle-color": "#ff5fa2", "circle-opacity": .35, "circle-stroke-color": "#ff5fa2", "circle-stroke-width": 1 } }, "laterals-halo");
       const box = document.getElementById("qk");
       box.addEventListener("change", () => map.setLayoutProperty("quakes", "visibility", box.checked ? "visible" : "none"));
+      if (savedView && savedView.quakes) { box.checked = true; map.setLayoutProperty("quakes", "visibility", "visible"); }
       map.on("click", "quakes", e => {
         if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
         const p = e.features[0].properties;
