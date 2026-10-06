@@ -172,6 +172,13 @@ each entry.
   popup's "Pad data" link is gone, and the charts page's Back closes a window
   FracView opened (or goes to the map at the pad) instead of landing there.
   The 3D view's bottom panel still uses it embedded (`?embedded=1`).
+- **Easier picking on the map and in 3D** (2026-10-06). The well under the
+  pointer is outlined in ink and drawn thicker (map: a wide invisible stroke
+  catches the pointer; 3D: hover targets all along each path); hovering a well
+  or pad in the sidebar list picks it out on the map. Pad circles are about
+  half again bigger (map and 3D). Pointing at the toe end of a pad on the map
+  offers "Wine rack ↗" just past the toes, as the 3D view does; a pad drilled
+  both ways offers it at each end.
 - **Private, invite-only** (2026-10-04). Every page, data file and the extractor
   need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
   anything is served); only `login.html` and `/api/auth` are open. Accounts are

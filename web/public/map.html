@@ -86,6 +86,10 @@
                           font:600 11.5px -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
   .legend .qk-f button:hover, .legend .qk-f button:focus-visible { border-color:var(--quake); }
   .legend .qk-f span { color:var(--mut); font-size:11.5px; max-width:180px; }
+  .rack-offer { background:var(--panel); color:var(--ink); border:1px solid var(--hov); border-left:4px solid var(--pad, var(--hov));
+                border-radius:999px; padding:5px 12px 5px 10px; font:600 12px/1.2 -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer;
+                white-space:nowrap; box-shadow:0 4px 14px var(--shadow), 0 0 0 3px var(--glow); }
+  .rack-offer:hover, .rack-offer:focus-visible { background:var(--go); color:var(--go-ink); border-color:var(--go-line); outline:none; }
   .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); text-shadow:0 0 3px var(--halo), 0 0 6px var(--halo), 0 0 2px var(--halo); white-space:nowrap; pointer-events:none; }
   /* the well section docked along the bottom (wellsection-host.js) */
   /* over the 3D view as well (z 20): a well sent from the wine rack window while 3D has no pad locked docks here */
@@ -136,8 +140,8 @@ const padColor = i => window.StratumTheme ? StratumTheme.padColor(i) : PAD_COLOR
 const esri = (name, layer) => `https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${name}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
 const tiles = layer => [esri(dark() ? "Dark" : "Light", layer)];
 const MARK = () => dark()
-  ? { halo: "#000", haloOp: .35, toeRing: "#0b1015", padFill: "#ffffff", areaFill: "#ffffff", areaOp: .07, areaLine: "#c9d3dc", quake: "#ff5fa2" }
-  : { halo: "#ffffff", haloOp: .8, toeRing: "#ffffff", padFill: "#ffffff", areaFill: "#0d8577", areaOp: .06, areaLine: "#5b7f8f", quake: "#d6336c" };
+  ? { halo: "#000", haloOp: .35, toeRing: "#0b1015", padFill: "#ffffff", areaFill: "#ffffff", areaOp: .07, areaLine: "#c9d3dc", quake: "#ff5fa2", hl: "#ffffff" }
+  : { halo: "#ffffff", haloOp: .8, toeRing: "#ffffff", padFill: "#ffffff", areaFill: "#0d8577", areaOp: .06, areaLine: "#5b7f8f", quake: "#d6336c", hl: "#14212b" };
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
 const map = new maplibregl.Map({
@@ -233,6 +237,7 @@ addEventListener("stratum:theme", () => {
   paint("toes", "circle-stroke-color", k.toeRing); paint("pads", "circle-color", k.padFill);
   paint("areas-fill", "fill-color", k.areaFill); paint("areas-fill", "fill-opacity", k.areaOp); paint("areas-line", "line-color", k.areaLine);
   paint("quakes", "circle-color", k.quake); paint("quakes", "circle-stroke-color", k.quake);
+  paint("laterals-hl-halo", "line-color", k.hl); paint("toes-hl", "circle-stroke-color", k.hl); paint("pads-hl", "circle-stroke-color", k.hl);
   refresh();
 });
 
@@ -263,7 +268,7 @@ function render() {
     map.addLayer({ id: "areas-line", type: "line", source: "areas",
       paint: { "line-color": k.areaLine, "line-width": 1, "line-dasharray": [3, 2], "line-opacity": .8 } });
     map.on("click", "areas-fill", e => {
-      if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
+      if (pickAt(e.point)) return;
       const p = e.features[0].properties;
       if (popup) popup.remove();
       popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(e.lngLat)
@@ -281,8 +286,25 @@ function render() {
       layout: { "line-cap": "round", "line-join": "round" } });
     map.addLayer({ id: "toes", type: "circle", source: "toes",
       paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, .8, 12, 3], "circle-color": ["get", "color"], "circle-stroke-color": k.toeRing, "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 0, 12, 1] } });
+    // the well under the pointer, picked out: drawn again, thicker, in an outline of ink
+    const none = ["==", ["get", "wa"], "\u0000"];
+    map.addLayer({ id: "laterals-hl-halo", type: "line", source: "laterals", filter: none,
+      paint: { "line-color": k.hl, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 4, 12, 8.5], "line-opacity": .9 },
+      layout: { "line-cap": "round", "line-join": "round" } });
+    map.addLayer({ id: "laterals-hl", type: "line", source: "laterals", filter: none,
+      paint: { "line-color": ["get", "color"], "line-width": ["interpolate", ["linear"], ["zoom"], 8, 2, 12, 4.5] },
+      layout: { "line-cap": "round", "line-join": "round" } });
+    map.addLayer({ id: "toes-hl", type: "circle", source: "toes", filter: none,
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3, 12, 6], "circle-color": ["get", "color"], "circle-stroke-color": k.hl, "circle-stroke-width": 2 } });
+    // pads: big enough to hit without hunting for them
     map.addLayer({ id: "pads", type: "circle", source: "pads",
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 11, 5, 14, 8], "circle-color": k.padFill, "circle-stroke-color": ["get", "color"], "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 7, 1, 11, 2.5, 14, 3] } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 4, 11, 8, 14, 12], "circle-color": k.padFill, "circle-stroke-color": ["get", "color"], "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 7, 1.5, 11, 3, 14, 3.5] } });
+    map.addLayer({ id: "pads-hl", type: "circle", source: "pads", filter: ["==", ["get", "id"], "\u0000"],
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 6, 11, 11, 14, 15], "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": k.hl, "circle-stroke-width": 2.5 } });
+    // what the pointer catches a well by: a wide, invisible stroke along each one
+    map.addLayer({ id: "laterals-hit", type: "line", source: "laterals",
+      paint: { "line-color": "#000", "line-opacity": 0, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 8, 12, 16] },
+      layout: { "line-cap": "round", "line-join": "round" } });
     // pad names as HTML markers: the raster base style carries no glyphs,
     // so a symbol layer cannot draw text here
     map.on("moveend", () => { updateLabels(); sidebar(); });
@@ -294,11 +316,21 @@ function render() {
     if (savedView && Array.isArray(savedView.center)) map.jumpTo({ center: savedView.center, zoom: savedView.zoom, bearing: savedView.bearing || 0, pitch: savedView.pitch || 0 });
     else if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 40, left: wide ? 360 : 24, right: wide ? 60 : 24 }, duration: 0, maxZoom: 13.5 });
     viewReady = true;
-    for (const id of ["laterals", "toes"]) {
-      map.on("mouseenter", id, () => map.getCanvas().style.cursor = "pointer");
-      map.on("mouseleave", id, () => map.getCanvas().style.cursor = "");
-      map.on("click", id, e => openWell(e.features[0].properties, e.lngLat));
-    }
+    // pointing: the pad or well under the pointer is picked out, and opens on a click
+    map.on("mousemove", e => {
+      const hit = pickAt(e.point);
+      map.getCanvas().style.cursor = hit ? "pointer" : "";
+      hoverWell(hit && hit.layer.id !== "pads" ? hit.properties.wa : null);
+      hoverPad(hit && hit.layer.id === "pads" ? hit.properties.id : null);
+      rackOffer(e.point);
+    });
+    map.getCanvas().addEventListener("mouseleave", () => { hoverWell(null); hoverPad(null); rackOffer(null); });
+    map.on("click", e => {
+      const hit = pickAt(e.point);
+      if (!hit) return;
+      if (hit.layer.id === "pads") openPad(PAD_BY_ID[hit.properties.id], e.lngLat);
+      else openWell(hit.properties, e.lngLat);
+    });
     // earthquakes: Natural Resources Canada's catalog, off until asked for
     fetch("data/seismic/events.json").then(r => r.ok ? r.json() : null).then(q => {
       if (!q) return;
@@ -326,7 +358,7 @@ function render() {
       box.addEventListener("change", () => showQuakes(box.checked));
       if (savedView && savedView.quakes) { box.checked = true; showQuakes(true); }
       map.on("click", "quakes", e => {
-        if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
+        if (pickAt(e.point)) return;
         const p = e.features[0].properties;
         if (popup) popup.remove();
         popup = new maplibregl.Popup({ closeButton: true, maxWidth: "300px" }).setLngLat(e.lngLat)
@@ -342,9 +374,6 @@ function render() {
         ].filter(Boolean).join("\n");
       });
     }).catch(() => {});
-    map.on("mouseenter", "pads", () => map.getCanvas().style.cursor = "pointer");
-    map.on("mouseleave", "pads", () => map.getCanvas().style.cursor = "");
-    map.on("click", "pads", e => openPad(PAD_BY_ID[e.features[0].properties.id], e.lngLat));
     sidebar();
     if (FOCUS) focusPad(FOCUS);
   };
@@ -362,6 +391,81 @@ function focusPad(id) {
   if (p) openPad(p);
 }
 
+// what is under the pointer: a pad first (its circle sits where its wells
+// start), then a toe, then the nearest well's stroke
+function pickAt(pt) {
+  const layers = ["pads", "toes", "laterals-hit"].filter(l => map.getLayer(l));
+  if (!layers.length) return null;
+  const f = map.queryRenderedFeatures(pt, { layers });
+  return f.find(x => x.layer.id === "pads") || f.find(x => x.layer.id === "toes") || f[0] || null;
+}
+let hoveredWa = null, hoveredPad = null;
+function hoverWell(wa) {
+  if (wa === hoveredWa || !map.getLayer("laterals-hl")) return;
+  hoveredWa = wa;
+  const f = ["==", ["get", "wa"], wa == null ? "\u0000" : wa];
+  for (const id of ["laterals-hl-halo", "laterals-hl", "toes-hl"]) map.setFilter(id, f);
+}
+function hoverPad(id) {
+  if (id === hoveredPad || !map.getLayer("pads-hl")) return;
+  hoveredPad = id;
+  map.setFilter("pads-hl", ["==", ["get", "id"], id == null ? "\u0000" : id]);
+}
+
+// ---------- a pad's wine rack, offered at its toes ----------
+// As in the 3D view: point at the toe end of a pad and its Wine rack button
+// shows there; it opens in the wine rack window, and the map stays as it is.
+const rackBtn = document.createElement("button");
+rackBtn.type = "button"; rackBtn.className = "rack-offer"; rackBtn.textContent = "Wine rack ↗";
+const rackMark = new maplibregl.Marker({ element: rackBtn, anchor: "center" });
+let rackPad = null, rackHideT = 0, overRack = false;
+// a pad's toes, in a group per side: a pad drilled both ways has two ends, and
+// the button goes to the one the pointer is at
+function toesOf(p) {
+  if (!p._toes) {
+    const k = Math.cos(p.lat * Math.PI / 180), ws = p.wells.filter(w => w.path && w.path.length > 1);
+    // the pad's axis: an axial mean of its wells' directions, so both ways count as one line
+    let sx = 0, sy = 0;
+    const v = ws.map(w => { const t = w.path[w.path.length - 1], x = (t[0] - p.lon) * k, y = t[1] - p.lat, th = Math.atan2(y, x); sx += Math.cos(2 * th); sy += Math.sin(2 * th); return { t, x, y }; });
+    const ax = Math.atan2(sy, sx) / 2, ux = Math.cos(ax), uy = Math.sin(ax);
+    const sides = [v.filter(q => q.x * ux + q.y * uy >= 0), v.filter(q => q.x * ux + q.y * uy < 0)].filter(g => g.length);
+    p._toes = sides.map(g => ({ pts: g.map(q => q.t), c: [g.reduce((a, q) => a + q.t[0], 0) / g.length, g.reduce((a, q) => a + q.t[1], 0) / g.length] }));
+  }
+  return p._toes;
+}
+// within reach of a toe, or of the middle of a group of them
+function rackOffer(pt) {
+  let best = null, bd = Infinity;
+  if (pt && map.getZoom() >= 11) {
+    const b = map.getBounds();
+    for (const S of SETS) for (const p of S.pads) for (const g of toesOf(p)) {
+      if (!b.contains(g.c)) continue;
+      const c = map.project(g.c), d = Math.min(Math.hypot(c.x - pt.x, c.y - pt.y), ...g.pts.map(q => { const v = map.project(q); return Math.hypot(v.x - pt.x, v.y - pt.y); }));
+      if (d < 40 && d < bd) { bd = d; best = { p, g }; }
+    }
+  }
+  if (best) {
+    clearTimeout(rackHideT);
+    if (!rackPad || rackPad.p !== best.p || rackPad.g !== best.g) {
+      rackPad = best;
+      rackBtn.title = `Wine rack: ${best.p.name} across its laterals, in the wine rack window`;
+      rackBtn.setAttribute("aria-label", rackBtn.title);
+      rackBtn.style.setProperty("--pad", best.p.color);
+      // just past the toes, on along the laterals' line, so it covers none of them
+      const c = map.project(best.g.c), o = map.project([best.p.lon, best.p.lat]), dx = c.x - o.x, dy = c.y - o.y, l = Math.hypot(dx, dy) || 1;
+      const reach = Math.max(...best.g.pts.map(q => { const v = map.project(q); return ((v.x - c.x) * dx + (v.y - c.y) * dy) / l; }), 0);
+      rackMark.setLngLat(best.g.c).setOffset([dx / l * (reach + 26), dy / l * (reach + 26)]).addTo(map);
+    }
+  } else if (rackPad && !overRack) {
+    clearTimeout(rackHideT);
+    rackHideT = setTimeout(() => { if (!overRack) { rackMark.remove(); rackPad = null; } }, 450);
+  }
+}
+rackBtn.addEventListener("mouseenter", () => { overRack = true; clearTimeout(rackHideT); });
+rackBtn.addEventListener("mouseleave", () => { overRack = false; rackOffer(null); });
+rackBtn.addEventListener("click", e => { e.stopPropagation(); if (rackPad && window.stratumRack) window.stratumRack.open(rackPad.p.id); });
+map.on("movestart", () => { if (!overRack) { rackMark.remove(); rackPad = null; } });
+
 const labelMarkers = new Map();
 function updateLabels() {
   const b = map.getBounds();
@@ -372,7 +476,7 @@ function updateLabels() {
     if (labelMarkers.has(p.id)) continue;
     const el = document.createElement("div");
     el.className = "padlabel"; el.textContent = p.name; el.style.color = p.color;
-    labelMarkers.set(p.id, new maplibregl.Marker({ element: el, anchor: "top", offset: [0, 9] }).setLngLat([p.lon, p.lat]).addTo(map));
+    labelMarkers.set(p.id, new maplibregl.Marker({ element: el, anchor: "top", offset: [0, 13] }).setLngLat([p.lon, p.lat]).addTo(map));
   }
 }
 
@@ -483,6 +587,14 @@ function sidebar() {
     const p = PAD_BY_ID[pad.dataset.id];
     if (p) { map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 12.5) }); openPad(p); }
   }));
+  el.querySelectorAll(".pad li a").forEach(a => {
+    a.addEventListener("mouseenter", () => hoverWell(WELL_BY_WA[a.dataset.wa] ? WELL_BY_WA[a.dataset.wa].wa : null));
+    a.addEventListener("mouseleave", () => hoverWell(null));
+  });
+  el.querySelectorAll(".pad > button").forEach(b => {
+    b.addEventListener("mouseenter", () => hoverPad(b.parentElement.dataset.id));
+    b.addEventListener("mouseleave", () => hoverPad(null));
+  });
   el.querySelectorAll(".pad li a").forEach(a => a.addEventListener("click", ev => {
     ev.preventDefault();
     const w = WELL_BY_WA[a.dataset.wa]; if (!w || !w.path) return;
