@@ -550,13 +550,34 @@ function note(html) {
   clearTimeout(noteTimer); noteTimer = setTimeout(() => { n.hidden = true; }, 9000);
 }
 const chartsUrl = label => `wellview.html?wa=${encodeURIComponent(WA)}${label ? '&stage=' + encodeURIComponent(label) : ''}`;
+// A stage's charts open in a window of their own, so the map or 3D view this
+// section sits under stays where it is. One window, reused: a stage of the well
+// it already shows is picked there without reloading it.
+let chartsWin = null;
+function chartsWindow(label) {
+  const url = chartsUrl(label);
+  try {
+    if (chartsWin && !chartsWin.closed && /\/wellview(\.html)?$/.test(chartsWin.location.pathname)
+        && new URLSearchParams(chartsWin.location.search).get('wa') === WA) {
+      if (label) chartsWin.postMessage({ type: 'ws:select-stage', wa: WA, label }, ORIGIN);
+      chartsWin.focus();
+      return;
+    }
+  } catch (e) { /* a window this page no longer reaches: open afresh */ }
+  chartsWin = window.open(url, 'stratum-charts', 'popup,width=1280,height=860');
+  if (chartsWin) { try { chartsWin.focus(); } catch (e) { /* the browser decides */ } }
+  else note(`Your browser blocked the charts window. <a href="${url}" target="_blank" rel="noopener">Open the charts</a>`);
+}
 function openStage(s) {
   const label = s && s.curves ? s.label : null;
-  if (EMBED) { parent.postMessage({ type: 'ws:stage', wa: WA, label }, ORIGIN); return; }
-  if (!owner) { window.open(chartsUrl(label), '_blank'); return; }
-  ask({ type: 'open-stage', wa: WA, label }).then(ok => {
-    if (!ok) note(`The main window has closed. <a href="${chartsUrl(label)}" target="_blank" rel="noopener">Open the charts in a new tab</a>`);
-  });
+  // popped out beside a well's charts page: the stage is picked on that page instead
+  if (!EMBED && owner && ownerPage === 'charts') {
+    ask({ type: 'open-stage', wa: WA, label }).then(ok => {
+      if (!ok) { ownerPage = null; note(`That charts page has closed. <a href="${chartsUrl(label)}" target="_blank" rel="noopener">Open the charts</a>`); }
+    });
+    return;
+  }
+  chartsWindow(label);
 }
 $('ws-charts').onclick = () => openStage(W && (W.stages.find(s => s.label === HI && s.curves) || W.stages.find(s => s.curves)));
 

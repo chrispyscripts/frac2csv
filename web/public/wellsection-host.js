@@ -3,7 +3,8 @@
 // otherwise a dock along the bottom of the map. Pop out (in the section) moves
 // it into a window of its own that keeps following the selected well; the two
 // talk over BroadcastChannel 'stratum-section', addressed by this page's id.
-// A stage clicked in the section, docked or popped, opens its charts here.
+// A stage clicked in the section opens its charts in a window of their own
+// (wellsection.js), so this page stays as it is.
 (() => {
   'use strict';
   const ORIGIN = location.origin;
@@ -110,11 +111,8 @@
     else if (m.type === 'ws:popped' && (from3D || fromDock)) {      // the section opened its own window
       popHeard = true; shown = { wa: String(m.wa), stage: m.stage == null ? null : String(m.stage) };
       closeDock(from3D ? '3d' : 'map');
-    } else if (m.type === 'ws:stage' && m.wa) openCharts(m.wa, m.label);
+    }
   });
-  const openCharts = (wa, label) => {
-    location.href = 'wellview.html?wa=' + encodeURIComponent(wa) + (label ? '&stage=' + encodeURIComponent(label) : '');
-  };
   if (chan) {
     chan.onmessage = e => {
       const m = e.data || {};
@@ -123,10 +121,9 @@
         chan.postMessage({ type: 'claim', from: ME, page: 'map' });   // e.g. a window reopened from a session
       }
       else if (m.type === 'bye') popHeard = false;
-      else if (m.to === ME && (m.type === 'open-stage' || m.type === 'dock')) {
+      else if (m.to === ME && m.type === 'dock') {
         chan.postMessage({ type: 'ack', id: m.id });
-        if (m.type === 'dock') { popHeard = false; openDock(m.wa, m.stage); try { window.focus(); } catch (err) { /* the browser decides */ } }
-        else openCharts(m.wa, m.label);
+        popHeard = false; openDock(m.wa, m.stage); try { window.focus(); } catch (err) { /* the browser decides */ }
       }
     };
     // a section popped out before this page loaded: hear from it, and be its main window now

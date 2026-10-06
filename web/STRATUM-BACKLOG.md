@@ -90,6 +90,10 @@ each entry.
   Picking a well (map lateral, sidebar list, 3D click or the 3D well menu) now
   opens this view straight away (2026-10-05); locking a pad still shows its pad
   data until a well is picked, and View well reopens it after ×.
+  Clicking a stage (or Charts →) opens its charts in a window of their own
+  (2026-10-05), so the map or 3D view stays put: one window, reused, picking
+  the stage without a reload when it already shows the well. Popped out beside
+  a well's charts page, the stage is picked on that page instead.
   Hovering a stage (or stepping with ← →) shows its stage chart as a
   thumbnail above it: the Lab's curves in the stage chart's names and colours,
   each on its own rounded scale, curves hidden on the charts page hidden here,

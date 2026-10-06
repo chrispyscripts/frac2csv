@@ -596,6 +596,13 @@ $('wc-section').onclick = () => {
     'stratum-section', 'popup,width=1280,height=620');
   if (w) announceSection();
 };
+// the charts window a well section opened: it picks the stage clicked there
+addEventListener('message', e => {
+  const m = e.data;
+  if (e.origin !== ORIGIN || !m || m.type !== 'ws:select-stage' || String(m.wa) !== WA) return;
+  const i = STAGES.findIndex(s => s.label === String(m.label));
+  if (i >= 0) selectStage(i);
+});
 if (secChan) secChan.onmessage = e => {
   const m = e.data || {};
   if (m.type === 'hello') { secChan.postMessage({ type: 'claim', from: ME, page: 'charts' }); return; }
