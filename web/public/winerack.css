@@ -1,0 +1,88 @@
+/* light by default; theme.js sets [data-theme=dark] for the dark one */
+:root{--page:#f3f6f8;--panel:#ffffff;--plot:#ffffff;--line:#d3dde4;--grid:#e4eaef;--zero:#b9c8d2;--ink:#14212b;--mut:#566b78;--faint:#7b8e9a;
+      --accent:#0d8577;--btn:#eef3f6;--btn-line:#b9c8d2;--on-bg:#0d8577;--on-ink:#ffffff;--halo:#ffffff;--hole:#ffffff;
+      --pop:#fffffff5;--pop-line:#0d8577;--shadow:rgba(20,33,43,.16);--dim:#7b8e9a;--dim-ink:#3d505c;--pick:#14212b;
+      --mono:ui-monospace,Menlo,Consolas,monospace}
+:root[data-theme=dark]{--page:#0b1620;--panel:#0d1924;--plot:#0d1b26;--line:#29404c;--grid:#1b2f3b;--zero:#345260;--ink:#e7f4fa;--mut:#93adb9;--faint:#7f97a4;
+      --accent:#5ee2d0;--btn:#152936;--btn-line:#345260;--on-bg:#246358;--on-ink:#f2fffc;--halo:#0d1b26;--hole:#0b1620;
+      --pop:#102733f5;--pop-line:#5ccbb7;--shadow:#000a;--dim:#5d7a88;--dim-ink:#b9cbd4;--pick:#ffffff}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+button,select{background:var(--btn);border:1px solid var(--btn-line);border-radius:8px;color:var(--ink);padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
+button:hover,select:hover{border-color:var(--accent)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.wr-head{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;
+  padding:12px 20px 10px;background:var(--page);border-bottom:1px solid var(--line)}
+.wr-head h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.3px}
+.wr-sub{color:var(--mut);font:12px var(--mono);margin-top:2px}
+.wr-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wr-seg{display:flex;border:1px solid var(--btn-line);border-radius:8px;overflow:hidden}
+.wr-seg button{border:0;border-radius:0;padding:6px 10px}
+.wr-seg button+button{border-left:1px solid var(--btn-line)}
+.wr-seg button[aria-pressed=true]{background:var(--on-bg);color:var(--on-ink)}
+.wr-seg button:disabled{opacity:.4;cursor:default}
+.wr-key{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:11.5px}
+.wr-key i{display:inline-block;width:96px;height:8px;border-radius:3px}
+.wr-key select{padding:3px 6px;font-size:12px}
+.rk-nonekey::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px dashed var(--faint);margin-right:5px;vertical-align:-1px}
+
+main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
+.wr-empty{color:var(--mut);max-width:60ch;margin:40px auto;text-align:center;line-height:1.6}
+
+.rk{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px 14px;box-shadow:0 1px 2px var(--shadow);scroll-margin-top:80px}
+.rk.fresh{animation:rk-in .9s ease-out}
+@keyframes rk-in{from{box-shadow:0 0 0 3px var(--accent)}to{box-shadow:0 1px 2px var(--shadow)}}
+.rk-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}
+.rk-id{min-width:0;flex:1}
+.rk-title{font-weight:650;font-size:15.5px;display:flex;align-items:center;gap:8px}
+.rk-title i{display:inline-block;width:10px;height:10px;border-radius:3px;flex:none}
+.rk-sub{color:var(--mut);font:12px var(--mono);margin-top:2px}
+.rk-acts{display:flex;gap:6px;flex:none}
+.rk-acts button{padding:4px 9px;font-size:13px;line-height:1.2}
+.rk-body{display:grid;grid-template-columns:minmax(260px,38%) 1fr;gap:12px;height:clamp(300px,48vh,540px)}
+.rk-planbox{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0;min-width:0}
+.rk svg{width:100%;height:100%;min-height:0;display:block;background:var(--plot);border:1px solid var(--line);border-radius:12px;font-family:var(--mono)}
+.rk-msg{display:grid;place-items:center;height:160px;color:var(--mut);text-align:center;padding:16px}
+.rk-plan{cursor:ew-resize;touch-action:none}
+.rk-ctl{display:flex;align-items:center;gap:10px;min-width:0}
+.rk-ctl input{flex:1 1 160px;min-width:110px;accent-color:var(--accent)}
+.rk-play{padding:6px 12px;min-width:44px}
+.rk-where{flex:0 1 auto;color:var(--mut);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* the drawings: text wears text tokens, marks carry the colour */
+.rk-paths polyline{fill:none;stroke-width:1.6;opacity:.8}
+.rk-paths polyline.on{stroke-width:3;opacity:1}
+.rk-plan-wa{fill:var(--mut);font-size:10px;paint-order:stroke;stroke:var(--halo);stroke-width:3px}
+.rk-plan-wa.on{fill:var(--ink);font-weight:700}
+.rk-padpt{fill:var(--ink);stroke:var(--hole);stroke-width:2}
+.rk-line{stroke:var(--accent);stroke-width:2}
+.rk-handle{fill:var(--accent)}
+.rk-meet{stroke:var(--hole);stroke-width:1.5}
+.rk-meet.landing{fill:var(--hole);stroke:var(--mut);stroke-dasharray:2 2}
+.rk-north{stroke:var(--mut);stroke-width:1.5}
+.rk-dim line{stroke:var(--dim)}
+.rk-dim text{fill:var(--dim-ink);font-size:10.5px}
+.rk-empty{fill:var(--mut);font-size:13px;font-family:system-ui}
+.rk-grid line{stroke:var(--grid)}
+.rk-grid line.rk-zero{stroke:var(--zero);stroke-dasharray:3 4}
+.rk-grid text{fill:var(--mut);font-size:11px}
+.rk-axis{fill:var(--faint);font-size:11px;font-family:system-ui}
+.rk-end{cursor:pointer;outline:none}
+.rk-end circle{stroke-width:2;transition:r .15s}
+.rk-end.landing circle{stroke-dasharray:3 2}
+.rk-end circle.rk-none{stroke:var(--faint);stroke-dasharray:3 3;stroke-width:1.5}
+.rk-end circle.rk-est{stroke:var(--mut);stroke-dasharray:3 3;stroke-width:1.5}
+.rk-end:hover circle,.rk-end:focus-visible circle{r:14px;stroke:var(--accent);stroke-width:2.5}
+.rk-end.on circle{stroke:var(--pick);stroke-width:3}
+.rk-wa{fill:var(--ink);font-size:11px;font-weight:600;paint-order:stroke;stroke:var(--halo);stroke-width:3px}
+.rk-tvd{fill:var(--mut);font-size:10px;paint-order:stroke;stroke:var(--halo);stroke-width:3px}
+
+.wr-tip{position:fixed;z-index:20;pointer-events:none;background:var(--pop);border:1px solid var(--pop-line);border-radius:8px;padding:8px 11px;
+  font-size:12px;line-height:1.5;max-width:280px;color:var(--ink);box-shadow:0 8px 22px var(--shadow)}
+.wr-tip b{display:block}
+
+@media(max-width:900px){.rk-body{grid-template-columns:1fr;grid-template-rows:minmax(150px,38%) 1fr;height:clamp(420px,80vh,720px)}}
+@media(max-width:640px){.wr-head{padding:10px 16px}main{padding:12px 16px 20px}.rk-where{display:none}.wr-key i{width:60px}
+  .rk-end:hover circle,.rk-end:focus-visible circle{r:11px}}

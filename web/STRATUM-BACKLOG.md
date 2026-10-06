@@ -30,8 +30,15 @@ each entry.
   gamma at the line, with the spacing between neighbours along the top. Wells
   drop in through their landing curve (dashed) as the line reaches them and drop
   out past their toes; the frame stays fixed for the pad so wells move within
-  it. Click a well to view it below on that stage. The line's place is kept with
-  the 3D view (Back, sessions).
+  it. Since 2026-10-05 (later) it opens in a window of its own
+  (`winerack.html?pads=a,b`, named `stratum-rack`), from the map's pad popup or
+  the 3D view's buttons, and the page that asked stays as it was; each pad after
+  it is stacked underneath (↑ to reorder, × to close). The well's 2D section
+  stays in the main window's dock: opening a rack shows its middle well there,
+  a well clicked in the rack switches it, and the rack's line moves a cursor
+  along that well, picking out the stage at the line with its chart as if
+  hovered (BroadcastChannel `stratum-rack`, wellsection-host.js). Lines, colour
+  and the picked well come back with the window and with sessions.
 - **100 km region around Gundy** (2026-10-03). `web/scripts/build_region.py`
   builds every surveyed, fractured BC well within 100 km (2,917 wells, 495
   pads) from the BCER bulk files: pads by surface location, per-pad files for
@@ -136,6 +143,21 @@ each entry.
   the test pad's toes now sit within ~2 m of a mapping package's bottom-hole
   positions (were 6-9 m). Sources: surface from the BCER wells table, path and
   toe from its directional survey (deepest drilling event).
+- **Light theme, the default** (2026-10-05). `theme.js` sets
+  `<html data-theme>` before paint from `stratum.theme` (light unless dark is
+  chosen); a sun/moon switch sits by Sessions on every page and the choice
+  follows across windows and sessions. Light basemap (Esri Light Gray), pad
+  colours re-picked for white (validated for colour-blind separation), gamma
+  schemes with light-ground stops (high gamma darkest), the Lab pages in their
+  own light colours (sync_lab_views.py patches are now theme-aware). Dark is as
+  before.
+- **Arrow keys in 3D** (2026-10-05). As on the map: arrows move, Shift + arrows
+  turn and tilt, + / − zoom; held keys keep going smoothly.
+- **Pressure and rate along the well** (2026-10-05). The 2D well section draws
+  each stage's treating pressure over its slurry rate in a strip above the
+  well, spanning the stage's own stretch of hole, one scale for every stage;
+  hover a stage there for its full chart, click for its charts. "Curves"
+  toggles it.
 - **Private, invite-only** (2026-10-04). Every page, data file and the extractor
   need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
   anything is served); only `login.html` and `/api/auth` are open. Accounts are

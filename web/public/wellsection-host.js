@@ -5,15 +5,21 @@
 // talk over BroadcastChannel 'stratum-section', addressed by this page's id.
 // A stage clicked in the section opens its charts in a window of their own
 // (wellsection.js), so this page stays as it is.
+//
+// The wine rack window (winerack.html) drives the section here too, over
+// BroadcastChannel 'stratum-rack': a well clicked there is shown here, and its
+// line, as it moves along the pad, moves a cursor along the well (`at`, metres
+// MD), picking out the stage there with its chart as if it were hovered.
 (() => {
   'use strict';
   const ORIGIN = location.origin;
   const H_KEY = 'stratum.sectionHeight', STATE_KEY = 'stratum.sectionDock';
   const chan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-section') : null;
   const ME = Math.random().toString(36).slice(2);
-  const url = (wa, stage) => 'wellsection.html?wa=' + encodeURIComponent(wa)
-    + (stage != null && stage !== '' ? '&stage=' + encodeURIComponent(stage) : '') + '&embedded=1&owner=' + ME + '&page=map';
-  const tell = (wa, stage) => { if (chan) chan.postMessage({ type: 'show', wa: String(wa), stage, from: ME, page: 'map' }); };
+  const atq = at => at != null && isFinite(at) ? '&at=' + Math.round(at) : '';
+  const url = (wa, stage, at) => 'wellsection.html?wa=' + encodeURIComponent(wa)
+    + (stage != null && stage !== '' ? '&stage=' + encodeURIComponent(stage) : '') + atq(at) + '&embedded=1&owner=' + ME + '&page=map';
+  const tell = (wa, stage, at) => { if (chan) chan.postMessage({ type: 'show', wa: String(wa), stage, at: at == null ? null : +at, from: ME, page: 'map' }); };
   const ug = () => window.stratum3D && window.stratum3D.section;   // the 3D view's bottom panel
 
   let popHeard = false;                  // a popped-out section window has said hello
@@ -49,25 +55,32 @@
   });
 
   // the section in a frame: told directly when it is already a section, loaded otherwise
-  function showIn(frame, wa, stage) {
+  function showIn(frame, wa, stage, at) {
     try {
       const w = frame.contentWindow;
-      if (w && typeof w.stratumSectionShow === 'function') { w.stratumSectionShow(wa, stage); return; }
+      if (w && typeof w.stratumSectionShow === 'function') { w.stratumSectionShow(wa, stage, at); return; }
     } catch (e) { /* loading */ }
-    frame.src = url(wa, stage);
+    frame.src = url(wa, stage, at);
+  }
+  // the rack's line on the well shown: straight to the section where it is a frame here
+  function cursorIn(frame, wa, at) {
+    try {
+      const w = frame.contentWindow;
+      if (w && typeof w.stratumSectionCursor === 'function') w.stratumSectionCursor(wa, at);
+    } catch (e) { /* loading: it has the line from its address */ }
   }
   const popAlive = () => popHeard;
 
-  function openDock(wa, stage) {
+  function openDock(wa, stage, at) {
     shown = { wa: String(wa), stage: stage == null ? null : String(stage) };
     const u = ug();
     if (u && u.available()) {
       if (docked === 'map') closeDock('map');
-      if (u.showing()) showIn(u.frame(), wa, stage); else u.show(url(wa, stage));
+      if (u.showing()) showIn(u.frame(), wa, stage, at); else u.show(url(wa, stage, at));
       docked = '3d';
       return;
     }
-    if (!dock.hidden) showIn(mapFrame, wa, stage); else mapFrame.src = url(wa, stage);
+    if (!dock.hidden) showIn(mapFrame, wa, stage, at); else mapFrame.src = url(wa, stage, at);
     dock.hidden = false; document.body.classList.add('ws-docked'); resizeMap();
     docked = 'map';
   }
@@ -78,14 +91,21 @@
   }
 
   // "View well": to the popped-out window when there is one, docked otherwise
-  function view(wa, stage) {
+  function view(wa, stage, at) {
     if (wa == null) return;
     if (popAlive()) {
       shown = { wa: String(wa), stage: stage == null ? null : String(stage) };
-      tell(wa, stage);
+      tell(wa, stage, at);
       return;
     }
-    openDock(wa, stage);
+    openDock(wa, stage, at);
+  }
+  // a cursor along the well shown, at `at` metres MD (null: none), wherever the section is
+  function cursor(wa, at) {
+    if (wa == null || String(wa) !== shown.wa) return;
+    if (popAlive() && chan) chan.postMessage({ type: 'cursor', wa: String(wa), at: at == null ? null : +at, from: ME });
+    if (docked === '3d') { const u = ug(); if (u && u.showing()) cursorIn(u.frame(), wa, at); }
+    else if (docked === 'map' && !dock.hidden) cursorIn(mapFrame, wa, at);
   }
   // the selection moved: an open section follows it
   function follow(wa, stage) {
@@ -146,8 +166,21 @@
     if (s && s.wa) setTimeout(() => { if (!(ug() && ug().available())) openDock(s.wa, s.stage); }, 0);
   } catch (e) { /* private mode */ }
 
+  // the wine rack window: whichever FracView main window spoke to it last is the one it drives
+  const rackChan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-rack') : null;
+  if (rackChan) {
+    rackChan.onmessage = e => {
+      const m = e.data || {};
+      if (m.to && m.to !== ME) return;
+      if (m.type === 'view') view(m.wa, m.stage, m.at);
+      else if (m.type === 'cursor') cursor(m.wa, m.at);
+      else if (m.type === 'hello') rackChan.postMessage({ type: 'main', from: ME });
+    };
+    rackChan.postMessage({ type: 'main', from: ME });
+  }
+
   window.stratumSection = {
-    view, follow,
+    view, follow, cursor, id: ME,
     closeMapDock: () => { if (!dock.hidden) closeDock('map'); },
     open: () => popAlive() || !!docked,
   };

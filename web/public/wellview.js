@@ -11,15 +11,28 @@ const $ = id => document.getElementById(id);
 const WA = new URLSearchParams(location.search).get('wa') || '';
 const ORIGIN = location.origin;
 
+// Light or dark (theme.js): every colour drawn here is picked as it is drawn,
+// and the page draws again on `stratum:theme`.
+const dark = () => !!(window.StratumTheme && StratumTheme.dark());
+const pick = (light, darkValue) => dark() ? darkValue : light;
+
 // Stratum's series keys -> the Lab's names and colours ("Our terms"), so a
-// curve is called and coloured the same here, in Stacked and in FracView.
+// curve is called and coloured the same here, in Stacked and in FracView:
+// the Lab's own colours in light, ones that read on the dark panel in dark.
 const SERIES = [
-  { k: 'press', name: 'Tr Press', color: '#f0555a' },
-  { k: 'rate', name: 'Slurry Rate', color: '#4f8ff7' },
-  { k: 'wh_conc', name: 'WH Prop Conc', color: '#3fb950' },
-  { k: 'bh_conc', name: 'BH Prop Conc', color: '#b87fd9' },
-  { k: 'bh_press', name: 'BH Press', color: '#39c5cf' },
+  { k: 'press', name: 'Tr Press', light: '#a31631', dark: '#f0555a' },
+  { k: 'rate', name: 'Slurry Rate', light: '#1f6feb', dark: '#4f8ff7' },
+  { k: 'wh_conc', name: 'WH Prop Conc', light: '#1e7a34', dark: '#3fb950' },
+  { k: 'bh_conc', name: 'BH Prop Conc', light: '#7a4fd6', dark: '#b87fd9' },
+  { k: 'bh_press', name: 'BH Press', light: '#0b7f8a', dark: '#39c5cf' },
 ];
+// the stage chart's own ink, per theme
+const INK = {
+  light: { base: '#b9c8d2', grid: '#e4eaef', axis: '#566b78', faint: '#7b8e9a', quake: '#d6336c', quakeText: '#a61e4d',
+           rule: '#7b8e9a', ring: '#ffffff', tipBg: '#fffffff5', tipEdge: '#0d8577', tipInk: '#14212b' },
+  dark: { base: '#345260', grid: '#1b2f3b', axis: '#93adb9', faint: '#7f97a4', quake: '#ff5fa2', quakeText: '#ffd6e7',
+          rule: '#9fb7c4', ring: '#0b1620', tipBg: 'rgba(16,39,51,.95)', tipEdge: '#5ccbb7', tipInk: '#e7f4fa' },
+};
 const GP = { L: 50, R: 16, T: 14, B: 40 };
 const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 const HIDDEN_KEY = 'stratum.hiddenCurves';
@@ -61,7 +74,7 @@ function buildStages(d) {
         values[i] = v == null || !isFinite(v) ? NaN : v;
         if (v != null && isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
       });
-      channels.push({ name: def.name, color: def.color, unit: units[def.k] || '', values,
+      channels.push({ name: def.name, get color() { return pick(def.light, def.dark); }, unit: units[def.k] || '', values,
                       dataLo: lo, vmax: hi, hi: niceCeil(hi) });
     }
     const n = Math.max(0, ...channels.map(c => c.values.length));
@@ -283,7 +296,7 @@ function drawChart() {
   ctx.setTransform(d, 0, 0, d, 0, 0);
   const Wd = r.width, H = r.height, { L, R, T, B } = GP, plotW = Wd - L - R, plotH = H - T - B;
   ctx.clearRect(0, 0, Wd, H);
-  const st = STAGES[sel];
+  const st = STAGES[sel], P = INK[dark() ? 'dark' : 'light'];
   const vis = st.channels.filter(c => !hidden.has(c.name));
   const X = t => L + (t - view.t0) / (view.t1 - view.t0) * plotW;
   const Y = (v, c) => T + (1 - v / c.hi) * plotH;
@@ -293,7 +306,7 @@ function drawChart() {
   ctx.font = '11px ui-monospace,Menlo,monospace'; ctx.textAlign = 'right';
   for (const f of fracs) {
     const y = T + (1 - f) * plotH;
-    ctx.strokeStyle = f === 0 ? '#345260' : '#1b2f3b'; ctx.lineWidth = 1;
+    ctx.strokeStyle = f === 0 ? P.base : P.grid; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(L, Math.round(y) + .5); ctx.lineTo(L + plotW, Math.round(y) + .5); ctx.stroke();
     if (f === 0) continue;
     // the rows move as one block, so the top line's labels stay on the canvas
@@ -308,15 +321,15 @@ function drawChart() {
 
   // time axis
   const step = timeTicks(view.t1 - view.t0);
-  ctx.textAlign = 'center'; ctx.fillStyle = '#93adb9';
+  ctx.textAlign = 'center'; ctx.fillStyle = P.axis;
   const first = Math.ceil(view.t0 / step) * step;
   for (let t = first; t <= view.t1 + 1e-6; t += step) {
     const x = X(t);
-    ctx.strokeStyle = '#1b2f3b';
+    ctx.strokeStyle = P.grid;
     ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, T); ctx.lineTo(Math.round(x) + .5, T + plotH); ctx.stroke();
     ctx.fillText(stamp(st, t, step < 60), x, T + plotH + 16);
   }
-  ctx.textAlign = 'left'; ctx.fillStyle = '#7f97a4';
+  ctx.textAlign = 'left'; ctx.fillStyle = P.faint;
   ctx.fillText(st.clock0 != null ? `${st.date} · clock time` : 'elapsed (no clock on the chart)', L, H - 6);
 
   // curves
@@ -343,11 +356,11 @@ function drawChart() {
       const t = (q.t - st.utc0) / 1000;
       if (t < view.t0 || t > view.t1) return;
       const x = X(t);
-      ctx.strokeStyle = '#ff5fa2'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = P.quake; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, T); ctx.lineTo(Math.round(x) + .5, T + plotH); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = '#ff5fa2';
+      ctx.setLineDash([]); ctx.fillStyle = P.quake;
       ctx.beginPath(); ctx.arc(x, T + 6, 4 + Math.max(0, q.mag || 0) * 1.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#ffd6e7';
+      ctx.fillStyle = P.quakeText;
       const label = q.gm != null ? `ground motion at pad · ${q.gm} %g${q.gm >= 0.8 ? ' (over BCER threshold)' : ''}`
         : `M${q.mag} · ${q.km} km` + (q.src === 'bcsrc' ? (q.herr ? ` ±${(q.herr / 1000).toFixed(1)}` : '') : ' (catalogue, km-scale)');
       // near the right edge the label goes on the line's left
@@ -361,14 +374,14 @@ function drawChart() {
   // hover: a rule and the reading of every shown curve at that sample
   if (hoverT != null && vis.length) {
     const i = Math.max(0, Math.min(st.n - 1, Math.round(hoverT / st.dsec))), t = i * st.dsec, x = X(t);
-    ctx.strokeStyle = '#9fb7c4'; ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = P.rule; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(Math.round(x) + .5, T); ctx.lineTo(Math.round(x) + .5, T + plotH); ctx.stroke();
     ctx.setLineDash([]);
     const rows = vis.map(c => ({ c, v: c.values[i] }));
     rows.forEach(({ c, v }) => {
       if (!isFinite(v)) return;
       ctx.beginPath(); ctx.arc(x, Y(v, c), 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = c.color; ctx.fill(); ctx.strokeStyle = '#0b1620'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = c.color; ctx.fill(); ctx.strokeStyle = P.ring; ctx.lineWidth = 2; ctx.stroke();
     });
     const head = `${stamp(st, t, true)}  ·  +${Math.floor(t / 60)}:${p2(Math.round(t % 60))}`;
     ctx.font = '12px ui-monospace,Menlo,monospace';
@@ -376,16 +389,16 @@ function drawChart() {
     const bw = Math.max(ctx.measureText(head).width, ...lines.map(s => ctx.measureText(s).width)) + 34;
     const bh = 22 + lines.length * 17;
     const bx = x + 14 + bw > L + plotW ? x - 14 - bw : x + 14, by = T + 8;
-    ctx.fillStyle = 'rgba(16,39,51,.95)'; ctx.strokeStyle = '#5ccbb7'; ctx.lineWidth = 1;
+    ctx.fillStyle = P.tipBg; ctx.strokeStyle = P.tipEdge; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.fill(); ctx.stroke();
-    ctx.textAlign = 'left'; ctx.fillStyle = '#e7f4fa'; ctx.fillText(head, bx + 10, by + 16);
+    ctx.textAlign = 'left'; ctx.fillStyle = P.tipInk; ctx.fillText(head, bx + 10, by + 16);
     rows.forEach(({ c }, k) => {
       ctx.fillStyle = c.color; ctx.fillRect(bx + 10, by + 27 + k * 17, 10, 3);
-      ctx.fillStyle = '#e7f4fa'; ctx.fillText(lines[k], bx + 26, by + 33 + k * 17);
+      ctx.fillStyle = P.tipInk; ctx.fillText(lines[k], bx + 26, by + 33 + k * 17);
     });
   }
   if (!vis.length) {
-    ctx.fillStyle = '#93adb9'; ctx.textAlign = 'center'; ctx.font = '13px system-ui';
+    ctx.fillStyle = P.axis; ctx.textAlign = 'center'; ctx.font = '13px system-ui';
     ctx.fillText('Every curve is hidden — click a name above to show it.', L + plotW / 2, T + plotH / 2);
   }
 }
@@ -424,6 +437,13 @@ cv.addEventListener('pointerleave', () => { hoverT = null; drawChart(); });
 cv.addEventListener('dblclick', () => { if (STAGES.length) { view = { t0: 0, t1: tMax(STAGES[sel]) }; afterView(false); } });
 $('wc-zoomreset').onclick = () => { view = { t0: 0, t1: tMax(STAGES[sel]) }; afterView(false); };
 new ResizeObserver(drawChart).observe(document.querySelector('.wc-plot'));
+// light or dark: the chart and the legend's swatches are coloured here, and so
+// are Stacked's curves (they come with the stage), so it is sent again. Both
+// Lab pages pick their own grid and text and redraw on the same event.
+addEventListener('stratum:theme', () => {
+  if (!STAGES.length) return;
+  renderLegend(); drawChart(); pushStacked();
+});
 
 // ---------- the Lab's views, embedded ----------
 const frames = {};

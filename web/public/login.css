@@ -1,28 +1,34 @@
-:root{--panel:#0d1924;--line:#29404c;--ink:#e7f4fa;--mut:#93adb9;--accent:#5ee2d0;--warn:#ffb48a}
+/* light by default; the inline script in login.html sets [data-theme=dark] for the dark one */
+:root{--panel:#ffffff;--line:#d3dde4;--ink:#14212b;--mut:#566b78;--faint:#7b8e9a;--accent:#0d8577;--link:#0d7a6d;--warn:#b5470f;
+  --btn:#eef3f6;--btn-line:#b9c8d2;--field:#ffffff;--on-bg:#0d8577;--on-line:#0d8577;--on-ink:#ffffff;--on-hover:#0b6f64;
+  --focus:#0d857733;--shadow:rgba(20,33,43,.16);--bg:#e9eef2;--page:radial-gradient(ellipse at 60% 30%,#ffffff,#e9eef2 75%)}
+:root[data-theme=dark]{--panel:#0d1924;--line:#29404c;--ink:#e7f4fa;--mut:#93adb9;--faint:#6b8290;--accent:#5ee2d0;--link:#5ee2d0;--warn:#ffb48a;
+  --btn:#152936;--btn-line:#345260;--field:#0a141d;--on-bg:#246358;--on-line:#64e8ce;--on-ink:#f2fffc;--on-hover:#2b7466;
+  --focus:#5ee2d033;--shadow:#0008;--bg:#080f18;--page:radial-gradient(ellipse at 60% 30%,#122b36,#080f18 75%)}
 *{box-sizing:border-box}
-html,body{margin:0;min-height:100%;background:radial-gradient(ellipse at 60% 30%,#122b36,#080f18 75%) fixed #080f18;
+html,body{margin:0;min-height:100%;background:var(--page) fixed var(--bg);
   color:var(--ink);font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 body{display:grid;place-items:center;min-height:100vh;padding:24px 16px}
 .card{width:100%;max-width:400px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px 26px 20px;
-  box-shadow:0 24px 60px #0008}
+  box-shadow:0 24px 60px var(--shadow)}
 h1{margin:0;font-size:24px;letter-spacing:-.4px}
 .lede{margin:4px 0 18px;color:var(--mut)}
-.tabs{display:flex;border:1px solid #345260;border-radius:10px;overflow:hidden;margin-bottom:16px}
-.tabs button{flex:1;background:#152936;border:0;color:var(--ink);padding:9px 10px;font:inherit;font-size:14px;cursor:pointer}
-.tabs button+button{border-left:1px solid #345260}
-.tabs button[aria-selected=true]{background:#246358;color:#f2fffc;font-weight:600}
+.tabs{display:flex;border:1px solid var(--btn-line);border-radius:10px;overflow:hidden;margin-bottom:16px}
+.tabs button{flex:1;background:var(--btn);border:0;color:var(--ink);padding:9px 10px;font:inherit;font-size:14px;cursor:pointer}
+.tabs button+button{border-left:1px solid var(--btn-line)}
+.tabs button[aria-selected=true]{background:var(--on-bg);color:var(--on-ink);font-weight:600}
 form{display:grid;gap:12px}
 label{display:grid;gap:5px;font-size:13px;color:var(--mut)}
-label .sub{font-size:12px;color:#6b8290}
-input{background:#0a141d;border:1px solid #345260;border-radius:9px;color:var(--ink);padding:10px 12px;font:inherit;font-size:15px;width:100%}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px #5ee2d033}
+label .sub{font-size:12px;color:var(--faint)}
+input{background:var(--field);border:1px solid var(--btn-line);border-radius:9px;color:var(--ink);padding:10px 12px;font:inherit;font-size:15px;width:100%}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--focus)}
 input[name=code]{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.06em;text-transform:uppercase}
-button.go{margin-top:4px;background:#246358;border:1px solid #64e8ce;color:#f2fffc;border-radius:10px;padding:11px;font:inherit;font-weight:650;cursor:pointer}
-button.go:hover{background:#2b7466}
+button.go{margin-top:4px;background:var(--on-bg);border:1px solid var(--on-line);color:var(--on-ink);border-radius:10px;padding:11px;font:inherit;font-weight:650;cursor:pointer}
+button.go:hover{background:var(--on-hover)}
 button.go:disabled{opacity:.6;cursor:default}
 button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .hint{margin:2px 0 0;color:var(--mut);font-size:12.5px}
-a{color:var(--accent)}
+a{color:var(--link)}
 .msg{min-height:1.4em;margin:14px 0 0;color:var(--warn);font-size:13.5px}
 .msg.ok{color:var(--accent)}
 [hidden]{display:none!important}

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
 <title>FracView — Pad map</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -12,24 +13,34 @@
 <script src="quake-filter.js"></script>
 <script src="account.js"></script>
 <style>
-  :root { --panel:#10161d; --ink:#e8eef4; --mut:#93a3b3; --line:#243040; --acc:#4d8dff;
+  /* light by default; theme.js sets [data-theme=dark] for the dark one */
+  :root { --panel:#ffffff; --ink:#14212b; --mut:#566b78; --line:#d3dde4; --acc:#2563eb; --page:#eef2f5;
+          --side:rgba(255,255,255,.96); --leg:rgba(255,255,255,.94); --row:#f3f6f8; --row-on:#e6f2f0; --cur:#1e7a34;
+          --btn:#eef3f6; --btn-line:#b9c8d2; --hov:#0d8577; --go:#0d8577; --go-line:#0d8577; --go-ink:#ffffff; --glow:rgba(13,133,119,.22);
+          --demo:#f3f7f9; --demo-line:#d3dde4; --quake:#d6336c; --area:#5b7f8f; --halo:#ffffff;
+          --dock:#ffffff; --dock-line:#d3dde4; --dock-shadow:rgba(20,33,43,.14); --grip:#b9c8d2; --shadow:rgba(20,33,43,.12);
           --mono:ui-monospace,Menlo,Consolas,monospace; }
-  html, body { margin:0; height:100%; background:#0b1015; color:var(--ink);
+  :root[data-theme=dark] { --panel:#10161d; --ink:#e8eef4; --mut:#93a3b3; --line:#243040; --acc:#4d8dff; --page:#0b1015;
+          --side:rgba(16,22,29,.94); --leg:rgba(16,22,29,.9); --row:#151d26; --row-on:#1c2632; --cur:#9fd8a8;
+          --btn:#152936; --btn-line:#345260; --hov:#5ee2d0; --go:#246358; --go-line:#64e8ce; --go-ink:#f2fffc; --glow:#5ee2d033;
+          --demo:#132433; --demo-line:#2c4456; --quake:#ff5fa2; --area:#c9d3dc; --halo:#0b1015;
+          --dock:#0b1620; --dock-line:#29404c; --dock-shadow:#0009; --grip:#3d5a68; --shadow:transparent; }
+  html, body { margin:0; height:100%; background:var(--page); color:var(--ink);
                font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
   #map { position:absolute; inset:0; }
   .side { position:absolute; top:12px; left:12px; bottom:12px; width:320px; max-width:calc(100% - 24px);
-          background:rgba(16,22,29,.94); border:1px solid var(--line); border-radius:12px;
+          background:var(--side); border:1px solid var(--line); border-radius:12px; box-shadow:0 6px 24px var(--shadow);
           display:flex; flex-direction:column; overflow:hidden; z-index:5; }
   .side header { padding:12px 14px 8px; border-bottom:1px solid var(--line); position:relative; }
   .side header .side-acts { position:absolute; top:9px; right:12px; display:flex; gap:8px; align-items:center; }
-  .side header .ss-btn { background:#152936; color:var(--ink); border:1px solid #345260;
+  .side header .ss-btn { background:var(--btn); color:var(--ink); border:1px solid var(--btn-line);
                          border-radius:8px; padding:5px 10px; font:600 12.5px -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
-  .side header .ss-btn:hover, .side header .ss-btn:focus-visible { border-color:#5ee2d0; }
+  .side header .ss-btn:hover, .side header .ss-btn:focus-visible { border-color:var(--hov); }
   .side h1 { margin:0; font-size:17px; letter-spacing:.01em; }
   .side .sub { color:var(--mut); font-family:var(--mono); font-size:12px; margin-top:2px; }
   .side .body { overflow:auto; padding:8px 8px 12px; }
   .pad { border:1px solid var(--line); border-radius:9px; margin:6px 0; overflow:hidden; }
-  .pad > button { width:100%; text-align:left; background:#151d26; color:var(--ink); border:none; padding:9px 11px;
+  .pad > button { width:100%; text-align:left; background:var(--row); color:var(--ink); border:none; padding:9px 11px;
                   font:inherit; font-weight:600; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
   .pad > button .n { color:var(--mut); font-family:var(--mono); font-weight:400; font-size:12px; }
   .pad .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:8px; vertical-align:-1px; }
@@ -37,55 +48,56 @@
   .pad.open ul { display:block; }
   .pad li { padding:0; }
   .pad li a { display:flex; justify-content:space-between; gap:8px; padding:6px 12px 6px 30px; color:var(--ink); text-decoration:none; }
-  .pad li a:hover, .pad li a.on { background:#1c2632; }
+  .pad li a:hover, .pad li a.on { background:var(--row-on); }
   .pad li .m { color:var(--mut); font-family:var(--mono); font-size:11.5px; white-space:nowrap; }
-  .pad li .m b { color:#9fd8a8; font-weight:600; }
+  .pad li .m b { color:var(--cur); font-weight:600; }
   .side footer { padding:8px 14px; border-top:1px solid var(--line); color:var(--mut); font-size:12px; }
   .side footer a { color:var(--acc); }
   .maplibregl-popup-content { background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:10px;
-                              padding:12px 14px; font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; min-width:220px; }
+                              padding:12px 14px; font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; min-width:220px; box-shadow:0 8px 24px var(--shadow); }
   .maplibregl-popup-tip { border-top-color:var(--panel) !important; border-bottom-color:var(--panel) !important; }
   .maplibregl-popup-close-button { color:var(--mut); font-size:18px; }
   .pop b { font-size:14px; }
   .pop .facts { color:var(--mut); font-family:var(--mono); font-size:12px; margin:6px 0 2px; }
   .pop a.btn { display:inline-block; margin-top:9px; background:var(--acc); color:#fff; text-decoration:none;
                padding:6px 11px; border-radius:7px; font-weight:600; }
-  .legend { position:absolute; right:12px; top:12px; background:rgba(16,22,29,.9); border:1px solid var(--line);
+  .legend { position:absolute; right:12px; top:12px; background:var(--leg); border:1px solid var(--line); box-shadow:0 6px 20px var(--shadow);
             border-radius:10px; padding:8px 12px; font-size:12px; color:var(--mut); z-index:5; }
   .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; }
-  .legend .l { width:22px; height:0; border-top:3px solid #4d8dff; }
+  .legend .l { width:22px; height:0; border-top:3px solid var(--acc); }
   .legend .l.thin { border-top-width:1.5px; opacity:.7; }
-  .legend .d { width:10px; height:10px; border-radius:50%; background:#fff; }
+  .legend .d { width:10px; height:10px; border-radius:50%; background:#fff; box-shadow:inset 0 0 0 2px var(--acc); }
   .pop .acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
-  .pop .acts button, .pop .acts a { background:#1b2a38; color:var(--ink); border:1px solid #33475a; border-radius:7px;
+  .pop .acts button, .pop .acts a { background:var(--btn); color:var(--ink); border:1px solid var(--btn-line); border-radius:7px;
                                     padding:6px 10px; font:600 12.5px/1 -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; text-decoration:none; }
-  .pop .acts button:hover, .pop .acts a:hover { border-color:#5ee2d0; }
-  .pop .acts .go { background:#246358; border-color:#64e8ce; color:#f2fffc; }
+  .pop .acts button:hover, .pop .acts a:hover { border-color:var(--hov); }
+  .pop .acts .go { background:var(--go); border-color:var(--go-line); color:var(--go-ink); }
   .demo { padding:8px 8px 4px; border-bottom:1px solid var(--line); display:grid; grid-template-columns:1fr 1fr; gap:6px; }
   .demo .dh { grid-column:1/-1; color:var(--mut); font-size:12px; padding:0 4px; }
-  .demo button { text-align:left; background:#132433; color:var(--ink); border:1px solid #2c4456; border-radius:9px; padding:7px 9px; font:inherit; cursor:pointer; }
-  .demo button:hover { border-color:#5ee2d0; }
+  .demo button { text-align:left; background:var(--demo); color:var(--ink); border:1px solid var(--demo-line); border-radius:9px; padding:7px 9px; font:inherit; cursor:pointer; }
+  .demo button:hover { border-color:var(--hov); }
   .demo button b { display:block; font-size:13px; }
   .demo button span { display:block; color:var(--mut); font-size:11px; line-height:1.35; margin-top:2px; }
   .side .inview { color:var(--mut); font-size:12px; padding:6px 6px 2px; }
   .legend .qk { cursor:pointer; color:var(--ink); }
-  .legend .qk input { margin:0; accent-color:#ff5fa2; }
+  .legend .qk input { margin:0; accent-color:var(--quake); }
   .legend .qk-f { padding-left:18px; gap:8px; }
-  .legend .qk-f button { background:#152936; color:var(--ink); border:1px solid #345260; border-radius:7px; padding:3px 9px;
+  .legend .qk-f button { background:var(--btn); color:var(--ink); border:1px solid var(--btn-line); border-radius:7px; padding:3px 9px;
                           font:600 11.5px -apple-system,Segoe UI,Roboto,sans-serif; cursor:pointer; }
-  .legend .qk-f button:hover, .legend .qk-f button:focus-visible { border-color:#ff5fa2; }
+  .legend .qk-f button:hover, .legend .qk-f button:focus-visible { border-color:var(--quake); }
   .legend .qk-f span { color:var(--mut); font-size:11.5px; max-width:180px; }
-  .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:#e8eef4; text-shadow:0 0 3px #0b1015, 0 0 6px #0b1015; white-space:nowrap; pointer-events:none; }
+  .padlabel { font:600 12px/1 -apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); text-shadow:0 0 3px var(--halo), 0 0 6px var(--halo), 0 0 2px var(--halo); white-space:nowrap; pointer-events:none; }
   /* the well section docked along the bottom (wellsection-host.js) */
-  #ws-dock { position:fixed; left:0; right:0; bottom:0; height:var(--ws-h, 42vh); z-index:7; background:#0b1620;
-             border-top:1px solid #29404c; box-shadow:0 -10px 28px #0009; }
+  /* over the 3D view as well (z 20): a well sent from the wine rack window while 3D has no pad locked docks here */
+  #ws-dock { position:fixed; left:0; right:0; bottom:0; height:var(--ws-h, 42vh); z-index:22; background:var(--dock);
+             border-top:1px solid var(--dock-line); box-shadow:0 -10px 28px var(--dock-shadow); }
   #ws-dock iframe { width:100%; height:100%; border:0; display:block; }
   #ws-dock .ws-grip { position:absolute; top:-6px; left:0; right:0; height:12px; cursor:ns-resize; z-index:1; }
-  #ws-dock .ws-grip::after { content:""; position:absolute; left:50%; top:3px; width:44px; height:4px; margin-left:-22px; border-radius:2px; background:#3d5a68; }
-  #ws-dock .ws-grip:hover::after, #ws-dock .ws-grip:focus-visible::after { background:#5ee2d0; }
+  #ws-dock .ws-grip::after { content:""; position:absolute; left:50%; top:3px; width:44px; height:4px; margin-left:-22px; border-radius:2px; background:var(--grip); }
+  #ws-dock .ws-grip:hover::after, #ws-dock .ws-grip:focus-visible::after { background:var(--hov); }
   body.ws-docked #map { bottom:var(--ws-h, 42vh); }
   body.ws-docked .side { bottom:calc(var(--ws-h, 42vh) + 12px); }
-  .pop .acts .view { background:#246358; border-color:#64e8ce; color:#f2fffc; box-shadow:0 0 14px #5ee2d033; }
+  .pop .acts .view { background:var(--go); border-color:var(--go-line); color:var(--go-ink); box-shadow:0 0 14px var(--glow); }
   @media (max-width: 640px) { .side { width:auto; right:12px; bottom:auto; max-height:46%; } .legend { display:none; }
     body.ws-docked .side { bottom:auto; max-height:calc(100% - var(--ws-h, 42vh) - 24px); } }
 </style>
@@ -97,26 +109,35 @@
     <h1>FracView</h1>
     <div class="side-acts">
       <button type="button" class="ss-btn" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
+      <span data-theme-toggle></span>
       <span data-account></span>
     </div>
     <div class="sub" id="sub">loading pads…</div>
   </header>
   <div class="demo" id="demo" hidden></div>
   <div class="body" id="pads"></div>
-  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D or its wine rack; zoom to 12+ and <b>Change View</b> opens 3D for what you see.</footer>
+  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D, or its wine rack in a window beside this one; zoom to 12+ and <b>Change View</b> opens 3D for what you see.</footer>
 </div>
 <div class="legend">
   <div class="row"><span class="l"></span> lateral with stage data loaded</div>
   <div class="row" id="survey-only"><span class="l thin"></span> lateral, survey only</div>
   <div class="row"><span class="d"></span> pad (surface location)</div>
-  <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:#c9d3dc"></span> permitted well-site area (BCER)</div>
-  <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:#ff5fa2"></span> earthquakes since 2013 (NRCan)</label>
+  <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:var(--area)"></span> permitted well-site area (BCER)</div>
+  <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:var(--quake);box-shadow:none"></span> earthquakes since 2013 (NRCan)</label>
   <div class="row qk-f" id="qk-frow" hidden><button type="button" id="qk-filter" aria-haspopup="dialog" aria-expanded="false">Filter quakes…</button><span id="qk-fnote"></span></div>
   <label class="row qk"><input type="checkbox" id="charted"> only wells with treatment charts</label>
 </div>
 
 <script>
 const PAD_COLORS = ["#4d8dff", "#ff8a4d", "#3ecf8e", "#e35d9a", "#f2c94c", "#8f6bff", "#4dd0e1", "#ff6b6b", "#9ccc65", "#ba68c8"];
+// pads, basemap and marks in the theme on screen (theme.js): light by default
+const dark = () => !!(window.StratumTheme && StratumTheme.dark());
+const padColor = i => window.StratumTheme ? StratumTheme.padColor(i) : PAD_COLORS[i % PAD_COLORS.length];
+const esri = (name, layer) => `https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_${name}_Gray_${layer}/MapServer/tile/{z}/{y}/{x}`;
+const tiles = layer => [esri(dark() ? "Dark" : "Light", layer)];
+const MARK = () => dark()
+  ? { halo: "#000", haloOp: .35, toeRing: "#0b1015", padFill: "#ffffff", areaFill: "#ffffff", areaOp: .07, areaLine: "#c9d3dc", quake: "#ff5fa2" }
+  : { halo: "#ffffff", haloOp: .8, toeRing: "#ffffff", padFill: "#ffffff", areaFill: "#0d8577", areaOp: .06, areaLine: "#5b7f8f", quake: "#d6336c" };
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
 
 const map = new maplibregl.Map({
@@ -124,10 +145,10 @@ const map = new maplibregl.Map({
   style: { version: 8,
     sources: {
       base: { type: "raster",
-        tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"],
+        tiles: tiles("Base"),
         tileSize: 256, maxzoom: 16, attribution: "Esri" },
       ref: { type: "raster",
-        tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"],
+        tiles: tiles("Reference"),
         tileSize: 256, maxzoom: 16 }
     },
     layers: [{ id: "base", type: "raster", source: "base" }, { id: "ref", type: "raster", source: "ref" }] },
@@ -164,7 +185,7 @@ async function load() {
     try {
       try { const a = await fetch("data/pads/" + s.set + "-areas.geojson"); if (a.ok) AREAS.features.push(...(await a.json()).features); } catch (e) {}
       const d = await (await fetch("data/pads/" + s.file)).json();
-      d.pads.forEach((p, i) => { p.color = PAD_COLORS[i % PAD_COLORS.length]; p.set = s.set; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
+      d.pads.forEach((p, i) => { p.ci = i; p.color = padColor(i); p.set = s.set; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
       ALL_SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
     } catch (e) {}
   }
@@ -188,14 +209,31 @@ function applyFilter() {
   document.getElementById("charted").checked = chartedOnly;
   document.getElementById("survey-only").hidden = chartedOnly;
 }
-document.getElementById("charted").addEventListener("change", e => {
-  chartedOnly = e.target.checked;
-  try { localStorage.setItem("stratum.allWells", chartedOnly ? "0" : "1"); } catch (err) {}
+// the pads as shown changed (the filter, or the theme's colours): every layer and list follows
+function refresh() {
   applyFilter();
   const f = features();
   for (const [id, data] of [["laterals", f.lines], ["toes", f.toes], ["pads", f.pads]]) { const src = map.getSource(id); if (src) src.setData(data); }
-  if (popup) popup.remove();
   updateLabels(); sidebar(); if (DEMO.length) demoAreas(DEMO);
+}
+document.getElementById("charted").addEventListener("change", e => {
+  chartedOnly = e.target.checked;
+  try { localStorage.setItem("stratum.allWells", chartedOnly ? "0" : "1"); } catch (err) {}
+  if (popup) popup.remove();
+  refresh();
+});
+// light or dark: the basemap, the marks and the pads' colours
+addEventListener("stratum:theme", () => {
+  for (const S of ALL_SETS) for (const p of S.pads) p.color = padColor(p.ci);
+  for (const [id, m] of labelMarkers) { m.remove(); labelMarkers.delete(id); }
+  if (!map.getSource("base")) return;
+  map.getSource("base").setTiles(tiles("Base")); map.getSource("ref").setTiles(tiles("Reference"));
+  const k = MARK(), paint = (layer, prop, v) => { if (map.getLayer(layer)) map.setPaintProperty(layer, prop, v); };
+  paint("laterals-halo", "line-color", k.halo); paint("laterals-halo", "line-opacity", k.haloOp);
+  paint("toes", "circle-stroke-color", k.toeRing); paint("pads", "circle-color", k.padFill);
+  paint("areas-fill", "fill-color", k.areaFill); paint("areas-fill", "fill-opacity", k.areaOp); paint("areas-line", "line-color", k.areaLine);
+  paint("quakes", "circle-color", k.quake); paint("quakes", "circle-stroke-color", k.quake);
+  refresh();
 });
 
 function features() {
@@ -218,11 +256,12 @@ const fc = f => ({ type: "FeatureCollection", features: f });
 function render() {
   const f = features();
   const add = () => {
+    const k = MARK();
     map.addSource("areas", { type: "geojson", data: AREAS });
     map.addLayer({ id: "areas-fill", type: "fill", source: "areas",
-      paint: { "fill-color": "#ffffff", "fill-opacity": .07 } });
+      paint: { "fill-color": k.areaFill, "fill-opacity": k.areaOp } });
     map.addLayer({ id: "areas-line", type: "line", source: "areas",
-      paint: { "line-color": "#c9d3dc", "line-width": 1, "line-dasharray": [3, 2], "line-opacity": .8 } });
+      paint: { "line-color": k.areaLine, "line-width": 1, "line-dasharray": [3, 2], "line-opacity": .8 } });
     map.on("click", "areas-fill", e => {
       if (map.queryRenderedFeatures(e.point, { layers: ["laterals", "toes", "pads"] }).length) return;
       const p = e.features[0].properties;
@@ -234,16 +273,16 @@ function render() {
     map.addSource("toes", { type: "geojson", data: f.toes });
     map.addSource("pads", { type: "geojson", data: f.pads });
     map.addLayer({ id: "laterals-halo", type: "line", source: "laterals",
-      paint: { "line-color": "#000", "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, ["case", [">", ["get", "stages"], 0], 5, 3.5]], "line-opacity": .35 },
+      paint: { "line-color": k.halo, "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 12, ["case", [">", ["get", "stages"], 0], 5, 3.5]], "line-opacity": k.haloOp },
       layout: { "line-cap": "round", "line-join": "round" } });
     map.addLayer({ id: "laterals", type: "line", source: "laterals",
       paint: { "line-color": ["get", "color"], "line-width": ["interpolate", ["linear"], ["zoom"], 8, .6, 12, ["case", [">", ["get", "stages"], 0], 3, 1.6]],
                "line-opacity": ["case", [">", ["get", "stages"], 0], 1, .75] },
       layout: { "line-cap": "round", "line-join": "round" } });
     map.addLayer({ id: "toes", type: "circle", source: "toes",
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, .8, 12, 3], "circle-color": ["get", "color"], "circle-stroke-color": "#0b1015", "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 0, 12, 1] } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, .8, 12, 3], "circle-color": ["get", "color"], "circle-stroke-color": k.toeRing, "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 8, 0, 12, 1] } });
     map.addLayer({ id: "pads", type: "circle", source: "pads",
-      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 11, 5, 14, 8], "circle-color": "#ffffff", "circle-stroke-color": ["get", "color"], "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 7, 1, 11, 2.5, 14, 3] } });
+      paint: { "circle-radius": ["interpolate", ["linear"], ["zoom"], 7, 2.5, 11, 5, 14, 8], "circle-color": k.padFill, "circle-stroke-color": ["get", "color"], "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 7, 1, 11, 2.5, 14, 3] } });
     // pad names as HTML markers: the raster base style carries no glyphs,
     // so a symbol layer cannot draw text here
     map.on("moveend", () => { updateLabels(); sidebar(); });
@@ -269,7 +308,7 @@ function render() {
       map.addSource("quakes", { type: "geojson", data: fc(feats) });
       map.addLayer({ id: "quakes", type: "circle", source: "quakes", layout: { visibility: "none" },
         paint: { "circle-radius": ["interpolate", ["linear"], ["get", "mag"], 0, 2, 2, 4, 3, 7, 4.6, 13],
-                 "circle-color": "#ff5fa2", "circle-opacity": .35, "circle-stroke-color": "#ff5fa2", "circle-stroke-width": 1 } }, "laterals-halo");
+                 "circle-color": MARK().quake, "circle-opacity": .35, "circle-stroke-color": MARK().quake, "circle-stroke-width": 1 } }, "laterals-halo");
       const box = document.getElementById("qk"), frow = document.getElementById("qk-frow");
       // the filter: dates, magnitudes, undetermined depths and more (quake-filter.js), shared with the 3D view and well charts
       const SQ = window.StratumQuakes, days = q.rows.map(r => r[0].slice(0, 10)).sort(), mags = q.rows.map(r => r[4]).filter(m => m != null);
@@ -325,7 +364,8 @@ function updateLabels() {
   }
 }
 
-// a pad's popup is where navigation starts: its 3D area, its wine rack, its table
+// a pad's popup is where navigation starts: its 3D area, its wine rack (in a window
+// of its own, so the map stays as it is), its table
 function openPad(p, lngLat) {
   if (!p) return;
   if (popup) popup.remove();
@@ -336,14 +376,15 @@ function openPad(p, lngLat) {
     : [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null]).filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat || [p.lon, p.lat])
     .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts">
-      <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack">Wine rack</button>
+      <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack" title="Opens in the wine rack window; each pad after it is added underneath">Wine rack ↗</button>
       <a href="pad.html?set=${encodeURIComponent(p.set)}&pad=${encodeURIComponent(p.id)}">Pad data</a></div></div>`).addTo(map);
   const el = popup.getElement();
   el.querySelector("b").textContent = p.name;
   el.querySelector(".facts").textContent = facts.join(" · ");
   el.querySelectorAll("[data-act]").forEach(btn => btn.addEventListener("click", () => {
+    if (btn.dataset.act === "rack") { if (window.stratumRack) window.stratumRack.open(p.id); return; }
     popup.remove();
-    if (window.stratum3D) window.stratum3D.open(p.id, { rack: btn.dataset.act === "rack" });
+    if (window.stratum3D) window.stratum3D.open(p.id);
   }));
 }
 

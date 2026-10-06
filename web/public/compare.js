@@ -13,19 +13,27 @@ const KEY = 'stratum.compare';
 const chan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-compare') : null;
 const $ = id => document.getElementById(id);
 
+// light or dark (theme.js): colours are picked as they are drawn, and every
+// row and swatch is drawn again when the theme changes
+const dark = () => !!(window.StratumTheme && StratumTheme.dark());
 const COLOURS = ['#4d8dff', '#ff8a4d', '#3ecf8e', '#e35d9a', '#f2c94c',
                  '#8f6bff', '#4dd0e1', '#ff6b6b', '#9ccc65', '#ba68c8'];
+const COLOURS_LIGHT = ['#2563eb', '#c2410c', '#15803d', '#be185d', '#a16207',
+                       '#6d28d9', '#0e7490', '#dc2626', '#4d7c0f', '#9333ea'];
+const wellColour = i => (dark() ? COLOURS : COLOURS_LIGHT)[i % COLOURS.length];
 
-// curve channels come from the per-second export; metrics from the stage table
+// curve channels come from the per-second export; metrics from the stage table.
+// colour is the dark theme's, light the light theme's
 const CHANNELS = {
-  press:    { label: 'Treating pressure', short: 'Press',   unit: 'MPa',    kind: 'curve',  colour: '#ff6b6b' },
-  rate:     { label: 'Slurry rate',       short: 'Rate',    unit: 'm³/min', kind: 'curve',  colour: '#4d8dff' },
-  wh_conc:  { label: 'WH proppant conc',  short: 'WH',      unit: 'kg/m³',  kind: 'curve',  colour: '#3ecf8e' },
-  bh_conc:  { label: 'BH proppant conc',  short: 'BH',      unit: 'kg/m³',  kind: 'curve',  colour: '#c79bff' },
-  proppant_t:       { label: 'Proppant placed', short: 'Prop t',   unit: 't',   kind: 'metric', colour: '#f2c94c' },
-  avg_pressure_mpa: { label: 'Average pressure', short: 'Avg P',   unit: 'MPa', kind: 'metric', colour: '#ff9f6b' },
-  avg_rate_m3_min:  { label: 'Average rate', short: 'Avg rate', unit: 'm³/min', kind: 'metric', colour: '#7fd1ff' },
+  press:    { label: 'Treating pressure', short: 'Press',   unit: 'MPa',    kind: 'curve',  colour: '#ff6b6b', light: '#a31631' },
+  rate:     { label: 'Slurry rate',       short: 'Rate',    unit: 'm³/min', kind: 'curve',  colour: '#4d8dff', light: '#1f6feb' },
+  wh_conc:  { label: 'WH proppant conc',  short: 'WH',      unit: 'kg/m³',  kind: 'curve',  colour: '#3ecf8e', light: '#1e7a34' },
+  bh_conc:  { label: 'BH proppant conc',  short: 'BH',      unit: 'kg/m³',  kind: 'curve',  colour: '#c79bff', light: '#7a4fd6' },
+  proppant_t:       { label: 'Proppant placed', short: 'Prop t',   unit: 't',   kind: 'metric', colour: '#f2c94c', light: '#9a6700' },
+  avg_pressure_mpa: { label: 'Average pressure', short: 'Avg P',   unit: 'MPa', kind: 'metric', colour: '#ff9f6b', light: '#c2410c' },
+  avg_rate_m3_min:  { label: 'Average rate', short: 'Avg rate', unit: 'm³/min', kind: 'metric', colour: '#7fd1ff', light: '#0369a1' },
 };
+const colourOf = c => dark() ? c.colour : c.light;
 const on = { press: true, rate: false, wh_conc: false, bh_conc: false,
              proppant_t: true, avg_pressure_mpa: false, avg_rate_m3_min: false };
 
@@ -65,14 +73,14 @@ async function addWell(wa) {
   let doc;
   try { doc = await (await fetch(`data/wells/${encodeURIComponent(wa)}.json`)).json(); }
   catch (e) { return; }
-  wells.push({ wa, doc, colour: COLOURS[wells.length % COLOURS.length], off: new Set(Array.isArray(offFor[wa]) ? offFor[wa] : []) });
+  wells.push({ wa, doc, colour: wellColour(wells.length), off: new Set(Array.isArray(offFor[wa]) ? offFor[wa] : []) });
   delete offFor[wa];
   saveList(); renderAll();
 }
 
 function removeWell(wa) {
   wells = wells.filter(w => w.wa !== wa);
-  wells.forEach((w, i) => { w.colour = COLOURS[i % COLOURS.length]; });
+  recolour();
   saveList(); renderAll();
 }
 
@@ -166,13 +174,14 @@ function drawRow(cnv, w, dom, rng) {
   const Y = (v, rr) => cnv.height - B - (v - rr[0]) / ((rr[1] - rr[0]) || 1) * (cnv.height - T - B);
 
   // baseline + depth ticks
-  g.strokeStyle = '#172836'; g.lineWidth = 1 * dpr;
+  const D = dark();
+  g.strokeStyle = D ? '#172836' : '#d3dde4'; g.lineWidth = 1 * dpr;
   g.beginPath(); g.moveTo(L, cnv.height - B); g.lineTo(cnv.width - R, cnv.height - B); g.stroke();
-  g.fillStyle = '#5d7585'; g.font = `${10 * dpr}px ui-monospace,Menlo,monospace`;
+  g.fillStyle = D ? '#5d7585' : '#566b78'; g.font = `${10 * dpr}px ui-monospace,Menlo,monospace`;
   for (let i = 0; i <= 4; i++) {
     const v = dom[0] + (dom[1] - dom[0]) * i / 4;
     const x = X(v);
-    g.strokeStyle = '#122230'; g.beginPath(); g.moveTo(x, T); g.lineTo(x, cnv.height - B); g.stroke();
+    g.strokeStyle = D ? '#122230' : '#e4eaef'; g.beginPath(); g.moveTo(x, T); g.lineTo(x, cnv.height - B); g.stroke();
     g.textAlign = i === 0 ? 'left' : i === 4 ? 'right' : 'center';
     g.fillText(axis === 'md' ? fmt(v) : fmt(v, 0), x, cnv.height - 6 * dpr);
   }
@@ -190,8 +199,8 @@ function drawRow(cnv, w, dom, rng) {
     if (!active(w, key)) continue;
     const rr = (rng[key] && rng[key].get(w.wa)) || null;
     if (!rr) continue;
-    const c = CHANNELS[key];
-    g.strokeStyle = c.colour; g.fillStyle = c.colour;
+    const c = CHANNELS[key], col = colourOf(c);
+    g.strokeStyle = col; g.fillStyle = col;
     if (c.kind === 'curve') {
       // each stage's own samples, laid inside that stage's slot
       g.lineWidth = 1 * dpr;
@@ -226,12 +235,12 @@ function drawRow(cnv, w, dom, rng) {
       });
     }
     // each drawn channel's top-of-scale, stacked down the left edge
-    g.fillStyle = c.colour; g.font = `${9.5 * dpr}px ui-monospace,Menlo,monospace`;
+    g.fillStyle = col; g.font = `${9.5 * dpr}px ui-monospace,Menlo,monospace`;
     g.fillText(`${fmt(rr[1], 1)} ${c.unit}`, 4 * dpr, T + 8 * dpr + lab * 11 * dpr);
     lab++;
   }
   if (!drew) {
-    g.fillStyle = '#6d8794'; g.font = `${12 * dpr}px -apple-system,Segoe UI,sans-serif`;
+    g.fillStyle = D ? '#6d8794' : '#7b8e9a'; g.font = `${12 * dpr}px -apple-system,Segoe UI,sans-serif`;
     g.textAlign = 'center';
     g.fillText('none of the selected channels are held for this well', cnv.width / 2, cnv.height / 2);
     g.textAlign = 'left';
@@ -242,7 +251,7 @@ function drawRow(cnv, w, dom, rng) {
 function renderSide() {
   $('cmp-channels').innerHTML = Object.entries(CHANNELS).map(([k, c]) =>
     `<label class="tog"><input type="checkbox" data-ch="${k}" ${on[k] ? 'checked' : ''}>
-       <i style="background:${c.colour}"></i>${c.label} <span style="color:var(--c-mut);font-size:11px">${c.unit}</span></label>`).join('');
+       <i style="background:${colourOf(c)}"></i>${c.label} <span style="color:var(--c-mut);font-size:11px">${c.unit}</span></label>`).join('');
   $('cmp-channels').querySelectorAll('input').forEach(i => i.onchange = () => { on[i.dataset.ch] = i.checked; renderRows(); renderSide(); });
 
   $('cmp-wells').innerHTML = wells.length ? wells.map(w => {
@@ -297,12 +306,14 @@ function renderRows() {
 }
 
 function renderAll() { renderSide(); renderRows(); }
+function recolour() { wells.forEach((w, i) => { w.colour = wellColour(i); }); }
 
 // ----------------------------------------------------------------- controls
 document.querySelectorAll('input[name=axis]').forEach(i => i.onchange = () => { axis = i.value; renderRows(); });
 $('cmp-shared').onchange = e => { shared = e.target.checked; renderRows(); };
 $('cmp-clear').onclick = () => { wells = []; saveList(); renderAll(); };
 addEventListener('resize', renderRows);
+addEventListener('stratum:theme', () => { recolour(); renderAll(); });
 if (chan) chan.onmessage = e => {
   if (e.data && e.data.type === 'add') addWell(e.data.wa);
   if (e.data && e.data.type === 'clear') { wells = []; saveList(); renderAll(); }
@@ -314,7 +325,7 @@ async function sync() {
   for (const wa of want) await addWell(wa);
   if (wells.some(w => !want.includes(w.wa))) {
     wells = wells.filter(w => want.includes(w.wa));
-    wells.forEach((w, i) => { w.colour = COLOURS[i % COLOURS.length]; });
+    recolour();
     renderAll();
   }
 }

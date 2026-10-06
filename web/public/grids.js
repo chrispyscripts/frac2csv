@@ -10,7 +10,14 @@
 // and silently breaks every tile here -- `.tilev4` is the one to register.
 maplibregl.addProtocol('pmtiles', new pmtiles.Protocol().tilev4);
 
-const NTS = '#7fb2d9', DLS = '#e2a75f';
+// line colour per family, [light, dark] -- the theme (theme.js) is read as the
+// layers are added and again whenever it changes. grids.css carries the same
+// pair for the legend's toggle buttons.
+const LINE = { nts: ['#2f6aa3', '#7fb2d9'], dls: ['#b45309', '#e2a75f'] };
+const dark = () => !!(window.StratumTheme && StratumTheme.dark());
+const lineColour = fam => LINE[fam][dark() ? 1 : 0];
+// dark lines on white read heavier than light ones on dark: lighter-handed in the light theme
+const lineOpacity = L => L.op * (dark() ? 1 : 0.6);
 
 // deg: nominal cell size [lon, lat], used to gate labelling on on-screen size.
 // A cell split across a tile boundary arrives in pieces, so its drawn size is
@@ -68,8 +75,8 @@ function addLayers(levels) {
       minzoom: L.z,
       layout: { visibility: on[L.fam] ? 'visible' : 'none', 'line-join': 'round' },
       paint: {
-        'line-color': L.fam === 'nts' ? NTS : DLS,
-        'line-opacity': L.op,
+        'line-color': lineColour(L.fam),
+        'line-opacity': lineOpacity(L),
         'line-width': ['interpolate', ['linear'], ['zoom'], L.z, L.w, L.z + 4, L.w * 1.45]
       }
     }, before);
@@ -122,6 +129,13 @@ function relabel() {
     el.textContent = v.text;
     markers.set(key, new maplibregl.Marker({ element: el, anchor: 'center' })
       .setLngLat([v.lng, v.lat]).addTo(map));
+  }
+}
+
+function recolour() {
+  for (const L of available) if (map.getLayer('grid-' + L.id)) {
+    map.setPaintProperty('grid-' + L.id, 'line-color', lineColour(L.fam));
+    map.setPaintProperty('grid-' + L.id, 'line-opacity', lineOpacity(L));
   }
 }
 
@@ -231,6 +245,7 @@ async function start() {
   map.on('idle', relabel);
   map.on('mousemove', e => queueReadout(e.point));
   map.on('mouseout', () => { readout.hidden = true; });
+  addEventListener('stratum:theme', recolour);
   relabel();
 }
 

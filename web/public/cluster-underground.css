@@ -11,29 +11,49 @@
 .ug-panel,.ug-head{z-index:3}.ug-rackbtns{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
 #underground .ug-rackbtn{position:absolute;left:0;top:0;pointer-events:auto;font-size:12px;padding:5px 11px;border-radius:999px;background:#10262fe8;border:1px solid #5ee2d0;color:#eafffb;white-space:nowrap;box-shadow:0 0 16px #5ee2d040}#underground .ug-rackbtn:hover,#underground .ug-rackbtn:focus-visible{background:#246358;box-shadow:0 0 22px #5ee2d080}
 #underground canvas{transition:opacity .2s}
-/* the wine rack has the screen to itself: no 3D behind it, none of the 3D's controls */
-#underground.racking{background:#0b1620}#underground.racking canvas{opacity:0;visibility:hidden;pointer-events:none}
-#underground.racking .ug-legend,#underground.racking .ug-hint,#underground.racking .ug-panel,#underground.racking .ug-rackbtns,#underground.racking #ug-reset,#underground.racking #ug-quakes,#underground.racking #ug-all{display:none!important}
-.ug-rack{position:absolute;left:24px;right:24px;top:84px;bottom:28px;display:grid;grid-template-rows:auto 1fr;gap:10px;z-index:2;animation:ug-rack-in .25s ease-out}@keyframes ug-rack-in{from{opacity:0}}
-#underground.pad-data .ug-rack{bottom:calc(38% + 10px)}
-.ug-rack-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.ug-rack-title{font-weight:650;font-size:15px}.ug-rack-sub{color:#93adb9;font-size:12px;font-family:ui-monospace,Menlo,monospace}
-.ug-rack-key{margin-left:auto;display:flex;align-items:center;gap:8px;color:#93adb9;font-size:11px}.ug-rack-key i{width:90px;height:8px;border-radius:3px}.rk-nonekey::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px dashed #6b8290;margin-right:5px;vertical-align:-1px}
-.ug-rack-body{display:grid;grid-template-columns:minmax(280px,40%) 1fr;gap:12px;min-height:0}.ug-rack-plan{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0;min-width:0}
-.ug-rack svg{width:100%;height:100%;min-height:0;display:block;background:#0d1b26;border:1px solid #29404c;border-radius:12px;font-family:ui-monospace,Menlo,monospace}
-.rk-plan{cursor:ew-resize;touch-action:none}.ug-rack-ctl{display:flex;align-items:center;gap:10px;min-width:0}.ug-rack-ctl input{flex:1;min-width:60px;accent-color:#5ee2d0}#underground .rk-play{padding:6px 12px;min-width:44px}.rk-where{color:#93adb9;font:12px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rk-paths polyline{fill:none;stroke-width:1.6;opacity:.75}.rk-paths polyline.on{stroke-width:3;opacity:1}.rk-plan-wa{fill:#93adb9;font-size:10px;paint-order:stroke;stroke:#0d1b26;stroke-width:3px}.rk-plan-wa.on{fill:#e7f4fa;font-weight:700}.rk-padpt{fill:#e7f4fa;stroke:#0b1620;stroke-width:2}
-.rk-line{stroke:#5ee2d0;stroke-width:2}.rk-handle{fill:#5ee2d0}.rk-meet{stroke:#0b1620;stroke-width:1.5}.rk-meet.landing{fill:#0b1620;stroke:#93adb9;stroke-dasharray:2 2}.rk-north{stroke:#93adb9;stroke-width:1.5}
-.rk-dim line{stroke:#5d7a88}.rk-dim text{fill:#b9cbd4;font-size:10.5px}.rk-empty{fill:#93adb9;font-size:13px;font-family:system-ui}
-.rk-grid line{stroke:#1b2f3b}.rk-grid line.rk-zero{stroke:#345260;stroke-dasharray:3 4}.rk-grid text{fill:#93adb9;font-size:11px}.rk-axis{fill:#7f97a4;font-size:11px;font-family:system-ui}
-.rk-end{cursor:pointer;outline:none}.rk-end circle{stroke-width:2;transition:r .15s}.rk-end.landing circle{stroke-dasharray:3 2}.rk-end circle.rk-none{stroke:#6b8290;stroke-dasharray:3 3;stroke-width:1.5}.rk-end:hover circle,.rk-end:focus-visible circle{r:14px;stroke:#e6fff7;stroke-width:2.5}.rk-end.on circle{stroke:#ffffff;stroke-width:3}
-.rk-wa{fill:#e7f4fa;font-size:11px;font-weight:600}.rk-tvd{fill:#93adb9;font-size:10px}
-@media(max-width:900px){.ug-rack-body{grid-template-columns:1fr;grid-template-rows:minmax(150px,40%) 1fr}}
-@media(max-width:640px){#underground.racking .ug-pad-page{display:none}.ug-rack{left:12px;right:12px;top:118px;bottom:16px}#underground.pad-data .ug-rack{bottom:16px}.ug-rack-key{margin-left:0}.ug-rack-key i{width:60px}.rk-end:hover circle,.rk-end:focus-visible circle{r:11px}.rk-where{display:none}}
 .ug-facts{color:#93adb9;font-size:11.5px;margin:2px 0 6px;line-height:1.5}
 .ug-quake{border-left:3px solid #ff5fa2;padding-left:8px}#underground #ug-quakes[aria-pressed=true]{background:#5a1f3c;border-color:#ff5fa2;color:#ffe3ef}
-.ug-gest i{border-top:2px dashed #b9c9d2!important}.rk-end circle.rk-est{stroke:#fef1d0;stroke-dasharray:3 3;stroke-width:1.5}
+.ug-gest i{border-top:2px dashed #b9c9d2!important}
 .ug-gmmr{margin:8px 0;padding:8px 0;border-top:1px solid #263c48;font-size:11.5px;color:#a3bac6;line-height:1.5}.ug-gmmr .ug-hot{color:#ffb3cf;font-weight:600}.ug-gtrig{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#c9dbe3}.ug-felt{color:#ffd6e7;margin-top:3px}
 #underground .ug-viewwell{display:block;width:100%;margin:9px 0 5px;background:#246358;border-color:#64e8ce;color:#f2fffc;font-weight:650;box-shadow:0 0 16px #5ee2d033}#underground .ug-viewwell:hover{background:#2b7466}
 
-.rk-palette{background:#152936;border:1px solid #345260;border-radius:7px;color:#e7f4fa;padding:3px 6px;font:11px system-ui;pointer-events:auto}
-#underground.racking #ug-qfilter{display:none!important}#underground #ug-qfilter.on{border-color:#ff5fa2;color:#ffd1e3}
+#underground #ug-qfilter.on{border-color:#ff5fa2;color:#ffd1e3}
+/* a pop-up blocker stood in the way of the wine rack window */
+#rack-blocked{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:#ffffff;color:#14212b;border:1px solid #0d8577;border-radius:10px;
+  padding:9px 12px;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 10px 26px rgba(20,33,43,.2);display:flex;gap:10px;align-items:center}
+#rack-blocked a{color:#0d7a6d;font-weight:600}#rack-blocked button{background:none;border:0;color:inherit;font-size:16px;cursor:pointer;padding:0 2px}
+[data-theme=dark] #rack-blocked{background:#102733;color:#e7f4fa;border-color:#5ccbb7;box-shadow:0 10px 26px #000a}[data-theme=dark] #rack-blocked a{color:#5ee2d0}
+
+/* ---------- the light theme (the default): the rules above are the dark one ---------- */
+:root:not([data-theme=dark]) #change-view{border-color:#0d8577;background:linear-gradient(135deg,#0f9484,#0b7466);color:#ffffff;box-shadow:0 6px 18px rgba(13,133,119,.25)}
+:root:not([data-theme=dark]) #underground{background:radial-gradient(ellipse at 60% 40%,#ffffff,#e6edf1 75%);color:#14212b}
+:root:not([data-theme=dark]) #underground button,:root:not([data-theme=dark]) #underground select{background:#ffffff;border-color:#b9c8d2;color:#14212b}
+:root:not([data-theme=dark]) #underground button:hover{border-color:#0d8577}
+:root:not([data-theme=dark]) .ug-sub,:root:not([data-theme=dark]) .ug-facts,:root:not([data-theme=dark]) .ug-gends,:root:not([data-theme=dark]) .ug-color span{color:#566b78}
+:root:not([data-theme=dark]) .pad-data .ug-sub{color:#0b6f64}
+:root:not([data-theme=dark]) .ug-panel,:root:not([data-theme=dark]) .ug-legend{background:#ffffffee;border-color:#d3dde4;box-shadow:0 4px 16px rgba(20,33,43,.08)}
+:root:not([data-theme=dark]) .ug-stages button.on{background:#0d8577!important;border-color:#0d8577!important;color:#ffffff!important}
+:root:not([data-theme=dark]) .ug-summary,:root:not([data-theme=dark]) .ug-legend,:root:not([data-theme=dark]) .ug-gmmr{color:#3d505c}
+:root:not([data-theme=dark]) .ug-summary strong,:root:not([data-theme=dark]) .ug-summary dd,:root:not([data-theme=dark]) .ug-glabel{color:#14212b}
+:root:not([data-theme=dark]) .ug-summary a{color:#0d7a6d}
+:root:not([data-theme=dark]) .ug-hint{color:#566b78}
+:root:not([data-theme=dark]) .ug-tip{background:#fffffff5;border-color:#0d8577;color:#14212b;box-shadow:0 6px 18px rgba(20,33,43,.16)}
+:root:not([data-theme=dark]) .ug-stat,:root:not([data-theme=dark]) .ug-gamma,:root:not([data-theme=dark]) .ug-gmmr{border-color:#e4eaef}
+:root:not([data-theme=dark]) #ug-return{background:#0d8577!important;color:#ffffff!important;border-color:#0d8577!important;box-shadow:0 4px 14px rgba(13,133,119,.25)}
+:root:not([data-theme=dark]) .ug-pad-page{border-color:#d3dde4;background:#ffffff}
+:root:not([data-theme=dark]) .ug-color{border-color:#b9c8d2;background:#ffffff}
+:root:not([data-theme=dark]) #underground .ug-color button{background:none}
+:root:not([data-theme=dark]) #underground .ug-color button[aria-pressed=true]{background:#0d8577;color:#ffffff}
+:root:not([data-theme=dark]) .ug-gticks,:root:not([data-theme=dark]) .ug-gread,:root:not([data-theme=dark]) .ug-gtrig{color:#3d505c}
+:root:not([data-theme=dark]) .ug-gnone i{border-top-color:#7b8e9a}
+:root:not([data-theme=dark]) .ug-gest i{border-top-color:#566b78!important}
+:root:not([data-theme=dark]) .ug-gfoot,:root:not([data-theme=dark]) .ug-gsrc{color:#566b78}
+:root:not([data-theme=dark]) #underground .ug-rackbtn{background:#ffffffee;border-color:#0d8577;color:#0b5f55;box-shadow:0 2px 10px rgba(13,133,119,.18)}
+:root:not([data-theme=dark]) #underground .ug-rackbtn:hover,:root:not([data-theme=dark]) #underground .ug-rackbtn:focus-visible{background:#0d8577;color:#ffffff;box-shadow:0 4px 14px rgba(13,133,119,.3)}
+:root:not([data-theme=dark]) .ug-quake{border-left-color:#d6336c}
+:root:not([data-theme=dark]) #underground #ug-quakes[aria-pressed=true]{background:#fbe4ec;border-color:#d6336c;color:#a3194a}
+:root:not([data-theme=dark]) .ug-gmmr .ug-hot{color:#b4234f}
+:root:not([data-theme=dark]) .ug-felt{color:#a3194a}
+:root:not([data-theme=dark]) #underground .ug-viewwell{background:#0d8577;border-color:#0d8577;color:#ffffff;box-shadow:0 4px 14px rgba(13,133,119,.22)}
+:root:not([data-theme=dark]) #underground .ug-viewwell:hover{background:#0b6f64}
+:root:not([data-theme=dark]) #underground #ug-qfilter.on{border-color:#d6336c;color:#a3194a}

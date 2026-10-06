@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
 <title>FracView — Pad view</title>
 <script src="session.js"></script>
 <style>
   :root { --bg:#f7f9fb; --card:#fff; --ink:#17222e; --mut:#5b6b7b; --line:#dfe6ec;
           --mono:ui-monospace,Menlo,Consolas,monospace; --acc:#1d5bd8; }
+  :root[data-theme=dark] { --bg:#0e1b26; --card:#132330; --ink:#e3f3f7; --mut:#9db6c3; --line:#2b4250; --acc:#72e2cd; }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
   .wrap { max-width:1180px; margin:0 auto; padding-block:18px; padding-inline:16px; }
   header h1 { margin:0 0 2px; font-size:22px; }
   header .sub { color:var(--mut); font-family:var(--mono); font-size:12.5px; }
   header a { color:var(--acc); }
+  header [data-theme-toggle] { float:right; margin-left:12px; }
   .facts { display:flex; flex-wrap:wrap; gap:14px; margin:10px 0 16px; color:var(--mut); font-family:var(--mono); font-size:12.5px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:16px; overflow-x:auto; }
   .card h2 { margin:0 0 8px; font-size:14px; color:var(--mut); font-weight:600; letter-spacing:.02em; text-transform:uppercase; }
@@ -26,12 +29,13 @@
   .list a span { color:var(--mut); font-family:var(--mono); font-size:12px; margin-left:10px; }
   .empty { color:var(--mut); padding:20px 0; }
   svg text { font-family:var(--mono); }
-html.embedded{--bg:#0e1b26;--card:#132330;--ink:#e3f3f7;--mut:#9db6c3;--line:#2b4250;--acc:#72e2cd}html.embedded #plan,html.embedded #ids{display:none!important}html.embedded .wrap{max-width:none;padding:12px 16px}html.embedded header h1{font-size:16px}html.embedded .facts{margin:6px 0 10px}html.embedded .card{margin:0;padding:0;border:0}html.embedded .card h2{display:none}
+html.embedded #plan,html.embedded #ids,html.embedded [data-theme-toggle]{display:none!important}html.embedded .wrap{max-width:none;padding:12px 16px}html.embedded header h1{font-size:16px}html.embedded .facts{margin:6px 0 10px}html.embedded .card{margin:0;padding:0;border:0}html.embedded .card h2{display:none}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
+    <span data-theme-toggle></span>
     <h1 id="name">Pad view</h1>
     <div class="sub" id="ids"></div>
   </header>
@@ -48,6 +52,11 @@ if(q.get('embedded')==='1'){
   const base=document.createElement('base');base.target='_top';document.head.append(base);
 }
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
+// light or dark (theme.js): the plan drawing picks its colours as it is drawn,
+// and is drawn again when the theme changes
+const dark = () => !!(window.StratumTheme && StratumTheme.dark());
+let lastPlan = null;
+addEventListener("stratum:theme", () => { if (lastPlan) drawPlan(...lastPlan); });
 
 async function main() {
   let idx = { sets: [] };
@@ -80,6 +89,9 @@ async function main() {
 function drawPlan(pads, wells) {
   const paths = wells.filter(w => w.path && w.path.length > 1);
   if (!paths.length) return;
+  lastPlan = [pads, wells];
+  const C = dark() ? { grid: "#1b2f3b", text: "#6b8290", pad: "#e3f3f7", ring: "#132330", l: 62 }
+                   : { grid: "#eef2f5", text: "#9fb0c0", pad: "#17222e", ring: "#fff", l: 42 };
   const lat0 = pads[0].lat, lon0 = pads[0].lon, kx = 111320 * Math.cos(lat0 * Math.PI / 180), ky = 111320;
   const pts = w => w.path.map(([lo, la]) => [(lo - lon0) * kx, (la - lat0) * ky]);
   const all = paths.flatMap(pts);
@@ -89,12 +101,12 @@ function drawPlan(pads, wells) {
   const W = Math.max(600, box.clientWidth || 900), H = Math.max(320, Math.min(640, W * (y1 - y0) / (x1 - x0)));
   const sc = Math.min(W / (x1 - x0), H / (y1 - y0));
   const X = x => (x - x0) * sc + (W - (x1 - x0) * sc) / 2, Y = y => H - ((y - y0) * sc + (H - (y1 - y0) * sc) / 2);
-  const hue = i => `hsl(${(i * 47) % 360} 60% 42%)`;
+  const hue = i => `hsl(${(i * 47) % 360} 60% ${C.l}%)`;
   let g = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-size="11">`;
   const step = [100, 250, 500, 1000, 2000].find(s => (x1 - x0) / s <= 12) || 2000;
-  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) g += `<line x1="${X(x)}" y1="0" x2="${X(x)}" y2="${H}" stroke="#eef2f5"/>`;
-  for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) g += `<line x1="0" y1="${Y(y)}" x2="${W}" y2="${Y(y)}" stroke="#eef2f5"/>`;
-  g += `<text x="8" y="${H - 8}" fill="#9fb0c0">grid ${step} m · north up</text>`;
+  for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) g += `<line x1="${X(x)}" y1="0" x2="${X(x)}" y2="${H}" stroke="${C.grid}"/>`;
+  for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) g += `<line x1="0" y1="${Y(y)}" x2="${W}" y2="${Y(y)}" stroke="${C.grid}"/>`;
+  g += `<text x="8" y="${H - 8}" fill="${C.text}">grid ${step} m · north up</text>`;
   paths.forEach((w, i) => {
     const p = pts(w);
     const d = p.map((q, j) => (j ? "L" : "M") + X(q[0]).toFixed(1) + " " + Y(q[1]).toFixed(1)).join("");
@@ -105,8 +117,8 @@ function drawPlan(pads, wells) {
   });
   pads.forEach((p, i) => {
     const sx = X((p.lon - lon0) * kx), sy = Y((p.lat - lat0) * ky);
-    g += `<circle cx="${sx}" cy="${sy}" r="5" fill="#17222e" stroke="#fff" stroke-width="1.5"/>`;
-    g += `<text x="${sx + 8}" y="${sy - 6}" fill="#17222e" font-weight="600">${p.name}</text>`;
+    g += `<circle cx="${sx}" cy="${sy}" r="5" fill="${C.pad}" stroke="${C.ring}" stroke-width="1.5"/>`;
+    g += `<text x="${sx + 8}" y="${sy - 6}" fill="${C.pad}" font-weight="600">${p.name}</text>`;
   });
   g += `</svg>`;
   box.innerHTML = g;

@@ -14,16 +14,29 @@ const PREF_KEY = 'stratum.section';
 // gamma in the colours chosen for every view (gamma-palettes.js), and the slate
 // the lateral is drawn in where there is none
 const gammaInk = (v, g) => window.StratumGamma.ink(v, g);
-const NEUTRAL = '#d6e6ee', BUILD = '#8fa9b5', CURVES = '#5ee2d0', FILED = '#6b8290', GR_MAX = 250;
+const GR_MAX = 250;
+// the marks' inks for the theme on screen (theme.js); text takes its colour from the CSS
+const INKS = {
+  light: { neutral: '#3d4f5b', build: '#8a9ba6', curves: '#0d8577', filed: '#7b8e9a', ground: '#9fb0bb', halo: '#ffffff', haloOp: .9,
+           pad: '#14212b', hole: '#ffffff', track: '#f6f8fa', cross: '#14212b', grid: '#e4eaef', press: '#a31631', rate: '#1f6feb' },
+  dark:  { neutral: '#d6e6ee', build: '#8fa9b5', curves: '#5ee2d0', filed: '#6b8290', ground: '#4f6d7b', halo: '#000', haloOp: .5,
+           pad: '#e7f4fa', hole: '#0a141d', track: '#0d1b25', cross: '#e7f4fa', grid: '#1a2c37', press: '#f0555a', rate: '#4f8ff7' },
+};
+const inks = () => INKS[document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'];
+let K = inks();
 
 let WA = Q.get('wa') || '';
 let HI = Q.get('stage');        // the stage picked out, by label
-let mode = 'well', colorBy = 'stages';
-try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); if (p.mode) mode = p.mode; if (p.color) colorBy = p.color; } catch (e) { /* private mode */ }
+let mode = 'well', colorBy = 'stages', curvesOn = true;
+try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); if (p.mode) mode = p.mode; if (p.color) colorBy = p.color; if (p.curves === false) curvesOn = false; } catch (e) { /* private mode */ }
 let W = null;                   // the assembled well: trajectory, stages, gamma
 let GAMMA = null;               // data/gamma.json, fetched once
 let G = null;                   // this render's geometry, for hover
 let hover = null, seq = 0;
+// the wine rack's line where it crosses this well, metres MD (winerack.js, by way of
+// the main window): shown as a hover would be, whenever the pointer is not here
+let EXT = Q.get('at') != null && isFinite(+Q.get('at')) && Q.get('at') !== '' ? { wa: Q.get('wa') || '', md: +Q.get('at') } : null;
+let pointerIn = false;
 
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–'
   : (Math.abs(v) < 0.5 * Math.pow(10, -d) ? 0 : Number(v)).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
@@ -129,6 +142,38 @@ function at(md) {
   return { md, tvd: a.tvd + (b.tvd - a.tvd) * f, vs: a.vs + (b.vs - a.vs) * f };
 }
 const stageAt = md => W.stages.find(s => md >= s.z0 && md <= s.z1) || null;
+// the rack's line as a hover point, in this render's geometry
+function extHover() {
+  if (!EXT || EXT.wa !== WA || !W || !G || !W.traj.length) return null;
+  const p = at(EXT.md);
+  return { md: EXT.md, vs: p.vs, tvd: p.tvd, x: G.X(p.vs), y: G.Y(p.tvd), ext: true };
+}
+// a curve squeezed into `n` columns: each column's low and high, in order, so a
+// spike survives however narrow the stage is drawn. [[column, value], ...]
+function spark(v, n) {
+  const out = [], len = v.length;
+  if (!len) return out;
+  n = Math.max(1, Math.min(n, len));
+  for (let c = 0; c < n; c++) {
+    let lo = null, hi = null, ilo = 0, ihi = 0;
+    for (let i = Math.floor(c * len / n); i < Math.floor((c + 1) * len / n); i++) {
+      const x = v[i];
+      if (x == null || !isFinite(x)) continue;
+      if (lo == null || x < lo) { lo = x; ilo = i; }
+      if (hi == null || x > hi) { hi = x; ihi = i; }
+    }
+    if (lo == null) { out.push(null); continue; }
+    if (lo === hi) out.push([c, lo]);
+    else if (ilo < ihi) out.push([c, lo], [c, hi]); else out.push([c, hi], [c, lo]);
+  }
+  return out;
+}
+// one scale for every stage's pressure, and one for rate, so stages compare by eye
+function curveScale() {
+  const top = k => niceCeil(Math.max(0, ...W.stages.filter(s => s.series && Array.isArray(s.series[k]))
+    .map(s => s.series[k].reduce((m, x) => x != null && isFinite(x) && x > m ? x : m, 0))));
+  return { press: top('press'), rate: top('rate') };
+}
 
 // ---------- drawing ----------
 function empty(msg, title) {
@@ -144,8 +189,12 @@ function render() {
   $('ws-empty').hidden = true;
   const w = W.well, elev = w.elev_m != null && isFinite(w.elev_m) ? +w.elev_m : null;
   const lateralMode = mode === 'lateral' && W.heel != null;
+  K = inks();
   const track = W.gamma && Ht >= 210 ? 50 : 0, gap = track ? 10 : 0;
-  const x0 = 58, x1 = Wd - (elev != null ? 62 : 18), y0 = 20, y1 = Ht - 24 - track - gap, ty0 = y1 + gap, ty1 = ty0 + track;
+  // each stage's pressure over its rate, along the top, where the lateral is
+  const hasCurves = W.stages.some(s => s.series), strip = curvesOn && hasCurves && Ht >= 230 ? Math.round(Math.max(48, Math.min(86, Ht * 0.2))) : 0;
+  const sy0 = 8, sy1 = sy0 + strip;
+  const x0 = 58, x1 = Wd - (elev != null ? 62 : 18), y0 = strip ? sy1 + 22 : 20, y1 = Ht - 24 - track - gap, ty0 = y1 + gap, ty1 = ty0 + track;
   const pts = W.traj;
   let vx0, vx1, dy0, dy1, kx, ky;
   if (!lateralMode) {
@@ -176,7 +225,7 @@ function render() {
   out.push('<g>');
   for (let v = Math.ceil(vx0 / xs) * xs; v <= vx1; v += xs) {
     const x = X(v).toFixed(1);
-    out.push(`<line x1="${x}" x2="${x}" y1="${y0}" y2="${track ? ty1 : y1}" stroke="var(--grid)"/>`
+    out.push(`<line x1="${x}" x2="${x}" y1="${strip ? sy0 : y0}" y2="${track ? ty1 : y1}" stroke="var(--grid)"/>`
       + `<text class="ax" x="${x}" y="${Ht - 8}" text-anchor="middle">${fmt(v)}</text>`);
   }
   for (let d = Math.ceil(dy0 / ys) * ys; d <= dy1; d += ys) {
@@ -199,9 +248,9 @@ function render() {
 
   // surface and sea level
   out.push('<g clip-path="url(#clip)">');
-  if (0 >= dy0 && 0 <= dy1) out.push(`<line x1="${x0}" x2="${x1}" y1="${Y(0)}" y2="${Y(0)}" stroke="#4f6d7b" stroke-width="1.5"/>`
+  if (0 >= dy0 && 0 <= dy1) out.push(`<line x1="${x0}" x2="${x1}" y1="${Y(0)}" y2="${Y(0)}" stroke="${K.ground}" stroke-width="1.5"/>`
     + `<text class="lbl m" x="${x0 + 8}" y="${Y(0) - 6}">surface${elev != null ? ` · KB ${fmt(elev)} m ASL` : ''}</text>`);
-  if (elev != null && elev >= dy0 && elev <= dy1) out.push(`<line x1="${x0}" x2="${x1}" y1="${Y(elev)}" y2="${Y(elev)}" stroke="#4f6d7b" stroke-dasharray="5 5"/>`
+  if (elev != null && elev >= dy0 && elev <= dy1) out.push(`<line x1="${x0}" x2="${x1}" y1="${Y(elev)}" y2="${Y(elev)}" stroke="${K.ground}" stroke-dasharray="5 5"/>`
     + `<text class="lbl m" x="${x1 - 8}" y="${Y(elev) - 6}" text-anchor="end">sea level</text>`);
   const stretch = Math.abs(ve - 1) < 0.02 ? 'true scale' : `depth ×${fmt(ve, ve < 10 ? 1 : 0)}`;
   out.push(`<text class="chip" x="${x1 - 8}" y="${y0 + 16}" text-anchor="end">${stretch}</text>`);
@@ -221,10 +270,10 @@ function render() {
   const line = list => list.map(p => `${X(p.vs).toFixed(1)},${Y(p.tvd).toFixed(1)}`).join(' ');
   const heel = W.heel != null ? W.heel : pts[pts.length - 1].md;
   const build = pts.filter(p => p.md <= heel).concat([at(heel)]), lat = [at(heel)].concat(pts.filter(p => p.md > heel));
-  out.push(`<polyline points="${line(pts)}" fill="none" stroke="#000" stroke-opacity=".5" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>`);
-  out.push(`<polyline points="${line(build)}" fill="none" stroke="${BUILD}" stroke-width="2.2" stroke-linejoin="round"/>`);
+  out.push(`<polyline points="${line(pts)}" fill="none" stroke="${K.halo}" stroke-opacity="${K.haloOp}" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>`);
+  out.push(`<polyline points="${line(build)}" fill="none" stroke="${K.build}" stroke-width="2.2" stroke-linejoin="round"/>`);
   const g = W.gamma, gammaOn = colorBy === 'gamma' && g;
-  out.push(`<polyline points="${line(lat)}" fill="none" stroke="${gammaOn ? FILED : NEUTRAL}" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>`);
+  out.push(`<polyline points="${line(lat)}" fill="none" stroke="${gammaOn ? K.filed : K.neutral}" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>`);
   if (gammaOn) {
     const segs = [];
     g.v.forEach((v, i) => {
@@ -247,7 +296,7 @@ function render() {
   for (const s of W.stages) {
     const p = at(s.mid), x = X(p.vs), y = Y(p.tvd), [nx, ny] = normal(s.mid), r = s.label === HI ? 9 : 6;
     s.px = x; s.py = y; s.nx = nx; s.ny = ny;
-    ticks.push(`<line x1="${(x - nx * r).toFixed(1)}" y1="${(y - ny * r).toFixed(1)}" x2="${(x + nx * r).toFixed(1)}" y2="${(y + ny * r).toFixed(1)}" stroke="${s.curves ? CURVES : FILED}" stroke-width="${s.label === HI ? 3 : 2}"/>`);
+    ticks.push(`<line x1="${(x - nx * r).toFixed(1)}" y1="${(y - ny * r).toFixed(1)}" x2="${(x + nx * r).toFixed(1)}" y2="${(y + ny * r).toFixed(1)}" stroke="${s.curves ? K.curves : K.filed}" stroke-width="${s.label === HI ? 3 : 2}"/>`);
   }
   out.push(`<g stroke-linecap="round">${ticks.join('')}</g>`);
   // stage numbers where they have room (the first, the last and the picked one always)
@@ -265,21 +314,21 @@ function render() {
 
   // pad, heel and TD
   const td = pts[pts.length - 1], hp = at(heel);
-  out.push(`<circle cx="${X(0)}" cy="${Y(0)}" r="5.5" fill="#e7f4fa" stroke="#0a141d" stroke-width="2"/>`);
+  out.push(`<circle cx="${X(0)}" cy="${Y(0)}" r="5.5" fill="${K.pad}" stroke="${K.hole}" stroke-width="2"/>`);
   if (W.heel != null) {
     const t = `heel ${fmt(W.heel)} m MD`, hx = X(hp.vs), w_ = tw(t), xa = Math.max(x0 + 4, hx - w_ / 2);
-    out.push(`<circle cx="${hx}" cy="${Y(hp.tvd)}" r="4" fill="#0a141d" stroke="${NEUTRAL}" stroke-width="2"/>`
+    out.push(`<circle cx="${hx}" cy="${Y(hp.tvd)}" r="4" fill="${K.hole}" stroke="${K.neutral}" stroke-width="2"/>`
       + `<text class="lbl m" x="${xa}" y="${clear(xa, xa + w_, Y(hp.tvd))}">${t}</text>`);
   }
   const tdx = X(td.vs), tdt = `TD ${fmt(td.md)} m MD · ${fmt(td.tvd)} m TVD`, tdw = tw(tdt);
   const tdxa = Math.max(x0 + 4, Math.min(tdx - tdw / 2, x1 - 6 - tdw));     // centred under TD, inside the frame
-  out.push(`<circle cx="${tdx}" cy="${Y(td.tvd)}" r="4.5" fill="${NEUTRAL}" stroke="#0a141d" stroke-width="2"/>`
+  out.push(`<circle cx="${tdx}" cy="${Y(td.tvd)}" r="4.5" fill="${K.neutral}" stroke="${K.hole}" stroke-width="2"/>`
     + `<text class="lbl" x="${tdxa}" y="${clear(tdxa, tdxa + tdw, Y(td.tvd))}">${tdt}</text>`);
   out.push('</g>');
 
   // gamma under the section, on the same along-section axis
   if (track) {
-    out.push(`<rect x="${x0}" y="${ty0}" width="${x1 - x0}" height="${track}" fill="#0d1b25" stroke="var(--line)"/>`);
+    out.push(`<rect x="${x0}" y="${ty0}" width="${x1 - x0}" height="${track}" fill="${K.track}" stroke="var(--line)"/>`);
     for (const a of [100, 200]) {
       const y = ty1 - a / GR_MAX * track;
       out.push(`<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-dasharray="3 4"/><text class="ax" x="${x0 - 7}" y="${y + 4}" text-anchor="end">${a}</text>`);
@@ -297,14 +346,55 @@ function render() {
     out.push(`<g clip-path="url(#clipx)"${g.estimated ? ' opacity=".75"' : ''}>${bars.join('')}</g>`);
     out.push(`<text class="chip" x="${x1 - 8}" y="${ty0 + 14}" text-anchor="end">gamma API${g.estimated ? ` · estimated from ${g.from && g.from.length ? g.from.length + ' offset log' + (g.from.length > 1 ? 's' : '') : 'offset logs'} (±15 API)` : ''}</text>`);
   }
+  let scale = null;
+  if (strip) {
+    // pressure in the top 60%, rate under it; a stage spans its own stretch of hole
+    scale = W.cvScale || (W.cvScale = curveScale());
+    const pm = sy0 + Math.round(strip * 0.6), u = W.units || {}, unit = k => esc(String(u[k] || '').replace(/m3/g, 'm³'));
+    const rows = [{ k: 'press', top: sy0 + 3, bot: pm - 3, max: scale.press, ink: K.press, name: 'Press' },
+                  { k: 'rate', top: pm + 3, bot: sy1 - 3, max: scale.rate, ink: K.rate, name: 'Rate' }];
+    out.push(`<rect class="cv-bg" x="${x0}" y="${sy0}" width="${x1 - x0}" height="${strip}"/>`
+      + `<line class="cv-sep" x1="${x0}" x2="${x1}" y1="${pm}" y2="${pm}"/>`);
+    for (const r of rows) out.push(`<text class="cv-k" x="${x0 - 7}" y="${(r.top + r.bot) / 2 + 2}" text-anchor="end" fill="${r.ink}">${r.name}<title>${r.name === 'Press' ? 'Treating pressure' : 'Slurry rate'}, 0–${fmt(r.max)} ${unit(r.k)} on every stage</title></text>`
+      + `<text class="cv-n" x="${x0 - 7}" y="${(r.top + r.bot) / 2 + 13}" text-anchor="end">${fmt(r.max)}</text>`);
+    const paths = { press: [], rate: [] };
+    for (const s of W.stages) {
+      s.sx0 = s.sx1 = null;
+      if (!s.series) continue;
+      let xa = X(at(s.z0).vs), xb = X(at(s.z1).vs);
+      if (xb < xa) [xa, xb] = [xb, xa];
+      if (xb < x0 || xa > x1) continue;
+      s.sx0 = xa; s.sx1 = xb;
+      const inset = xb - xa > 8 ? 1.5 : 0, a = xa + inset, wpx = Math.max(1, xb - xa - 2 * inset);
+      for (const r of rows) {
+        const v = s.series[r.k];
+        if (!Array.isArray(v) || !v.length) continue;
+        const n = Math.max(2, Math.round(wpx * 1.5)), pts_ = spark(v, n);
+        let d = '', pen = false;
+        for (const q of pts_) {
+          if (!q) { pen = false; continue; }
+          const px = a + (n > 1 ? q[0] / (n - 1) : 0.5) * wpx, py = r.bot - Math.max(0, Math.min(1, q[1] / r.max)) * (r.bot - r.top);
+          d += (pen ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1); pen = true;
+        }
+        if (d) paths[r.k].push(d);
+      }
+    }
+    out.push(`<g clip-path="url(#clipx)" fill="none" stroke-width="1.2" stroke-linejoin="round">`
+      + `<path d="${paths.press.join('')}" stroke="${K.press}"/><path d="${paths.rate.join('')}" stroke="${K.rate}"/></g>`);
+  }
   out.push('<g id="ws-hl"></g>');
   $('ws-svg').innerHTML = out.join('');
   $('ws-svg').setAttribute('viewBox', `0 0 ${Wd} ${Ht}`);
 
-  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev };
+  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev, strip, sy0, sy1 };
+  if (!pointerIn) hover = extHover();
   $('ws-foot').textContent = `Vertical section along ${fmt(azDeg)}° (${compass(azDeg)}), from the pad's surface location`
     + ` · ${lateralMode ? 'lateral' : 'whole well'}, ${stretch}`
-    + ` · ${W.stages.length ? 'teal ticks have treatment curves, slate are filed only · ' : ''}hover for depths · click a stage for its charts`;
+    + ` · ${W.stages.length ? 'teal ticks have treatment curves, slate are filed only · ' : ''}`
+    + (scale ? `above: each stage's pressure (0–${fmt(scale.press)} ${String((W.units || {}).press || '').replace(/m3/g, 'm³')}) and rate (0–${fmt(scale.rate)} ${String((W.units || {}).rate || '').replace(/m3/g, 'm³')}), one scale for all · ` : '')
+    + 'hover for depths · click a stage for its charts';
+  const cb = $('ws-curves');
+  if (cb) { cb.disabled = !hasCurves; cb.setAttribute('aria-pressed', String(curvesOn && hasCurves)); cb.title = hasCurves ? 'Each stage\'s pressure and rate, above the well' : 'The Lab has not read this well\'s treatment curves yet'; }
   drawHover();
 }
 
@@ -320,13 +410,27 @@ function drawHover() {
   if (!hl || !G) return;
   const out = [];
   const hiS = W.stages.find(s => s.label === HI);
-  if (hiS) out.push(band(hiS, CURVES, .28, 16));
+  // a stage's stretch of the curves strip, picked out
+  const lit = (s, op) => { if (G.strip && s && s.sx0 != null) out.push(`<rect x="${s.sx0.toFixed(1)}" y="${G.sy0}" width="${Math.max(1, s.sx1 - s.sx0).toFixed(1)}" height="${G.sy1 - G.sy0}" fill="${K.curves}" fill-opacity="${op}" stroke="${K.curves}" stroke-opacity="${op * 3}"/>`); };
+  if (hiS) { out.push(band(hiS, K.curves, .28, 16)); lit(hiS, .14); }
   const tip = $('ws-tip');
-  if (hover) {
+  if (hover && hover.strip) {
+    // over the curves strip: the stage's band below, a cursor through its curves, and its chart
+    const s = hover.strip;
+    if (s !== hiS) { out.push(band(s, K.curves, .2, 16)); lit(s, .1); }
+    out.push(`<line x1="${hover.x}" x2="${hover.x}" y1="${G.sy0}" y2="${G.sy1}" stroke="${K.cross}" stroke-opacity=".45"/>`);
+    tip.hidden = true;
+    const n = curveMinutes(s), t = Math.max(0, Math.min(1, hover.frac)) * n, val = k => {
+      const v = s.series[k]; if (!Array.isArray(v) || !v.length) return null;
+      const x = v[Math.round(Math.max(0, Math.min(1, hover.frac)) * (v.length - 1))]; return x == null || !isFinite(x) ? null : x;
+    }, u = W.units || {}, un = k => String(u[k] || '').replace(/m3/g, 'm³'), p = val('press'), r = val('rate');
+    showCard(s, [`${fmt(t)} min in: ${[p != null && `${fmt(p, 1)} ${un('press')}`, r != null && `${fmt(r, 2)} ${un('rate')}`].filter(Boolean).join(' · ') || 'no reading'}`],
+      { x: (s.sx0 + s.sx1) / 2, y: G.sy0 });
+  } else if (hover) {
     const s = hover.md >= (G.heel - 1) ? stageAt(hover.md) : null;
-    if (s && s !== hiS) out.push(band(s, s.curves ? CURVES : FILED, .2, 16));
-    if (G.track && hover.md >= G.heel - 200) out.push(`<line x1="${hover.x}" x2="${hover.x}" y1="${G.y0}" y2="${G.ty1}" stroke="#e7f4fa" stroke-opacity=".35"/>`);
-    out.push(`<circle cx="${hover.x}" cy="${hover.y}" r="5" fill="none" stroke="#e7f4fa" stroke-width="2"/>`);
+    if (s && s !== hiS) { out.push(band(s, s.curves ? K.curves : K.filed, .2, 16)); lit(s, .1); }
+    if (G.track && hover.md >= G.heel - 200) out.push(`<line x1="${hover.x}" x2="${hover.x}" y1="${G.y0}" y2="${G.ty1}" stroke="${K.cross}" stroke-opacity=".35"/>`);
+    out.push(`<circle cx="${hover.x}" cy="${hover.y}" r="5" fill="none" stroke="${K.cross}" stroke-width="2"/>`);
     const gr = gammaAt(hover.md);
     const lines = [`<b>MD ${fmt(hover.md)} m</b> · TVD ${fmt(hover.tvd)} m`,
       `<span class="m">${fmt(hover.vs)} m along the section${G.elev != null ? ` · ${fmt(G.elev - hover.tvd)} m ASL` : ''}</span>`];
@@ -338,10 +442,10 @@ function drawHover() {
       if (bits.length) lines.push(`<span class="m">${bits.join(' · ')}</span>`);
       lines.push(s.curves ? 'Click for its treatment charts' : '<span class="m">Filed with the BCER; no curves yet</span>');
     }
-    if (s) { tip.hidden = true; showCard(s, [`MD ${fmt(hover.md)} m · TVD ${fmt(hover.tvd)} m${gr != null ? ` · GR ${fmt(gr)} API` : ''}`]); }
+    if (s) { tip.hidden = true; showCard(s, [(hover.ext ? 'Wine rack line · ' : '') + `MD ${fmt(hover.md)} m · TVD ${fmt(hover.tvd)} m${gr != null ? ` · GR ${fmt(gr)} API` : ''}`]); }
     else {
     hideCard();
-    tip.innerHTML = lines.join('<br>');
+    tip.innerHTML = (hover.ext ? '<span class="m">Wine rack line</span><br>' : '') + lines.join('<br>');
     tip.hidden = false;
     const box = $('ws-main'), tw = tip.offsetWidth, th = tip.offsetHeight;
     let tx = hover.x + 16, ty = hover.y - th - 12;
@@ -356,7 +460,7 @@ function drawHover() {
     if (hiS && document.activeElement === $('ws-svg')) showCard(hiS, null); else hideCard();
   }
   hl.innerHTML = out.join('');
-  $('ws-svg').style.cursor = hover && hover.md >= G.heel - 1 && stageAt(hover.md) ? 'pointer' : 'crosshair';
+  $('ws-svg').style.cursor = hover && (hover.strip || (hover.md >= G.heel - 1 && stageAt(hover.md))) ? 'pointer' : 'crosshair';
 }
 
 // ---------- a stage's chart, above it ----------
@@ -364,12 +468,13 @@ function drawHover() {
 // well's charts page (wellview.js SERIES), each on its own scale rounded up to a
 // readable top, and the curves hidden there hidden here too.
 const LAB_CURVES = [
-  { k: 'press', name: 'Tr Press', short: 'Press', color: '#f0555a' },
-  { k: 'rate', name: 'Slurry Rate', short: 'Rate', color: '#4f8ff7' },
-  { k: 'wh_conc', name: 'WH Prop Conc', short: 'WH conc', color: '#3fb950' },
-  { k: 'bh_conc', name: 'BH Prop Conc', short: 'BH conc', color: '#b87fd9' },
-  { k: 'bh_press', name: 'BH Press', short: 'BH press', color: '#39c5cf' },
+  { k: 'press', name: 'Tr Press', short: 'Press', color: '#f0555a', light: '#a31631' },
+  { k: 'rate', name: 'Slurry Rate', short: 'Rate', color: '#4f8ff7', light: '#1f6feb' },
+  { k: 'wh_conc', name: 'WH Prop Conc', short: 'WH conc', color: '#3fb950', light: '#1e7a34' },
+  { k: 'bh_conc', name: 'BH Prop Conc', short: 'BH conc', color: '#b87fd9', light: '#7a4fd6' },
+  { k: 'bh_press', name: 'BH Press', short: 'BH press', color: '#39c5cf', light: '#0b7f8a' },
 ];
+const curveInk = c => document.documentElement.dataset.theme === 'dark' ? c.color : c.light;
 const NICE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
 function niceCeil(v) {
   if (!(v > 0)) return 1;
@@ -380,9 +485,10 @@ function niceCeil(v) {
 function hiddenCurves() { try { return new Set(JSON.parse(localStorage.getItem('stratum.hiddenCurves') || '[]')); } catch (e) { return new Set(); } }
 
 let cardFor = null;
-function showCard(s, readout) {
+// anchored on the stage's tick on the well, or on a point given (its curves along the top)
+function showCard(s, readout, anchor) {
   const card = $('ws-card'), r = $('ws-svg').getBoundingClientRect();
-  const ax = r.left + s.px, ay = r.top + s.py;
+  const ax = r.left + (anchor ? anchor.x : s.px), ay = r.top + (anchor ? anchor.y : s.py);
   if (cardFor !== s) {
     cardFor = s;
     const bits = [s.date && `${s.date}${s.start ? ' ' + s.start : ''}`, s.series && s.step && `${fmt(curveMinutes(s))} min`].filter(Boolean);
@@ -434,7 +540,7 @@ function drawThumb(cv, legend, s) {
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
   const pad = 4, H = h - pad * 2;
-  g.strokeStyle = '#1a2c37'; g.lineWidth = 1;
+  g.strokeStyle = K.grid; g.lineWidth = 1;
   for (const f of [0.25, 0.5, 0.75]) { const y = Math.round(pad + H * f) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
   const off = hiddenCurves(), shown = [];
   for (const c of LAB_CURVES) {
@@ -443,7 +549,7 @@ function drawThumb(cv, legend, s) {
     const vals = v.filter(x => x != null && isFinite(x)), max = Math.max(...vals), top = niceCeil(max);
     shown.push({ ...c, max, hidden: off.has(c.name) });
     if (off.has(c.name)) continue;
-    g.strokeStyle = c.color; g.lineWidth = 1.5; g.lineJoin = 'round'; g.beginPath();
+    g.strokeStyle = curveInk(c); g.lineWidth = 1.5; g.lineJoin = 'round'; g.beginPath();
     let pen = false;
     v.forEach((x, i) => {
       if (x == null || !isFinite(x)) { pen = false; return; }
@@ -455,7 +561,7 @@ function drawThumb(cv, legend, s) {
   const u = W.units || {};
   const unit = k => esc(String(u[k] || '').replace(/m3/g, 'm³'));
   legend.innerHTML = (shown.length ? '<span class="m">peak</span>' : '')
-    + shown.map(c => `<span${c.hidden ? ' class="off" title="Hidden on the stage chart"' : ''}><i style="background:${c.color}"></i>${c.short} ${fmt(c.max, c.max < 100 ? 1 : 0)} ${unit(c.k)}</span>`).join('');
+    + shown.map(c => `<span${c.hidden ? ' class="off" title="Hidden on the stage chart"' : ''}><i style="background:${curveInk(c)}"></i>${c.short} ${fmt(c.max, c.max < 100 ? 1 : 0)} ${unit(c.k)}</span>`).join('');
 }
 
 const svg = $('ws-svg');
@@ -464,6 +570,13 @@ svg.addEventListener('pointermove', e => {
   if (!G) return;
   const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   let best = null, bd = Infinity;
+  if (G.strip && my <= G.sy1 + 6) {
+    // the curves strip: the stage under the pointer, and how far through it
+    const s = W.stages.find(q => q.sx0 != null && mx >= q.sx0 && mx <= q.sx1);
+    best = s ? { strip: s, md: s.mid, x: mx, frac: (mx - s.sx0) / Math.max(1, s.sx1 - s.sx0) } : null;
+    if (best || hover) { hover = best; drawHover(); }
+    return;
+  }
   if (G.track && my >= G.ty0 - 4) {
     for (const s of G.samples) { if (s.md < G.heel - 200) continue; const d = Math.abs(s.x - mx); if (d < bd) { bd = d; best = s; } }
     if (bd > 30) best = null;
@@ -473,9 +586,11 @@ svg.addEventListener('pointermove', e => {
   }
   if (best !== hover) { hover = best; drawHover(); }
 });
-svg.addEventListener('pointerleave', () => { hover = null; drawHover(); });
+svg.addEventListener('pointerenter', () => { pointerIn = true; });
+svg.addEventListener('pointerleave', () => { pointerIn = false; hover = extHover(); drawHover(); });
 svg.addEventListener('blur', () => { if (!hover) hideCard(); });
 svg.addEventListener('click', () => {
+  if (hover && hover.strip) { HI = hover.strip.label; syncUrl(); render(); openStage(hover.strip); return; }
   if (!hover || hover.md < G.heel - 1) return;
   const s = stageAt(hover.md);
   if (s) { HI = s.label; syncUrl(); render(); openStage(s); }
@@ -492,6 +607,7 @@ svg.addEventListener('keydown', e => {
 });
 new ResizeObserver(() => render()).observe($('ws-main'));
 addEventListener('stratum:gammapalette', () => { setPressed(); render(); });
+addEventListener('stratum:theme', () => { cardFor = null; render(); });
 
 // ---------- header and controls ----------
 function header() {
@@ -520,13 +636,15 @@ function setPressed() {
   for (const [id, p] of Object.entries(window.StratumGamma.PALETTES)) { const o = document.createElement('option'); o.value = id; o.textContent = p.name; pal.append(o); }
   pal.onchange = () => window.StratumGamma.set(pal.value);
 }
-const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode, color: colorBy })); } catch (e) { /* private mode */ } };
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode, color: colorBy, curves: curvesOn })); } catch (e) { /* private mode */ } };
+$('ws-curves').onclick = () => { curvesOn = !curvesOn; savePrefs(); hover = null; render(); };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; savePrefs(); setPressed(); render(); });
 document.querySelectorAll('[data-color]').forEach(b => b.onclick = () => { colorBy = b.dataset.color; savePrefs(); setPressed(); render(); });
 
 function syncUrl() {
   const q = new URLSearchParams(location.search);
   q.set('wa', WA); if (HI) q.set('stage', HI); else q.delete('stage');
+  if (EXT && EXT.wa === WA) q.set('at', Math.round(EXT.md)); else q.delete('at');
   history.replaceState(null, '', '?' + q);
 }
 
@@ -581,8 +699,15 @@ function openStage(s) {
 }
 $('ws-charts').onclick = () => openStage(W && (W.stages.find(s => s.label === HI && s.curves) || W.stages.find(s => s.curves)));
 
-function show(wa, stage) {
+// the wine rack's line on this well moved (null: it is off this well)
+function cursorTo(wa, md) {
+  EXT = md == null || !isFinite(md) ? null : { wa: String(wa), md: +md };
+  if (!W || String(wa) !== WA || pointerIn) return;
+  hover = extHover(); drawHover();
+}
+function show(wa, stage, at) {
   if (wa == null || wa === '') return;
+  if (at !== undefined) EXT = at == null || !isFinite(at) ? null : { wa: String(wa), md: +at };
   HI = stage != null && stage !== '' ? String(stage) : null;
   if (String(wa) === WA && W) { syncUrl(); render(); return; }
   load(wa);
@@ -601,10 +726,11 @@ if (EMBED) {
   };
   $('ws-close').onclick = () => parent.postMessage({ type: 'ws:close' }, ORIGIN);
   window.stratumSectionShow = show;          // the parent's direct line, same origin
+  window.stratumSectionCursor = cursorTo;
   addEventListener('message', e => {
     if (e.origin !== ORIGIN || e.source !== parent) return;
     const m = e.data;
-    if (m && m.type === 'ws:show') show(m.wa, m.stage);
+    if (m && m.type === 'ws:show') show(m.wa, m.stage, m.at);
   });
 } else {
   // popped out: follow the main window, and say so, so it sends wells here rather than docking
@@ -613,8 +739,9 @@ if (EMBED) {
     const m = e.data || {};
     if (m.type === 'show') {
       if (m.from) { owner = m.from; ownerPage = m.page || null; dockable(); }
-      show(m.wa, m.stage);
-    } else if (m.type === 'claim' && m.from) { owner = m.from; ownerPage = m.page || null; dockable(); }
+      show(m.wa, m.stage, m.at);
+    }
+    else if (m.type === 'cursor') cursorTo(m.wa, m.at); else if (m.type === 'claim' && m.from) { owner = m.from; ownerPage = m.page || null; dockable(); }
     else if (m.type === 'ping') announce();
     else if (m.type === 'ack' && pending.has(m.id)) { pending.get(m.id)(true); pending.delete(m.id); }
   };

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
+<title>FracView — Wine racks</title>
+<link rel="stylesheet" href="winerack.css">
+<script src="session.js"></script>
+<script src="account.js"></script>
+</head>
+<body>
+<header class="wr-head">
+  <div class="wr-id">
+    <h1>Wine racks</h1>
+    <div class="wr-sub" id="wr-sub">Loading…</div>
+  </div>
+  <div class="wr-tools">
+    <div class="wr-seg" role="group" aria-label="Colour wells by">
+      <button type="button" data-color="pad" aria-pressed="true">Pad</button>
+      <button type="button" data-color="gamma" aria-pressed="false">Gamma</button>
+    </div>
+    <div class="wr-key" id="wr-key" hidden></div>
+    <button type="button" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
+    <span data-theme-toggle></span>
+    <span data-account></span>
+  </div>
+</header>
+<main id="wr-list" aria-live="polite">
+  <p class="wr-empty" id="wr-empty" hidden>No wine racks open. Pick <b>Wine rack</b> on a pad, on the map or in the 3D view, and it opens here; each one after it is added underneath.</p>
+</main>
+<div class="wr-tip" id="wr-tip" hidden></div>
+<script src="gamma-palettes.js"></script>
+<script src="winerack.js"></script>
+</body>
+</html>

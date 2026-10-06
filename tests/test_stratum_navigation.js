@@ -19,14 +19,15 @@ const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:nul
   sessionStorage:{setItem:(k,v)=>objects.set(k,v),getItem:k=>objects.get(k)||null,removeItem:k=>objects.delete(k)},
   addEventListener:noop,ready:Promise.resolve(),button:element(),
   map:{getCenter:()=>({toArray:()=>[-122,56]}),getZoom:()=>13,getBearing:()=>12,getPitch:()=>4,jumpTo:v=>{c.surface=v}},
-  colorBy:'pad',NEUTRAL:'#d6e6ee',GAMMA_NONE:'#6b8290',GAMMA_INK:['#000','#111'],setColor:async m=>{c.colorBy=m},
+  colorBy:'pad',GAMMA_INK:['#000','#111'],setColor:async m=>{c.colorBy=m},keyNav:noop,
+  UK:{grid:'#4f7584',gridA:[.3,.12],depth:'#566b78',neutral:'#3d4f5b',none:'#7b8e9a',lit:'#0d8577',on:'#14212b',padOn:'#14212b',padRing:'#ffffff',glow:0,quake:'#d6336c'},
   sectionOn:false,padUrl:()=>'pad.html?embedded=1',
-  rack:null,rackEntry:null,rackHover:null,rackS:null,placeRackButtons:noop,enterRack:noop,exitRack(){c.rack=null},loadArea:async()=>{},areaTitle:'Test area · Below the surface',showQuakes:false,areaName:''
+  rackHover:null,placeRackButtons:noop,loadArea:async()=>{},areaTitle:'Test area · Below the surface',showQuakes:false,areaName:''
 };
 vm.createContext(c);
 vm.runInContext(between('function selectPad(id)','function renderPanel'),c);
 c.selectPad('pad-0');assert.deepEqual(plain(c.entryCamera),initial);
-c.rack=c.pad;c.selectPad('');assert.equal(c.rack,null,'leaving the pad closes its wine rack');c.camera=structuredClone(initial);c.selectPad('pad-0');
+c.selectPad('');c.camera=structuredClone(initial);c.selectPad('pad-0');
 c.camera.yaw=2;c.camera.target[0]=999;
 c.selectPad('pad-1');assert.equal(c.pad.id,'pad-0','neighbour pad must not become selected');
 c.returnToCluster();assert.deepEqual(plain(c.camera),initial,'back restores every camera component');
@@ -45,7 +46,7 @@ c.colorBy='pad';
 const tail=between("const UG_KEY=",'(async()=>{let s=null');
 vm.runInContext(tail,c);c.ugSave();
 const saved=JSON.parse(objects.get('stratum.underground'));
-assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);assert.equal(saved.colorBy,'pad');assert.deepEqual(plain(saved.area),['pad-0','pad-1'],'the open area is saved, so Back reloads the same pads');assert.equal(saved.rack,null,'no wine rack open, none restored');
+assert.deepEqual(saved.entryCamera,initial);assert.equal(saved.stage,'2');assert.equal(saved.interval,7);assert.equal(saved.colorBy,'pad');assert.deepEqual(plain(saved.area),['pad-0','pad-1'],'the open area is saved, so Back reloads the same pads');assert.equal(saved.rack,undefined,'wine racks live in their own window now, not in the 3D view');
 c.pad=null;c.well=null;c.entryCamera=null;c.camera={yaw:0,pitch:0,scale:1,target:[0,0,0],pan:[0,0]};c.draw=noop;
 const restore=source.slice(source.indexOf('(async()=>{let s=null'),source.lastIndexOf('})();'));
 (async()=>{

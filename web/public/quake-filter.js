@@ -71,22 +71,35 @@ function describe(f = get()) {
 }
 
 // ---------- the form, in a small panel under the button that opens it ----------
+// light by default; theme.js sets [data-theme=dark] on <html> for the dark one
 const CSS = `
-.qf{position:fixed;z-index:90;width:300px;max-width:calc(100vw - 16px);background:#0d1924;border:1px solid #345260;border-radius:12px;
-  box-shadow:0 16px 40px #000b;padding:12px 13px 11px;color:#e7f4fa;font:13px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.qf{position:fixed;z-index:90;width:300px;max-width:calc(100vw - 16px);background:#ffffff;border:1px solid #b9c8d2;border-radius:12px;
+  box-shadow:0 16px 40px rgba(20,33,43,.22);padding:12px 13px 11px;color:#14212b;font:13px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
 .qf h3{margin:0 0 9px;font-size:13.5px;font-weight:650;display:flex;align-items:center;gap:7px}
-.qf h3 i{width:9px;height:9px;border-radius:50%;background:#ff5fa2;display:inline-block}
+.qf h3 i{width:9px;height:9px;border-radius:50%;background:#d6336c;display:inline-block}
 .qf .row{display:grid;grid-template-columns:76px 1fr 1fr;gap:6px;align-items:center;margin-bottom:7px}
-.qf .row>span{color:#93adb9;font-size:12px}
-.qf input[type=date],.qf input[type=number]{background:#0a141d;border:1px solid #345260;border-radius:7px;color:#e7f4fa;padding:5px 6px;font:12.5px ui-monospace,Menlo,monospace;min-width:0;width:100%;color-scheme:dark}
-.qf label.ck{display:flex;gap:7px;align-items:flex-start;margin:6px 0;font-size:12.5px;color:#d6e6ee;cursor:pointer}
-.qf label.ck input{margin:2px 0 0;accent-color:#ff5fa2}
-.qf label.ck small{display:block;color:#7f97a4;font-size:11.5px}
-.qf .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #243a46}
-.qf .count{color:#93adb9;font:12px ui-monospace,Menlo,monospace}
-.qf button{background:#152936;border:1px solid #345260;border-radius:7px;color:#e7f4fa;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer}
-.qf button:hover{border-color:#5ee2d0}
-.qf input:focus-visible,.qf button:focus-visible{outline:2px solid #5ee2d0;outline-offset:1px}`;
+.qf .row>span{color:#566b78;font-size:12px}
+.qf input[type=date],.qf input[type=number]{background:#ffffff;border:1px solid #b9c8d2;border-radius:7px;color:#14212b;padding:5px 6px;font:12.5px ui-monospace,Menlo,monospace;min-width:0;width:100%;color-scheme:light}
+.qf label.ck{display:flex;gap:7px;align-items:flex-start;margin:6px 0;font-size:12.5px;color:#14212b;cursor:pointer}
+.qf label.ck input{margin:2px 0 0;accent-color:#d6336c}
+.qf label.ck small{display:block;color:#7b8e9a;font-size:11.5px}
+.qf .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;padding-top:8px;border-top:1px solid #d3dde4}
+.qf .count{color:#566b78;font:12px ui-monospace,Menlo,monospace}
+.qf button{background:#eef3f6;border:1px solid #b9c8d2;border-radius:7px;color:#14212b;padding:5px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+.qf button:hover{border-color:#0d8577}
+.qf input:focus-visible,.qf button:focus-visible{outline:2px solid #0d8577;outline-offset:1px}
+[data-theme=dark] .qf{background:#0d1924;border-color:#345260;box-shadow:0 16px 40px #000b;color:#e7f4fa}
+[data-theme=dark] .qf h3 i{background:#ff5fa2}
+[data-theme=dark] .qf .row>span{color:#93adb9}
+[data-theme=dark] .qf input[type=date],[data-theme=dark] .qf input[type=number]{background:#0a141d;border-color:#345260;color:#e7f4fa;color-scheme:dark}
+[data-theme=dark] .qf label.ck{color:#d6e6ee}
+[data-theme=dark] .qf label.ck input{accent-color:#ff5fa2}
+[data-theme=dark] .qf label.ck small{color:#7f97a4}
+[data-theme=dark] .qf .foot{border-top-color:#243a46}
+[data-theme=dark] .qf .count{color:#93adb9}
+[data-theme=dark] .qf button{background:#152936;border-color:#345260;color:#e7f4fa}
+[data-theme=dark] .qf button:hover{border-color:#5ee2d0}
+[data-theme=dark] .qf input:focus-visible,[data-theme=dark] .qf button:focus-visible{outline-color:#5ee2d0}`;
 let open = null;
 function close() { if (open) { open.el.remove(); document.removeEventListener('pointerdown', open.outside, true); open.anchor.setAttribute('aria-expanded', 'false'); open = null; } }
 // anchor: the button; o.bounds {first, last, magMin, magMax} for the placeholders; o.count(f) -> "n of N"
