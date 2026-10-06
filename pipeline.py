@@ -1386,9 +1386,10 @@ STEP_REST_FLOOR = 0.05
 def _bridge_step_gaps(results, notes):
     """No broken stretches in a STEP curve.
 
-    Carmine: STEP graphs must not have broken links of data, "use
-    interpolation or whatever else is necessary to make sure data doesn't
-    drop off". A STEP chart is a picture traced column by column, and a curve
+    STEP graphs must not have broken links of data: "use interpolation or
+    whatever else is necessary to make sure data doesn't drop off" (the brief,
+    2026-10-06, after Carmine's "we lose a lot of data on the ends of the
+    charts"). A STEP chart is a picture traced column by column, and a curve
     goes blank wherever its ink cannot be seen: under another curve painted
     over it, along the frame's bottom rule where a shut-in rate or a bled-off
     pressure rests, and through the near-vertical stroke of a shutdown, which
@@ -1399,11 +1400,15 @@ def _bridge_step_gaps(results, notes):
       - a gap with a reading on both sides (mid-flight, resting at the floor,
         or on a channel whose axis was not read) is bridged by straight-line
         interpolation between the two readings;
-      - before the first reading or after the last, when that reading sits on
-        the axis floor, the curve is carried along the floor — but only as far
-        as the chart has ink at all: to the first or last sample any curve on
-        it carries. The empty margin a plotter leaves after the data stays
-        empty, because nothing is drawn there;
+      - before the first reading or after the last, the curve is carried as
+        far as the chart has ink at all: to the first or last sample any curve
+        on it carries. The empty margin a plotter leaves after the data stays
+        empty, because nothing is drawn there. A curve that rests on the axis
+        floor is carried along it. One whose first or last reading is in
+        mid-air met a near-vertical stroke the tracer could not see: before
+        its first reading it was on the floor; after its last, a pressure
+        holds that reading (it shuts in, it does not fall to zero) and a rate
+        or a concentration goes to the floor;
       - a stretch pinned at full scale stays blank: the curve is off the top
         of its axis, and the client asked for that to come back blank, not as
         a flat line at the axis maximum (#97).
