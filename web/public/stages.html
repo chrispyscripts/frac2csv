@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
+<title>FracView — Stage charts</title>
+<link rel="stylesheet" href="stages.css">
+<script src="session.js"></script>
+<script src="account.js"></script>
+</head>
+<body>
+<header class="sg-head">
+  <div>
+    <h1>Stage charts</h1>
+    <div class="sg-sub" id="sg-sub">Loading…</div>
+  </div>
+  <div class="sg-tools">
+    <button type="button" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
+    <span data-theme-toggle></span>
+    <span data-account></span>
+  </div>
+</header>
+<main id="sg-list" aria-live="polite">
+  <p class="sg-empty" id="sg-empty" hidden>No stages here. Click a stage on a well's 2D view and its chart opens in a window like this one; the next one can be stacked here or given a window of its own.</p>
+</main>
+<script src="stages.js"></script>
+</body>
+</html>

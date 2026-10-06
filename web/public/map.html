@@ -346,8 +346,20 @@ function render() {
     map.on("mouseleave", "pads", () => map.getCanvas().style.cursor = "");
     map.on("click", "pads", e => openPad(PAD_BY_ID[e.features[0].properties.id], e.lngLat));
     sidebar();
+    if (FOCUS) focusPad(FOCUS);
   };
   mapReady.then(add);
+}
+
+// map.html?pad=ID (where the old pad page's links and a well's Back now land): straight to that pad, its popup open
+const FOCUS = new URLSearchParams(location.search).get("pad");
+function focusPad(id) {
+  const p = PAD_BY_ID[id], info = PAD_INFO[id], at = p ? [p.lon, p.lat] : info ? [info.lon, info.lat] : null;
+  const q = new URLSearchParams(location.search); q.delete("pad");
+  history.replaceState(history.state, "", location.pathname + (String(q) ? "?" + q : ""));
+  if (!at) return;
+  map.jumpTo({ center: at, zoom: Math.max(map.getZoom(), 13.5) });
+  if (p) openPad(p);
 }
 
 const labelMarkers = new Map();
@@ -364,8 +376,8 @@ function updateLabels() {
   }
 }
 
-// a pad's popup is where navigation starts: its 3D area, its wine rack (in a window
-// of its own, so the map stays as it is), its table
+// a pad's popup is where navigation starts: its 3D area, or its wine rack (in a
+// window of its own, so the map stays as it is)
 function openPad(p, lngLat) {
   if (!p) return;
   if (popup) popup.remove();
@@ -376,8 +388,7 @@ function openPad(p, lngLat) {
     : [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null]).filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat || [p.lon, p.lat])
     .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts">
-      <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack" title="Opens in the wine rack window; each pad after it is added underneath">Wine rack ↗</button>
-      <a href="pad.html?set=${encodeURIComponent(p.set)}&pad=${encodeURIComponent(p.id)}">Pad data</a></div></div>`).addTo(map);
+      <button type="button" class="go" data-act="3d">3D view</button><button type="button" data-act="rack" title="Opens in the wine rack window; each pad after it is added underneath">Wine rack ↗</button></div></div>`).addTo(map);
   const el = popup.getElement();
   el.querySelector("b").textContent = p.name;
   el.querySelector(".facts").textContent = facts.join(" · ");

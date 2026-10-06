@@ -158,6 +158,20 @@ each entry.
   well, spanning the stage's own stretch of hole, one scale for every stage;
   hover a stage there for its full chart, click for its charts. "Curves"
   toggles it.
+- **Stage charts in their own windows** (2026-10-06). A stage clicked on a
+  well's 2D view (on the well, its tick, or its curves above) opens its chart
+  in a window (`stages.html?s=WA:stage,…`); with a stage window already open, a
+  small dialog asks: stack it under the charts there, or open a new window.
+  Each card is the charts page's stage chart (`wellview.html?solo=1`: zoom,
+  pan, hide curves), with ‹ › to step that card's stage, Charts ↗ for the
+  well's full charts, ↑ and ×. Windows say what they hold over
+  `stratum-stages`; they come back with sessions. "Charts →" on the section
+  still opens the well's full charts.
+- **No pad page** (2026-10-06). `pad.html` on its own redirects to
+  `map.html?pad=ID`, which centres the map on the pad with its popup open; the
+  popup's "Pad data" link is gone, and the charts page's Back closes a window
+  FracView opened (or goes to the map at the pad) instead of landing there.
+  The 3D view's bottom panel still uses it embedded (`?embedded=1`).
 - **Private, invite-only** (2026-10-04). Every page, data file and the extractor
   need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
   anything is served); only `login.html` and `/api/auth` are open. Accounts are

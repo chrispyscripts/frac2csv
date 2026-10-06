@@ -133,7 +133,7 @@ function header() {
     `<b>${measured}</b> with a printed depth${measured < WELL.stages.length ? `, ${WELL.stages.length - measured} placed by order` : ""}`,
     WELL.file ? `<span style="font-family:var(--mono);font-size:12px">${WELL.file}</span>` : null,
   ].filter(Boolean);
-  if (WELL.pad && WELL.pad.id) facts.push(`pad <a href="pad.html?set=${encodeURIComponent(WELL.pad.id.replace(/-\d+$/, ""))}&pad=${encodeURIComponent(WELL.pad.id)}">${WELL.pad.name}</a>`);
+  if (WELL.pad && WELL.pad.id) facts.push(`pad <a href="map.html?pad=${encodeURIComponent(WELL.pad.id)}">${WELL.pad.name}</a>`);
   if (WELL.trajectory && WELL.trajectory.md && WELL.trajectory.md.length) facts.push(`survey <b>${WELL.trajectory.md.length} stations</b>`);
   if (WELL.logs && WELL.logs.length) facts.push(`logs <b>${WELL.logs.map(l => l.mnemonic || l.name).join(", ")}</b>`);
   document.getElementById("facts").innerHTML = facts.map(f => `<span>${f}</span>`).join("");

@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+// The pad page lives on only inside the 3D view's bottom panel (?embedded=1).
+// On its own it is gone: old links, Back and saved sessions land on the map at the pad.
+if (new URLSearchParams(location.search).get('embedded') !== '1') {
+  const id = new URLSearchParams(location.search).get('pad');
+  location.replace('map.html' + (id ? '?pad=' + encodeURIComponent(id) : ''));
+}
+</script>
 <script src="theme.js"></script>
 <title>FracView — Pad view</title>
 <script src="session.js"></script>

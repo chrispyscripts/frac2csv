@@ -10,6 +10,16 @@
 const $ = id => document.getElementById(id);
 const WA = new URLSearchParams(location.search).get('wa') || '';
 const ORIGIN = location.origin;
+// ?solo=1: one stage's chart and nothing else, for a card in the stage charts
+// window (stages.html), which frames it and is told what it shows
+const SOLO = new URLSearchParams(location.search).get('solo') === '1' && window.parent !== window;
+if (SOLO) document.body.classList.add('wc-solo');
+function tellCard() {
+  if (!SOLO) return;
+  const st = STAGES[sel], w = (W && W.well) || {};
+  parent.postMessage({ type: 'wc:solo', wa: WA, label: st ? st.label : null, name: w.name || '', pad: W && W.pad ? W.pad.name : '',
+    date: st && st.date ? `${st.date} ${st.start.slice(0, 5)}` : '', stages: STAGES.map(x => x.label), curves: STAGES.length > 0 }, ORIGIN);
+}
 
 // Light or dark (theme.js): every colour drawn here is picked as it is drawn,
 // and the page draws again on `stratum:theme`.
@@ -135,7 +145,7 @@ async function load() {
     }
     ['tab-stacked', 'tab-frac', 'wc-prev', 'wc-next'].forEach(id => { $(id).disabled = true; });
     document.querySelector('.wc-stagenav').hidden = true; document.querySelector('.wc-hint').hidden = true;
-    announceSection();
+    announceSection(); tellCard();
     return;
   }
   renderSteps();
@@ -206,7 +216,7 @@ function selectStage(i, from) {
   if (from !== 'fv') fvSel();
   const q = new URLSearchParams(location.search); q.set('stage', st.label);
   history.replaceState(history.state, '', '?' + q);
-  announceSection();
+  announceSection(); tellCard();
 }
 
 function renderInfo() {
@@ -572,7 +582,7 @@ function setTab(id) {
   if (id === 'tab-stacked') ensureFrame('stacked');
   if (id === 'tab-frac') ensureFrame('frac');
   if (id === 'tab-chart') drawChart();
-  try { sessionStorage.setItem('stratum.wellTab', id); } catch (e) { /* private mode */ }
+  if (!SOLO) try { sessionStorage.setItem('stratum.wellTab', id); } catch (e) { /* private mode */ }
 }
 TABS.forEach(([t], k) => {
   $(t).onclick = () => setTab(t);
@@ -595,11 +605,16 @@ addEventListener('keydown', e => {
 
 // back: the browser's own history restores the pad or underground view with the
 // camera and selection it had; only fall back when this page was opened cold
+// back: the browser's own history restores the map or 3D view with the camera
+// and selection it had. A window FracView opened has no history: Back closes it,
+// and the window that opened it is still there. Opened cold, it goes to the map
+// at this well's pad.
+const ownWindow = () => history.length <= 1 && !!window.opener && !window.opener.closed;
+if (ownWindow()) { $('wc-back').textContent = 'Close ×'; $('wc-back').title = 'Close this window'; }
 $('wc-back').onclick = () => {
   if (history.length > 1 && document.referrer && new URL(document.referrer, location.href).origin === location.origin) history.back();
-  else location.href = W && W.pad && W.pad.id
-    ? `pad.html?set=${encodeURIComponent(String(W.pad.id).replace(/-\d+$/, ''))}&pad=${encodeURIComponent(W.pad.id)}`
-    : 'map.html';
+  else if (ownWindow()) window.close();
+  else location.href = W && W.pad && W.pad.id ? `map.html?pad=${encodeURIComponent(W.pad.id)}` : 'map.html';
 };
 // the well section window (wellsection.html, popped out): it follows the well
 // and stage on screen here, and a stage clicked there selects it here. Messages
@@ -608,6 +623,7 @@ $('wc-back').onclick = () => {
 const secChan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-section') : null;
 const ME = Math.random().toString(36).slice(2);
 function announceSection() {
+  if (SOLO) return;       // a card in the stage charts window is not a main window
   if (secChan) secChan.postMessage({ type: 'show', wa: WA, stage: STAGES[sel] ? STAGES[sel].label : null, from: ME, page: 'charts' });
 }
 $('wc-section').onclick = () => {
@@ -623,7 +639,7 @@ addEventListener('message', e => {
   const i = STAGES.findIndex(s => s.label === String(m.label));
   if (i >= 0) selectStage(i);
 });
-if (secChan) secChan.onmessage = e => {
+if (secChan && !SOLO) secChan.onmessage = e => {
   const m = e.data || {};
   if (m.type === 'hello') { secChan.postMessage({ type: 'claim', from: ME, page: 'charts' }); return; }
   if (m.type !== 'open-stage' || m.to !== ME || !m.wa) return;
@@ -652,5 +668,5 @@ $('wc-add').onclick = e => {
 };
 
 let startTab = 'tab-chart';
-try { startTab = sessionStorage.getItem('stratum.wellTab') || startTab; } catch (e) { /* private mode */ }
+if (!SOLO) try { startTab = sessionStorage.getItem('stratum.wellTab') || startTab; } catch (e) { /* private mode */ }
 load().then(() => { if (STAGES.length) setTab(startTab); });

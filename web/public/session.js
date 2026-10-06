@@ -17,7 +17,7 @@
 // FracView was Stratum: files saved under the old name still open
 const KIND = 'fracview-session', KINDS = [KIND, 'stratum-session'];
 const LIST_KEY = 'stratum.sessions', HAND = 'stratum.handoff.', PENDING = 'stratum.pendingWindows';
-const PAGES = /^(map|wellview|wellsection|compare|pad|winerack)\.html(\?[^#]*)?$/;
+const PAGES = /^(map|wellview|wellsection|compare|pad|winerack|stages)\.html(\?[^#]*)?$/;
 const TOP = window.top === window;
 const ME = Math.random().toString(36).slice(2);
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -105,6 +105,7 @@ function describe(w, settings) {
   if (page === 'wellsection') return `Well section · ${t}`;
   if (page === 'compare') { const n = (parse(settings && settings['stratum.compare']) || []).length; return `Compare · ${n} well${n === 1 ? '' : 's'}`; }
   if (page === 'pad') return `Pad · ${t}`;
+  if (page === 'stages') { const n = (new URLSearchParams(w.url.split('?')[1] || '').get('s') || '').split(',').filter(Boolean).length; return `Stage charts · ${n} stage${n === 1 ? '' : 's'}`; }
   if (page === 'winerack') { const n = ((parse(s['stratum.racks']) || {}).pads || []).length || (new URLSearchParams(w.url.split('?')[1] || '').get('pads') || '').split(',').filter(Boolean).length; return `Wine racks · ${n} pad${n === 1 ? '' : 's'}`; }
   return t || page;
 }

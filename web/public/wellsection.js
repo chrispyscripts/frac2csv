@@ -440,7 +440,7 @@ function drawHover() {
       const bits = [s.date && `${s.date}${s.start ? ' ' + s.start : ''}`, s.proppant != null && `${fmt(s.proppant, 1)} t`,
         s.fluid != null && `${fmt(s.fluid)} m³`, s.rate != null && `${fmt(s.rate, 1)} m³/min`, s.pmax != null && `max ${fmt(s.pmax, 1)} MPa`].filter(Boolean);
       if (bits.length) lines.push(`<span class="m">${bits.join(' · ')}</span>`);
-      lines.push(s.curves ? 'Click for its treatment charts' : '<span class="m">Filed with the BCER; no curves yet</span>');
+      lines.push(s.curves ? 'Click to open its chart in a window' : '<span class="m">Filed with the BCER; no curves yet</span>');
     }
     if (s) { tip.hidden = true; showCard(s, [(hover.ext ? 'Wine rack line · ' : '') + `MD ${fmt(hover.md)} m · TVD ${fmt(hover.tvd)} m${gr != null ? ` · GR ${fmt(gr)} API` : ''}`]); }
     else {
@@ -499,7 +499,7 @@ function showCard(s, readout, anchor) {
     card.querySelector('.ws-card-p').textContent = pumped.join(' · ');
   }
   card.querySelector('.ws-card-r').innerHTML = (readout || []).join('<br>');
-  card.querySelector('.ws-card-f').textContent = s.curves ? 'Click for this stage’s charts' : 'Filed with the BCER; the Lab has not read its curves yet';
+  card.querySelector('.ws-card-f').textContent = s.curves ? 'Click to open this stage’s chart in a window' : 'Filed with the BCER; the Lab has not read its curves yet';
   const cv = card.querySelector('canvas'), legend = card.querySelector('.ws-card-l');
   cv.hidden = legend.hidden = !s.series;
   card.classList.remove('below', 'side-r', 'side-l');
@@ -695,7 +695,102 @@ function openStage(s) {
     });
     return;
   }
-  chartsWindow(label);
+  if (!label) { note(`Stage ${esc(s ? s.label : '')} was filed with the BCER; the Lab has not read its curves yet.`); return; }
+  stageWindow(s);
+}
+
+// ---------- a stage's chart in a window of its own (stages.html) ----------
+// The first stage opens a window. With one open already, a small dialog asks:
+// stack it under the charts there, or give it a window of its own. The stage
+// windows say what they hold over 'stratum-stages'; this page keeps the list.
+const stChan = 'BroadcastChannel' in self ? new BroadcastChannel('stratum-stages') : null;
+const stageWins = new Map();          // id -> {id, name, at, stages}
+const stAcks = new Map();             // a stage sent over the channel, until its window says it has it
+if (stChan) {
+  stChan.onmessage = e => {
+    const m = e.data || {};
+    if (m.type === 'here' && m.id) stageWins.set(m.id, m);
+    else if (m.type === 'bye') stageWins.delete(m.id);
+    else if (m.type === 'added' && stAcks.has(m.rid)) { clearTimeout(stAcks.get(m.rid)); stAcks.delete(m.rid); }
+  };
+  stChan.postMessage({ type: 'ping' });
+  addEventListener('focus', () => stChan.postMessage({ type: 'ping' }));
+}
+const openWins = () => [...stageWins.values()].sort((a, b) => (b.at || 0) - (a.at || 0));
+const stageUrl = (wa, label) => `stages.html?s=${encodeURIComponent(wa)}:${encodeURIComponent(label)}`;
+const letters = () => Array.from({ length: 6 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('');
+function newStageWindow(wa, label) {
+  const w = window.open(stageUrl(wa, label), 'stratum-stages' + letters(), 'popup,width=1180,height=820');
+  if (w) { try { w.focus(); } catch (e) { /* the browser decides */ } }
+  else note(`Your browser blocked the stage window. <a href="${stageUrl(wa, label)}" target="_blank" rel="noopener">Open stage ${esc(label)}</a>`);
+}
+// into an open stage window: found by its name, so it can be brought forward; told over the channel otherwise
+function stackStage(win, wa, label) {
+  let w = null;
+  try { w = window.open('', win.name); } catch (e) { /* blocked */ }
+  try {
+    if (w && w.stratumStages) { w.stratumStages.add(wa, label); w.focus(); return; }
+    if (w && /\/stages(\.html)?$/.test(w.location.pathname)) { (w.stratumStageQueue = w.stratumStageQueue || []).push({ wa, label }); w.focus(); return; }
+    if (w) w.close();               // not reachable by name from here: a blank window was made for it
+  } catch (e) { /* not ours */ }
+  if (!stChan) return;
+  // a window that went without saying so never answers: say where the stage can still be opened
+  const rid = letters();
+  stAcks.set(rid, setTimeout(() => {
+    stAcks.delete(rid); stageWins.delete(win.id);
+    note(`That stage window has closed. <a href="${stageUrl(wa, label)}" target="_blank" rel="noopener">Open stage ${esc(label)} in a new window</a>`);
+  }, 900));
+  stChan.postMessage({ type: 'add', to: win.id, wa, label, rid });
+}
+const stageList = st => {
+  const by = new Map();
+  st.forEach(x => { if (!by.has(x.wa)) by.set(x.wa, []); by.get(x.wa).push(x.label); });
+  return [...by].map(([wa, ls]) => (by.size > 1 || wa !== WA ? `WA ${wa}: ` : '') + 'stage' + (ls.length > 1 ? 's ' : ' ') + ls.join(', ')).join(' · ');
+};
+function stageWindow(s) {
+  const wins = openWins().filter(w => w.name);
+  if (!wins.length) { newStageWindow(WA, s.label); return; }
+  chooser(s, wins);
+}
+let chooseEl = null;
+function closeChooser(refocus) {
+  if (!chooseEl) return;
+  chooseEl.remove(); chooseEl = null;
+  document.removeEventListener('pointerdown', outsideChooser, true);
+  if (refocus) $('ws-svg').focus();
+}
+const outsideChooser = e => { if (chooseEl && !chooseEl.contains(e.target)) closeChooser(false); };
+function chooser(s, wins) {
+  closeChooser(false); hideCard();
+  const el = chooseEl = document.createElement('div');
+  el.className = 'ws-choose'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', `Where to open stage ${s.label}`);
+  el.innerHTML = `<div class="ws-choose-h"><b>Stage ${esc(s.label)}</b><span>${esc(W.well.name || 'WA ' + WA)}</span></div>
+    <p>A stage chart window is open. Stack this stage under the charts there, or give it a window of its own?</p>`;
+  const acts = document.createElement('div'); acts.className = 'ws-choose-acts';
+  wins.slice(0, 4).forEach((w, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'go';
+    const here = (w.stages || []).some(x => String(x.wa) === WA && String(x.label) === String(s.label));
+    b.innerHTML = `<b>${here ? 'Show it in' : 'Stack in'} ${wins.length > 1 ? (i ? 'window ' + (i + 1) : 'the last window') : 'that window'}</b><span></span>`;
+    b.querySelector('span').textContent = (w.stages || []).length ? stageList(w.stages) : 'empty';
+    b.onclick = () => { closeChooser(false); stackStage(w, WA, s.label); };
+    acts.append(b);
+  });
+  const nw = document.createElement('button');
+  nw.type = 'button'; nw.innerHTML = '<b>Open a new window</b><span>this stage on its own</span>';
+  nw.onclick = () => { closeChooser(false); newStageWindow(WA, s.label); };
+  const x = document.createElement('button');
+  x.type = 'button'; x.className = 'ws-choose-x'; x.setAttribute('aria-label', 'Cancel'); x.textContent = '×';
+  x.onclick = () => closeChooser(true);
+  acts.append(nw); el.append(x, acts);
+  el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeChooser(true); } });
+  document.body.append(el);
+  // beside the stage, inside the frame
+  const r = $('ws-svg').getBoundingClientRect(), ax = r.left + (s.px != null ? s.px : r.width / 2), cw = el.offsetWidth, ch = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(innerWidth - cw - 8, ax - cw / 2)) + 'px';
+  el.style.top = Math.max(8, Math.min(innerHeight - ch - 8, r.top + r.height / 2 - ch / 2)) + 'px';
+  document.addEventListener('pointerdown', outsideChooser, true);
+  acts.querySelector('button').focus();
 }
 $('ws-charts').onclick = () => openStage(W && (W.stages.find(s => s.label === HI && s.curves) || W.stages.find(s => s.curves)));
 
@@ -751,6 +846,6 @@ if (EMBED) {
     if (ok) window.close(); else { owner = null; dockable(); note('The map window has closed.'); }
   });
 }
-addEventListener('keydown', e => { if (e.key === 'Escape' && EMBED) parent.postMessage({ type: 'ws:close' }, ORIGIN); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && EMBED && !chooseEl) parent.postMessage({ type: 'ws:close' }, ORIGIN); });
 
 if (WA) load(WA); else empty('No well chosen. Open this page from a well on the map.', 'Well section');

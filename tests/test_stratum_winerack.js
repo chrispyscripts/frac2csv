@@ -67,4 +67,8 @@ for(const [id,pal] of Object.entries(gp.StratumGamma.PALETTES)){
 }
 gp.document.documentElement.dataset.theme='dark';
 assert.deepEqual(plain(gp.StratumGamma.stops('amber')),plain(gp.StratumGamma.PALETTES.amber.stops),'and the dark ones on the dark theme');
-console.log('PASS: wine rack geometry on gundy-01, section sparklines, light theme colours');
+// ---------- the stage charts window's address: stages.html?s=WA:stage,WA:stage ----------
+const sg={decodeURIComponent};vm.createContext(sg);vm.runInContext(slice(read('stages.js'),'const parse = q =>','const key =').replace('const parse','parse'),sg);
+assert.deepEqual(plain(sg.parse('28749:12,28753:5.1, bad ,34346:A%2CB')),[{wa:'28749',label:'12'},{wa:'28753',label:'5.1'},{wa:'34346',label:'A,B'}],'stages in order, odd labels kept, junk dropped');
+assert.deepEqual(plain(sg.parse(null)),[],'no stages');
+console.log('PASS: wine rack geometry on gundy-01, section sparklines, light theme colours, stage window addresses');
