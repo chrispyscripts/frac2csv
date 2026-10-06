@@ -69,7 +69,60 @@ async function load() {
   const { user } = await r.json();
   window.stratumUser = user;
   render(user);
+  window.dispatchEvent(new CustomEvent('stratum:user', { detail: user }));
+  pull();
 }
+
+// ---------- settings that follow the person (/api/mine?k=prefs) ----------
+// The page works from this browser's copy (localStorage, read as pages load);
+// the account keeps the person's. On sign-in the account's copy is taken when it
+// is newer than what this browser last had from it; changes made here go up a
+// little after they are made and when the page is put away.
+const PREF_KEYS = ['stratum.theme', 'stratum.textSize', 'stratum.gammaPalette', 'stratum.quakeFilter', 'stratum.allWells',
+                   'stratum.section', 'stratum.hiddenCurves'];
+const AT_KEY = 'fv.prefsAt';                   // not stratum.*: sessions leave it alone
+const local = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const snapshot = () => Object.fromEntries(PREF_KEYS.map(k => [k, local(k)]));
+let sent = null, pulled = false;
+function take(prefs) {
+  for (const k of PREF_KEYS) {
+    const v = prefs[k] == null ? null : String(prefs[k]);
+    if (v === local(k)) continue;
+    // live where the page can change in place; the rest is read as pages load
+    if (k === 'stratum.theme' && window.StratumTheme && v) StratumTheme.set(v);
+    else if (k === 'stratum.textSize' && window.StratumTheme && v) StratumTheme.setText(v);
+    else if (k === 'stratum.gammaPalette' && window.StratumGamma && v) StratumGamma.set(v);
+    else if (k === 'stratum.quakeFilter' && window.StratumQuakes) { try { StratumQuakes.set(v ? JSON.parse(v) : {}); } catch (e) { /* unreadable: skipped */ } }
+    else try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* private mode */ }
+  }
+}
+async function pull() {
+  let j;
+  try { const r = await fetch('/api/mine?k=prefs', { credentials: 'same-origin', cache: 'no-store' }); if (!r.ok) return; j = await r.json(); }
+  catch (e) { return; }
+  pulled = true;
+  if (j.updated && (!local(AT_KEY) || j.updated > local(AT_KEY))) {
+    take(j.prefs || {});
+    try { localStorage.setItem(AT_KEY, j.updated); } catch (e) { /* private mode */ }
+    sent = JSON.stringify(snapshot());
+  } else push();                                 // the account has none yet, or this browser is up to date
+}
+function push(keepalive) {
+  if (!pulled) return;
+  const snap = snapshot(), body = JSON.stringify(snap);
+  if (body === sent) return;
+  sent = body;
+  fetch('/api/mine?k=prefs', { method: 'POST', credentials: 'same-origin', keepalive: !!keepalive, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefs: snap }) })
+    .then(r => r.ok ? r.json() : null).then(j => { if (j && j.updated) try { localStorage.setItem(AT_KEY, j.updated); } catch (e) { /* private mode */ } })
+    .catch(() => { sent = null; });
+}
+let pushT = 0;
+const soon = () => { clearTimeout(pushT); pushT = setTimeout(() => push(false), 1500); };
+['stratum:theme', 'stratum:textsize', 'stratum:gammapalette', 'stratum:quakefilter', 'stratum:prefs'].forEach(t => addEventListener(t, soon));
+addEventListener('storage', e => { if (PREF_KEYS.includes(e.key)) soon(); });
+addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') push(true); });
+addEventListener('pagehide', () => push(true));
+window.StratumPrefs = { push: () => push(false), pull, KEYS: PREF_KEYS };
 if (window.top === window) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load); else load();
 }

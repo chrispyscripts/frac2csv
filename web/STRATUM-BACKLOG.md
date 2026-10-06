@@ -179,6 +179,37 @@ each entry.
   half again bigger (map and 3D). Pointing at the toe end of a pad on the map
   offers "Wine rack ↗" just past the toes, as the 3D view does; a pad drilled
   both ways offers it at each end.
+- **The main menu** (2026-10-06). `menu.js`/`menu.css`: a full-screen menu
+  over any page (☰ on the map, ☰ Menu on the charts, racks, stage charts and
+  compare pages; it is the home screen on a fresh visit to the map).
+  Home (where next, recent sessions, groups), Sessions (list with date and
+  area on the left; on the right the windows each opens, drawn as they sat on
+  screen, what each shows and the settings saved with it), Groups, Discover,
+  Settings. Things sent to the map go there in place, or by
+  `map.html?show=1` plus a hand-off in that window's sessionStorage
+  (`stratumMapShow.apply` in map.html: pads, wells, a well, 3D, wine racks,
+  Group mode).
+- **Settings, per account** (2026-10-06). Theme, text size (new: s/m/l/xl,
+  theme.js scales the reading surfaces; charts, map and 3D keep their scale),
+  gamma colours, the quake filter (all of it, inline), only-wells-with-charts,
+  the well section's defaults and curves strip, hidden stage-chart curves,
+  reset, sign out. `/api/mine?k=prefs` (lib/account-docs.js) keeps them with
+  the account; account.js takes the account's copy on sign-in when newer and
+  sends changes up.
+- **Groups and Group mode** (2026-10-06). Prepared areas (featured.json) and
+  the person's own (`/api/mine?k=groups`, up to 100 groups of 80 pads). Group
+  mode on the map (legend button, or from Groups): point at a pad or any of its
+  wells, click to add or take out, "Add the pads in view", name, save; a
+  group of your own can be changed the same way. A group shows on the map,
+  opens in 3D or as stacked wine racks; Discover results save as a group.
+- **Discover** (2026-10-06). `discover.js` over `data/discover/wells.json` and
+  `spacing.json` (web/scripts/build_discover.py: every region well's
+  completion, landing gamma, production, earthquakes and nearest offset
+  lateral). Well finder (filters, sortable table, CSV, to the map, save as a
+  group), Completion vs production (any two measures, by operator, year or
+  formation, median trend), Earthquakes at stages (opens the stage's chart),
+  Well spacing (nearest lateral across and vertically, same zone, histogram,
+  opens the wine racks).
 - **Saved sessions belong to the account** (2026-10-06). `/api/sessions`
   (lib/saved-sessions.js) keeps each account's sessions in the private Blob
   store, `sessions/<account id>/<id>.json` plus an `index.json`, the account id

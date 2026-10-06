@@ -46,7 +46,7 @@ assert.equal(Math.max(...s.spark(flat,30).filter(Boolean).map(q=>q[1])),97,'a on
 // ---------- the light theme: pads and gamma stay readable on white ----------
 const L=h=>{const v=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(x=>x<=.03928?x/12.92:((x+.055)/1.055)**2.4);return .2126*v[0]+.7152*v[1]+.0722*v[2]};
 const contrast=(a,b)=>{const x=L(a),y=L(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
-const store=new Map(),root={dataset:{},style:{}};
+const store=new Map(),props={},root={dataset:{},style:{setProperty:(k,v)=>{props[k]=v}}};
 const t={localStorage:{getItem:k=>store.has(k)?store.get(k):null,setItem:(k,v)=>store.set(k,String(v)),removeItem:k=>store.delete(k)},
   document:{documentElement:root,readyState:'complete',querySelectorAll:()=>[],getElementById:()=>({}),createElement:()=>({}),head:{append(){}}},
   CustomEvent:class{constructor(n,o){this.type=n;this.detail=o&&o.detail}},addEventListener(){},dispatchEvent(){}};
@@ -56,6 +56,9 @@ assert.equal(T.get(),'light','light unless dark is chosen');assert.equal(root.da
 const lightPads=Array.from({length:9},(_,i)=>T.padColor(i));
 assert.equal(new Set(lightPads).size,9,'nine distinct pad colours before they repeat');
 for(const col of lightPads)assert(contrast(col,'#ffffff')>=3,`pad colour ${col} clears 3:1 on white`);
+assert.equal(T.text(),'m','text at its default size');assert.equal(props['--fv-ts'],'1');
+T.setText('xl');assert.equal(root.dataset.text,'xl');assert.equal(props['--fv-ts'],'1.25');assert.equal(store.get('stratum.textSize'),'xl','the text size is kept');
+T.setText('huge');assert.equal(root.dataset.text,'xl','an unknown size is ignored');
 T.set('dark');assert.equal(root.dataset.theme,'dark');assert.equal(store.get('stratum.theme'),'dark','the choice is kept');
 assert.equal(T.padColor(0),'#4d8dff','dark keeps its pad colours');
 const gp={localStorage:t.localStorage,document:{documentElement:{dataset:{theme:'light'}},getElementById:()=>({})},CustomEvent:t.CustomEvent,addEventListener(){},dispatchEvent(){}};

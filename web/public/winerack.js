@@ -479,3 +479,6 @@ window.stratumRacks = { add: (id, from) => add(id, { owner: from }), list: () =>
   await gammaReady;
   if (st && st.colorBy === 'gamma') setColor('gamma'); else head();
 })();
+
+// the area this window is on, for a saved session's list (session.js)
+window.stratumArea = () => racks.filter(R => R.p).map(R => R.p.name).slice(0, 3).join(', ') + (racks.length > 3 ? ` +${racks.length - 3}` : '');

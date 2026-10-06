@@ -56,7 +56,7 @@ function sessionProblem(s) {
   return null;
 }
 const entryOf = (id, s, summary) => ({ id, name: s.name.trim().slice(0, 120), saved: str(s.saved, 40) || new Date().toISOString(),
-                                       windows: s.windows.length, summary: str(summary, 600) });
+                                       windows: s.windows.length, summary: str(summary, 600), area: str(s.area, 120) });
 
 // the index, changed by `fn` and written back only if no one else wrote it meanwhile
 async function updateIndex(store, uid, fn) {
@@ -87,13 +87,18 @@ async function save(store, uid, s, summary) {
   return { id, sessions: next.sessions };
 }
 
-export async function handle(request, store, secret) {
-  // who is asking: the signed cookie, and an account that still exists
+// who is asking: the account id from the signed cookie, if that account still exists
+export async function signedIn(request, store, secret) {
   const s = await verify(readCookie(request.headers.get('cookie')), secret);
   const uid = s && typeof s.sub === 'string' && /^[0-9a-f]{64}$/.test(s.sub) ? s.sub : null;
-  if (!uid) return fail(401, 'Sign in to see your saved sessions.');
+  if (!uid) return null;
   const acct = await store.read(`users/${uid}.json`);
-  if (!acct || acct.data.disabled) return fail(401, 'Sign in to see your saved sessions.');
+  return acct && !acct.data.disabled ? uid : null;
+}
+
+export async function handle(request, store, secret) {
+  const uid = await signedIn(request, store, secret);
+  if (!uid) return fail(401, 'Sign in to see your saved sessions.');
 
   const url = new URL(request.url);
   if (request.method === 'GET') {

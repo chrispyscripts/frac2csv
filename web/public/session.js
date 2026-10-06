@@ -65,7 +65,9 @@ function sessionState() {
 const isPopup = () => !!(window.toolbar && window.toolbar.visible === false);
 function snapshot() {
   const q = new URLSearchParams(location.search); q.delete('owner');
-  return { url: pagePath() + (String(q) ? '?' + q : ''), title: document.title.replace(/^(FracView|Stratum)\s*—\s*/, ''),
+  let area = '';
+  try { area = window.stratumArea ? String(window.stratumArea() || '').slice(0, 120) : ''; } catch (e) { /* a page mid-load */ }
+  return { url: pagePath() + (String(q) ? '?' + q : ''), title: document.title.replace(/^(FracView|Stratum)\s*—\s*/, ''), area,
            name: /^stratum-[a-z]+$/.test(window.name) ? window.name : '', popup: isPopup(),
            rect: { x: screenX, y: screenY, w: innerWidth, h: innerHeight }, session: sessionState() };
 }
@@ -92,8 +94,10 @@ async function capture(name) {
   const others = await collect();
   const settings = {};
   keys(localStorage).filter(ours).forEach(k => { settings[k] = localStorage.getItem(k); });
-  return { kind: KIND, v: 1, name, saved: new Date().toISOString(), settings,
-           windows: [{ ...snapshot(), role: 'main' }, ...others.map(w => ({ ...w, role: 'window' }))] };
+  const windows = [{ ...snapshot(), role: 'main' }, ...others.map(w => ({ ...w, role: 'window' }))];
+  // where it is: the main window's area, or the first window that knows one
+  const area = (windows.find(w => w.area) || {}).area || '';
+  return { kind: KIND, v: 1, name, saved: new Date().toISOString(), area, settings, windows };
 }
 
 // ---------- what a session holds, in words ----------
@@ -123,12 +127,12 @@ function clean(s) {
   const windows = s.windows.filter(w => w && str(w.url) && PAGES.test(w.url.replace(/^\//, ''))).slice(0, 12).map(w => {
     const r = w.rect || {}, rect = [r.x, r.y, r.w, r.h].every(Number.isFinite)
       ? { x: num(r.x, -20000, 20000), y: num(r.y, -20000, 20000), w: num(r.w, 320, 8000), h: num(r.h, 240, 8000) } : null;
-    return { role: w.role === 'main' ? 'main' : 'window', url: w.url.replace(/^\//, ''), title: str(w.title) ? w.title.slice(0, 200) : '',
+    return { role: w.role === 'main' ? 'main' : 'window', url: w.url.replace(/^\//, ''), title: str(w.title) ? w.title.slice(0, 200) : '', area: str(w.area) ? w.area.slice(0, 120) : '',
              name: str(w.name) && /^stratum-[a-z]+$/.test(w.name) ? w.name : '', popup: !!w.popup, rect, session: strings(w.session) };
   });
   if (!windows.length) throw Error('This session has no FracView windows in it.');
   return { kind: KIND, v: 1, name: str(s.name) && s.name.trim() ? s.name.trim().slice(0, 120) : 'Session',
-           saved: str(s.saved) ? s.saved : '', settings: strings(s.settings), windows };
+           saved: str(s.saved) ? s.saved : '', area: str(s.area) ? s.area.slice(0, 120) : '', settings: strings(s.settings), windows };
 }
 
 // ---------- the account's saved list, and files ----------
@@ -334,16 +338,20 @@ function pendingBar() {
 
 function ready() {
   if (!TOP) return;
-  document.querySelectorAll('[data-sessions]').forEach(b => b.addEventListener('click', () => panel(false)));
+  // the Sessions buttons: the main menu's Sessions screen where the page has the menu (menu.js), the dialog otherwise
+  document.querySelectorAll('[data-sessions]').forEach(b => b.addEventListener('click', () => { if (window.StratumMenu) StratumMenu.open('sessions'); else panel(false); }));
   pendingBar();
   // Stratum just opened (not back from a well, not a reload): offer the saved sessions
   const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
   let fromUs = false;
   try { const r = new URL(document.referrer); fromUs = r.origin === location.origin && PAGES.test(r.pathname.replace(/^.*\//, '')); } catch (e) { /* no referrer */ }
-  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs)
-    list().then(items => { if (items.length && !document.querySelector('.ss-dlg')) panel(true, items); }).catch(() => { /* offline or signed out: nothing to offer */ });
+  // ... as the main menu's home screen where there is one (it lists them too)
+  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs && !/[?&](pad|group|wells|wa|show)=/.test(location.search)) {
+    if (window.StratumMenu) StratumMenu.open('home');
+    else list().then(items => { if (items.length && !document.querySelector('.ss-dlg')) panel(true, items); }).catch(() => { /* offline or signed out: nothing to offer */ });
+  }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
 
-window.StratumSession = { provide, panel: () => panel(false), capture, open, clean };
+window.StratumSession = { provide, panel: () => panel(false), capture, open, clean, describe, summary, list, fetchOne, remember, forget, download, readFile };
 })();

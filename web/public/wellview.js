@@ -670,3 +670,6 @@ $('wc-add').onclick = e => {
 let startTab = 'tab-chart';
 if (!SOLO) try { startTab = sessionStorage.getItem('stratum.wellTab') || startTab; } catch (e) { /* private mode */ }
 load().then(() => { if (STAGES.length) setTab(startTab); });
+
+// the area this window is on, for a saved session's list (session.js)
+window.stratumArea = () => W && W.pad ? W.pad.name : '';

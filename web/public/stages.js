@@ -134,3 +134,6 @@ window.stratumStages = { add: (wa, label) => add(wa, label), list: () => cards.m
   queued.forEach(x => x && add(x.wa, x.label, true));
   save();
 }
+
+// the area this window is on, for a saved session's list (session.js)
+window.stratumArea = () => [...new Set(cards.map(c => c.pad).filter(Boolean))].slice(0, 3).join(', ');

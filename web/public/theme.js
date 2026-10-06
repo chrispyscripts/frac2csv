@@ -7,10 +7,35 @@
 // A setting (localStorage stratum.theme), so it carries across windows,
 // reloads and saved sessions; a change fires `stratum:theme` on window here and
 // in every other open FracView window and frame.
+//
+// Text size too (stratum.textSize: s, m, l, xl; Settings in the main menu):
+// <html data-text>, and the panels, headers and lists people read grow with
+// it. Charts, maps and the 3D scene keep their own scale.
 (() => {
 'use strict';
-const KEY = 'stratum.theme';
+const KEY = 'stratum.theme', TEXT_KEY = 'stratum.textSize';
+const TEXT = { s: 0.92, m: 1, l: 1.12, xl: 1.25 };
 const root = document.documentElement;
+function getText() {
+  try { const t = localStorage.getItem(TEXT_KEY); return TEXT[t] ? t : 'm'; } catch (e) { return 'm'; }
+}
+function applyText(t) { root.dataset.text = t; root.style.setProperty('--fv-ts', String(TEXT[t])); }
+function setText(t) {
+  if (!TEXT[t]) return;
+  try { localStorage.setItem(TEXT_KEY, t); } catch (e) { /* private mode: this window only */ }
+  applyText(t);
+  window.dispatchEvent(new CustomEvent('stratum:textsize', { detail: t }));
+}
+// the reading surfaces of every page: scaled whole where they sit in the page's flow;
+// pop-ups placed by script scale their contents, so they still open where they should
+const TEXT_CSS = `:root:not([data-text=m]) :is(.side,.legend,.maplibregl-popup-content,.ug-head,.ug-panel,.ug-legend,.ug-hint,
+  .wc-head,.wc-bar,.wc-chartbar,.wc-hint,.wc-foot,.wc-empty,.ws-head,.ws-foot,.wr-head,.rk-head,.rk-ctl,.sg-head,.sg-card-h,
+  .cmp-side,.cmp-head,.qf>*,.ws-card>*,.ws-choose>*,.ss-dlg>*,.ss-bar,.acct-menu>*,.rack-offer,.gm-bar){zoom:var(--fv-ts)}
+:root:not([data-text=m]) :is(.ug-tip,.ws-tip,.wr-tip){font-size:calc(12px * var(--fv-ts))}`;
+{
+  const st = document.createElement('style'); st.id = 'fv-text-style'; st.textContent = TEXT_CSS;
+  (document.head || root).append(st);
+}
 function get() {
   try { return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; }
 }
@@ -22,6 +47,7 @@ function set(t) {
   window.dispatchEvent(new CustomEvent('stratum:theme', { detail: t }));
 }
 addEventListener('storage', e => {
+  if (e.key === TEXT_KEY) { applyText(getText()); window.dispatchEvent(new CustomEvent('stratum:textsize', { detail: getText() })); }
   if (e.key !== KEY) return;
   apply(get());
   window.dispatchEvent(new CustomEvent('stratum:theme', { detail: get() }));
@@ -71,7 +97,8 @@ function mount() {
   document.querySelectorAll('[data-theme-toggle]').forEach(slot => { if (!slot.querySelector('.fv-theme')) slot.append(button()); });
 }
 apply(get());
+applyText(getText());
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
 
-window.StratumTheme = { get, set, dark, pick, padColor, button, mount };
+window.StratumTheme = { get, set, dark, pick, padColor, button, mount, text: getText, setText, TEXT };
 })();
