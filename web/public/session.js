@@ -1,6 +1,9 @@
 // Stratum sessions: the whole workspace — every Stratum window that is open,
 // where it sits on screen, what each one shows, and the settings — saved under
-// a name, in this browser and as a .stratum-session.json file, and opened again.
+// a name, with the signed-in account (/api/sessions: each person's own, on any
+// computer they sign in from) and as a .fracview-session.json file, and opened
+// again. Sessions this browser kept before they moved to the account are carried
+// over to it the first time the list is read.
 //
 // Each window keeps its own view in sessionStorage (stratum.* keys: the 3D view,
 // the map's camera, the docked section, the compare choices…) and the settings
@@ -128,16 +131,34 @@ function clean(s) {
            saved: str(s.saved) ? s.saved : '', settings: strings(s.settings), windows };
 }
 
-// ---------- the saved list, and files ----------
-const list = () => (parse(localStorage.getItem(LIST_KEY)) || []).filter(x => x && x.session);
-function keep(entries) {
-  try { localStorage.setItem(LIST_KEY, JSON.stringify(entries)); return true; }
-  catch (e) { return false; }
+// ---------- the account's saved list, and files ----------
+const API = '/api/sessions';
+async function api(body, q = '') {
+  let r;
+  try {
+    r = await fetch(API + q, body ? { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+                                 : { credentials: 'same-origin', cache: 'no-store' });
+  } catch (e) { throw Error('Your saved sessions could not be reached. Check the connection and try again.'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Error(j.error || (r.status === 401 ? 'Sign in again to see your saved sessions.' : 'Your saved sessions could not be reached. Try again in a moment.'));
+  return j;
 }
-function remember(session) {
-  const rest = list().filter(x => x.session.name !== session.name);
-  return keep([{ id: rid(), session }, ...rest].slice(0, 40));
+// sessions this browser kept itself, before they lived with the account: carried over once
+let moved = null;
+function carryOver() {
+  if (moved) return moved;
+  let local = [];
+  try { local = (parse(localStorage.getItem(LIST_KEY)) || []).map(x => x && x.session).filter(Boolean); } catch (e) { /* private mode */ }
+  if (!local.length) return (moved = Promise.resolve());
+  const sessions = local.map(x => { try { const c = clean(x); return { session: c, summary: summary(c) }; } catch (e) { return null; } }).filter(Boolean);
+  return (moved = api({ action: 'import', sessions }).then(() => { try { localStorage.removeItem(LIST_KEY); } catch (e) { /* private mode */ } })
+    .catch(e => { moved = null; throw e; }));
 }
+// [{id, name, saved, windows, summary}], newest first
+const list = () => carryOver().then(() => api(null)).then(j => j.sessions || []);
+const fetchOne = id => api(null, '?id=' + encodeURIComponent(id)).then(j => clean(j.session));
+const remember = s => api({ action: 'save', session: s, summary: summary(s) });
+const forget = id => api({ action: 'delete', id });
 function download(session) {
   const slug = session.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'session';
   const a = document.createElement('a');
@@ -223,7 +244,7 @@ const when = iso => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocale
 function el(tag, props, ...kids) { const e = document.createElement(tag); Object.assign(e, props || {}); e.append(...kids); return e; }
 
 // entry: true when Stratum has just been opened, which offers the saved sessions first
-function panel(entry) {
+function panel(entry, preloaded) {
   style();
   const old = document.querySelector('.ss-dlg'); if (old) old.remove();
   const dlg = el('dialog', { className: 'ss-dlg' });
@@ -234,48 +255,54 @@ function panel(entry) {
   const saveBtn = el('button', { type: 'button', className: 'go', textContent: 'Save' });
   const fileBtn = el('button', { type: 'button', textContent: 'Save + download file' });
   const ul = el('ul', { className: 'ss-list' });
-  function draw() {
-    const items = list();
+  // the account's list: `items` when it was just fetched, read again otherwise
+  async function draw(items) {
+    if (!items) {
+      ul.replaceChildren(el('li', { className: 'ss-empty', textContent: 'Loading your saved sessions…' }));
+      try { items = await list(); } catch (e) { ul.replaceChildren(el('li', { className: 'ss-empty', textContent: e.message })); return; }
+    }
     ul.replaceChildren(...items.map(x => {
-      const s = x.session;
-      const what = el('div', { className: 'ss-what' }, el('b', { textContent: s.name }),
-        el('div', { className: 'ss-meta', textContent: `${when(s.saved)} · ${s.windows.length} window${s.windows.length > 1 ? 's' : ''} · ${summary(s)}` }));
+      const what = el('div', { className: 'ss-what' }, el('b', { textContent: x.name }),
+        el('div', { className: 'ss-meta', textContent: `${when(x.saved)} · ${x.windows} window${x.windows > 1 ? 's' : ''}${x.summary ? ' · ' + x.summary : ''}` }));
       const go = el('button', { type: 'button', className: 'go', textContent: 'Open' });
-      go.onclick = () => { try { open(s); } catch (e) { say(e.message); } };
-      const dl = el('button', { type: 'button', textContent: '⤓', title: 'Download as a session file' }); dl.setAttribute('aria-label', `Download ${s.name}`);
-      dl.onclick = () => download(s);
-      const rm = el('button', { type: 'button', className: 'ss-x', textContent: '×', title: 'Forget this session (files you downloaded are kept)' }); rm.setAttribute('aria-label', `Forget ${s.name}`);
-      rm.onclick = () => { keep(list().filter(y => y.id !== x.id)); draw(); };
+      go.onclick = async () => { go.disabled = true; say('Opening…'); try { open(await fetchOne(x.id)); } catch (e) { say(e.message); go.disabled = false; } };
+      const dl = el('button', { type: 'button', textContent: '⤓', title: 'Download as a session file' }); dl.setAttribute('aria-label', `Download ${x.name}`);
+      dl.onclick = async () => { try { download(await fetchOne(x.id)); } catch (e) { say(e.message); } };
+      const rm = el('button', { type: 'button', className: 'ss-x', textContent: '×', title: 'Delete this saved session (files you downloaded are kept)' }); rm.setAttribute('aria-label', `Delete ${x.name}`);
+      rm.onclick = async () => { rm.disabled = true; try { draw((await forget(x.id)).sessions || []); say(`Deleted “${x.name}”.`); } catch (e) { say(e.message); rm.disabled = false; } };
       return el('li', null, what, go, dl, rm);
     }));
-    if (!items.length) ul.replaceChildren(el('li', { className: 'ss-empty', textContent: 'No sessions saved in this browser yet.' }));
+    if (!items.length) ul.replaceChildren(el('li', { className: 'ss-empty', textContent: 'No saved sessions yet.' }));
   }
   async function save(toFile) {
     const n = name.value.trim() || `Session ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
     saveBtn.disabled = fileBtn.disabled = true; say('Asking the open windows…');
     const s = await capture(n);
+    say('Saving…');
+    let items = null;
+    try { items = (await remember(s)).sessions || null; }
+    catch (e) { download(s); say(`${e.message} It was downloaded as a file instead.`); saveBtn.disabled = fileBtn.disabled = false; return; }
     saveBtn.disabled = fileBtn.disabled = false;
-    const kept = remember(s);
-    if (toFile || !kept) download(s);
-    say(kept ? `Saved “${n}”: ${s.windows.length} window${s.windows.length > 1 ? 's' : ''}.` : 'This browser is out of room for sessions, so it was saved as a file instead.');
-    name.value = ''; draw();
+    if (toFile) download(s);
+    say(`Saved “${n}” to your account: ${s.windows.length} window${s.windows.length > 1 ? 's' : ''}.`);
+    name.value = ''; draw(items);
   }
   saveBtn.onclick = () => save(false);
   fileBtn.onclick = () => save(true);
   name.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); save(false); } };
   const openFile = el('button', { type: 'button', textContent: 'Open a session file…' });
-  openFile.onclick = () => readFile().then(s => { remember(s); open(s); }).catch(e => say(e.message));
+  openFile.onclick = () => readFile().then(async s => { try { await remember(s); } catch (e) { /* opened all the same */ } open(s); }).catch(e => say(e.message));
   const close = el('button', { type: 'button', textContent: entry ? 'Start fresh' : 'Close' });
   close.onclick = () => dlg.close();
   dlg.append(
     el('header', null, el('h2', { textContent: entry ? 'Pick up where you left off' : 'Sessions' }),
-      el('div', { className: 'ss-sub', textContent: 'A session is every FracView window that is open, where it sits, what it shows, and your settings.' })),
+      el('div', { className: 'ss-sub', textContent: 'A session is every FracView window that is open, where it sits, what it shows, and your settings. They are saved with your account: only you see them, on any computer you sign in from.' })),
     entry ? '' : el('section', null, el('div', { className: 'ss-save' }, name, saveBtn, fileBtn)),
     el('section', null, ul), msg,
     el('footer', null, openFile, close));
   dlg.addEventListener('close', () => dlg.remove());
   document.body.append(dlg);
-  draw();
+  draw(preloaded);
   dlg.showModal();
   (entry ? (dlg.querySelector('.ss-list .go') || close) : name).focus();
 }
@@ -313,7 +340,8 @@ function ready() {
   const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
   let fromUs = false;
   try { const r = new URL(document.referrer); fromUs = r.origin === location.origin && PAGES.test(r.pathname.replace(/^.*\//, '')); } catch (e) { /* no referrer */ }
-  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs && list().length) panel(true);
+  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs)
+    list().then(items => { if (items.length && !document.querySelector('.ss-dlg')) panel(true, items); }).catch(() => { /* offline or signed out: nothing to offer */ });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
 

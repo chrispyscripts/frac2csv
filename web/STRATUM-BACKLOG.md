@@ -179,6 +179,16 @@ each entry.
   half again bigger (map and 3D). Pointing at the toe end of a pad on the map
   offers "Wine rack ↗" just past the toes, as the 3D view does; a pad drilled
   both ways offers it at each end.
+- **Saved sessions belong to the account** (2026-10-06). `/api/sessions`
+  (lib/saved-sessions.js) keeps each account's sessions in the private Blob
+  store, `sessions/<account id>/<id>.json` plus an `index.json`, the account id
+  taken only from the signed cookie (the same sha256-of-email the account is
+  filed under), so one account can neither list, open nor delete another's.
+  Same name replaces; 60 per account, oldest dropped. The Sessions panel lists,
+  opens, saves and deletes through it; a browser's old local list is carried
+  over to whoever opens the panel signed in there, once, then cleared. Files
+  (download / open a file) work as before. Settings (theme, gamma colours,
+  quake filter) are still per browser.
 - **Private, invite-only** (2026-10-04). Every page, data file and the extractor
   need a signed-in account (`web/middleware.js`, Vercel Routing Middleware, before
   anything is served); only `login.html` and `/api/auth` are open. Accounts are
