@@ -68,6 +68,29 @@ class ChartEnds(unittest.TestCase):
     def test_the_curve_is_untouched(self):
         self.assertTrue((self.out[90:110, 5:501] == self.m[90:110, 5:501]).all())
 
+    def test_a_shutdown_only_goes_down(self):
+        # 00163 p195: the curve is on the floor; past its end another pen's
+        # anti-aliased fall, in this curve's colour, stands well above it
+        m = np.zeros((H, W), bool)
+        for c in range(5, 501):
+            m[290:292, c] = True                       # the curve, on the floor
+        for c0 in (200, 240):
+            m[6:24, c0:c0 + 22] = True                 # a logo, so there is
+            m[10:20, c0 + 6:c0 + 16] = False           # something to judge
+        m[150:190, 506:512] = True                     # 40 rows, 100 above it
+        out = ar.drop_glyph_islands(m)
+        self.assertTrue(gone(m, out, (150, 190), (506, 512)))
+        self.assertTrue(out[290:292, 5:501].all())
+
+    def test_the_trace_keeps_every_reading_it_had(self):
+        # the end pieces add readings where there were none; where the old
+        # trace read the curve, the new one reads it the same
+        old = ar.curve_positions(ar.drop_glyph_islands(self.m, ends=False), glyphs=False)
+        new = ar.curve_positions(self.m, glyphs=True)
+        had = np.isfinite(old)
+        self.assertTrue(np.array_equal(old[had], new[had]))
+        self.assertGreater(int(np.isfinite(new[501:]).sum()), int(had[501:].sum()))
+
     def test_the_bug_this_answers(self):
         tree = os.environ.get("F2C_OLD_TREE", "")
         old = os.path.join(tree, "auto_raster.py")

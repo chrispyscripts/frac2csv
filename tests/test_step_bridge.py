@@ -60,12 +60,39 @@ class Bridge(unittest.TestCase):
         self.assertTrue(np.isnan(v[:3]).all())
         self.assertTrue(np.allclose(v[3:10], 0.0))
 
-    def test_a_curve_that_stops_in_mid_air_is_not_extended(self):
-        p = [60.0] * 10 + [NAN] * 10
+    def test_a_pressure_that_stops_in_mid_air_holds_its_last_reading(self):
+        # the shutdown's near-vertical stroke is not traced; pressure holds
+        # near its shut-in level, it does not fall to zero
+        p = [60.0] * 9 + [27.7] + [NAN] * 10
         q = [8.0] * 20
+        r, notes = self.run1(chart({"Surface Pressure": p, "Slurry Rate": q},
+                                   axes={"Surface Pressure": (100.0, 0.0), "Slurry Rate": (16.0, 0.0)}))
+        self.assertTrue(np.allclose(r["data"]["Surface Pressure"][10:], 27.7))
+        self.assertTrue(any("mid-air" in n for n in notes))
+
+    def test_a_rate_that_stops_in_mid_air_drops_to_the_floor(self):
+        q = [8.0] * 9 + [6.6] + [NAN] * 10
+        c = [1.5] * 20
+        r, _ = self.run1(chart({"Slurry Rate": q, "Btm Prop Conc": c},
+                               axes={"Slurry Rate": (25.0, 0.0), "Btm Prop Conc": (500.0, 0.0)}))
+        self.assertTrue(np.allclose(r["data"]["Slurry Rate"][10:], 0.0))
+
+    def test_a_curve_that_starts_in_mid_air_rose_from_the_floor(self):
+        p = [NAN] * 8 + [40.6] + [65.0] * 11
+        c = [1.5] * 20
+        r, _ = self.run1(chart({"Surface Pressure": p, "Btm Prop Conc": c},
+                               axes={"Surface Pressure": (100.0, 0.0), "Btm Prop Conc": (500.0, 0.0)}))
+        v = r["data"]["Surface Pressure"]
+        self.assertTrue(np.allclose(v[:8], 0.0))
+        self.assertEqual(v[8], 40.6)
+
+    def test_nothing_is_carried_past_where_every_curve_ends(self):
+        p = [60.0] * 9 + [27.7] + [NAN] * 10
+        q = [8.0] * 12 + [NAN] * 8
         r, _ = self.run1(chart({"Surface Pressure": p, "Slurry Rate": q},
                                axes={"Surface Pressure": (100.0, 0.0), "Slurry Rate": (16.0, 0.0)}))
-        self.assertTrue(np.isnan(r["data"]["Surface Pressure"][10:]).all())
+        v = r["data"]["Surface Pressure"]
+        self.assertTrue(np.isfinite(v[:12]).all() and np.isnan(v[12:]).all())
 
     def test_off_the_top_stays_blank(self):
         p = [99.5] * 5 + [NAN] * 5 + [99.6] * 5
