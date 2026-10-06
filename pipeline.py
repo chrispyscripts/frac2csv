@@ -32,6 +32,7 @@ import bj_summary
 import calfrac_summary
 import calfrac_progress as cprog
 import calfrac_scan as cscan
+import gaps
 import liberty_summary
 import ocr_labels
 import lib1
@@ -1345,6 +1346,137 @@ def _splice_continuous_edge(c, stage_r, at_front, secs, notes):
         f"draws the whole job at about a minute per pixel, so these minutes "
         f"are coarser than the rest of the stage")
     return mins
+
+
+def _axis_of(r, label):
+    """(lo, hi) of a channel's printed axis — the frame reading when there is
+    one, the tick range otherwise — or None."""
+    for cand in ((r.get("frames") or {}).get(label),
+                 (r.get("scales") or {}).get(label)):
+        if isinstance(cand, (list, tuple)) and len(cand) == 2:
+            try:
+                return (float(cand[0]), float(cand[1]))
+            except (TypeError, ValueError):
+                return None
+    sc = (r.get("scales") or {}).get(label)
+    if sc and not isinstance(sc, (list, tuple)):
+        try:
+            return (0.0, float(sc))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+# How close to its axis floor a curve's last (or first) reading has to sit
+# for the stretch beyond it to be the pen resting there rather than the
+# trace stopping in mid-air. gaps.FLOOR is 2%; a pressure bled down to a
+# few hundred kPa on a 0..100 MPa axis reads a little higher than that.
+STEP_REST_FLOOR = 0.05
+
+
+def _bridge_step_gaps(results, notes):
+    """No broken stretches in a STEP curve.
+
+    Carmine: STEP graphs must not have broken links of data, "use
+    interpolation or whatever else is necessary to make sure data doesn't
+    drop off". A STEP chart is a picture traced column by column, and a curve
+    goes blank wherever its ink cannot be seen: under another curve painted
+    over it, along the frame's bottom rule where a shut-in rate or a bled-off
+    pressure rests, and through the near-vertical stroke of a shutdown, which
+    anti-aliasing leaves too faint to classify. The chart draws an unbroken
+    line through all of those.
+
+    Per channel, using gaps.py's own classification:
+      - a gap with a reading on both sides (mid-flight, resting at the floor,
+        or on a channel whose axis was not read) is bridged by straight-line
+        interpolation between the two readings;
+      - before the first reading or after the last, when that reading sits on
+        the axis floor, the curve is carried along the floor — but only as far
+        as the chart has ink at all: to the first or last sample any curve on
+        it carries. The empty margin a plotter leaves after the data stays
+        empty, because nothing is drawn there;
+      - a stretch pinned at full scale stays blank: the curve is off the top
+        of its axis, and the client asked for that to come back blank, not as
+        a flat line at the axis maximum (#97).
+    Every filled sample is marked deduced, so the Lab draws it as supplied
+    rather than read and Isolate Interpolation finds it, and the file says how
+    much was filled.
+    """
+    import numpy as np
+    filled_n, filled_s, charts = 0, 0.0, 0
+    for r in results:
+        if r.get("type") != "series" or not str(r.get("source") or "").startswith("STEP"):
+            continue
+        data = r.get("data") or {}
+        if not data:
+            continue
+        smp = r.get("samples")
+        n = 0 if smp is None else len(smp)      # an array: never `or []` it
+        if not n:
+            continue
+        sec = _sample_sec(r)
+        ends = []
+        for v in data.values():
+            a = np.asarray(v, float)
+            fin = np.flatnonzero(np.isfinite(a))
+            if len(fin):
+                ends.append((int(fin[0]), int(fin[-1])))
+        if not ends:
+            continue
+        first_any = min(e[0] for e in ends)
+        last_any = max(e[1] for e in ends)
+        ded = r.setdefault("deduced", {})
+        touched = False
+        for label in list(data.keys()):
+            vals = np.asarray(data[label], float).copy()
+            if len(vals) != n:
+                continue
+            axis = _axis_of(r, label)
+            runs = gaps.find_gaps(list(vals), axis)
+            mark = np.zeros(n, bool)
+            lo = min(axis) if axis else None
+            span = (max(axis) - min(axis)) if axis else None
+            def resting(x):
+                return (axis is not None and span and span > 0
+                        and (x - lo) / span <= STEP_REST_FLOOR)
+            for g in runs:
+                a, b = g["start"], g["end"]
+                if g["kind"] in (gaps.MISSING, gaps.AT_FLOOR, gaps.UNKNOWN):
+                    x0, x1 = g["before"], g["after"]
+                    if gaps.is_missing(x0) or gaps.is_missing(x1):
+                        continue
+                    k = np.arange(1, g["n"] + 1) / (g["n"] + 1.0)
+                    vals[a:b + 1] = x0 + (x1 - x0) * k
+                    mark[a:b + 1] = True
+                elif g["kind"] == gaps.TRAIL and resting(g["before"]):
+                    stop = min(b, last_any)
+                    if stop >= a:
+                        vals[a:stop + 1] = g["before"]
+                        mark[a:stop + 1] = True
+                elif g["kind"] == gaps.LEAD and resting(g["after"]):
+                    start = max(a, first_any)
+                    if b >= start:
+                        vals[start:b + 1] = g["after"]
+                        mark[start:b + 1] = True
+            if mark.any():
+                data[label] = vals
+                old = ded.get(label)
+                if old is not None:
+                    om = np.asarray(old, bool)
+                    if len(om) == n:
+                        mark = mark | om
+                ded[label] = mark
+                filled_n += int(mark.sum())
+                filled_s += float(mark.sum()) * sec
+                touched = True
+        charts += touched
+    if charts:
+        notes.append(
+            f"{charts} STEP chart(s) bridged where the curve's ink could not be "
+            f"seen — under another curve, along the frame's floor, or through a "
+            f"near-vertical shutdown — {filled_s / 60:.0f} min in all, filled by "
+            f"interpolation between the readings either side, or along the floor "
+            f"where the curve rests there; marked as deduced, not read")
 
 
 def _trican_continuous(results, notes):
@@ -3616,6 +3748,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # a Canyon chart page dates itself from the job, not from the interval
     _canyon_dates(doc, results, notes)
     _sanjel_dates(results, notes)
+
+    # STEP: no broken stretches in a curve the chart draws whole
+    _bridge_step_gaps(results, notes)
 
     # a Trican CONTINUOUS chart re-plots the stage charts end to end
     _trican_continuous(results, notes)

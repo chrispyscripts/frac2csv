@@ -1030,6 +1030,8 @@ GLYPH_WIDTH = 0.12       # of plot width: wider than this is a curve, not a mark
 GLYPH_FILL = 0.15        # lit / bounding box; curves measured <= 0.094
 GLYPH_NEAR = 0.05        # of plot height: how close to the trace still belongs
 GLYPH_PAD = 0.03         # of plot width: how far to look sideways for the trace
+GLYPH_TOP = 0.10         # of plot height: the band the logo prints in (6% measured)
+GLYPH_TALL = 0.04        # of plot height: a piece this tall past the end is a fall
 
 
 def _components(sub):
@@ -1087,7 +1089,7 @@ def _components(sub):
              "runs": v[5]} for v in agg.values()], runs
 
 
-def drop_glyph_islands(sub):
+def drop_glyph_islands(sub, ends=True):
     """Clear printed marks (a logo, a stamp) from a plot-cropped colour mask.
 
     Returns a copy with the offending pixels cleared, or the input untouched
@@ -1141,35 +1143,92 @@ def drop_glyph_islands(sub):
     # IS the curve. The logo never chains — nothing bridges the ~180 rows
     # between it and the pressure trace — so the loop settles with it still
     # condemned.
-    pending = list(cand)
-    while pending:
-        spared = []
-        for cp in pending:
-            a = max(0, cp["c0"] - pad)
-            b = min(W - 1, cp["c1"] + pad)
-            cols = have[(have >= a) & (have <= b)]
-            if not len(cols):
-                # No trace beside it at all: fall back to the nearest columns
-                # that do carry one, so a real spike standing off on its own —
-                # the green needles at the left of 00184 p37 — is still
-                # measured against the curve it belongs to rather than
-                # condemned for being alone.
-                j = int(np.argmin(np.abs(have - (cp["c0"] + cp["c1"]) // 2)))
-                cols = have[j:j + 1]
-            t0 = float(np.nanmin(lo[cols]))
-            t1 = float(np.nanmax(hi[cols]))
-            gap = max(t0 - cp["y1"], cp["y0"] - t1, 0.0)
-            if gap <= near:
-                spared.append(cp)
-        if not spared:
-            break
-        for cp in spared:
-            pending.remove(cp)
-            for i in cp["runs"]:
-                c, y0, y1 = runs[i]
-                lo[c] = y0 if not np.isfinite(lo[c]) else min(lo[c], y0)
-                hi[c] = y1 if not np.isfinite(hi[c]) else max(hi[c], y1)
+    def reprieve(pending):
+        nonlocal have
+        while pending:
+            spared = []
+            for cp in pending:
+                a = max(0, cp["c0"] - pad)
+                b = min(W - 1, cp["c1"] + pad)
+                cols = have[(have >= a) & (have <= b)]
+                if not len(cols):
+                    # No trace beside it at all: fall back to the nearest columns
+                    # that do carry one, so a real spike standing off on its own —
+                    # the green needles at the left of 00184 p37 — is still
+                    # measured against the curve it belongs to rather than
+                    # condemned for being alone.
+                    j = int(np.argmin(np.abs(have - (cp["c0"] + cp["c1"]) // 2)))
+                    cols = have[j:j + 1]
+                t0 = float(np.nanmin(lo[cols]))
+                t1 = float(np.nanmax(hi[cols]))
+                gap = max(t0 - cp["y1"], cp["y0"] - t1, 0.0)
+                if gap <= near:
+                    spared.append(cp)
+            if not spared:
+                break
+            for cp in spared:
+                pending.remove(cp)
+                for i in cp["runs"]:
+                    c, y0, y1 = runs[i]
+                    lo[c] = y0 if not np.isfinite(lo[c]) else min(lo[c], y0)
+                    hi[c] = y1 if not np.isfinite(hi[c]) else max(hi[c], y1)
+            have = np.flatnonzero(np.isfinite(lo))
+
+        return pending
+
+    pending = reprieve(list(cand))
+
+    # A shutdown is the curve finishing, not a logo.
+    #
+    # At shutdown the pressure falls near-vertically, and that stroke is a
+    # one-pixel anti-aliased line the colour mask largely misses. What is left
+    # — the fall's lower part, the brief hold, the drop to the floor — arrives
+    # as tall, narrow, dense pieces with nothing joining them back to the
+    # trace, which is exactly what condemns a logo glyph. On 00100 p197 the
+    # pressure ink runs to column 831 and the trace stopped at 748: the whole
+    # shutdown, where ISIP is read, was deleted, 641 s of a 94-minute chart
+    # (Carmine: "we lose a lot of data on the ends of the charts").
+    #
+    # So, once the reprieve above has settled where the curve ends, a TALL
+    # piece (at least GLYPH_TALL of the plot's height — a fall, not a fleck)
+    # that starts within `pad` columns after that end and lies below the logo
+    # band is the curve's own, and so is the next one after it. The logo
+    # prints across the top 6% of the plot and through its middle, never as a
+    # tall stroke past the end. Then the reprieve runs once more, so the pen
+    # resting along the floor after the fall joins too.
+    #
+    # Measured and backed out on the way here: walking past the end without
+    # the height test, and before the reprieve, stepped across 215 columns of
+    # scraps on 00005 p150 — other curves' fringe among them — and moved the
+    # trace 149 px at column 36; sparing pieces before the trace's START took
+    # flecks for a late-starting concentration curve and cost 117 channels
+    # samples mid-chart.
+    if pending and ends:
+        last = int(have.max()) if len(have) else -1
+        end0 = last                      # where the curve's own trace stopped
+        tall = GLYPH_TALL * H
+        grew = True
+        while grew:
+            grew = False
+            for cp in list(pending):
+                if (cp["y0"] > GLYPH_TOP * H and cp["y1"] - cp["y0"] + 1 >= tall
+                        and last < cp["c0"] <= last + pad):
+                    pending.remove(cp)
+                    for i in cp["runs"]:
+                        c, y0, y1 = runs[i]
+                        lo[c] = y0 if not np.isfinite(lo[c]) else min(lo[c], y0)
+                        hi[c] = y1 if not np.isfinite(hi[c]) else max(hi[c], y1)
+                    last = max(last, cp["c1"])
+                    grew = True
         have = np.flatnonzero(np.isfinite(lo))
+        # Only what lies PAST the old end is asked again. Asked of everything,
+        # the falls just spared widened the trace's reach back over its own
+        # span, and on 00005 p150 that reprieved some thirty slivers of the
+        # orange curve lying under the pressure trace at columns 628-799.
+        later = [cp for cp in pending if cp["c0"] > end0]
+        if later:
+            kept_back = [cp for cp in pending if cp["c0"] <= end0]
+            pending = kept_back + reprieve(later)
 
     if not pending:
         return sub
@@ -1244,7 +1303,25 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
     # has not been scored against that template's printed tables. Templates
     # opt in one at a time, each with its own validation.
     if glyphs:
-        sub = drop_glyph_islands(sub)
+        # The shutdown pieces drop_glyph_islands now keeps past the curve's
+        # end are tall runs, and a few tall runs among a few hundred columns
+        # nudge this routine's whole-chart statistics (the pen height, the
+        # rolling reference): measured over 13 STEP files, 8 channels moved by
+        # about half an MPa from start to finish when they were simply traced
+        # together. So trace both ways and take the recovered ink ONLY in the
+        # columns the old mask had none: everywhere the curve was already
+        # read it reads bit-identical, and the end is added, not re-read.
+        base = drop_glyph_islands(sub, ends=False)
+        full = drop_glyph_islands(sub, ends=True)
+        if not np.array_equal(base, full):
+            kw = dict(gap=gap, win=win, iters=iters, spike_tol=spike_tol,
+                      spike_run=spike_run, glyphs=False, envelope=envelope,
+                      swept_factor=swept_factor, edge_blank=edge_blank)
+            py0 = curve_positions(base, **kw)
+            py1 = curve_positions(full, **kw)
+            own = base.any(axis=0)
+            return np.where(own, py0, py1)
+        sub = base
     cols = []                    # per column: ((run median, run height), ...)
     py = np.full(W, np.nan)
     for cx in range(W):
