@@ -1203,15 +1203,25 @@ def drop_glyph_islands(sub, ends=True):
     # trace 149 px at column 36; sparing pieces before the trace's START took
     # flecks for a late-starting concentration curve and cost 117 channels
     # samples mid-chart.
+    #
+    # And a shutdown only goes down. A piece past the end has to start no
+    # higher than the curve stood as it stopped (its top row over its last
+    # three columns, less `near`). On 00163 p195 the orange Btm Prop Conc is
+    # on the floor from 08:23, and where the red and yellow pressures fall
+    # together at 08:27 their anti-aliased overlap is orange: a 38-row piece
+    # 86 rows above the curve's end, which read as 300 kg/m³ of proppant
+    # after the job had stopped.
     if pending and ends:
         last = int(have.max()) if len(have) else -1
         end0 = last                      # where the curve's own trace stopped
         tall = GLYPH_TALL * H
+        stood = float(np.nanmin(lo[have[have >= last - 2]])) - near
         grew = True
         while grew:
             grew = False
             for cp in list(pending):
-                if (cp["y0"] > GLYPH_TOP * H and cp["y1"] - cp["y0"] + 1 >= tall
+                if (cp["y0"] > GLYPH_TOP * H and cp["y0"] >= stood
+                        and cp["y1"] - cp["y0"] + 1 >= tall
                         and last < cp["c0"] <= last + pad):
                     pending.remove(cp)
                     for i in cp["runs"]:
@@ -1306,8 +1316,15 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
         # rolling reference): measured over 13 STEP files, 8 channels moved by
         # about half an MPa from start to finish when they were simply traced
         # together. So trace both ways and take the recovered ink ONLY in the
-        # columns the old mask had none: everywhere the curve was already
-        # read it reads bit-identical, and the end is added, not re-read.
+        # columns the old trace gave no reading: everywhere the curve was
+        # already read it reads bit-identical, and the end is added, not
+        # re-read. "No reading", not "no ink": the old trace carries a curve
+        # across columns it has no ink in, and on 00163 p167 it rightly held
+        # the Btm Prop Conc on the floor through 17:30, where the red and
+        # yellow pressures fall together and their overlap reads as orange;
+        # judged by ink, the new pass took that overlap for the curve and
+        # put 300 kg/m³ of proppant there. On 00119 p141 it re-drew a fall
+        # the old trace had read as a step.
         base = drop_glyph_islands(sub, ends=False)
         full = drop_glyph_islands(sub, ends=True)
         if not np.array_equal(base, full):
@@ -1316,8 +1333,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
                       swept_factor=swept_factor, edge_blank=edge_blank)
             py0 = curve_positions(base, **kw)
             py1 = curve_positions(full, **kw)
-            own = base.any(axis=0)
-            return np.where(own, py0, py1)
+            return np.where(np.isfinite(py0), py0, py1)
         sub = base
     cols = []                    # per column: ((run median, run height), ...)
     py = np.full(W, np.nan)

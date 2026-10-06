@@ -1367,6 +1367,15 @@ def _axis_of(r, label):
     return None
 
 
+def _is_pressure(r, label):
+    """Is this channel a pressure? Its unit says so (MPa, kPa, psi), or failing
+    that its name."""
+    u = str((r.get("units") or {}).get(label) or "").lower()
+    if u in ("mpa", "kpa", "psi", "bar"):
+        return True
+    return "press" in str(label).lower()
+
+
 # How close to its axis floor a curve's last (or first) reading has to sit
 # for the stretch beyond it to be the pen resting there rather than the
 # trace stopping in mid-air. gaps.FLOOR is 2%; a pressure bled down to a
@@ -1403,7 +1412,7 @@ def _bridge_step_gaps(results, notes):
     much was filled.
     """
     import numpy as np
-    filled_n, filled_s, charts = 0, 0.0, 0
+    filled_n, filled_s, charts, ends_n = 0, 0.0, 0, 0
     for r in results:
         if r.get("type") != "series" or not str(r.get("source") or "").startswith("STEP"):
             continue
@@ -1448,16 +1457,40 @@ def _bridge_step_gaps(results, notes):
                     k = np.arange(1, g["n"] + 1) / (g["n"] + 1.0)
                     vals[a:b + 1] = x0 + (x1 - x0) * k
                     mark[a:b + 1] = True
-                elif g["kind"] == gaps.TRAIL and resting(g["before"]):
+                elif g["kind"] == gaps.TRAIL:
+                    # After the last reading, to where the chart's ink ends.
+                    # A curve resting on the floor stays there. One that stops
+                    # in mid-air stopped on the shutdown's near-vertical
+                    # stroke, which anti-aliasing leaves too faint to trace:
+                    # rate and proppant fall to the floor there, and pressure
+                    # does not — it holds near its shut-in level and decays
+                    # slowly — so pressure holds its last reading and the
+                    # rest go to the floor. 50029 p154: the rate's last
+                    # reading is 6.6 and the page draws it straight down to 0;
+                    # the pressure's is 27.7 and the page draws it there.
                     stop = min(b, last_any)
                     if stop >= a:
-                        vals[a:stop + 1] = g["before"]
+                        x = g["before"]
+                        if not resting(x) and not _is_pressure(r, label) and lo is not None:
+                            x = lo
+                        vals[a:stop + 1] = x
                         mark[a:stop + 1] = True
-                elif g["kind"] == gaps.LEAD and resting(g["after"]):
+                        if not resting(g["before"]):
+                            ends_n += 1
+                elif g["kind"] == gaps.LEAD:
+                    # Before the first reading, from where the chart's ink
+                    # starts. A curve whose first reading is in mid-air rose to
+                    # it on a near-vertical stroke the tracer cannot see, from
+                    # rest on the floor, where it sat hidden under the frame's
+                    # bottom rule — 50029 p154's pressure is on the floor from
+                    # 23:16 and its first traced reading is 40.6 MPa at 82 s.
                     start = max(a, first_any)
                     if b >= start:
-                        vals[start:b + 1] = g["after"]
+                        x = g["after"] if resting(g["after"]) or lo is None else lo
+                        vals[start:b + 1] = x
                         mark[start:b + 1] = True
+                        if not resting(g["after"]):
+                            ends_n += 1
             if mark.any():
                 data[label] = vals
                 old = ded.get(label)
@@ -1476,7 +1509,11 @@ def _bridge_step_gaps(results, notes):
             f"seen — under another curve, along the frame's floor, or through a "
             f"near-vertical shutdown — {filled_s / 60:.0f} min in all, filled by "
             f"interpolation between the readings either side, or along the floor "
-            f"where the curve rests there; marked as deduced, not read")
+            f"where the curve rests there; marked as deduced, not read"
+            + (f". {ends_n} curve end(s) that stopped or started in mid-air on a "
+               f"near-vertical stroke were carried to the chart's ink: pressure "
+               f"held at its last reading, rate and proppant from or to the floor"
+               if ends_n else ""))
 
 
 def _trican_continuous(results, notes):
