@@ -45,9 +45,9 @@ curve.BH Prop Conc = BH Prop Con
 BJ-1
 chart_headers_include = Press
 chart_stage_tokens =
-curve.Tr Press = WH 2 Press, WH 2 , WH Press 2, WH Press
-curve.Slurry Rate = CMB SLR Rate, SLR Rate, Comb SLR Rate, Combined SLR Rate, CMB SLR Rate*, SLR Rate*, BLD SLR Rate
-curve.WH Prop Conc = WH Density
+curve.Tr Press = WH 2 Press, WH 2 , WH Press 2, WH Press, SIDE 1 WH-Press, SIDE 1-WH-Press, SIDE 2 WH-Press, SIDE 2-WH-Press
+curve.Slurry Rate = CMB SLR Rate, SLR Rate, Comb SLR Rate, Combined SLR Rate, CMB SLR Rate*, SLR Rate*, BLD SLR Rate, CMB-SLR-Rate
+curve.WH Prop Conc = WH Density, Bld1-WH-Density, Bld2-WH-Density
 curve.BH Prop Conc = Density at Perfs
 
 LEI-1

@@ -27,6 +27,7 @@ import frac_core as fc
 import halliburton_ifs as ifs
 import leucrotta as lc
 import bj1
+import bj_zing
 import bj_fracturing
 import bj_summary
 import calfrac_summary
@@ -3288,9 +3289,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 notes.append(f"p{pno + 1}: Liberty chart failed — {e}")
             continue
 
-        if bj1.detect(page):
+        # BJ's 2026 ZingChart render (#796, #797) before BJ-1: it prints no
+        # BJ-1 title and no "Mon-DD HH:MM" clock, so bj1 never sees it
+        zing = bj_zing.detect(page)
+        if zing or bj1.detect(page):
             try:
-                meta, samples, data, units = bj1.extract_page(page)
+                meta, samples, data, units = (bj_zing if zing else bj1).extract_page(page)
                 if re.search(r"\bAdditives\b", str(getattr(meta, "title", "") or "")):
                     # JobMaster's second page per zone (00575): additive
                     # ratios and the clean rate, the same footing as
