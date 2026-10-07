@@ -1208,6 +1208,16 @@ def _b_group_class(img, ca, cb, ya, yb):
         return "rate"
     if g > b + 35 and g > r - 25:
         return "conc"
+    # Olive: red and green together, well above blue. The 2026 sheets print
+    # the Concentration (kg/m³) axis in full, 0 to 800, in a pale olive that
+    # comes out about (147, 148, 122) — 26 above blue, short of the test
+    # above — so the column was read (700, 500, 400, 100 on the right rows)
+    # and thrown away, the axis was "derived" from the rate axis at 100 to 1
+    # when these sheets run 50 to 1, and the printed-maximum check rightly
+    # dropped both conc channels: 25 of 33 stages on 00036, 32 of 41 on
+    # 00035 (#794, #795).
+    if min(r, g) > b + 18 and abs(r - g) < 30:
+        return "conc"
     return None
 
 
@@ -1243,6 +1253,9 @@ def _b_read_rotated(col, y0, y1):
     return best_pts
 
 
+B_LABEL_EDGE_TRIM = 4      # px taken off a label column's plot-facing side on a retry
+
+
 def b_tick_points(img, x0, x1, y0, y1):
     """-> {axis: [(value, row)]} from the three coloured tick columns.
 
@@ -1273,6 +1286,17 @@ def b_tick_points(img, x0, x1, y0, y1):
                 continue
             col = _b_darken(img[:, max(0, xa + ca - 3):xa + cb + 3])
             pts = _b_read_rotated(col, y0, y1)
+            if len(pts) < 3 and cb - ca >= 10:
+                # A curve that runs a few pixels past the frame lands in the
+                # label column nearest it: on 00036 p68 the rate curve's last
+                # columns sit at x 794-796 beside labels at 797-807, and the
+                # stub took the whole 0..16 ladder with it ("rate axis
+                # unreadable", #794). Read again without the side that faces
+                # the plot.
+                cut = B_LABEL_EDGE_TRIM
+                crop = (img[:, xa + ca + cut:xa + cb + 3] if side == "right"
+                        else img[:, max(0, xa + ca - 3):xa + cb - cut])
+                pts = _b_read_rotated(_b_darken(crop), y0, y1)
             if len(pts) >= 3:
                 out[cls] = (dist, pts)
     return {k: v[1] for k, v in out.items()}
@@ -1553,12 +1577,14 @@ def _strip_rules(masks, rows, x0, y0, x1, y1):
     On 00981 the same rule is reported at 60, 61, 62 and 63 across four pages
     while the ink sits at 61 every time.
     """
+    found = {}
     for r0 in rows:
         for r in range(max(y0, r0 - _RULE_SEARCH), min(y1, r0 + _RULE_SEARCH) + 1):
             for key, _col, _l, _u, _a in B_SERIES:
                 m = masks.get(key)
                 if m is None or not _is_rule_row(m, r, x0, x1):
                     continue          # no rule of this colour on this row
+                found.setdefault(key, set()).add(r)
                 # Take the dashes and leave the curve. Blanking the row whole
                 # took every HOLD that sat on a gridline with it: a proppant
                 # schedule steps 100, 200, 300 kg/m3 and holds each for
@@ -1571,6 +1597,55 @@ def _strip_rules(masks, rows, x0, y0, x1, y1):
                 # curve along the row is one run of tens.
                 for rr in range(max(0, r - 1), min(m.shape[0], r + 2)):
                     _drop_short_runs(m[rr], _RULE_DASH_MAX)
+    return found
+
+
+def _drop_lone_dots(py, sub, jump=4.0, width=2, dot=2, near=6):
+    """Blank a one- or two-column excursion made of nothing but stray dots.
+    -> columns blanked.
+
+    Where a conc curve is hidden under the other one, the only ink its mask
+    has left in that column can be a dot or two of a gridline close to its
+    colour, and the tracer takes it. On 00036 p82 WH Prop Conc holds 500
+    under DH Prop Conc and jumps to ~600 for one column nine times (#794):
+    one pixel on the 600 rule, or a pixel a few rows off it, or four lone
+    pixels on four rules. A real spike is a STROKE — a tall run in its column
+    from the curve up to the peak — and a curve that holds along a rule is a
+    long run of columns there; neither is touched. Blanked, the column is
+    filled from the covering curve like any other hidden one.
+    """
+    n = len(py)
+    if not n:
+        return 0
+    # the tallest vertical run of ink in each column
+    tallest = np.zeros(n, int)
+    for c in range(n):
+        ys = np.flatnonzero(sub[:, c])
+        if len(ys):
+            cuts = np.flatnonzero(np.diff(ys) > 1)
+            tallest[c] = int(np.max(np.diff(np.r_[-1, cuts, len(ys) - 1])))
+    cand = np.isfinite(py) & (tallest <= dot)
+    c, dropped = 0, 0
+    while c < n:
+        if not cand[c]:
+            c += 1
+            continue
+        e = c + 1               # one blip: candidate columns at one height
+        while e < n and cand[e] and abs(py[e] - py[c]) <= 2:
+            e += 1
+        if e - c <= width:
+            # the nearest reading either side: the column beside a blip is
+            # often blank, the curve being hidden there too (00036 p82 col 456)
+            lft = [py[k] for k in range(c - 1, max(-1, c - 1 - near), -1) if np.isfinite(py[k])]
+            rgt = [py[k] for k in range(e, min(n, e + near)) if np.isfinite(py[k])]
+            sides = ([lft[0]] if lft else []) + ([rgt[0]] if rgt else [])
+            mid = np.nanmean(py[c:e])
+            if (sides and all(abs(mid - v) > jump for v in sides)
+                    and (len(sides) < 2 or abs(sides[0] - sides[1]) <= jump)):
+                py[c:e] = np.nan
+                dropped += e - c
+        c = e
+    return dropped
 
 
 # A run on a rule row no longer than this is a dash (or the anti-aliased
@@ -1627,6 +1702,14 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
     # the channels if the two disagree. Against that answer key on three
     # pages this lands within 0.6% — 480.4 against a printed 483.1, 539.1
     # against 537.0, 553.8 against 552.2.
+    # Whether this page prints its own concentration axis. The gridline and
+    # stray-dot clean-up for the conc masks below is measured on pages that
+    # do — the 2026 sheets, and the 2024-25 ones (01433, 00397, 00470) that
+    # print 0..480 or 0..1000, where it changed no printed maximum for the
+    # worse and turned 01433 p194's DH spike from a false double peak into
+    # the single one the page draws. Pages that print only the zero and
+    # share the rate axis (00583) are left exactly as they were.
+    conc_printed = fits.get("conc") is not None
     if fits.get("conc") is None and fits.get("rate") is not None:
         ra, rb, rn = fits["rate"]
         fits["conc"] = (ra * CONC_PER_RATE, rb * CONC_PER_RATE, rn)
@@ -1636,6 +1719,22 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
 
     masks = b_masks(img)
     _strip_rules(masks, rows, x0, y0, x1, y1)
+    # The conc curves are solid lines, so on the gridline rows b_box reports
+    # a dash in their masks is a dash, whether or not enough of the rule
+    # matched their colour for _is_rule_row to call it theirs. The 2026
+    # sheets draw their rules a shade off WH Prop Conc's olive: 26 of the 600
+    # rule's dots land in its mask on 00036 p89, too few to be a rule, and
+    # once the curve has dropped they are the only ink left, so the trace ran
+    # along them at 598.5 kg/m3 (#794). Short runs only — a curve holding on
+    # a rule is one long run, and one crossing it loses what the tracer
+    # already bridges.
+    for key, _c, _l, _u, axis in B_SERIES:
+        m = masks.get(key)
+        if m is None or axis != "conc" or not conc_printed:
+            continue
+        for r0 in rows:
+            for rr in range(max(y0, r0 - 1), min(y1, r0 + 1) + 1):
+                _drop_short_runs(m[rr, x0 + 1:x1], _RULE_DASH_MAX)
 
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels, notes = [], []
@@ -1653,11 +1752,13 @@ def extract_image_b(img, sample_sec=1.0, start_hint=None):
         sub = mask[y0:y1, x0 + 1:x1]
         if not sub.any():
             continue
+        py = ar.curve_positions(sub, envelope="turns")
+        if axis == "conc" and conc_printed:
+            _drop_lone_dots(py, sub)
         traced[key] = {"label": label, "unit": unit, "axis": axis,
                        "cal": fits.get(axis), "sub": sub,
                        "cov": float(sub.any(axis=0).mean()),
-                       "py": ar.curve_positions(sub, envelope="turns"),
-                       "filled": 0}
+                       "py": py, "filled": 0}
     # The other half: this path recovered exactly one pair of the nine, WH
     # Prop Conc from under DH Prop Conc, hard-coded in that direction. Monitor
     # Pressure and WH Slurry Rate were never recovered at all, and the conc
