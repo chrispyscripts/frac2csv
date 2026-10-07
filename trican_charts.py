@@ -81,6 +81,7 @@ CHEM_TITLE = "CHEMICAL CONCENTRATIONS"
 # real reports run a stage up to 11.5x their own median (00081), so no ratio
 # tight enough to catch a misread is loose enough to spare a long stage.
 STAGE_MAX_S = 30000
+B_STAGE_MAX_S = 86400      # layout B: one stage on a wall clock, at most a day
 
 
 def detect(page):
@@ -1770,6 +1771,7 @@ def detect_b(page):
 _B_DATE = re.compile(r"Interval Date\s*(\d{1,2})/(\d{1,2})/(\d{2})\s*\(m/d/y\)")
 _B_START = re.compile(r"Start Time\s*(\d{1,2}):(\d{2})\s*\(hh:mm\)")
 _B_ELAPSED = re.compile(r"Elapsed Time\s*(\d{1,2}):(\d{2}):(\d{2})\s*\(h:mm:ss\)")
+_B_PUMPING = re.compile(r"Pumping Time\s*(\d{1,2}):(\d{2}):(\d{2})\s*\(h:mm:ss\)")
 
 
 def page_meta_b(page):
@@ -1791,6 +1793,10 @@ def page_meta_b(page):
     m = _B_ELAPSED.search(text)
     if m:
         meta["elapsed_s"] = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                             + int(m.group(3)))
+    m = _B_PUMPING.search(text)
+    if m:
+        meta["pumping_s"] = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
                              + int(m.group(3)))
     m = B_STAGE.search(text)
     if m:
@@ -1868,6 +1874,19 @@ def _crop_to_printed_window(meta, samples, channels, info, slack_s=60.0):
     a, b = max(0.0, s), min(n, s + el + slack_s)
     if b - a < 60:
         return samples, channels, info, meta
+    # The window has to be able to hold the pumping the page prints for the
+    # stage. 00396 p125 (#800) prints Start Time 21:10 and Pumping Time
+    # 3:56:52 under a chart that pumps 12:10-13:05 and 19:20-21:43: from
+    # 21:10 the chart has 31 minutes left, and the trim exported those and
+    # nothing else. A start that leaves less room than the stage pumped is
+    # not this chart's, and the window is kept whole.
+    pump = float(meta.get("pumping_s") or 0.0)
+    if pump and b - a < 0.9 * pump:
+        notes.append(f"the page prints a Start Time {st[:5]} that leaves "
+                     f"{(b - a) / 60:.0f} min of chart for a stage that pumped "
+                     f"{pump / 60:.0f} min; the window is kept whole and the "
+                     f"printed time stays on the export")
+        return samples, channels, dict(info, notes=notes), meta
     sel = (samples >= a) & (samples < b)
     out = samples[sel] - samples[sel][0]
     # Cut every per-sample array, not just `values`: `deduced` is one flag per
@@ -1959,9 +1978,13 @@ def extract_page_b(page, sample_sec=1.0):
         meta, samples, channels, info)
     meta, info = _clock_from_axis(meta, info)
     # Layout B has no whole-job page — detect_b requires a "Stage # N"
-    # caption — so every page here is a single stage and the cap applies,
-    # to the stage the page prints rather than to the window around it.
-    if info["duration_s"] > STAGE_MAX_S:
+    # caption — so every page here is a single stage, on a wall clock. A
+    # stage that screens out and restarts runs long: 00396's stages 7, 12
+    # and 13 (#800) chart 9.6, 10.4 and 13.9 hours, each one stage start to
+    # finish, and STAGE_MAX_S (8.3 h) threw all three away. What the cap is
+    # for here is a misread axis, and one of those reads in days (#794's
+    # 409,655 s), so a layout-B chart may run up to B_STAGE_MAX_S.
+    if info["duration_s"] > B_STAGE_MAX_S:
         raise ValueError("trican-B: implausible stage duration "
                          f"{info['duration_s']}s")
     _attach_geom(page, im, img, info)

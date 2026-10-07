@@ -116,11 +116,13 @@ class MisreadHours(unittest.TestCase):
         self.assertAlmostEqual(dur / 3600, 13.5, delta=0.2)        # the crop's job, not the fit's
 
 
-def window(n_s, t0_s, start, elapsed_s, plot=(59, 100, 791, 400)):
+def window(n_s, t0_s, start, elapsed_s, plot=(59, 100, 791, 400), pumping_s=None):
     samples = np.arange(n_s, dtype=float)
     chans = [{"key": "press", "values": samples.copy()}]        # value == original second
     info = {"plot": plot, "t0_seconds": float(t0_s), "duration_s": int(n_s), "notes": []}
     meta = {"start_time": start, "elapsed_s": elapsed_s}
+    if pumping_s:
+        meta["pumping_s"] = pumping_s
     return tc._crop_to_printed_window(meta, samples, chans, info)
 
 
@@ -157,12 +159,46 @@ class PrintedWindow(unittest.TestCase):
         self.assertEqual(info["duration_s"], 48600)
         self.assertIn("outside", info["notes"][-1])
 
+    def test_00396_p125_a_start_that_cannot_hold_the_pumping_is_not_trimmed_to(self):
+        # #800: Start Time 21:10, Elapsed 5:09:15, Pumping 3:56:52, under a
+        # chart from 12:06 to 21:40 that pumps 12:10-13:05 and 19:20-21:43
+        s, c, info, meta = window(34447, hm("12:06"), "21:10:00", 18555,
+                                  pumping_s=14212)
+        self.assertEqual(info["duration_s"], 34447)
+        self.assertEqual(len(c[0]["values"]), 34447)
+        self.assertIn("pumped", info["notes"][-1])
+        # the same page with a start that leaves room for the pumping is trimmed
+        s, c, info, meta = window(34447, hm("12:06"), "13:00:00", 18555,
+                                  pumping_s=14212)
+        self.assertEqual(info["duration_s"], 18615)
+
+    def test_p155_still_trims_with_its_pumping_printed(self):
+        s, c, info, meta = window(48600, 0, "11:05:00", 3602, pumping_s=3300)
+        self.assertEqual(info["duration_s"], 3662)
+
     def test_no_elapsed_printed_means_no_crop(self):
         samples = np.arange(48600, dtype=float)
         s, c, info, meta = tc._crop_to_printed_window(
             {"start_time": "11:05:00"}, samples, [{"values": samples}],
             {"plot": (59, 100, 791, 400), "t0_seconds": 0.0, "duration_s": 48600})
         self.assertEqual(info["duration_s"], 48600)
+
+
+PDF_00396 = ("/Volumes/For-Chris-CnC-1TB/BCER-Frac/00396-200D077H094B1600_30450/"
+             "00396-200D077H094B1600_30450_COMP_2024MAY08_INITIAL.PDF")
+
+
+@unittest.skipUnless(os.path.exists(PDF_00396), "the BCER drive is not mounted")
+class Stages00396(unittest.TestCase):
+    """#800: Petronas stages that screen out and restart. Each chart is the
+    whole stage; the printed Start/Elapsed Times do not describe it."""
+
+    def test_long_restarted_stages_read_whole(self):
+        import fitz
+        doc = fitz.open(PDF_00396)
+        for pno, hours in ((121, 9.6), (125, 9.6), (130, 10.4), (131, 13.9)):
+            meta, samples, chans, info = tc.extract_page_b(doc[pno - 1])
+            self.assertAlmostEqual(info["duration_s"] / 3600, hours, delta=0.15, msg=pno)
 
 
 if __name__ == "__main__":
