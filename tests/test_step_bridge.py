@@ -60,6 +60,22 @@ class Bridge(unittest.TestCase):
         self.assertTrue(np.isnan(v[:3]).all())
         self.assertTrue(np.allclose(v[3:10], 0.0))
 
+    def test_a_pressure_on_the_stroke_takes_the_low_it_reached(self):
+        # 53560 p357: down to 32.6, then back up to 62.8 on the stroke's top
+        p = [74.0] * 30 + [56.6, 42.0, 35.2, 32.6, 40.1, 51.5, 62.8] + [NAN] * 10
+        q = [8.0] * 47
+        r, _ = self.run1(chart({"Surface Pressure": p, "Slurry Rate": q},
+                               axes={"Surface Pressure": (100.0, 0.0), "Slurry Rate": (16.0, 0.0)}))
+        self.assertTrue(np.allclose(r["data"]["Surface Pressure"][37:], 32.6))
+
+    def test_a_pressure_that_reached_the_floor_is_on_the_floor(self):
+        # 53559 p322: 2.7, 0.6, then 11.7 on the stroke
+        p = [24.0] * 30 + [13.0, 5.4, 2.7, 0.6, 11.7] + [NAN] * 10
+        q = [8.0] * 45
+        r, _ = self.run1(chart({"Surface Pressure": p, "Slurry Rate": q},
+                               axes={"Surface Pressure": (100.0, 0.0), "Slurry Rate": (16.0, 0.0)}))
+        self.assertTrue(np.allclose(r["data"]["Surface Pressure"][35:], 0.0))
+
     def test_a_pressure_that_stops_in_mid_air_holds_its_last_reading(self):
         # the shutdown's near-vertical stroke is not traced; pressure holds
         # near its shut-in level, it does not fall to zero
@@ -85,6 +101,31 @@ class Bridge(unittest.TestCase):
         v = r["data"]["Surface Pressure"]
         self.assertTrue(np.allclose(v[:8], 0.0))
         self.assertEqual(v[8], 40.6)
+
+    def test_a_curve_still_under_another_pen_holds_its_height(self):
+        # 00108 p282: the page keeps the last reading's height inked to the
+        # end; the curve is under another pen there, not on the floor
+        q = [0.1] * 8 + [NAN] * 12
+        c = [0.4] * 20
+        ch = chart({"Chem Conc (orange)": q, "Chem Conc (green)": c},
+                   axes={"Chem Conc (orange)": (1.0, 0.0), "Chem Conc (green)": (1.0, 0.0)})
+        ch["held_ends"] = {"Chem Conc (orange)": {"lead": None, "trail": 14}}
+        r, _ = self.run1(ch)
+        v = r["data"]["Chem Conc (orange)"]
+        self.assertTrue(np.allclose(v[8:15], 0.1))     # held while inked
+        self.assertTrue(np.allclose(v[15:], 0.0))      # then down to the floor
+        self.assertTrue(r["deduced"]["Chem Conc (orange)"][8:].all())
+        self.assertNotIn("held_ends", r)
+
+    def test_a_lead_under_another_pen_holds_back_to_where_the_ink_says(self):
+        p = [NAN] * 10 + [162.0] * 10
+        q = [150.0] * 20
+        ch = chart({"Prop Conc": p, "Btm Prop Conc": q},
+                   axes={"Prop Conc": (1000.0, 0.0), "Btm Prop Conc": (1000.0, 0.0)})
+        ch["held_ends"] = {"Prop Conc": {"lead": 4, "trail": None}}
+        r, _ = self.run1(ch)
+        v = r["data"]["Prop Conc"]
+        self.assertTrue(np.allclose(v[:4], 0.0) and np.allclose(v[4:10], 162.0))
 
     def test_nothing_is_carried_past_where_every_curve_ends(self):
         p = [60.0] * 9 + [27.7] + [NAN] * 10

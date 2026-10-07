@@ -853,6 +853,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         cols = _fill_under(o["sub"], o["py"], g["sub"], g["py"], ink=ink)
         o["filled"] = len(cols)
     seen = set()
+    ends_ink = None
     for base, tr in traced.items():
         fam, name, unit, sub, cov, py = (tr["fam"], tr["name"], tr["unit"],
                                          tr["sub"], tr["cov"], tr["py"])
@@ -873,12 +874,17 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # edge value, so every gap and both tails carried a flat invented line.
         # ct.resample blanks them instead (see curve_trace.resample).
         v = ct.resample(samples, t_cols, vals)
+        if ends_ink is None:
+            ends_ink = _ink(img, y0, y1, x0, x1)
+            for mk in masks.values():
+                ends_ink |= mk[y0:y1, x0:x1]
         channels.append({"key": f"series-{fam}", "label": name, "unit": unit,
                          "color": ar.HUE_HEX.get(base, "#555577"),
                          "values": v, "ticks": ntick, "coverage": cov,
                          # axis read at the frame edges — see auto_raster
                          "axis_frame": (float(a + b * y0), float(a + b * y1)),
-                         "filled_cols": tr["filled"]})
+                         "filled_cols": tr["filled"],
+                         "ends": _held_ends(ends_ink, v, a, b, y0, tb, sample_sec)})
         seen.add(name)
     if not channels:
         raise ValueError("step1: no channel calibrated")
@@ -897,6 +903,53 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 f"where the page paints the green curve over the orange one "
                 f"and the two coincide — deduced, not traced")
     return samples, channels, info
+
+
+def _held_ends(ink, v, a, b, y0, tb, sample_sec, slack=3):
+    """Past a curve's last reading, and before its first: how far does the
+    page keep ink at that reading's height? -> {"lead": first sample index
+    still held, "trail": last sample index still held}, None where the row is
+    blank straight away.
+
+    A curve goes blank for one of two reasons, and the page tells them apart.
+    Painted over by another pen at the same height, it is still there: on
+    00108 p282 the orange Chem Conc runs at 0.1 under the pale yellow Bio
+    Conc from 01:05 to 02:40, and the row stays inked the whole way. Gone
+    down to the floor, it is under the frame's bottom rule and its row is
+    blank: 50029 p154's rate falls from 7.5 to 0 at 01:29 and nothing is
+    left at 7.5. `ink` is every coloured pixel of the plot, every pen mask
+    included; grey gridlines and the frame are not in it. Up to `slack` blank
+    columns are crossed, for the gaps between a dashed or anti-aliased
+    pen's pixels.
+    """
+    H, W = ink.shape
+    fin = np.flatnonzero(np.isfinite(v))
+    out = {"lead": None, "trail": None}
+    if not len(fin) or not b or not tb:
+        return out
+    R = max(2, int(0.005 * H) + 1)
+    for side, i, step in (("trail", fin[-1], 1), ("lead", fin[0], -1)):
+        row = (v[i] - a) / b - y0
+        if not np.isfinite(row) or not (0 <= row < H):
+            continue
+        band = ink[max(0, int(round(row)) - R):int(round(row)) + R + 1].any(axis=0)
+        c = int(np.floor(i * sample_sec / tb)) + step   # the reading's column, then on
+        last, miss = None, 0
+        while 0 <= c < W:
+            if band[c]:
+                last, miss = c, 0
+            else:
+                miss += 1
+                if miss > slack:
+                    break
+            c += step
+        if last is None:
+            continue
+        k = int(last * tb / sample_sec)
+        k = min(len(v) - 1, max(0, k))
+        if (side == "trail" and k > i) or (side == "lead" and k < i):
+            out[side] = k
+    return out
 
 
 def _ink(img, y0, y1, x0, x1):
