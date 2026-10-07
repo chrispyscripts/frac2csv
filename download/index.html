@@ -39,6 +39,32 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.38</h2>
+    <ul>
+      <li><b>BJ 2026 charts read (#796, #797).</b> BJ&rsquo;s 2026 Ovintiv books
+        are drawn by a different chart program (ZingChart), and the app
+        didn&rsquo;t recognise them: 00057 gave nothing. A new reader takes the
+        curves straight from the PDF&rsquo;s lines. 00057 now reads 47 stages,
+        00019 39, 00058 65, 00059 87, 00060 49. The older BJ files are
+        untouched</li>
+      <li><b>Liberty 00068 reads, 52 charts (#792, #793, #798).</b> Its clock is
+        printed in &ldquo;rich black&rdquo; (a very dark grey) and the reader
+        only looked for pure black. Every other Liberty file reads exactly as
+        before (5,631 of 5,634 pages identical; the other 3 failed before
+        too)</li>
+      <li><b>Trican 1 2026: conc and rate are back (#794, #795).</b> The
+        concentration axis is printed in a new olive colour, the gridlines are
+        nearly the WH Prop Conc colour, and the clock&rsquo;s thin type loses
+        digits to the text recognition. All three are handled, and conc reads
+        within about 1.5% of each page&rsquo;s printed maximum</li>
+      <li><b>Trican 1: restarted stages read whole (#800).</b> A stage is no
+        longer clipped to a printed Start Time that can&rsquo;t hold its own
+        Pumping Time, and stages of 9.6 to 13.9 hours are no longer refused</li>
+      <li><b>Which templates this release touches: BJ (the new chart type
+        only), Liberty, Trican 1.</b> Every other template reads exactly as it
+        did under v1.11.37</li>
+    </ul>
+
     <h2>v1.11.37</h2>
     <ul>
       <li><b>STEP charts: no more broken lines, and no more lost chart
