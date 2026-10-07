@@ -308,6 +308,7 @@ function applyStage(d) {
   state.id = d.id || "";
   state.haveStage = true;
   state.channels = d.channels || [];
+  state.isolate = !!d.isolate;
   applyScale();
   state.n = d.n; state.dsec = d.dsec || 1; state.tMax = d.tMax || 1;
   state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
@@ -522,6 +523,16 @@ function build() {
   host.innerHTML = "";
   blocks = state.channels.map((c, i) => {
     const gs = gapStats(c.values);
+    c._ded = null;
+    let nded = 0;
+    if (c.deduced && c.deduced.length && c.values) {
+      c._ded = new Uint8Array(c.values.length);
+      for (const [a, b] of c.deduced)
+        for (let k = Math.max(0, a); k < Math.min(b, c.values.length); k++) {
+          if (!c._ded[k]) nded++;
+          c._ded[k] = 1;
+        }
+    }
     const el = document.createElement("div");
     el.className = "chartblock" + (c.off ? " off" : "");
     el.innerHTML =
@@ -537,6 +548,10 @@ function build() {
             ? " · " + gs.pct.toFixed(1) + "% missing" +
               (interp ? " (bridged, longest " + gs.longest + ")" : "")
             : "") +
+          (nded && c.values.length
+            ? " · " + (100 * nded / c.values.length).toFixed(1) + "% deduced (dashed)"
+            : "") +
+          (state.isolate ? " · Isolate Interpolation" : "") +
           (showMissing ? flatNote(c) : "") + "</span>" +
         '<span class="ro"></span>' +
       "</div><canvas></canvas>";
@@ -648,14 +663,20 @@ function drawChart(b) {
     g.restore();
   }
 
+  // The Lab's deduced stretches (supplied, not read off the page) are drawn
+  // dashed below, joined to the readings either side, the way this window's
+  // own bridges are: drawn, not measured. With the Lab's Isolate
+  // Interpolation on, they are the only thing drawn, as in the Lab.
+  const ded = c._ded;
   g.strokeStyle = c.color; g.lineWidth = 1.4;
   g.lineJoin = "round";
   g.beginPath();
   let pen = false, prev = null;
   const bridges = [];
-  for (let i = i0; i <= i1; i += step) {
+  for (let i = i0; i <= i1 && !state.isolate; i += step) {
     const v = vals[i];
     if (v == null || !isFinite(v)) { pen = false; continue; }
+    if (ded && ded[i]) { pen = false; prev = null; continue; }
     const x = xOf(i * state.dsec, W), y = yOf(v);
     if (pen) g.lineTo(x, y);
     else {
@@ -673,6 +694,30 @@ function drawChart(b) {
     g.globalAlpha = 0.8;
     g.beginPath();
     for (const [ax, ay, bx, by] of bridges) { g.moveTo(ax, ay); g.lineTo(bx, by); }
+    g.stroke();
+    g.setLineDash([]);
+    g.globalAlpha = 1;
+  }
+  if (ded && c.deduced && c.deduced.length) {
+    g.setLineDash([4, 3]);
+    g.lineWidth = state.isolate ? 2.2 : 1.4;
+    g.globalAlpha = state.isolate ? 1 : 0.85;
+    g.beginPath();
+    const ok = k => k >= 0 && k < len && vals[k] != null && isFinite(vals[k]);
+    for (const [a, b] of c.deduced) {           // [a, b): b is the next read sample
+      if (b <= i0 || a > i1) continue;
+      let on = false;
+      const at = k => {
+        const x = xOf(k * state.dsec, W), y = yOf(vals[k]);
+        if (on) g.lineTo(x, y); else { g.moveTo(x, y); on = true; }
+      };
+      if (ok(a - 1)) at(a - 1);
+      for (let k = Math.max(a, i0); k < Math.min(b, i1 + 1); k += step) {
+        if (ok(k)) at(k); else on = false;
+      }
+      if (ok(b - 1)) at(b - 1);
+      if (ok(b)) at(b);
+    }
     g.stroke();
     g.setLineDash([]);
     g.globalAlpha = 1;
