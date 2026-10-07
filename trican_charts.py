@@ -1333,7 +1333,98 @@ def b_time_axis(img, x0, x1, y1, start_hint=None):
     if len(pts) < 3:
         return None
     pts.sort(key=lambda p: p[1])
-    return _b_clock_fit(pts, x0, x1, start_hint)
+    fit = _b_clock_fit(pts, x0, x1, start_hint)
+    # An axis may span days and be right — 00028 p180 plots 16:00 "7. Jul"
+    # 08:00 16:00 "8. Jul" 08:00 16:00 around a 139-minute stage that the
+    # printed window then cuts out — and such a fit explains every label it
+    # read. A multi-day fit that leaves labels unexplained is the misread.
+    if fit is None or (fit[1] * (x1 - x0) > B_STAGE_MAX_S
+                       and _b_explained(fit, pts) < len(pts) - 1):
+        # The 2026 sheets print the clock in a thin grey face the OCR loses
+        # whole digits of: 00036 p83's 15:45 16:00 16:15 16:30 16:45 17:00
+        # come back 5:45 1:00 16:15 16:39 1:45 17:00, and p79's 11:00-11:40
+        # as 7:00 13:10 (unread) 7:39 11:40 — one label right in five. The
+        # fit above then either finds nothing or lines up the misreads as
+        # midnight crossings and fits a stage of four days (#794, #795).
+        # The minutes survive where the hours do not; read the ladder off
+        # them instead.
+        fit = _b_minute_ladder(pts, x0, x1, start_hint) or fit
+    return fit
+
+
+def _b_explained(fit, pts, tol_s=90.0):
+    """How many labels does the line read to their own time of day?"""
+    a, b = fit
+    return sum(1 for v, c in pts
+               if abs((a + b * c - v + 43200) % 86400 - 43200) <= tol_s)
+
+
+def _b_minute_ladder(pts, x0, x1, start_hint=None, min_match=3):
+    """[(seconds, x)] as OCR'd -> (seconds at x=0, sec/px) from the MINUTES.
+
+    The labels sit on evenly spaced gridlines one fixed step apart, so label
+    k reads m0 + k*step (mod 60) in its minutes whatever the OCR made of its
+    hour. The step and m0 that explain the most minutes are taken (at least
+    `min_match` labels, and more than half of those read). The hour then
+    comes from the labels: the one that the most readings agree on, and
+    among equals the one that puts the chart's start nearest the printed
+    Start Time — on p79 only 11:40 reads whole, and it says 11.
+    """
+    if len(pts) < min_match:
+        return None
+    xs = np.array([c for _v, c in pts], float)
+    gaps = np.diff(np.sort(xs))
+    gaps = gaps[gaps > 5]
+    if not len(gaps):
+        return None
+    dx = float(np.min(gaps))
+    k = np.round((xs - xs.min()) / dx).astype(int)
+    if np.any(np.abs((xs - xs.min()) / dx - k) > 0.2):
+        return None                            # not one evenly spaced ladder
+    mins = np.array([int(v // 60) % 60 for v, _c in pts])
+    best = None
+    for step in (1, 2, 5, 10, 15, 20, 30, 60):
+        for m0 in range(0, 60):
+            pred = (m0 + k * step) % 60
+            hit = int(np.sum(pred == mins))
+            if hit < min_match or hit * 2 <= len(pts):
+                continue
+            if best is None or hit > best[0] or (hit == best[0] and step < best[1]):
+                best = (hit, step, m0)
+    if best is None:
+        return None
+    hit, step, m0 = best
+    b = step * 60.0 / dx
+    # the hour of the first label: the most readings agree on it, and the
+    # printed start breaks a tie. Only a label whose minutes are on the
+    # ladder votes — p79's "7:39" is 11:30 with two digits gone, and its
+    # hour is no better than its minutes
+    votes = {}
+    for (v, _c), kk in zip(pts, k):
+        if (m0 + kk * step) % 60 != int(v // 60) % 60:
+            continue
+        h_first = (int(v // 3600) * 60 + int(v // 60) % 60 - kk * step) // 60 % 24
+        votes[h_first] = votes.get(h_first, 0) + 1
+    def start_of(h):
+        a = (h * 60 + m0) * 60.0 - b * xs.min()
+        return a + b * x0
+    def near(h):
+        if start_hint is None:
+            return 0.0
+        return -abs((start_of(h) - start_hint + 43200) % 86400 - 43200)
+    # The printed Start Time first: the OCR loses the same leading digit on
+    # label after label — 00034 p77's "20:xx" come back "2:xx" — and enough
+    # of them outvote the ones that read whole, which put that stage at
+    # 02:35 against a page printing 20:35. Votes only where nothing is
+    # printed.
+    if start_hint is not None:
+        hour = max(range(24), key=near)
+    elif votes:
+        hour = max(votes, key=lambda h: votes[h])
+    else:
+        return None
+    a = (hour * 60 + m0) * 60.0 - b * xs.min()
+    return float(a), float(b)
 
 
 def _swap_hours(seq, delta):

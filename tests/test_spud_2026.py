@@ -88,6 +88,60 @@ class LoneDots(unittest.TestCase):
         self.assertEqual(tc._drop_lone_dots(py, sub), 0)
 
 
+def _hm(t):
+    h, m = t.split(":")
+    return int(h) * 3600 + int(m) * 60
+
+
+class MinuteLadder(unittest.TestCase):
+    """The clock read off the minutes when OCR has lost the hours."""
+
+    def _start(self, fit, x0=59):
+        a, b = fit
+        t = (a + b * x0) % 86400
+        return f"{int(t // 3600):02d}:{int(t % 3600 // 60):02d}"
+
+    def test_00036_p83_as_ocr_read_it(self):
+        # printed 15:45 16:00 16:15 16:30 16:45 17:00, one every ~111 px
+        read = ["5:45", "1:00", "16:15", "16:39", "1:45", "17:00"]
+        pts = [(_hm(t), 136.5 + 111.0 * i) for i, t in enumerate(read)]
+        fit = tc._b_minute_ladder(pts, 59, 791, start_hint=_hm("15:34"))
+        self.assertIsNotNone(fit)
+        self.assertAlmostEqual(fit[1], 900 / 111.0, places=3)     # 15 min a label
+        self.assertEqual(self._start(fit), "15:34")
+
+    def test_00036_p79_one_label_right_in_five(self):
+        # printed 11:00 11:10 11:20 11:30 11:40; the third did not read at all
+        read = [("7:00", 0), ("13:10", 1), ("7:39", 3), ("11:40", 4)]
+        pts = [(_hm(t), 145.0 + 130.0 * k) for t, k in read]
+        fit = tc._b_minute_ladder(pts, 59, 791, start_hint=_hm("10:53"))
+        self.assertIsNotNone(fit)
+        self.assertEqual(self._start(fit), "10:53")
+
+    def test_00028_p180_a_multi_day_axis_that_reads_is_kept(self):
+        # 16:00 [7. Jul] 08:00 16:00 [8. Jul] 08:00 16:00, 8 h a label, the
+        # day labels unread: the fit spans 56 h and explains every label,
+        # so the ladder must not replace it
+        read = [("16:00", 0), ("08:00", 2), ("16:00", 3), ("08:00", 5), ("16:00", 6)]
+        pts = [(_hm(t), 110.0 + 104.0 * k) for t, k in read]
+        fit = tc._b_clock_fit(pts, 59, 791, start_hint=_hm("12:08"))
+        self.assertIsNotNone(fit)
+        self.assertGreater(fit[1] * (791 - 59), tc.B_STAGE_MAX_S)
+        self.assertEqual(tc._b_explained(fit, pts), len(pts))
+
+    def test_the_printed_start_sets_the_hour_over_misread_votes(self):
+        # 00034 p77: "20:xx" read as "2:xx" on most labels
+        read = [("2:40", 0), ("2:50", 1), ("21:00", 2), ("2:10", 3), ("21:20", 4)]
+        pts = [(_hm(t), 150.0 + 120.0 * k) for t, k in read]
+        fit = tc._b_minute_ladder(pts, 59, 791, start_hint=_hm("20:35"))
+        self.assertIsNotNone(fit)
+        self.assertEqual(self._start(fit)[:2], "20")
+
+    def test_too_few_minutes_is_no_answer(self):
+        pts = [(_hm("7:13"), 100.0), (_hm("9:47"), 200.0), (_hm("3:02"), 300.0)]
+        self.assertIsNone(tc._b_minute_ladder(pts, 59, 791))
+
+
 @unittest.skipUnless(_pdf("00068"), "the 2026 filings are not on this machine")
 class Liberty00068(unittest.TestCase):
 
