@@ -46,6 +46,41 @@ class Rise(unittest.TestCase):
         self.assertTrue(np.all(np.diff(seg[start:]) <= 6.0), seg)
         self.assertLess(seg[start:].max(), 270, seg)            # no return to ~1
 
+    def test_the_upright_trailing_edge_is_not_a_dip(self):
+        # 00051 p159: up to ~26, two columns still reading the bottom of the
+        # thick upright (~12), then ~22-27 again: the page draws no dip
+        m = np.zeros((H, W), bool)
+        m[286:290, 0:10] = True
+        for c in range(10, 13):
+            m[150:290, c] = True                 # the upright
+        for c in (13, 14):
+            m[150:240, c] = True                 # its trailing edge, top to ~mid
+        m[160:166, 15:40] = True                 # carrying on at ~the top
+        py = np.full(W, np.nan)
+        py[0:10] = 287.5
+        py[10:13] = [150.0, 289.0, 150.0]
+        py[13:15] = 239.0
+        py[15:] = 162.5
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertTrue(np.all(out[13:15] < 170), out[10:16])
+
+    def test_a_real_dip_after_the_peak_is_kept(self):
+        # 00051 p156: up to 30, a drawn dip to 23 held for columns, then on
+        m = np.zeros((H, W), bool)
+        m[286:290, 0:10] = True
+        for c in range(10, 13):
+            m[150:290, c] = True
+        for c in range(13, 20):
+            m[150:200, c] = True                 # the dip, a band 150-200
+        m[150:156, 20:40] = True
+        py = np.full(W, np.nan)
+        py[0:10] = 287.5
+        py[10:13] = [150.0, 289.0, 150.0]
+        py[13:20] = 199.0                        # held at the dip
+        py[20:] = 152.5
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertTrue(np.all(out[13:20] == 199.0), out[10:21])
+
     def test_a_needle_keeps_its_depth(self):
         m = np.zeros((H, W), bool)
         m[160:166, :] = True                 # a level line

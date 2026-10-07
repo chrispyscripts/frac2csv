@@ -1046,8 +1046,115 @@ def _despeckle(py, join=2, island=3, need=40):
     return out
 
 
-RAMP_GAP = 6        # px: the breaks in a thin stroke's column, joined
-RAMP_FILL = 0.6     # a column this full of ink, top to bottom, is one stroke
+def _no_flip_back(sub, py, med, tall):
+    """Inside a steep move, a column that reads back at the level the move
+    started from — though its own ink reaches far past it — takes the
+    move's leading edge instead. -> py, changed only there.
+
+    The 2026 STEP books draw the pressure's opening rise (~1 to ~30 MPa) with
+    a thick line that fills four pixel columns, each inked from the baseline
+    up. curve_positions takes one END of each column's run (the end further
+    from a lagging reference), and it took the top of the first column and
+    the baseline of the next three: 00051 p156 read 18, 0.7, 0.7, 0.8, then
+    the hold — a false spike before every rise on every well of the set
+    (Carmine, #799). A column that falls back to where the move began, while
+    its ink reaches past where the move has already been, is the same stroke
+    read from the wrong end; it is read from the leading end. Nothing else
+    moves: the first column, peaks, holds, needles and every ordinary column
+    keep the reading they had.
+    """
+    n = len(py)
+    out = np.array(py, float)
+    # each reading's run, from either end (the envelope moves readings off
+    # the middle), joining the breaks of a thin, anti-aliased stroke
+    rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
+    for c in range(n):
+        if not np.isfinite(py[c]):
+            continue
+        ys = np.flatnonzero(sub[:, c])
+        if not len(ys):
+            continue
+        if len(ys) >= 0.6 * (ys[-1] - ys[0] + 1):
+            rtop[c], rbot[c] = float(ys[0]), float(ys[-1])
+            continue
+        cuts = np.flatnonzero(np.diff(ys) > 6) + 1
+        for g in np.split(ys, cuts):
+            if g[0] - 1 <= py[c] <= g[-1] + 1:
+                rtop[c], rbot[c] = float(g[0]), float(g[-1])
+                break
+    tall_c = np.isfinite(py) & np.isfinite(rtop) & ((rbot - rtop + 1) >= tall)
+    near = max(2.0, med)
+    c = 0
+    while c < n:
+        if not tall_c[c]:
+            c += 1
+            continue
+        e = c
+        while e + 1 < n and tall_c[e + 1]:
+            e += 1
+        if e > c:
+            # where the move began: the reading just before it, or — where
+            # the trace starts on the move (the blank margin at the frame) —
+            # the end opposite the one its first column reads
+            before = c - 1
+            while before >= 0 and not np.isfinite(py[before]):
+                before -= 1
+            if before >= 0 and c - before <= 3:
+                p0 = py[before]
+            else:
+                p0 = rbot[c] if abs(py[c] - rtop[c]) < abs(py[c] - rbot[c]) else rtop[c]
+            # and where it ends up: the first reading after it. A move that
+            # comes back to where it began is a needle, and is left alone.
+            after = e + 1
+            while after < n and not np.isfinite(py[after]):
+                after += 1
+            p1 = py[after] if after < n and after - e <= 3 else np.nan
+            up = np.isfinite(p1) and p1 < p0 - tall        # rows grow downward
+            down = np.isfinite(p1) and p1 > p0 + tall
+            reached = False
+            for k in range(c, e + 1):
+                at_top = abs(out[k] - rtop[k]) <= near
+                at_bot = abs(out[k] - rbot[k]) <= near
+                back = abs(out[k] - p0) <= 2 * tall      # back where it began
+                if (up and at_top) or (down and at_bot):
+                    reached = True
+                elif reached and back and up and at_bot and rtop[k] < p0 - tall:
+                    out[k] = rtop[k] + med / 2.0           # read from the leading end
+                elif reached and back and down and at_top and rbot[k] > p0 + tall:
+                    out[k] = rbot[k] - med / 2.0
+            # The stroke's trailing edge after the top: one or two columns
+            # still reading the bottom of the thick upright, far below both
+            # the reading before them and the one after (00051 p159: 26.5,
+            # then 12.3 and 11.2 off the upright's edge, then 21-27 — the page
+            # draws a small notch at ~22). A real dip after an overshoot is
+            # shallower (p156's 30 -> 23 is drawn) and a hold is longer; both
+            # keep their level.
+            if up or down:
+                sign = 1 if up else -1
+                k = c + 1
+                while k <= e:
+                    tail_end = k
+                    while (tail_end <= e and tail_end - k < 3
+                           and abs(out[tail_end] - (rbot[tail_end] if up else rtop[tail_end])) <= near):
+                        tail_end += 1
+                    run = tail_end - k
+                    if 1 <= run <= 2 and tail_end <= e + 1:
+                        # judged against the readings around it, three a side,
+                        # not one: the column after p156's real dip to 23 is
+                        # itself a tall column read at its top (31)
+                        lft = [out[j] for j in range(k - 1, max(-1, k - 6), -1) if np.isfinite(out[j])][:3]
+                        rgt = [out[j] for j in range(tail_end, min(n, tail_end + 6)) if np.isfinite(out[j])][:3]
+                        prv = float(np.median(lft)) if lft else np.nan
+                        nx = float(np.median(rgt)) if rgt else np.nan
+                        if (np.isfinite(prv) and np.isfinite(nx)
+                                and all(sign * (out[j] - prv) > 2 * tall
+                                        and sign * (out[j] - nx) > 2 * tall
+                                        for j in range(k, tail_end))):
+                            for j in range(k, tail_end):
+                                out[j] = (rtop[j] + med / 2.0) if up else (rbot[j] - med / 2.0)
+                    k = max(tail_end, k + 1)
+        c = e + 1
+    return out
 
 
 def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
@@ -1088,79 +1195,10 @@ def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
         nxt[c] = last
         if np.isfinite(py[c]):
             last = py[c]
-    # The run each reading sits in, found from either end as well as the
-    # middle: in a swept column curve_positions has already moved the
-    # reading to one end of its run (envelope), where _chosen_run, which
-    # matches medians, does not find it — so these columns never reached
-    # the split below, and the envelope's end-picking passed straight
-    # through. Used only to find MOVES; everything else is as it was.
-    # A thin, anti-aliased stroke breaks up in its column (00051 p156 col 76:
-    # 83 inked rows over 126), so pieces up to RAMP_GAP apart are one run.
-    rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
-    for c in range(n):
-        if not np.isfinite(py[c]):
-            continue
-        ys = np.flatnonzero(sub[:, c])
-        if not len(ys):
-            continue
-        if len(ys) >= RAMP_FILL * (ys[-1] - ys[0] + 1):
-            # mostly ink top to bottom: one stroke, whatever its breaks —
-            # p155 col 78's top pixel stands 7 rows clear of the rest
-            rtop[c], rbot[c] = float(ys[0]), float(ys[-1])
-            continue
-        cuts = np.flatnonzero(np.diff(ys) > RAMP_GAP) + 1
-        for g in np.split(ys, cuts):
-            if g[0] - 1 <= py[c] <= g[-1] + 1:
-                rtop[c], rbot[c] = float(g[0]), float(g[-1])
-                break
-    rheight = rbot - rtop + 1.0
-    is_tall = np.isfinite(py) & np.isfinite(rheight) & (rheight >= tall)
-    # A RISE or FALL drawn with a thick line fills several neighbouring
-    # columns, and each of them spans from where the move starts to some way
-    # up it — so "both ends" per column zigzags. 00051 p156 (#799): the
-    # pressure goes straight from 1 to 30 MPa across columns 76-79, every one
-    # of them inked from the baseline up, and came out 0 -> 18 -> 0.7 -> 30 ->
-    # 0.8: a false spike before every rise of the 2026 STEP books. A needle
-    # comes back to where it was; a move leaves at the other end. So a run of
-    # two or more tall columns that leaves at the far end is read as one
-    # move: the end it came from, the columns' middles, the end it goes to.
-    ramp_cols = {}
-    c = 0
-    while c < n:
-        if not is_tall[c]:
-            c += 1
-            continue
-        e = c
-        while e + 1 < n and is_tall[e + 1]:
-            e += 1
-        if e > c and np.isfinite(nxt[e]):
-            t_, b_ = float(np.min(rtop[c:e + 1])), float(np.max(rbot[c:e + 1]))
-            goes_low = abs(nxt[e] - b_) < abs(nxt[e] - t_)
-            # where the trace STARTS on the move — the columns before it are
-            # the blank margin at the frame (00051 p156) — it came from the
-            # other end
-            came_low = (abs(prev[c] - b_) < abs(prev[c] - t_)
-                        if np.isfinite(prev[c]) else not goes_low)
-            if came_low != goes_low:                 # it moved, not a needle
-                ramp_cols[c] = (e, b_ if came_low else t_, t_ if came_low else b_)
-        c = e + 1
+    py = _no_flip_back(sub, py, med, tall)
     xs, rows = [], []
-    skip_to = -1
     for c in range(n):
-        if c <= skip_to:
-            continue
         if not np.isfinite(py[c]):
-            continue
-        if c in ramp_cols:
-            e, start, end = ramp_cols[c]
-            xs.append(c - split)
-            rows.append(start)
-            for k in range(c, e + 1):
-                xs.append(float(k))
-                rows.append((rtop[k] + rbot[k]) / 2.0)   # the run's middle
-            xs.append(e + split)
-            rows.append(end)
-            skip_to = e
             continue
         if not np.isfinite(height[c]) or height[c] < tall:
             xs.append(float(c))
