@@ -39,6 +39,39 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.37</h2>
+    <ul>
+      <li><b>STEP charts: no more broken lines, and no more lost chart
+        ends.</b> The reader was deleting the shutdown at the end of a chart
+        as if it were the FracPro logo. On 00100 page 197 the export stopped
+        641 seconds before the pressure ink does, which is the whole shutdown,
+        where ISIP is read</li>
+      <li><b>The ends are kept.</b> On 20 AER STEP filings, 304 channels run
+        30,271 s (8.4 h) longer at the end. 6,859 are identical, none got
+        shorter, and every sample 1.11.36 actually read is unchanged</li>
+      <li><b>Broken stretches are bridged:</b> under another curve, along the
+        frame&rsquo;s floor, through a near-vertical shutdown. A gap between
+        two readings is filled with a straight line. A curve&rsquo;s ends are
+        carried as far as the chart has ink. Where a settled curve&rsquo;s
+        height stays inked, it holds it under another pen; otherwise it goes to the
+        floor, and a pressure to its shut-in level. Off-scale stays blank, as
+        asked in #97</li>
+      <li><b>On 25 STEP filings, 2,465 charts,</b> about 780 hours of broken
+        curve are filled, and none are left apart from 14 minutes off the top
+        of a scale</li>
+      <li><b>Everything filled in is marked deduced, not read:</b> it pulses
+        in the Lab, &ldquo;Isolate Interpolation&rdquo; shows it on its own,
+        and any stretch can be deleted, which takes it out of the export
+        too</li>
+      <li><b>The stacked window follows the interpolation:</b> it refreshes
+        when Isolate Interpolation is turned on or off and when a stretch is
+        deleted or undone. Deduced stretches are drawn dashed, and with
+        Isolate on they are all it shows</li>
+      <li><b>Which templates this release touches: STEP, and the Lab&rsquo;s
+        stacked window.</b> Every other template reads exactly as it did under
+        v1.11.36</li>
+    </ul>
+
     <h2>v1.11.36</h2>
     <ul>
       <li><b>Trican 1: no more small spikes where the pressure climbs or
