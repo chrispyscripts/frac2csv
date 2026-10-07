@@ -1367,6 +1367,36 @@ def _axis_of(r, label):
     return None
 
 
+STEP_SHUT_IN_SEC = 40.0
+
+
+def _shut_in(vals, a, x, lo, span, sec):
+    """Where a STEP pressure sits after its trace stops in mid-air with nothing
+    left at that height on the page.
+
+    A pressure does not drop to zero when the pumps stop; it holds near its
+    shut-in level. But the readings that end a trace sit on the shutdown's
+    near-vertical stroke, and there they are noise: the tracer catches the
+    stroke's top or bottom from column to column. So the last reading stands
+    only where the curve arrived at it level — 50029 p154 ends 27.4, 27.6,
+    27.7, and the page draws it at 28. Where the trace was lower in the last
+    STEP_SHUT_IN_SEC, by more than STEP_REST_FLOOR of the axis, the late
+    readings are the stroke and the low is where the pressure got to: 53559
+    p322 reaches 0.6 and then reads 11.7 on the stroke, and the page has it
+    on the floor; 53560 p357 reaches 32.6 and climbs back to 62.8 on the
+    stroke, and the page has it near 20, which 32.6 is nearer than either.
+    A low on the floor is the floor.
+    """
+    import numpy as np
+    w = np.asarray(vals[max(0, a - int(round(STEP_SHUT_IN_SEC / max(sec, 1e-9)))):a], float)
+    w = w[np.isfinite(w)]
+    if not len(w) or lo is None or not span:
+        return x
+    m = float(w.min())
+    y = m if x - m > STEP_REST_FLOOR * span else x
+    return lo if (y - lo) / span <= STEP_REST_FLOOR else y
+
+
 def _is_pressure(r, label):
     """Is this channel a pressure? Its unit says so (MPa, kPa, psi), or failing
     that its name."""
@@ -1419,6 +1449,7 @@ def _bridge_step_gaps(results, notes):
     import numpy as np
     filled_n, filled_s, charts, ends_n = 0, 0.0, 0, 0
     for r in results:
+        held = r.pop("held_ends", None) or {}  # step1's word, read here only
         if r.get("type") != "series" or not str(r.get("source") or "").startswith("STEP"):
             continue
         data = r.get("data") or {}
@@ -1465,37 +1496,48 @@ def _bridge_step_gaps(results, notes):
                 elif g["kind"] == gaps.TRAIL:
                     # After the last reading, to where the chart's ink ends.
                     # A curve resting on the floor stays there. One that stops
-                    # in mid-air stopped on the shutdown's near-vertical
-                    # stroke, which anti-aliasing leaves too faint to trace:
-                    # rate and proppant fall to the floor there, and pressure
-                    # does not — it holds near its shut-in level and decays
-                    # slowly — so pressure holds its last reading and the
-                    # rest go to the floor. 50029 p154: the rate's last
-                    # reading is 6.6 and the page draws it straight down to 0;
-                    # the pressure's is 27.7 and the page draws it there.
+                    # in mid-air is either still there under another pen —
+                    # the page keeps that height inked, and step1 says how far
+                    # (held_ends) — or it went down on a near-vertical stroke
+                    # too faint to trace and lies under the frame's bottom
+                    # rule. 00108 p282: the orange Chem Conc stops at 0.1 at
+                    # 01:05 and the pale yellow Bio Conc covers it at 0.1 to
+                    # 02:40, so it holds there. 50029 p154: the rate's last
+                    # reading is 6.6, nothing is left at that height, and the
+                    # page draws it straight down to 0.
                     stop = min(b, last_any)
                     if stop >= a:
                         x = g["before"]
-                        if not resting(x) and not _is_pressure(r, label) and lo is not None:
-                            x = lo
-                        vals[a:stop + 1] = x
-                        mark[a:stop + 1] = True
-                        if not resting(g["before"]):
+                        if resting(x) or lo is None:
+                            vals[a:stop + 1] = x
+                        else:
+                            k = (held.get(label) or {}).get("trail")
+                            k = a - 1 if k is None else min(int(k), stop)
+                            vals[a:k + 1] = x
+                            vals[k + 1:stop + 1] = (_shut_in(vals, a, x, lo, span, sec)
+                                                    if _is_pressure(r, label) else lo)
                             ends_n += 1
+                        mark[a:stop + 1] = True
                 elif g["kind"] == gaps.LEAD:
                     # Before the first reading, from where the chart's ink
-                    # starts. A curve whose first reading is in mid-air rose to
-                    # it on a near-vertical stroke the tracer cannot see, from
-                    # rest on the floor, where it sat hidden under the frame's
-                    # bottom rule — 50029 p154's pressure is on the floor from
-                    # 23:16 and its first traced reading is 40.6 MPa at 82 s.
+                    # starts. Held under another pen where the page keeps its
+                    # height inked (00108 p291: the green Prop Conc's first
+                    # steps lie under the orange Btm Prop Conc), and otherwise
+                    # risen on a near-vertical stroke from rest on the floor
+                    # — 50029 p154's pressure is on the floor from 23:16 and
+                    # its first traced reading is 40.6 MPa at 82 s.
                     start = max(a, first_any)
                     if b >= start:
-                        x = g["after"] if resting(g["after"]) or lo is None else lo
-                        vals[start:b + 1] = x
-                        mark[start:b + 1] = True
-                        if not resting(g["after"]):
+                        x = g["after"]
+                        if resting(x) or lo is None:
+                            vals[start:b + 1] = x
+                        else:
+                            k = (held.get(label) or {}).get("lead")
+                            k = b + 1 if k is None else max(int(k), start)
+                            vals[k:b + 1] = x
+                            vals[start:k] = lo
                             ends_n += 1
+                        mark[start:b + 1] = True
             if mark.any():
                 data[label] = vals
                 old = ded.get(label)
@@ -1515,9 +1557,10 @@ def _bridge_step_gaps(results, notes):
             f"near-vertical shutdown — {filled_s / 60:.0f} min in all, filled by "
             f"interpolation between the readings either side, or along the floor "
             f"where the curve rests there; marked as deduced, not read"
-            + (f". {ends_n} curve end(s) that stopped or started in mid-air on a "
-               f"near-vertical stroke were carried to the chart's ink: pressure "
-               f"held at its last reading, rate and proppant from or to the floor"
+            + (f". {ends_n} curve end(s) that stopped or started in mid-air were "
+               f"carried to the chart's ink: held at that reading as far as the "
+               f"page keeps that height inked under another pen, and beyond it "
+               f"from or to the floor (a pressure to its shut-in level)"
                if ends_n else ""))
 
 
@@ -3532,6 +3575,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             geom=info.get("geom"), scales=frames,
                             frames=frames,
                             deduced=deduced))
+                        # how far each curve's first and last height stays
+                        # inked on the page: _bridge_step_gaps reads it, and
+                        # drops it once read
+                        held = {c["label"]: c["ends"] for c in chans
+                                if c.get("ends")}
+                        if held:
+                            results[-1]["held_ends"] = held
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue
