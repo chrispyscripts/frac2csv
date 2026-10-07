@@ -1046,6 +1046,10 @@ def _despeckle(py, join=2, island=3, need=40):
     return out
 
 
+RAMP_GAP = 6        # px: the breaks in a thin stroke's column, joined
+RAMP_FILL = 0.6     # a column this full of ink, top to bottom, is one stroke
+
+
 def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
     """Curve rows -> (column positions, rows), splitting near-vertical strokes.
 
@@ -1084,9 +1088,79 @@ def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
         nxt[c] = last
         if np.isfinite(py[c]):
             last = py[c]
-    xs, rows = [], []
+    # The run each reading sits in, found from either end as well as the
+    # middle: in a swept column curve_positions has already moved the
+    # reading to one end of its run (envelope), where _chosen_run, which
+    # matches medians, does not find it — so these columns never reached
+    # the split below, and the envelope's end-picking passed straight
+    # through. Used only to find MOVES; everything else is as it was.
+    # A thin, anti-aliased stroke breaks up in its column (00051 p156 col 76:
+    # 83 inked rows over 126), so pieces up to RAMP_GAP apart are one run.
+    rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
     for c in range(n):
         if not np.isfinite(py[c]):
+            continue
+        ys = np.flatnonzero(sub[:, c])
+        if not len(ys):
+            continue
+        if len(ys) >= RAMP_FILL * (ys[-1] - ys[0] + 1):
+            # mostly ink top to bottom: one stroke, whatever its breaks —
+            # p155 col 78's top pixel stands 7 rows clear of the rest
+            rtop[c], rbot[c] = float(ys[0]), float(ys[-1])
+            continue
+        cuts = np.flatnonzero(np.diff(ys) > RAMP_GAP) + 1
+        for g in np.split(ys, cuts):
+            if g[0] - 1 <= py[c] <= g[-1] + 1:
+                rtop[c], rbot[c] = float(g[0]), float(g[-1])
+                break
+    rheight = rbot - rtop + 1.0
+    is_tall = np.isfinite(py) & np.isfinite(rheight) & (rheight >= tall)
+    # A RISE or FALL drawn with a thick line fills several neighbouring
+    # columns, and each of them spans from where the move starts to some way
+    # up it — so "both ends" per column zigzags. 00051 p156 (#799): the
+    # pressure goes straight from 1 to 30 MPa across columns 76-79, every one
+    # of them inked from the baseline up, and came out 0 -> 18 -> 0.7 -> 30 ->
+    # 0.8: a false spike before every rise of the 2026 STEP books. A needle
+    # comes back to where it was; a move leaves at the other end. So a run of
+    # two or more tall columns that leaves at the far end is read as one
+    # move: the end it came from, the columns' middles, the end it goes to.
+    ramp_cols = {}
+    c = 0
+    while c < n:
+        if not is_tall[c]:
+            c += 1
+            continue
+        e = c
+        while e + 1 < n and is_tall[e + 1]:
+            e += 1
+        if e > c and np.isfinite(nxt[e]):
+            t_, b_ = float(np.min(rtop[c:e + 1])), float(np.max(rbot[c:e + 1]))
+            goes_low = abs(nxt[e] - b_) < abs(nxt[e] - t_)
+            # where the trace STARTS on the move — the columns before it are
+            # the blank margin at the frame (00051 p156) — it came from the
+            # other end
+            came_low = (abs(prev[c] - b_) < abs(prev[c] - t_)
+                        if np.isfinite(prev[c]) else not goes_low)
+            if came_low != goes_low:                 # it moved, not a needle
+                ramp_cols[c] = (e, b_ if came_low else t_, t_ if came_low else b_)
+        c = e + 1
+    xs, rows = [], []
+    skip_to = -1
+    for c in range(n):
+        if c <= skip_to:
+            continue
+        if not np.isfinite(py[c]):
+            continue
+        if c in ramp_cols:
+            e, start, end = ramp_cols[c]
+            xs.append(c - split)
+            rows.append(start)
+            for k in range(c, e + 1):
+                xs.append(float(k))
+                rows.append((rtop[k] + rbot[k]) / 2.0)   # the run's middle
+            xs.append(e + split)
+            rows.append(end)
+            skip_to = e
             continue
         if not np.isfinite(height[c]) or height[c] < tall:
             xs.append(float(c))
