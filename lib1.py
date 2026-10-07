@@ -104,9 +104,24 @@ def _outline_colour(page):
     return out
 
 
+def _black(c):
+    """Near-black and grey-balanced counts as black. Black, here, is what
+    tells the clock and the axis captions from a series' coloured ticks
+    (`color == 0` throughout this module), and the 2026 Petronas sheets
+    print it as #231F20 — the (35, 31, 32) "rich black" of a print
+    workflow — so 00068 (#792, #793, #798) found no time labels on any of
+    its 52 chart pages. A dark series colour is not grey: navy and maroon
+    are far from balanced, and keep their colour."""
+    if not c:
+        return True
+    r, g, b = (c >> 16) & 255, (c >> 8) & 255, c & 255
+    return max(r, g, b) <= 0x40 and max(r, g, b) - min(r, g, b) <= 0x18
+
+
 def _spans(page):
     """Text spans, from the page or — when it has none — from OCR."""
-    out = _text_spans(page)
+    out = [dict(s, color=0) if s.get("color") and _black(s["color"]) else s
+           for s in _text_spans(page)]
     if out or not ocr_labels.available():
         return out
     try:
