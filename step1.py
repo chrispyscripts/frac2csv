@@ -905,6 +905,11 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     return samples, channels, info
 
 
+HELD_WINDOW_S = 300.0   # among the readings nearest a curve's end...
+HELD_SETTLED_S = 120.0  # ...for this much of it at the end's height
+HELD_NEAR = 0.02        # within this share of the axis
+
+
 def _held_ends(ink, v, a, b, y0, tb, sample_sec, slack=3):
     """Past a curve's last reading, and before its first: how far does the
     page keep ink at that reading's height? -> {"lead": first sample index
@@ -921,6 +926,15 @@ def _held_ends(ink, v, a, b, y0, tb, sample_sec, slack=3):
     included; grey gridlines and the frame are not in it. Up to `slack` blank
     columns are crossed, for the gaps between a dashed or anti-aliased
     pen's pixels.
+
+    Only for a curve that was AT that height, though: HELD_SETTLED_S of
+    readings within HELD_NEAR of it among its HELD_WINDOW_S of readings
+    nearest the end. An
+    end that is one short piece may not be this curve at all, and the row
+    that holds it is then the very pen it was misread from: 00108 p291's
+    green Prop Conc "starts" with a minute at 162 kg/m3 that is a piece of
+    the yellow annulus line, and holding it back along that line put 162
+    where the page has 25.
     """
     H, W = ink.shape
     fin = np.flatnonzero(np.isfinite(v))
@@ -928,7 +942,15 @@ def _held_ends(ink, v, a, b, y0, tb, sample_sec, slack=3):
     if not len(fin) or not b or not tb:
         return out
     R = max(2, int(0.005 * H) + 1)
+    near = HELD_NEAR * abs(b) * H
+    win = int(round(HELD_WINDOW_S / sample_sec))
     for side, i, step in (("trail", fin[-1], 1), ("lead", fin[0], -1)):
+        # the curve's own last (first) readings, however far apart: a curve
+        # hidden for minutes at its level is still settled there (53560 p377,
+        # 0.091 before and after five hidden minutes)
+        w = v[fin[-win:]] if side == "trail" else v[fin[:win]]
+        if np.sum(np.abs(w - v[i]) <= near) * sample_sec < HELD_SETTLED_S:
+            continue
         row = (v[i] - a) / b - y0
         if not np.isfinite(row) or not (0 <= row < H):
             continue
