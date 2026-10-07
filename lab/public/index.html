@@ -3390,6 +3390,7 @@ function setIso(on) {
   gState.isolate = on;
   if (!on) gState.dedSel.clear();
   syncIso(); redrawGraph();
+  pushStacked();      // the stacked window isolates the same stretches
 }
 function applyRetrace(i0, i1, yTop, yBot) {
   const { L, R, T, B } = GP, cv = $("graph"), H = cv.height;
@@ -3482,6 +3483,7 @@ function dedDelete() {
   gState.dedUndo.push(undo);
   gState.dedSel.clear();
   syncIso(); redrawGraph(); buildLegend();
+  pushStacked();      // the deleted stretches leave the stacked window too
 }
 function dedUndoLast() {
   const undo = gState.dedUndo.pop();
@@ -3492,6 +3494,7 @@ function dedUndoLast() {
     c.deducedRuns.splice(u.ri, 0, u.run);
   }
   syncIso(); redrawGraph(); buildLegend();
+  pushStacked();
 }
 
 function clearGraph() {
@@ -6876,7 +6879,10 @@ function stackPayload() {
                  lo: r.lo, hi: r.hi, printed: !!r.printed,
                  dataLo: has ? dLo : null, dataHi: has ? dHi : null,
                  vmax: round2(c._vmax), off: gState.hidden.has(ci),
-                 values: vals });
+                 values: vals,
+                 // the stretches the reader deduced rather than read — the
+                 // stacked window draws them as drawn, not measured
+                 deduced: (c.deducedRuns || []).map(r => [r[0], r[1]]) });
   });
   const pages = it.pages || [];
   return {
@@ -6898,6 +6904,7 @@ function stackPayload() {
     clock0: gState.clock0 ? gState.clock0.getTime() : null,
     page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
     pageCount: pages.length,
+    isolate: !!gState.isolate,
     channels: chans,
   };
 }
