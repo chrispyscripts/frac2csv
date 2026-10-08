@@ -1114,7 +1114,14 @@ def _no_flip_back(sub, py, med, tall):
             before = c - 1
             while before >= 0 and not np.isfinite(py[before]):
                 before -= 1
-            if before >= 0 and c - before <= 3:
+            # the ink of the columns just before, by pixel, not the one
+            # reading there: 00049 p136's last reading before its rise is a
+            # stray dot at row 516, the baseline it rose from is at 643
+            ink_before = np.concatenate([np.flatnonzero(sub[:, j])
+                                         for j in range(max(0, c - 3), c)] or [np.empty(0, int)])
+            if before >= 0 and c - before <= 3 and len(ink_before) >= 4:
+                p0 = float(np.median(ink_before))
+            elif before >= 0 and c - before <= 3:
                 p0 = py[before]
             else:
                 # No reading just before: the frame's blank margin. The ink
@@ -1137,6 +1144,25 @@ def _no_flip_back(sub, py, med, tall):
             p1 = py[after] if after < n and after - e <= 3 else np.nan
             up = np.isfinite(p1) and p1 < p0 - tall        # rows grow downward
             down = np.isfinite(p1) and p1 > p0 + tall
+            # Just before the move: a reading on a lone dot (a run of one or
+            # two pixels) in a column that also carries ink at the level the
+            # move starts from is a stray, and the curve is on that level —
+            # 00049 p136 read a dot at row 516 (20 MPa) in the two columns
+            # before its rise, over the baseline at 642-644.
+            if up or down:
+                for j in range(max(0, c - 3), c):
+                    if not np.isfinite(out[j]):
+                        continue
+                    ys = np.flatnonzero(sub[:, j])
+                    if not len(ys):
+                        continue
+                    runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
+                    mine = next((g for g in runs_j if g[0] - 1 <= out[j] <= g[-1] + 1), None)
+                    if mine is None or len(mine) > 2 or abs(out[j] - p0) <= 2 * tall:
+                        continue
+                    base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near]
+                    if base:
+                        out[j] = float(np.median(np.concatenate(base)))
             # A repair is a reading back where the move began (`back`) AND
             # fallen more than `tall` behind the furthest the move has read
             # (`reached`): a steady climb whose readings lag at the foot of
@@ -1144,27 +1170,41 @@ def _no_flip_back(sub, py, med, tall):
             # bump in 00006 p152 (24.7 22.4 24.8 -> 30 37 46 50, then 35).
             # The repaired reading lies between what had been reached and
             # where the move lands (p1): it fills a false dip and draws no
-            # peak (00048 p130 grew one at 31). And the move has to have got
-            # somewhere first — more than 3 x `tall` — for anything to have
-            # fallen back from it: a climb that has gained a couple of MPa
-            # and reads the lagging edge of its own line is just climbing.
+            # peak (00048 p130 grew one at 31). And the move has to be a big
+            # one (start to landing more than 3 x `tall`) that had got
+            # somewhere (more than 2 x `tall`) before anything fell back from
+            # it: a climb that has gained a couple of MPa and reads the
+            # lagging edge of its own line is just climbing (00006 p152).
             reached = None                             # furthest row read so far
             for k in range(c, e + 1):
                 at_top = abs(out[k] - rtop[k]) <= near
                 at_bot = abs(out[k] - rbot[k]) <= near
-                back = abs(out[k] - p0) <= 2 * tall      # back where it began
+                # back where it began: within two stroke-heights of it, or in
+                # the bottom quarter of the move so far (00049 p136's false
+                # readings sit 29 rows, ~5 MPa, off the floor of a 170-row rise)
+                back = abs(out[k] - p0) <= max(2 * tall,
+                                               0.25 * abs(p0 - reached) if reached is not None else 0)
+                # in the trailing half of its column's ink, not only at its
+                # very end: 00009 p169's col 9 reads 14 rows above the foot of
+                # the upright it is part of (5.8 MPa where the page holds 17).
+                # And the column's OWN ink reaches the level already reached:
+                # it is still the upright. A real V drawn after a climb has
+                # left that level — 00048 p142's dip from 67 to 32 MPa at col
+                # 31 inks rows 419-540, nowhere near the 256 it fell from.
+                low_half = out[k] - rtop[k] > rbot[k] - out[k]
+                high_half = rbot[k] - out[k] > out[k] - rtop[k]
                 if up and at_top:
                     reached = out[k] if reached is None else min(reached, out[k])
                 elif down and at_bot:
                     reached = out[k] if reached is None else max(reached, out[k])
-                elif (reached is not None and back and up and at_bot
-                        and rtop[k] < p0 - tall and out[k] > reached + tall
-                        and p0 - reached > 3 * tall):
+                elif (reached is not None and back and up and low_half
+                        and rtop[k] <= reached + tall and out[k] > reached + tall
+                        and p0 - reached > 2 * tall and p0 - p1 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
-                elif (reached is not None and back and down and at_top
-                        and rbot[k] > p0 + tall and out[k] < reached - tall
-                        and reached - p0 > 3 * tall):
+                elif (reached is not None and back and down and high_half
+                        and rbot[k] >= reached - tall and out[k] < reached - tall
+                        and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)
             # The stroke's trailing edge after the top: one or two columns
@@ -1197,6 +1237,7 @@ def _no_flip_back(sub, py, med, tall):
                         if (np.isfinite(prv) and np.isfinite(nx)
                                 and all(sign * (out[j] - prv) > 2 * tall
                                         and sign * (out[j] - nx) > 2 * tall
+                                        and rtop[j] <= min(prv, nx) + tall   # still the upright
                                         for j in range(k, tail_end))):
                             for j in range(k, tail_end):
                                 # up out of the dip, no higher than the lower
