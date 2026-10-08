@@ -1117,7 +1117,18 @@ def _no_flip_back(sub, py, med, tall):
             if before >= 0 and c - before <= 3:
                 p0 = py[before]
             else:
-                p0 = rbot[c] if abs(py[c] - rtop[c]) < abs(py[c] - rbot[c]) else rtop[c]
+                # No reading just before: the frame's blank margin. The ink
+                # in those columns still says where the curve was (00051
+                # p156: its baseline at rows 708-713); with none there either
+                # there is nothing to judge by, and nothing is repaired —
+                # guessing the far end of the first column turned 00051
+                # p179's opening pressure test (a hold at 93 MPa) upside down.
+                lvl = [float(np.median(np.flatnonzero(sub[:, j])))
+                       for j in range(max(0, c - 6), c) if sub[:, j].any()]
+                if len(lvl) < 2:
+                    c = e + 1
+                    continue
+                p0 = float(np.median(lvl))
             # and where it ends up: the first reading after it. A move that
             # comes back to where it began is a needle, and is left alone.
             after = e + 1
