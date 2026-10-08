@@ -1236,7 +1236,11 @@ def _no_flip_back(sub, py, med, tall):
                 # notch drawn just after a rise has an edge that holds its
                 # level (00048 p142's 582, 566, 566, 566), and a steady climb
                 # one that creeps (00200 p189's 16 rows a column); both keep
-                # their readings.
+                # their readings. The repaired column's reading counts as
+                # reached when judging how far this one has fallen back, not
+                # whether its ink reaches: 00052 p150's conc falls 320 -> 0
+                # across columns each inked part way, and holding a column to
+                # the one before's landing left its reading at the top.
                 ref = reached
                 if k > c and fixed[k - 1] and k + 1 < n and (
                         out[k] > out[k - 1] + tall if up else out[k] < out[k - 1] - tall):
@@ -1265,13 +1269,13 @@ def _no_flip_back(sub, py, med, tall):
                 elif down and at_bot:
                     reached = out[k] if reached is None else max(reached, out[k])
                 elif (reached is not None and back and up and low_half
-                        and rtop[k] <= ref + tall and out[k] > ref + tall
+                        and rtop[k] <= reached + tall and out[k] > ref + tall
                         and p0 - reached > 2 * tall and p0 - p1 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
                     fixed[k] = True
                 elif (reached is not None and back and down and high_half
-                        and rbot[k] >= ref - tall and out[k] < ref - tall
+                        and rbot[k] >= reached - tall and out[k] < ref - tall
                         and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)

@@ -202,6 +202,16 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(self._columns(spans), py, 8.0, 24.0)
         self.assertTrue(np.all(out[12:16] <= 540), out[9:17])
 
+    def test_a_fall_inked_part_way_a_column_still_reads_down(self):
+        # 00052 p150: conc falls 320 -> 0, each column inked part way; the
+        # column after the repaired one reached 742, not the 782 before it,
+        # and must still read low rather than back at the top
+        spans = [(276, 282)] * 5 + [(280, 317), (235, 390), (231, 784), (231, 742),
+                                    (359, 786), (523, 786)] + [(782, 786)] * 10
+        py = np.r_[np.full(5, 282.0), [313, 235, 280, 279, 390, np.nan], np.full(10, 786.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 4.0, 12.0)
+        self.assertGreater(out[8], 700, out[5:12])
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
