@@ -200,7 +200,9 @@ class Rise(unittest.TestCase):
         py = np.r_[np.full(9, 787.0), [788, 631, 788, 738, 738, 631, 588],
                    np.full(4, 509.0), np.full(11, 534.0)]
         out = step1._no_flip_back(self._columns(spans), py, 8.0, 24.0)
-        self.assertTrue(np.all(out[12:16] <= 540), out[9:17])
+        # rows grow downward: from the repaired column on, never back down
+        # by more than a stroke-height
+        self.assertTrue(np.all(np.diff(out[11:17]) <= 24), out[9:17])
 
     def test_a_fall_inked_part_way_a_column_still_reads_down(self):
         # 00052 p150: conc falls 320 -> 0, each column inked part way; the
@@ -211,6 +213,22 @@ class Rise(unittest.TestCase):
         py = np.r_[np.full(5, 282.0), [313, 235, 280, 279, 390, np.nan], np.full(10, 786.0)]
         out = step1._no_flip_back(self._columns(spans), py, 4.0, 12.0)
         self.assertGreater(out[8], 700, out[5:12])
+
+    def test_a_slanted_rise_grows_no_peak(self):
+        # 00590 p322: a thick stroke climbing ~40 rows a column; the top of
+        # one column's ink runs ahead of the curve, and reading it there made
+        # a peak the page doesn't draw (44 MPa, then 40, 38)
+        spans = [(553, 558)] * 15 + [(520, 558), (518, 558), (510, 555), (504, 542),
+                                     (445, 538), (396, 526), (379, 486), (362, 484),
+                                     (324, 460), (278, 419), (273, 382), (265, 352),
+                                     (231, 286)] + [(182, 200)] * 3 + [(182, 186)] * 10
+        py = np.r_[np.full(15, 556.0), [556, 518, 545, 542, 538, 526, 486, 476, 414, 413,
+                                        358, 342, 286], np.full(3, 184.0), np.full(10, 184.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 5.0, 15.0)
+        # past the columns the first repair reads at their top (col 19 is
+        # one, as in 1.11.39): none above both of the next two
+        for k in range(20, 27):
+            self.assertFalse(out[k] < min(out[k + 1], out[k + 2]) - 15, (k, out[14:30]))
 
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds

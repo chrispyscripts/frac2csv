@@ -1241,12 +1241,20 @@ def _no_flip_back(sub, py, med, tall):
                 # whether its ink reaches: 00052 p150's conc falls 320 -> 0
                 # across columns each inked part way, and holding a column to
                 # the one before's landing left its reading at the top.
+                # And a column repaired this way reads no further on than
+                # the two after it: on a slanted rise the top of a thick
+                # stroke runs ahead of the curve, and 00590 p322 traded a
+                # false dip to 27 MPa for a false peak at 44.
                 ref = reached
+                follow = False
                 if k > c and fixed[k - 1] and k + 1 < n and (
                         out[k] > out[k - 1] + tall if up else out[k] < out[k - 1] - tall):
                     edge, nxt = (rbot[k], rbot[k + 1]) if up else (rtop[k], rtop[k + 1])
                     if np.isfinite(nxt) and (nxt < edge - 1.5 * tall if up
                                              else nxt > edge + 1.5 * tall):
+                        # (only where the repair is this rule's alone)
+                        follow = not (back and (out[k] > reached + tall if up
+                                                else out[k] < reached - tall))
                         back = True
                         ref = (min(reached, out[k - 1]) if up
                                else max(reached, out[k - 1]))
@@ -1264,6 +1272,8 @@ def _no_flip_back(sub, py, med, tall):
                 w = out[max(0, c - 6):(k if margin else c)]
                 w = [p0, *w[np.isfinite(w)]]
                 back = back and (out[k] <= max(w) + tall if up else out[k] >= min(w) - tall)
+                ahead = orig[k + 1:k + 3]
+                ahead = ahead[np.isfinite(ahead)]
                 if up and at_top:
                     reached = out[k] if reached is None else min(reached, out[k])
                 elif down and at_bot:
@@ -1274,12 +1284,16 @@ def _no_flip_back(sub, py, med, tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
                     fixed[k] = True
+                    if follow and len(ahead):
+                        out[k] = max(out[k], float(np.min(ahead)))
                 elif (reached is not None and back and down and high_half
                         and rbot[k] >= reached - tall and out[k] < ref - tall
                         and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)
                     fixed[k] = True
+                    if follow and len(ahead):
+                        out[k] = min(out[k], float(np.max(ahead)))
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,
