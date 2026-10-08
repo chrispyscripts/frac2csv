@@ -26,6 +26,13 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 .wr-key{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:11.5px}
 .wr-key i{display:inline-block;width:96px;height:8px;border-radius:3px}
 .wr-key select{padding:3px 6px;font-size:12px}
+.wr-keynote{color:var(--faint)}
+.wr-rel{display:inline-flex;align-items:center;gap:4px;cursor:help}
+.wr-rel b{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;font:700 10px system-ui,sans-serif}
+.wr-limits{display:block;background:none;border:0;padding:0;margin-top:3px;color:var(--accent);font:12px var(--mono);text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.wr-limits:hover{text-decoration-style:solid}
+.rk-key{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;color:var(--mut);font-size:11.5px}
+.rk-key-l{color:var(--ink)}
 .rk-nonekey::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px dashed var(--faint);margin-right:5px;vertical-align:-1px}
 
 main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
@@ -42,14 +49,17 @@ main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
 .rk-acts{display:flex;gap:6px;flex:none}
 .rk-acts button{padding:4px 9px;font-size:13px;line-height:1.2}
 .rk-body{display:grid;grid-template-columns:minmax(260px,38%) 1fr;gap:12px;height:clamp(300px,48vh,540px)}
-.rk-planbox{display:grid;grid-template-rows:1fr auto;gap:8px;min-height:0;min-width:0}
+.rk-planbox{display:grid;grid-template-rows:1fr auto auto;gap:6px;min-height:0;min-width:0}
 .rk svg{width:100%;height:100%;min-height:0;display:block;background:var(--plot);border:1px solid var(--line);border-radius:12px;font-family:var(--mono)}
 .rk-msg{display:grid;place-items:center;height:160px;color:var(--mut);text-align:center;padding:16px}
 .rk-plan{cursor:ew-resize;touch-action:none}
 .rk-ctl{display:flex;align-items:center;gap:10px;min-width:0}
 .rk-ctl input{flex:1 1 160px;min-width:110px;accent-color:var(--accent)}
-.rk-play{padding:6px 12px;min-width:44px}
-.rk-where{flex:0 1 auto;color:var(--mut);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rk-play,.rk-dplay{padding:6px 12px;min-width:44px}
+.rk-dplay{padding:3px 10px;font-size:11px}
+.rk-dplay:disabled,.rk-date:disabled{opacity:.4;cursor:default}
+.rk-where,.rk-when{flex:0 1 auto;color:var(--mut);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rk-asof{gap:8px}.rk-asof-l{color:var(--mut);font-size:12px;flex:none}
 
 /* the drawings: text wears text tokens, marks carry the colour */
 .rk-paths polyline{fill:none;stroke-width:1.6;opacity:.8}
@@ -70,19 +80,31 @@ main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
 .rk-grid text{fill:var(--mut);font-size:11px}
 .rk-axis{fill:var(--faint);font-size:11px;font-family:system-ui}
 .rk-end{cursor:pointer;outline:none}
-.rk-end circle{stroke-width:2;transition:r .15s}
-.rk-end.landing circle{stroke-dasharray:3 2}
-.rk-end circle.rk-none{stroke:var(--faint);stroke-dasharray:3 3;stroke-width:1.5}
-.rk-end circle.rk-est{stroke:var(--mut);stroke-dasharray:3 3;stroke-width:1.5}
-.rk-end:hover circle,.rk-end:focus-visible circle{r:14px;stroke:var(--accent);stroke-width:2.5}
-.rk-end.on circle{stroke:var(--pick);stroke-width:3}
+.rk-end .rk-dot{stroke-width:2;transition:r .15s}
+.rk-end.landing .rk-dot{stroke-dasharray:3 2}
+.rk-end .rk-dot.rk-none{stroke:var(--faint);stroke-dasharray:3 3;stroke-width:1.5}
+.rk-end .rk-dot.rk-est{stroke:var(--mut);stroke-dasharray:3 3;stroke-width:1.5}
+.rk-end .rk-dot.rk-fut{stroke:var(--faint);stroke-dasharray:3 3;stroke-width:1.5}
+.rk-end:hover .rk-dot,.rk-end:focus-visible .rk-dot{r:14px;stroke:var(--accent);stroke-width:2.5}
+.rk-end.on .rk-dot{stroke:var(--pick);stroke-width:3}
+.rk-end.fut text{opacity:.55}
+/* parent/child: a letter on the marker, or a chip at its shoulder */
+.rk-rel{font:700 11px system-ui,sans-serif;pointer-events:none}.rk-rel.sm{font-size:9px}
+.rk-chip{stroke:var(--hole);stroke-width:1.5}
+.rk-chipt{font:700 8.5px system-ui,sans-serif;pointer-events:none}.rk-chipt.sm{font-size:7px}
+/* not fracked yet on the as-of date */
+.rk-paths .fut{opacity:.2;stroke-dasharray:3 4}
+.rk-meet.fut{stroke:var(--faint);stroke-dasharray:2 2;opacity:.6}
 .rk-wa{fill:var(--ink);font-size:11px;font-weight:600;paint-order:stroke;stroke:var(--halo);stroke-width:3px}
 .rk-tvd{fill:var(--mut);font-size:10px;paint-order:stroke;stroke:var(--halo);stroke-width:3px}
 
 .wr-tip{position:fixed;z-index:20;pointer-events:none;background:var(--pop);border:1px solid var(--pop-line);border-radius:8px;padding:8px 11px;
-  font-size:12px;line-height:1.5;max-width:280px;color:var(--ink);box-shadow:0 8px 22px var(--shadow)}
+  font-size:12px;line-height:1.5;max-width:330px;color:var(--ink);box-shadow:0 8px 22px var(--shadow)}
 .wr-tip b{display:block}
+.wr-tip b:not(:first-child){margin-top:4px}
+.wr-tip i{display:block;font-style:normal;color:var(--mut);margin-top:3px}
 
 @media(max-width:900px){.rk-body{grid-template-columns:1fr;grid-template-rows:minmax(150px,38%) 1fr;height:clamp(420px,80vh,720px)}}
 @media(max-width:640px){.wr-head{padding:10px 16px}main{padding:12px 16px 20px}.rk-where{display:none}.wr-key i{width:60px}
-  .rk-end:hover circle,.rk-end:focus-visible circle{r:11px}}
+  .wr-seg button{padding:6px 7px;font-size:12px}
+  .rk-end:hover .rk-dot,.rk-end:focus-visible .rk-dot{r:11px}.rk-when{min-width:0}}

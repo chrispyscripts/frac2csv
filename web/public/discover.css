@@ -1,0 +1,93 @@
+/* Discover's charts and tools (discover.js), over menu.css's base: the menu's
+   tokens (--m-*) for ink and surfaces, so light and dark follow the theme;
+   chart text grows with Settings' text size (--fv-ts). */
+.fvd{--d-notify:#9a6b00;--d-mitigate:#c2560c;--d-suspend:#c92a3c}
+:root[data-theme=dark] .fvd{--d-notify:#f2c94c;--d-mitigate:#ff9a5c;--d-suspend:#ff7a8a}
+.fvd .fvm-filters select,.fvd .fvm-filters input{width:100%}
+.fvd .fvd-controls{grid-template-columns:repeat(auto-fill,minmax(12.5em,1fr))}
+.fvd .fvd-more{display:block}
+.fvd .fvd-more summary{cursor:pointer;font-size:.85em;color:var(--m-ink);font-weight:600;padding:.2em 0}
+.fvd .fvd-more-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(10.5em,1fr));gap:.55em .8em;margin-top:.5em}
+.fvd .fvd-cols{margin:0 0 .8em;font-size:.88em}
+.fvd .fvd-cols summary{cursor:pointer;font-weight:600}
+.fvd .fvd-cols>div{display:grid;grid-template-columns:repeat(auto-fill,minmax(15em,1fr));gap:.1em 1em;background:var(--m-panel);border:1px solid var(--m-line);border-radius:.8em;padding:.4em .9em .8em;margin-top:.4em}
+.fvd .fvd-cols>div>button{justify-self:start;margin-top:.6em}
+.fvd .fvd-cols .fvm-check{margin:.35em 0 0}
+
+/* the menu's tooltip sits on <body>, outside .fvm: its colours come from menu.css, its type from here */
+.fvm-tip{color:var(--m-ink);font:calc(12.5px * var(--fv-ts, 1))/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}
+.fvm-tip .fvd-key{display:inline-block}
+
+/* cards and the two-up grid */
+.fvd .fvd-card{margin:0 0 1em;min-width:0}
+.fvd .fvd-card>h3{font-size:.92em;margin:0 0 .5em}
+.fvd .fvd-grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,27em),1fr));gap:0 1em}
+.fvd .fvd-head{margin:.2em 0 .6em;font-size:.95em;line-height:1.5}
+.fvd .fvd-head b{font-weight:650}
+.fvd .fvd-head span{color:var(--m-mut)}
+.fvd .fvd-warn{margin:.2em 0 .6em;padding:.45em .7em;border-radius:.6em;border:1px solid var(--d-notify);color:var(--m-ink);font-size:.84em}
+
+/* the plots: drawn at the width they show */
+.fvd .fvd-plot{width:100%;min-width:0;position:relative}
+.fvd .fvd-plot svg{display:block;max-width:100%;height:auto;overflow:visible}
+.fvd .fvd-plot .ax line{stroke:var(--m-grid);stroke-width:1}
+.fvd .fvd-plot .ax line.base{stroke:var(--m-edge)}
+.fvd .fvd-plot .ax text{fill:var(--m-mut);font:calc(11px * var(--fv-ts, 1)) ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.fvd .fvd-plot .ax text.t,.fvd .fvd-plot text.lab{fill:var(--m-mut);font:calc(11.5px * var(--fv-ts, 1)) -apple-system,Segoe UI,Roboto,sans-serif}
+.fvd .fvd-plot text.lab{fill:var(--m-ink)}
+.fvd .fvd-plot circle.dot{stroke:var(--m-panel);stroke-width:1}
+.fvd .fvd-plot circle.end{stroke:var(--m-panel);stroke-width:2}
+.fvd .fvd-plot circle.picked{stroke:var(--m-ink);stroke-width:1.5}
+.fvd .fvd-plot circle.ring{fill:none;stroke:var(--m-ink);stroke-width:2;pointer-events:none}
+.fvd .fvd-plot line.xh{stroke:var(--m-mut);stroke-width:1;pointer-events:none}
+.fvd .fvd-plot line.ref{stroke:var(--m-edge);stroke-width:1.5}
+.fvd .fvd-plot rect.span{fill:var(--m-mut);fill-opacity:.09}
+.fvd .fvd-plot rect.spanbar{fill:var(--m-mut);fill-opacity:.55}
+.fvd .fvd-plot .hit{outline:none}
+.fvd .fvd-plot rect.row:hover,.fvd .fvd-plot rect.row:focus-visible{fill:var(--m-acc-soft);fill-opacity:.55;cursor:pointer}
+.fvd .fvd-plot rect.row:focus-visible{stroke:var(--m-acc);stroke-width:2}
+.fvd .fvd-plot polyline.trend{stroke-opacity:.95}
+
+/* legends: the mark beside the words (dot, line, box, ring, size) */
+.fvd .fvm-legend{align-items:center}
+.fvd .fvm-legend i{background:var(--c,var(--m-faint))}
+.fvd .fvm-legend i.line{width:1.3em;height:0;border-radius:0;background:none;border-top:2.5px solid var(--c);vertical-align:.25em}
+.fvd .fvm-legend i.box{width:1em;height:.7em;border-radius:3px}
+.fvd .fvm-legend i.band{width:1.3em;height:.75em;border-radius:2px;opacity:.25}
+.fvd .fvm-legend i.ring{background:none;border:2px solid var(--c);width:.75em;height:.75em}
+.fvd .fvm-legend i.s1,.fvd .fvm-legend i.s2,.fvd .fvm-legend i.s3{opacity:.6;vertical-align:middle}
+.fvd .fvm-legend i.s1{width:8px;height:8px}
+.fvd .fvm-legend i.s2{width:13px;height:13px}
+.fvd .fvm-legend i.s3{width:18px;height:18px}
+.fvd .fvm-legend button.fvd-lg{background:none;border:1px solid transparent;border-radius:99em;padding:.1em .55em;font-size:1em;color:var(--m-mut)}
+.fvd .fvm-legend button.fvd-lg[aria-pressed=true]{border-color:var(--m-edge);color:var(--m-ink);background:var(--m-raise)}
+.fvd .fvd-sw{display:inline-block;width:.7em;height:.7em;border-radius:50%;background:var(--c);margin-right:.45em;vertical-align:-.05em}
+
+/* tables */
+.fvd .fvm-table tbody tr.still{cursor:default}
+.fvd .fvm-table tbody tr.still:hover{background:none}
+.fvd .fvm-table tbody tr:focus-visible{outline:2px solid var(--m-acc);outline-offset:-2px}
+.fvd .fvm-table.fvd-compact{font-size:.82em}
+.fvd .fvd-auto{max-height:none}
+.fvd .fvd-total td{font-weight:600;border-top:1px solid var(--m-line)}
+.fvd .fvd-card .fvm-tablewrap{max-height:28em}
+
+/* traffic lights: an icon and a word, never colour alone */
+.fvd .fvd-lv{display:inline-flex;align-items:center;gap:.35em;padding:.05em .55em;border-radius:99em;border:1px solid var(--m-line);background:var(--m-raise);font-size:.92em}
+.fvd .fvd-lv i{font-style:normal;font-size:.9em;color:var(--m-faint)}
+.fvd .fvd-lv[data-lv=below] i{color:var(--m-mut)}
+.fvd .fvd-lv[data-lv=notify]{border-color:var(--d-notify)}
+.fvd .fvd-lv[data-lv=notify] i{color:var(--d-notify)}
+.fvd .fvd-lv[data-lv=mitigate]{border-color:var(--d-mitigate)}
+.fvd .fvd-lv[data-lv=mitigate] i{color:var(--d-mitigate)}
+.fvd .fvd-lv[data-lv=suspend]{border-color:var(--d-suspend);font-weight:600}
+.fvd .fvd-lv[data-lv=suspend] i{color:var(--d-suspend)}
+
+@media (max-width:820px){
+  .fvd .fvd-controls{grid-template-columns:1fr 1fr}
+  .fvd .fvd-cols>div{grid-template-columns:1fr}
+}
+@media (max-width:480px){
+  .fvd .fvd-controls{grid-template-columns:1fr}
+  .fvd .fvm-filters{grid-template-columns:1fr 1fr}
+}

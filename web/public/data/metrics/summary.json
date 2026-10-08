@@ -1,0 +1,32 @@
+{
+ "v": 1,
+ "built": "2026-10-08 16:36",
+ "wells": 2917,
+ "wellsCharted": 1048,
+ "stagesCharted": 40383,
+ "from1s": 36063,
+ "matchedByTime": 31363,
+ "propRatioMedian": 1.01,
+ "propWithin10pct": 0.803,
+ "propWithin20pct": 0.925,
+ "fluidRatioMedian": 0.993,
+ "fluidWithin10pct": 0.885,
+ "isipStages": 8565,
+ "isipBiasMPa": 0.05,
+ "isipWithin2MPa": 0.722,
+ "isipFromCurves": 10384,
+ "flagCounts": {
+  "screenout": 79,
+  "shutdown": 4064,
+  "spike": 179,
+  "drop": 1116,
+  "short": 649,
+  "gaps": 928,
+  "qcProp": 1223,
+  "qcFluid": 1155,
+  "qcIsip": 1359,
+  "depth": 362
+ },
+ "misplacedWells": 0,
+ "misplacedStages": 0
+}

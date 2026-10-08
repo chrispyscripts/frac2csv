@@ -10,6 +10,10 @@ const Q = new URLSearchParams(location.search);
 const EMBED = Q.get('embedded') === '1';
 const ORIGIN = location.origin;
 const PREF_KEY = 'stratum.section';
+// the stages coloured by one of their numbers (metrics.js), or '' for none: a
+// setting of its own, kept with the account and in sessions like the others
+const METRIC_KEY = 'stratum.sectionMetric';
+const FVM = window.FVMetrics || null;
 
 // gamma in the colours chosen for every view (gamma-palettes.js), and the slate
 // the lateral is drawn in where there is none
@@ -18,9 +22,11 @@ const GR_MAX = 250;
 // the marks' inks for the theme on screen (theme.js); text takes its colour from the CSS
 const INKS = {
   light: { neutral: '#3d4f5b', build: '#8a9ba6', curves: '#0d8577', filed: '#7b8e9a', ground: '#9fb0bb', halo: '#ffffff', haloOp: .9,
-           pad: '#14212b', hole: '#ffffff', track: '#f6f8fa', cross: '#14212b', grid: '#e4eaef', press: '#a31631', rate: '#1f6feb' },
+           pad: '#14212b', hole: '#ffffff', track: '#f6f8fa', cross: '#14212b', grid: '#e4eaef', press: '#a31631', rate: '#1f6feb',
+           serious: '#d6402b', warning: '#e8a400', bang: { serious: '#ffffff', warning: '#14212b' }, paper: '#ffffff' },
   dark:  { neutral: '#d6e6ee', build: '#8fa9b5', curves: '#5ee2d0', filed: '#6b8290', ground: '#4f6d7b', halo: '#000', haloOp: .5,
-           pad: '#e7f4fa', hole: '#0a141d', track: '#0d1b25', cross: '#e7f4fa', grid: '#1a2c37', press: '#f0555a', rate: '#4f8ff7' },
+           pad: '#e7f4fa', hole: '#0a141d', track: '#0d1b25', cross: '#e7f4fa', grid: '#1a2c37', press: '#f0555a', rate: '#4f8ff7',
+           serious: '#ff6f5c', warning: '#f7c03e', bang: { serious: '#0a141d', warning: '#0a141d' }, paper: '#0a141d' },
 };
 const inks = () => INKS[document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'];
 let K = inks();
@@ -29,6 +35,11 @@ let WA = Q.get('wa') || '';
 let HI = Q.get('stage');        // the stage picked out, by label
 let mode = 'well', colorBy = 'stages', curvesOn = true;
 try { const p = JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); if (p.mode) mode = p.mode; if (p.color) colorBy = p.color; if (p.curves === false) curvesOn = false; } catch (e) { /* private mode */ }
+const readMetric = () => { try { const k = localStorage.getItem(METRIC_KEY) || ''; return FVM && FVM.BY[k] ? k : ''; } catch (e) { return ''; } };
+let metric = readMetric();
+// the ribbon's name in the axis gutter (the key above it gives the full one)
+const SHORT = { avgP: 'Avg P', maxP: 'Peak P', isip: 'ISIP', fg: 'FG', avgRate: 'Rate', prop: 'Sand', clean: 'Fluid', tph: 't/h',
+  maxConc: 'Conc', pumpMin: 'Pump', rampMin: 'Ramp', pSlope: 'P trend', propVsFiled: 'Sand %', flagCount: 'Flags' };
 let W = null;                   // the assembled well: trajectory, stages, gamma
 let GAMMA = null;               // data/gamma.json, fetched once
 let G = null;                   // this render's geometry, for hover
@@ -66,9 +77,36 @@ async function load(wa) {
   if (padId) try { row = (await getJSON(`data/region/pads/${encodeURIComponent(padId)}.json`)).wells.find(x => String(x.well.wa) === WA) || null; } catch (e) { /* no survey */ }
   if (my !== seq) return;
   W = assemble(d, row);
+  if (!FVM || !padId) W.mrows = [];           // no numbers to wait for
   attachGamma();
   syncUrl(); header(); render(); announce();
   if (!GAMMA) getJSON('data/gamma.json').then(g => { GAMMA = g; if (W && my === seq) { attachGamma(); header(); render(); } }).catch(() => {});
+  // the stages' numbers, worked out from their curves and checked against the filing
+  if (FVM && padId) FVM.rows(padId, WA).then(rows => {
+    if (my !== seq || !W) return;
+    attachMetrics(rows || []); cardFor = null; header(); render();
+  }).catch(() => {});
+}
+
+// Each stage's row of numbers (metrics.js). A row is the stage's when it has the
+// stage's label at the stage's interval, else its label, else it was filed at
+// that interval: a chart's label and the filing's do not always agree (a chart
+// pumped twice on one interval, or 88A filed as 88a). Rows no stage takes keep
+// their flags, shown where they were pumped.
+function attachMetrics(rows) {
+  W.mrows = rows;
+  W.stages.forEach(s => { s.m = null; });
+  const free = new Set(rows), lab = x => String(x).toLowerCase();
+  const near = (r, s) => r.top != null && Math.abs(r.top - s.top) <= 10;
+  const passes = [(r, s) => lab(r.label) === lab(s.label) && near(r, s), (r, s) => lab(r.label) === lab(s.label), near];
+  for (const ok of passes) for (const s of W.stages) {
+    if (s.m) continue;
+    const c = [...free].filter(r => ok(r, s));
+    if (!c.length) continue;
+    s.m = c.find(r => (r.src !== 'filed') === s.curves) || c[0];
+    free.delete(s.m);
+  }
+  W.loose = [...free].filter(r => r.top != null && FVM.opFlags(r).length);
 }
 
 function assemble(d, row) {
@@ -175,6 +213,72 @@ function curveScale() {
   return { press: top('press'), rate: top('rate') };
 }
 
+// the ribbon's key, centred above the frame between the compass chips: the
+// measure, its low and high ends, and the grey of a stage with no number; the
+// measure's name goes first when there is no room, then the grey
+function ribbonKey(m, dom, x0, x1, y, comp) {
+  const room = x1 - x0 - 2 * (comp.length * 6.6 + 30), mid = (x0 + x1) / 2;
+  if (!dom) return room > 220 ? `<text class="rb-t" x="${mid}" y="${y}" text-anchor="middle">${esc(m.t)}: no numbers for this well</text>` : '';
+  const lo = FVM.fmt(dom[0], m.k), hi = FVM.fmt(dom[1], m.k), GR = 64;
+  const all = [{ k: 'name', w: m.t.length * 5.9 + 12 }, { k: 'lo', w: lo.length * 6.6 + 6 }, { k: 'bar', w: GR + 6 },
+               { k: 'hi', w: hi.length * 6.6 + 14 }, { k: 'none', w: 14 + 4 * 5.9 }];
+  const fit = [all, all.filter(p => p.k !== 'name'), all.filter(p => p.k !== 'name' && p.k !== 'none')]
+    .find(ps => ps.reduce((a, p) => a + p.w, 0) <= room);
+  if (!fit) return '';
+  const n = 9, stops = Array.from({ length: n }, (_, i) =>
+    `<stop offset="${(i / (n - 1)).toFixed(3)}" stop-color="${FVM.colour(dom[0] + (dom[1] - dom[0]) * i / (n - 1), dom, m.k)}"/>`).join('');
+  let x = mid - fit.reduce((a, p) => a + p.w, 0) / 2;
+  const out = [`<defs><linearGradient id="ws-kg" x1="0" x2="1" y1="0" y2="0">${stops}</linearGradient></defs>`];
+  for (const p of fit) {
+    if (p.k === 'name') out.push(`<text class="rb-t" x="${x}" y="${y}">${esc(m.t)}</text>`);
+    else if (p.k === 'lo' || p.k === 'hi') out.push(`<text class="rb-n" x="${x}" y="${y}">${esc(p.k === 'lo' ? lo : hi)}</text>`);
+    else if (p.k === 'bar') out.push(`<rect x="${x}" y="${y - 8}" width="${GR}" height="8" rx="4" fill="url(#ws-kg)"/>`);
+    else out.push(`<rect x="${x}" y="${y - 8}" width="10" height="8" rx="2" fill="${FVM.colour(null, null, m.k)}"/><text class="rb-t" x="${x + 14}" y="${y}">none</text>`);
+    x += p.w;
+  }
+  return `<g>${out.join('')}<title>${esc(`${m.t}: ${lo} to ${hi} (the well's 5th to 95th percentile); grey has no number`)}</title></g>`;
+}
+// a flagged stage's marker: a triangle pointing at the hole, red-orange when one
+// of its flags is serious (a possible screenout), amber for a warning
+function flagMark(x, y, r, label) {
+  const f = FVM.opFlags(r), lvl = f.some(k => FVM.FLAG_INFO[k].level === 'serious') ? 'serious' : 'warning';
+  return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})"><title>${esc(`Stage ${label}: ${f.map(k => FVM.FLAG_INFO[k].t).join(' · ')}`)}</title>`
+    + `<path d="M0,-6.5L6.2,4.6H-6.2Z" fill="${K[lvl]}" stroke="${K.paper}" stroke-width="1.5" stroke-linejoin="round"/>`
+    + `<text y="3.4" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="8" font-weight="700" fill="${K.bang[lvl]}">!</text></g>`;
+}
+// a stage's numbers on its card: from its curves, with the filing beside them
+// where both exist; a stage with no curves, its filed numbers
+function cardMetrics(s) {
+  const r = s.m;
+  if (!FVM || !r) return '';
+  const f = (v, k) => esc(FVM.fmt(v, k)), out = [];
+  const pair = (t, v) => { if (v != null) out.push(`<dt>${t}</dt><dd>${v}</dd>`); };
+  const wide = (t, v) => { if (v != null) out.push(`<dt style="grid-column:1">${t}</dt><dd class="w">${v}</dd>`); };
+  const filed = r.src === 'filed';
+  if (filed) {
+    pair('Avg pressure', r.fAvgP != null ? f(r.fAvgP, 'avgP') : null);
+    pair('Peak', r.fMaxP != null ? f(r.fMaxP, 'maxP') : null);
+    pair('Rate', r.fRate != null ? f(r.fRate, 'avgRate') : null);
+    pair('Frac gradient', r.fg != null ? f(r.fg, 'fg') : null);
+    wide('ISIP', r.fIsip != null ? f(r.fIsip, 'isip') : null);
+    wide('Proppant', r.fProp != null ? f(r.fProp, 'prop') : null);
+    wide('Clean fluid', r.fFluid != null ? f(r.fFluid, 'clean') : null);
+  } else {
+    pair('Pump time', r.pumpMin != null ? f(r.pumpMin, 'pumpMin') : null);
+    pair('Avg pressure', r.avgP != null ? f(r.avgP, 'avgP') : null);
+    pair('Frac gradient', r.fg != null ? f(r.fg, 'fg') : null);
+    pair('Sand rate', r.tph != null ? f(r.tph, 'tph') : null);
+    wide('ISIP', r.fIsip != null ? `${f(r.fIsip, 'isip')} filed${r.isip != null ? ` <span class="m">· ${f(r.isip, 'isip')} from the falloff</span>` : ''}`
+      : r.isip != null ? `${f(r.isip, 'isip')} from the falloff` : null);
+    wide('Proppant', r.prop != null ? `${f(r.prop, 'prop')} from the curves${r.fProp ? ` <span class="m">· ${f(r.fProp, 'prop')} filed (${fmt(100 * r.prop / r.fProp)}%)</span>` : ''}`
+      : r.fProp != null ? `${f(r.fProp, 'prop')} filed` : null);
+  }
+  const fl = FVM.flags(r).map(k => { const i = FVM.FLAG_INFO[k]; return `<li class="${i.level}"><i aria-hidden="true">${i.level === 'info' ? '•' : '▲'}</i><span>${esc(i.t)}</span></li>`; });
+  const src = filed ? 'As filed with the BCER; the Lab has no curves for it' : r.src && r.src !== '1 s' ? `From the curves as thinned (a point every ${esc(r.src)})` : '';
+  if (!out.length && !fl.length) return src ? `<div class="src">${src}</div>` : '';
+  return (src ? `<div class="src">${src}</div>` : '') + (out.length ? `<dl>${out.join('')}</dl>` : '') + (fl.length ? `<ul>${fl.join('')}</ul>` : '');
+}
+
 // ---------- drawing ----------
 function empty(msg, title) {
   $('ws-svg').innerHTML = ''; $('ws-tip').hidden = true;
@@ -194,7 +298,9 @@ function render() {
   // each stage's pressure over its rate, along the top, where the lateral is
   const hasCurves = W.stages.some(s => s.series), strip = curvesOn && hasCurves && Ht >= 230 ? Math.round(Math.max(48, Math.min(86, Ht * 0.2))) : 0;
   const sy0 = 8, sy1 = sy0 + strip;
-  const x0 = 58, x1 = Wd - (elev != null ? 62 : 18), y0 = strip ? sy1 + 22 : 20, y1 = Ht - 24 - track - gap, ty0 = y1 + gap, ty1 = ty0 + track;
+  // the stages coloured by one of their numbers: a ribbon under the curves strip, on the same axis
+  const rib = metric && W.mrows && W.mrows.length && Ht >= 130 ? 12 : 0, ry0 = strip ? sy1 + 5 : 8, ry1 = ry0 + rib;
+  const x0 = 58, x1 = Wd - (elev != null ? 62 : 18), y0 = rib ? ry1 + 22 : strip ? sy1 + 22 : 20, y1 = Ht - 24 - track - gap, ty0 = y1 + gap, ty1 = ty0 + track;
   const pts = W.traj;
   let vx0, vx1, dy0, dy1, kx, ky;
   if (!lateralMode) {
@@ -225,7 +331,7 @@ function render() {
   out.push('<g>');
   for (let v = Math.ceil(vx0 / xs) * xs; v <= vx1; v += xs) {
     const x = X(v).toFixed(1);
-    out.push(`<line x1="${x}" x2="${x}" y1="${strip ? sy0 : y0}" y2="${track ? ty1 : y1}" stroke="var(--grid)"/>`
+    out.push(`<line x1="${x}" x2="${x}" y1="${strip ? sy0 : rib ? ry0 : y0}" y2="${track ? ty1 : y1}" stroke="var(--grid)"/>`
       + `<text class="ax" x="${x}" y="${Ht - 8}" text-anchor="middle">${fmt(v)}</text>`);
   }
   for (let d = Math.ceil(dy0 / ys) * ys; d <= dy1; d += ys) {
@@ -315,15 +421,32 @@ function render() {
   // pad, heel and TD
   const td = pts[pts.length - 1], hp = at(heel);
   out.push(`<circle cx="${X(0)}" cy="${Y(0)}" r="5.5" fill="${K.pad}" stroke="${K.hole}" stroke-width="2"/>`);
+  const boxes = [];                     // the labels' boxes, for the flag markers to keep off
   if (W.heel != null) {
-    const t = `heel ${fmt(W.heel)} m MD`, hx = X(hp.vs), w_ = tw(t), xa = Math.max(x0 + 4, hx - w_ / 2);
+    const t = `heel ${fmt(W.heel)} m MD`, hx = X(hp.vs), w_ = tw(t), xa = Math.max(x0 + 4, hx - w_ / 2), ly = clear(xa, xa + w_, Y(hp.tvd));
     out.push(`<circle cx="${hx}" cy="${Y(hp.tvd)}" r="4" fill="${K.hole}" stroke="${K.neutral}" stroke-width="2"/>`
-      + `<text class="lbl m" x="${xa}" y="${clear(xa, xa + w_, Y(hp.tvd))}">${t}</text>`);
+      + `<text class="lbl m" x="${xa}" y="${ly}">${t}</text>`);
+    boxes.push([xa, xa + w_, ly - 11, ly + 3]);
   }
   const tdx = X(td.vs), tdt = `TD ${fmt(td.md)} m MD · ${fmt(td.tvd)} m TVD`, tdw = tw(tdt);
-  const tdxa = Math.max(x0 + 4, Math.min(tdx - tdw / 2, x1 - 6 - tdw));     // centred under TD, inside the frame
+  const tdxa = Math.max(x0 + 4, Math.min(tdx - tdw / 2, x1 - 6 - tdw)), tdy = clear(tdxa, tdxa + tdw, Y(td.tvd));     // centred under TD, inside the frame
   out.push(`<circle cx="${tdx}" cy="${Y(td.tvd)}" r="4.5" fill="${K.neutral}" stroke="${K.hole}" stroke-width="2"/>`
-    + `<text class="lbl" x="${tdxa}" y="${clear(tdxa, tdxa + tdw, Y(td.tvd))}">${tdt}</text>`);
+    + `<text class="lbl" x="${tdxa}" y="${tdy}">${tdt}</text>`);
+  boxes.push([tdxa, tdxa + tdw, tdy - 11, tdy + 3]);
+
+  // stages with an operational flag: a marker under the hole, its level in its
+  // colour and named in its tooltip (and on the stage's card); one that would sit
+  // on the heel or TD label goes under the label instead
+  if (rib) {
+    const place = (x, y) => { const b = boxes.find(q => x + 7 > q[0] && x - 7 < q[1] && y + 5 > q[2] && y - 7 < q[3]); return b ? [x, b[3] + 8] : [x, y]; };
+    const marks = W.stages.filter(s => s.m && FVM.opFlags(s.m).length)
+      .map(s => flagMark(...place(s.px - s.nx * 15, s.py - s.ny * 15), s.m, s.label));
+    for (const r of W.loose || []) {
+      const md = (r.top + (r.base != null ? r.base : r.top)) / 2, p = at(md), [nx, ny] = normal(md);
+      marks.push(flagMark(...place(X(p.vs) - nx * 15, Y(p.tvd) - ny * 15), r, r.label));
+    }
+    out.push(`<g>${marks.join('')}</g>`);
+  }
   out.push('</g>');
 
   // gamma under the section, on the same along-section axis
@@ -382,16 +505,33 @@ function render() {
     out.push(`<g clip-path="url(#clipx)" fill="none" stroke-width="1.2" stroke-linejoin="round">`
       + `<path d="${paths.press.join('')}" stroke="${K.press}"/><path d="${paths.rate.join('')}" stroke="${K.rate}"/></g>`);
   }
+  if (rib) {
+    // each stage's own stretch of hole, in its colour; no number, the neutral grey
+    const m = FVM.BY[metric], cells = [], dom = FVM.domain(W.mrows.map(r => FVM.value(r, metric)), metric);
+    for (const s of W.stages) {
+      let xa = X(at(s.z0).vs), xb = X(at(s.z1).vs);
+      if (xb < xa) [xa, xb] = [xb, xa];
+      s.rx0 = s.rx1 = null;
+      if (xb < x0 || xa > x1) continue;
+      s.rx0 = xa; s.rx1 = xb;
+      const g_ = xb - xa > 5 ? .5 : 0;            // a hairline of plot between neighbours
+      cells.push(`<rect x="${(xa + g_).toFixed(1)}" y="${ry0}" width="${Math.max(.8, xb - xa - 2 * g_).toFixed(1)}" height="${rib}" fill="${FVM.colour(s.m ? FVM.value(s.m, metric) : null, dom, metric)}"/>`);
+    }
+    out.push(`<rect class="cv-bg" x="${x0}" y="${ry0 - .5}" width="${x1 - x0}" height="${rib + 1}"/><g clip-path="url(#clipx)">${cells.join('')}</g>`
+      + `<text class="rb-k" x="${x0 - 7}" y="${ry0 + rib - 2}" text-anchor="end">${esc(SHORT[metric] || m.t.slice(0, 7))}<title>Stages coloured by ${esc(m.t.toLowerCase())}</title></text>`);
+    out.push(ribbonKey(m, dom, x0, x1, y0 - 7, compass(((W.az * 180 / Math.PI) + 360) % 360)));
+  }
   out.push('<g id="ws-hl"></g>');
   $('ws-svg').innerHTML = out.join('');
   $('ws-svg').setAttribute('viewBox', `0 0 ${Wd} ${Ht}`);
 
-  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev, strip, sy0, sy1 };
+  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev, strip, sy0, sy1, rib, ry0, ry1 };
   if (!pointerIn) hover = extHover();
   $('ws-foot').textContent = `Vertical section along ${fmt(azDeg)}° (${compass(azDeg)}), from the pad's surface location`
     + ` · ${lateralMode ? 'lateral' : 'whole well'}, ${stretch}`
     + ` · ${W.stages.length ? 'teal ticks have treatment curves, slate are filed only · ' : ''}`
     + (scale ? `above: each stage's pressure (0–${fmt(scale.press)} ${String((W.units || {}).press || '').replace(/m3/g, 'm³')}) and rate (0–${fmt(scale.rate)} ${String((W.units || {}).rate || '').replace(/m3/g, 'm³')}), one scale for all · ` : '')
+    + (rib ? `stages coloured by ${FVM.BY[metric].t.toLowerCase()}${FVM.BY[metric].filed ? ' (as filed where the curves give none)' : FVM.BY[metric].prefer ? ' (as filed where there is one, else from the curves)' : ''}, grey where there is no number · ▲ a flagged stage · ` : '')
     + 'hover for depths · click a stage for its charts';
   const cb = $('ws-curves');
   if (cb) { cb.disabled = !hasCurves; cb.setAttribute('aria-pressed', String(curvesOn && hasCurves)); cb.title = hasCurves ? 'Each stage\'s pressure and rate, above the well' : 'The Lab has not read this well\'s treatment curves yet'; }
@@ -414,7 +554,16 @@ function drawHover() {
   const lit = (s, op) => { if (G.strip && s && s.sx0 != null) out.push(`<rect x="${s.sx0.toFixed(1)}" y="${G.sy0}" width="${Math.max(1, s.sx1 - s.sx0).toFixed(1)}" height="${G.sy1 - G.sy0}" fill="${K.curves}" fill-opacity="${op}" stroke="${K.curves}" stroke-opacity="${op * 3}"/>`); };
   if (hiS) { out.push(band(hiS, K.curves, .28, 16)); lit(hiS, .14); }
   const tip = $('ws-tip');
-  if (hover && hover.strip) {
+  if (hover && hover.rib) {
+    // over the ribbon: the stage's band below, its cell outlined, and its card with the number
+    const s = hover.rib;
+    if (s !== hiS) { out.push(band(s, s.curves ? K.curves : K.filed, .2, 16)); lit(s, .1); }
+    out.push(`<rect x="${s.rx0.toFixed(1)}" y="${G.ry0 - 1}" width="${Math.max(1, s.rx1 - s.rx0).toFixed(1)}" height="${G.ry1 - G.ry0 + 2}" fill="none" stroke="${K.cross}" stroke-width="1.5"/>`);
+    tip.hidden = true;
+    const m = FVM.BY[metric], v = s.m ? FVM.value(s.m, metric) : null;
+    showCard(s, [`${esc(m.t)}: <b>${esc(FVM.fmt(v, metric))}</b>${v == null ? ' <span class="m">(no number for this stage)</span>' : ''}`],
+      { x: (s.rx0 + s.rx1) / 2, y: G.ry1 });
+  } else if (hover && hover.strip) {
     // over the curves strip: the stage's band below, a cursor through its curves, and its chart
     const s = hover.strip;
     if (s !== hiS) { out.push(band(s, K.curves, .2, 16)); lit(s, .1); }
@@ -460,7 +609,7 @@ function drawHover() {
     if (hiS && document.activeElement === $('ws-svg')) showCard(hiS, null); else hideCard();
   }
   hl.innerHTML = out.join('');
-  $('ws-svg').style.cursor = hover && (hover.strip || (hover.md >= G.heel - 1 && stageAt(hover.md))) ? 'pointer' : 'crosshair';
+  $('ws-svg').style.cursor = hover && (hover.strip || hover.rib || (hover.md >= G.heel - 1 && stageAt(hover.md))) ? 'pointer' : 'crosshair';
 }
 
 // ---------- a stage's chart, above it ----------
@@ -496,7 +645,9 @@ function showCard(s, readout, anchor) {
     card.querySelector('.ws-card-d').textContent = bits.join(' · ');
     const pumped = [s.proppant != null && `${fmt(s.proppant, 1)} t`, s.fluid != null && `${fmt(s.fluid)} m³`,
       s.rate != null && `${fmt(s.rate, 1)} m³/min avg`, s.pmax != null && `max ${fmt(s.pmax, 1)} MPa`].filter(Boolean);
-    card.querySelector('.ws-card-p').textContent = pumped.join(' · ');
+    const mb = cardMetrics(s);
+    card.querySelector('.ws-card-m').innerHTML = mb;
+    card.querySelector('.ws-card-p').textContent = mb ? '' : pumped.join(' · ');
   }
   card.querySelector('.ws-card-r').innerHTML = (readout || []).join('<br>');
   card.querySelector('.ws-card-f').textContent = s.curves ? 'Click to open this stage’s chart in a window' : 'Filed with the BCER; the Lab has not read its curves yet';
@@ -570,7 +721,14 @@ svg.addEventListener('pointermove', e => {
   if (!G) return;
   const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
   let best = null, bd = Infinity;
-  if (G.strip && my <= G.sy1 + 6) {
+  if (G.rib && my >= G.ry0 - 3 && my <= G.ry1 + 4) {
+    // the ribbon: the stage whose stretch is under the pointer
+    const s = W.stages.find(q => q.rx0 != null && mx >= q.rx0 && mx <= q.rx1);
+    best = s ? { rib: s, md: s.mid, x: mx } : null;
+    if (best ? !hover || hover.rib !== s : hover) { hover = best; drawHover(); }
+    return;
+  }
+  if (G.strip && my <= G.sy1 + (G.rib ? 2 : 6)) {
     // the curves strip: the stage under the pointer, and how far through it
     const s = W.stages.find(q => q.sx0 != null && mx >= q.sx0 && mx <= q.sx1);
     best = s ? { strip: s, md: s.mid, x: mx, frac: (mx - s.sx0) / Math.max(1, s.sx1 - s.sx0) } : null;
@@ -590,7 +748,8 @@ svg.addEventListener('pointerenter', () => { pointerIn = true; });
 svg.addEventListener('pointerleave', () => { pointerIn = false; hover = extHover(); drawHover(); });
 svg.addEventListener('blur', () => { if (!hover) hideCard(); });
 svg.addEventListener('click', () => {
-  if (hover && hover.strip) { HI = hover.strip.label; syncUrl(); render(); openStage(hover.strip); return; }
+  const picked = hover && (hover.strip || hover.rib);
+  if (picked) { HI = picked.label; syncUrl(); render(); openStage(picked); return; }
   if (!hover || hover.md < G.heel - 1) return;
   const s = stageAt(hover.md);
   if (s) { HI = s.label; syncUrl(); render(); openStage(s); }
@@ -623,6 +782,13 @@ function header() {
   gb.disabled = !W.gamma;
   gb.title = W.gamma ? (W.gamma.estimated ? 'Gamma estimated from offset logs' : 'Gamma from this well’s LAS log') : 'No gamma log on file for this well';
   document.querySelector('[data-mode=lateral]').disabled = W.heel == null;
+  const ms = $('ws-metric');
+  if (FVM) {
+    const has = !!(W.mrows && W.mrows.length);
+    ms.disabled = !has; ms.value = metric; ms.classList.toggle('on', !!metric && has);
+    ms.title = has ? 'Colour each stage by a number from its treatment curves (or its filing)'
+      : W.mrows ? 'No stage numbers for this well yet' : 'Loading the stages\' numbers…';
+  }
   setPressed();
 }
 function setPressed() {
@@ -637,6 +803,26 @@ function setPressed() {
   pal.onchange = () => window.StratumGamma.set(pal.value);
 }
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode, color: colorBy, curves: curvesOn })); } catch (e) { /* private mode */ } };
+if (FVM) {
+  const ms = $('ws-metric');
+  ms.append(new Option('Stage colour: none', ''));
+  for (const m of FVM.METRICS) ms.append(new Option(m.t, m.k));
+  ms.value = metric; ms.hidden = false; ms.disabled = true;
+  ms.onchange = () => {
+    metric = FVM.BY[ms.value] ? ms.value : '';
+    try { if (metric) localStorage.setItem(METRIC_KEY, metric); else localStorage.removeItem(METRIC_KEY); } catch (e) { /* private mode */ }
+    hover = null; cardFor = null; header(); render();
+  };
+  // chosen in another window (a docked section and a popped-out one, a session opened)
+  addEventListener('storage', e => { if (e.key === METRIC_KEY && readMetric() !== metric) { metric = readMetric(); cardFor = null; if (W) { header(); render(); } } });
+}
+$('ws-report').onclick = () => {
+  if (!WA) return;
+  const url = `report.html?wa=${encodeURIComponent(WA)}`, w = window.open(url, 'stratum-report');
+  if (w) { try { w.focus(); } catch (e) { /* the browser decides */ } }
+  else note(`Your browser blocked the report window. <a href="${url}" target="_blank" rel="noopener">Open the stage report</a>`);
+};
+$('ws-png').onclick = () => savePng().catch(() => note('The picture could not be made in this browser.'));
 $('ws-curves').onclick = () => { curvesOn = !curvesOn; savePrefs(); hover = null; render(); };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; savePrefs(); setPressed(); render(); });
 document.querySelectorAll('[data-color]').forEach(b => b.onclick = () => { colorBy = b.dataset.color; savePrefs(); setPressed(); render(); });
@@ -793,6 +979,50 @@ function chooser(s, wins) {
   acts.querySelector('button').focus();
 }
 $('ws-charts').onclick = () => openStage(W && (W.stages.find(s => s.label === HI && s.curves) || W.stages.find(s => s.curves)));
+
+// ---------- the section as a picture ----------
+// The drawing as it is on screen (the stage picked out, no pointer), with the
+// stylesheet's colours written onto each mark so it draws without the page, under
+// a caption naming the well. Twice the screen's pixels, so it prints sharply.
+const PAINT = ['fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-opacity', 'stroke-dasharray', 'stroke-linejoin', 'stroke-linecap',
+  'paint-order', 'opacity', 'font-family', 'font-size', 'font-weight'];
+async function savePng() {
+  if (!W || !G) return;
+  const svg = $('ws-svg'), box = svg.getBoundingClientRect(), w = Math.round(box.width), h = Math.round(box.height);
+  const was = hover; hover = null; drawHover();
+  const copy = svg.cloneNode(true);
+  hover = was; drawHover();
+  const from = svg.querySelectorAll('*'), to = copy.querySelectorAll('*');
+  from.forEach((el, i) => {
+    const cs = getComputedStyle(el);
+    to[i].removeAttribute('class');
+    to[i].setAttribute('style', PAINT.map(k => [k, cs.getPropertyValue(k)]).filter(([, v]) => v && !v.includes('url(')).map(([k, v]) => `${k}:${v}`).join(';'));
+  });
+  copy.querySelectorAll('title').forEach(t => t.remove());
+  copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  copy.setAttribute('width', w); copy.setAttribute('height', h); copy.removeAttribute('style');
+  const img = new Image();
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(copy));
+  await img.decode();
+  const cap = 46, k = 2, cv = document.createElement('canvas');
+  cv.width = w * k; cv.height = (h + cap) * k;
+  const g = cv.getContext('2d'), css = getComputedStyle(document.documentElement);
+  g.scale(k, k);
+  g.fillStyle = K.paper; g.fillRect(0, 0, w, h + cap);
+  g.fillStyle = css.getPropertyValue('--ink').trim() || K.pad;
+  g.font = '600 15px -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif';
+  g.fillText($('ws-name').textContent, 12, 20);
+  g.fillStyle = css.getPropertyValue('--mut').trim() || K.filed;
+  g.font = '11px ui-monospace,Menlo,Consolas,monospace';
+  g.fillText(`${$('ws-sub').textContent} · FracView ${new Date().toISOString().slice(0, 10)}`.slice(0, Math.floor((w - 24) / 6.6)), 12, 37);
+  g.drawImage(img, 0, cap, w, h);
+  const blob = await new Promise(res => cv.toBlob(res, 'image/png'));
+  if (!blob) throw Error('no picture');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `FracView-${WA}-section.png`;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
 
 // the wine rack's line on this well moved (null: it is off this well)
 function cursorTo(wa, md) {

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
+<title>FracView — Stage report</title>
+<link rel="stylesheet" href="report.css">
+<script src="session.js"></script>
+<script src="account.js"></script>
+</head>
+<body class="rp-loading">
+<header class="rp-bar">
+  <div class="rp-brand">FracView <span>Stage report</span></div>
+  <div class="rp-tools">
+    <button type="button" id="rp-csv" title="The stage table with every column, the filed numbers too, as a CSV file">Download CSV</button>
+    <button type="button" id="rp-print" title="Print this report, or save it as a PDF from the print dialog">Print / Save as PDF</button>
+    <button type="button" id="rp-charts" title="This well's stage charts, in their own window">Charts ↗</button>
+    <button type="button" class="menu-btn" data-menu title="Main menu: home, sessions, groups, Discover, settings">☰ Menu</button>
+    <button type="button" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
+    <span data-theme-toggle></span>
+    <span data-account></span>
+  </div>
+</header>
+<main class="rp" id="rp-main">
+  <section class="rp-head" aria-labelledby="rp-name">
+    <p class="rp-kicker">End-of-well stage report</p>
+    <h1 id="rp-name">Loading…</h1>
+    <p class="rp-ident" id="rp-ident"></p>
+    <dl class="rp-facts" id="rp-facts"></dl>
+    <p class="rp-prov" id="rp-prov"></p>
+  </section>
+
+  <section class="rp-sec" aria-labelledby="rp-qc-h">
+    <h2 id="rp-qc-h">How the curves agree with the filing</h2>
+    <div class="rp-qc" id="rp-qc"></div>
+  </section>
+
+  <section class="rp-sec" aria-labelledby="rp-fl-h">
+    <h2 id="rp-fl-h">Flags</h2>
+    <div class="rp-flags" id="rp-flags"></div>
+  </section>
+
+  <section class="rp-sec rp-keep" aria-labelledby="rp-ov-h">
+    <h2 id="rp-ov-h">Every stage, overlaid</h2>
+    <div class="rp-ctl" id="rp-ov-ctl" hidden>
+      <div class="rp-seg" id="rp-ch" role="group" aria-label="Curve"></div>
+      <div class="rp-seg" id="rp-x" role="group" aria-label="Across"></div>
+      <select id="rp-cmp" aria-label="Compare with another well on the pad" hidden></select>
+    </div>
+    <div class="rp-chart" id="rp-ov"></div>
+    <div class="rp-legend" id="rp-ov-legend"></div>
+    <p class="rp-cap" id="rp-ov-cap"></p>
+  </section>
+
+  <section class="rp-sec rp-keep" aria-labelledby="rp-pr-h">
+    <h2 id="rp-pr-h">Production</h2>
+    <div class="rp-prod" id="rp-prod"></div>
+  </section>
+
+  <section class="rp-sec rp-tbsec" aria-labelledby="rp-tb-h">
+    <h2 id="rp-tb-h">Stages, toe to heel</h2>
+    <p class="rp-cap">Click a column’s name to sort by it (again to reverse, a third time for toe to heel). Grey italics are the operator’s filed figure where the curves give none (or, for a depth, the chart’s own where the filing gives none). Click a stage for its chart.</p>
+    <div class="rp-tablewrap" id="rp-table-wrap" tabindex="0" role="region" aria-label="Stage table">
+      <table class="rp-table" id="rp-table"></table>
+    </div>
+  </section>
+
+  <footer class="rp-foot">
+    FracView · stages from the BC Energy Regulator’s hydraulic fracture table and the Lab’s read of the operator’s treatment report.
+    Contains information licensed under the BC Energy Regulator Open Data Licence.
+  </footer>
+</main>
+<div class="rp-note" id="rp-note" role="status" hidden></div>
+<script src="metrics.js"></script>
+<script src="report.js"></script>
+<script src="quake-filter.js"></script>
+<script src="gamma-palettes.js"></script>
+<script src="menu.js"></script>
+</body>
+</html>

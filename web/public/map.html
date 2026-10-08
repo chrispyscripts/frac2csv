@@ -12,6 +12,8 @@
 <script src="session.js"></script>
 <script src="quake-filter.js"></script>
 <script src="account.js"></script>
+<script src="metrics.js"></script>
+<script src="watch.js"></script>
 <style>
   /* light by default; theme.js sets [data-theme=dark] for the dark one */
   :root { --panel:#ffffff; --ink:#14212b; --mut:#566b78; --line:#d3dde4; --acc:#2563eb; --page:#eef2f5;
@@ -144,14 +146,14 @@
   </header>
   <div class="demo" id="demo" hidden></div>
   <div class="body" id="pads"></div>
-  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D, or its wine rack in a window beside this one; zoom to 12+ and <b>Change View</b> opens 3D for what you see.</footer>
+  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D, or its wine rack in a window beside this one; zoom to 12+ and <b>Change View</b> opens 3D for what you see.<br><small>Contains information licensed under the BC Energy Regulator Open Data Licence; earthquakes also from Natural Resources Canada and the BC Seismic Research Consortium.</small></footer>
 </div>
 <div class="legend">
   <div class="row"><span class="l"></span> lateral with stage data loaded</div>
   <div class="row" id="survey-only"><span class="l thin"></span> lateral, survey only</div>
   <div class="row"><span class="d"></span> pad (surface location)</div>
   <div class="row"><span class="l thin" style="border-top-style:dashed;border-color:var(--area)"></span> permitted well-site area (BCER)</div>
-  <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:var(--quake);box-shadow:none"></span> earthquakes since 2013 (NRCan)</label>
+  <label class="row qk"><input type="checkbox" id="qk"> <span class="d" style="background:var(--quake);box-shadow:none"></span> earthquakes since 2013 (BCER, NRCan)</label>
   <div class="row qk-f" id="qk-frow" hidden><button type="button" id="qk-filter" aria-haspopup="dialog" aria-expanded="false">Filter quakes…</button><span id="qk-fnote"></span></div>
   <label class="row qk"><input type="checkbox" id="charted"> only wells with treatment charts</label>
   <button type="button" class="gm-btn" id="gm-toggle" aria-pressed="false" title="Pick pads on the map into a group of your own (Menu › Groups)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="7" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="16.5" r="2.6" fill="none" stroke="currentColor" stroke-width="2"/></svg>Group mode</button>
@@ -616,6 +618,8 @@ function openPad(p, lngLat) {
     popup.remove();
     if (window.stratum3D) window.stratum3D.open(p.id);
   }));
+  // its traffic light and ☆ Watch (map-extras.js)
+  if (window.stratumMapExtras) stratumMapExtras.padPopup(p, el);
 }
 
 let popup = null;
@@ -644,6 +648,7 @@ function openWell(p, lngLat) {
     if (pt.y > h - 70) map.panBy([0, pt.y - h * 0.55], { duration: 350 });
   };
   popup.getElement().querySelector(".view").addEventListener("click", view);
+  if (window.stratumMapExtras) stratumMapExtras.wellPopup(p, popup.getElement());
   view();
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
@@ -736,5 +741,6 @@ if (new URLSearchParams(location.search).get("show") === "1") {
 <script src="wellsection-host.js"></script>
 <script src="menu.js"></script>
 <script src="groupmode.js"></script>
+<script src="map-extras.js"></script>
 </body>
 </html>

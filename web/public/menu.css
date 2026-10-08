@@ -1,11 +1,13 @@
 /* FracView's main menu (menu.js): full screen, over whichever page opened it.
    Light by default; theme.js sets [data-theme=dark]. Sizes are in em off one
    base, so Settings' text size scales all of it. */
-.fvm{--m-page:#f3f6f8;--m-panel:#ffffff;--m-raise:#eef3f6;--m-line:#d3dde4;--m-edge:#b9c8d2;--m-grid:#e4eaef;--m-ink:#14212b;--m-mut:#566b78;--m-faint:#7b8e9a;
+.fvm,.fvm-tip{--m-page:#f3f6f8;--m-panel:#ffffff;--m-raise:#eef3f6;--m-line:#d3dde4;--m-edge:#b9c8d2;--m-grid:#e4eaef;--m-ink:#14212b;--m-mut:#566b78;--m-faint:#7b8e9a;
   --m-acc:#0d8577;--m-acc-ink:#ffffff;--m-acc-soft:#dff2ee;--m-acc-text:#0b5f55;--m-warn:#b5470f;--m-danger:#c92a3c;--m-shadow:rgba(20,33,43,.12);--m-quake:#d6336c;
-  position:fixed;inset:0;z-index:200;display:grid;grid-template-columns:auto 1fr;background:var(--m-page);color:var(--m-ink);
+}
+/* the tooltip sits on <body>, outside the menu, so it takes the colours above too */
+.fvm{position:fixed;inset:0;z-index:200;display:grid;grid-template-columns:auto 1fr;background:var(--m-page);color:var(--m-ink);
   font:calc(15px * var(--fv-ts, 1))/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;animation:fvm-in .18s ease-out}
-:root[data-theme=dark] .fvm{--m-page:#08111a;--m-panel:#0d1924;--m-raise:#132331;--m-line:#243a46;--m-edge:#345260;--m-grid:#1a2c37;--m-ink:#e7f4fa;--m-mut:#93adb9;--m-faint:#7f97a4;
+:root[data-theme=dark] :is(.fvm,.fvm-tip){--m-page:#08111a;--m-panel:#0d1924;--m-raise:#132331;--m-line:#243a46;--m-edge:#345260;--m-grid:#1a2c37;--m-ink:#e7f4fa;--m-mut:#93adb9;--m-faint:#7f97a4;
   --m-acc:#5ee2d0;--m-acc-ink:#062a25;--m-acc-soft:#173a3a;--m-acc-text:#9af3e4;--m-warn:#ffb48a;--m-danger:#ff7a8a;--m-shadow:#0008;--m-quake:#ff5fa2}
 @keyframes fvm-in{from{opacity:0;transform:scale(1.01)}}
 .fvm[hidden],.fvm [hidden]{display:none!important}
@@ -182,3 +184,31 @@ html.fv-menu-open,html.fv-menu-open body{overflow:hidden}
   .fvm-detail{padding:1.1em 1em 2em}
   .fvm-tile.lead{grid-column:auto}
 }
+
+/* watch list: the badge on ☰, the feed, share links */
+.fvm-badge{position:absolute;top:-6px;right:-8px;min-width:1.5em;height:1.5em;padding:0 .35em;border-radius:99em;background:#c2255c;color:#fff;
+  font:700 10.5px/1.5em -apple-system,Segoe UI,Roboto,sans-serif;text-align:center;box-shadow:0 0 0 2px var(--m-bg,#fff);pointer-events:none}
+[data-menu]{position:relative}
+:root[data-theme=dark] .fvm-badge{background:#ff5fa2;color:#10161d}
+.fvm-feed{display:flex;flex-direction:column;gap:.45em;margin-top:1em}
+.fvm-feed-item{display:grid;grid-template-columns:2em 1fr auto;gap:.7em;align-items:center;padding:.7em .9em;border:1px solid var(--m-line);border-radius:.7em;background:var(--m-panel)}
+.fvm-feed-item.fresh{border-color:var(--m-acc);box-shadow:inset 3px 0 0 var(--m-acc)}
+.fvm-feed-item .ic{display:grid;place-items:center;width:1.9em;height:1.9em;border-radius:50%;background:var(--m-raise);font-size:.95em}
+.fvm-feed-item .ic.k-quake{color:#c2255c}.fvm-feed-item .ic.k-frac{color:#b35c00}.fvm-feed-item .ic.k-charts,.fvm-feed-item .ic.k-production{color:var(--m-acc)}
+:root[data-theme=dark] .fvm-feed-item .ic.k-quake{color:#ff5fa2}:root[data-theme=dark] .fvm-feed-item .ic.k-frac{color:#f2a65a}
+.fvm-feed-item .what{display:flex;flex-direction:column;gap:.15em;min-width:0}
+.fvm-feed-item .what span{color:var(--m-mut);font-size:.86em}
+.fvm-watch-pad{display:flex;flex-direction:column;gap:.45em;cursor:default}
+.fvm-watch-pad .fvm-pair{display:flex;gap:.5em}
+.fvm-watch-pad label{display:flex;flex-direction:column;gap:.15em;font-size:.8em;color:var(--m-mut)}
+.fvm-watch-pad input{width:5.5em}
+.fvm-watch-opts{display:flex;flex-direction:column;gap:.8em;width:100%}
+.fvm-watch-opts .field{display:flex;flex-direction:column;gap:.35em}
+.fvm-watch-opts .field>span{font-weight:600;font-size:.88em}
+.fvm-watch-opts small{color:var(--m-mut);font-size:.8em;line-height:1.35}
+.fvm-share{margin:.2em 0 1em}
+.fvm-share-on{display:flex;gap:.45em;align-items:center;flex-wrap:wrap}
+.fvm-share-on input{flex:1;min-width:14em;font-family:ui-monospace,Menlo,monospace;font-size:.85em}
+.fvm-unit{display:flex;align-items:center;gap:.4em}
+.fvm-unit input{width:6em}
+@media (max-width:640px){.fvm-feed-item{grid-template-columns:2em 1fr}.fvm-feed-item button{grid-column:2}}

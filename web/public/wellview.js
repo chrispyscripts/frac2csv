@@ -372,7 +372,7 @@ function drawChart() {
       ctx.beginPath(); ctx.arc(x, T + 6, 4 + Math.max(0, q.mag || 0) * 1.5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = P.quakeText;
       const label = q.gm != null ? `ground motion at pad · ${q.gm} %g${q.gm >= 0.8 ? ' (over BCER threshold)' : ''}`
-        : `M${q.mag} · ${q.km} km` + (q.src === 'bcsrc' ? (q.herr ? ` ±${(q.herr / 1000).toFixed(1)}` : '') : ' (catalogue, km-scale)');
+        : `M${q.mag} · ${q.km} km` + (q.src === 'bcsrc' || q.src === 'bcer' ? (q.herr ? ` ±${(q.herr / 1000).toFixed(1)}` : '') : ' (catalogue, km-scale)');
       // near the right edge the label goes on the line's left
       const flip = x + 8 + ctx.measureText(label).width > L + plotW;
       ctx.textAlign = flip ? 'right' : 'left';

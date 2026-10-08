@@ -79,7 +79,7 @@ async function load() {
 // is newer than what this browser last had from it; changes made here go up a
 // little after they are made and when the page is put away.
 const PREF_KEYS = ['stratum.theme', 'stratum.textSize', 'stratum.gammaPalette', 'stratum.quakeFilter', 'stratum.allWells',
-                   'stratum.section', 'stratum.hiddenCurves'];
+                   'stratum.section', 'stratum.hiddenCurves', 'stratum.spacingLimits', 'stratum.sectionMetric', 'stratum.mapColour'];
 const AT_KEY = 'fv.prefsAt';                   // not stratum.*: sessions leave it alone
 const local = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const snapshot = () => Object.fromEntries(PREF_KEYS.map(k => [k, local(k)]));
@@ -93,6 +93,7 @@ function take(prefs) {
     else if (k === 'stratum.textSize' && window.StratumTheme && v) StratumTheme.setText(v);
     else if (k === 'stratum.gammaPalette' && window.StratumGamma && v) StratumGamma.set(v);
     else if (k === 'stratum.quakeFilter' && window.StratumQuakes) { try { StratumQuakes.set(v ? JSON.parse(v) : {}); } catch (e) { /* unreadable: skipped */ } }
+    else if (k === 'stratum.spacingLimits' && window.FVMetrics && v) { try { FVMetrics.setLimits(JSON.parse(v)); } catch (e) { /* unreadable: skipped */ } }
     else try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* private mode */ }
   }
 }
@@ -118,7 +119,7 @@ function push(keepalive) {
 }
 let pushT = 0;
 const soon = () => { clearTimeout(pushT); pushT = setTimeout(() => push(false), 1500); };
-['stratum:theme', 'stratum:textsize', 'stratum:gammapalette', 'stratum:quakefilter', 'stratum:prefs'].forEach(t => addEventListener(t, soon));
+['stratum:theme', 'stratum:textsize', 'stratum:gammapalette', 'stratum:quakefilter', 'stratum:spacing', 'stratum:prefs'].forEach(t => addEventListener(t, soon));
 addEventListener('storage', e => { if (PREF_KEYS.includes(e.key)) soon(); });
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') push(true); });
 addEventListener('pagehide', () => push(true));

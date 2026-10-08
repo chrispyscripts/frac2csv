@@ -2,7 +2,7 @@
 'use strict';
 const button=document.createElement('button');button.id='change-view';button.textContent='Change View';button.setAttribute('aria-label','Change View to underground cluster');document.body.append(button);
 const overlay=document.createElement('section');overlay.id='underground';overlay.setAttribute('aria-label','Underground cluster explorer');overlay.setAttribute('aria-hidden','true');overlay.inert=true;
-overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Arrow keys move the view, Shift and the arrows turn and tilt it, plus and minus zoom. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false">Gamma</button></div><button id="ug-quakes" type="button" aria-pressed="false" title="Earthquakes since 2013 (Earthquakes Canada)">Quakes</button><button id="ug-qfilter" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Filter the earthquakes: dates, magnitude, undetermined depths">Filter</button><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Arrow keys move, Shift + arrows turn and tilt, + / − zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
+overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Arrow keys move the view, Shift and the arrows turn and tilt it, plus and minus zoom. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false">Gamma</button><button data-color="metric" aria-pressed="false" title="Colour each stage by a measure from its treatment">Stage</button><button data-color="relation" aria-pressed="false" title="Colour the wells parent, child, co-completed or standalone">Parent/child</button><button data-color="date" aria-pressed="false" title="Colour the wells by when they were fracked">Date</button></div><button id="ug-quakes" type="button" aria-pressed="false" title="Earthquakes since 2013 (Earthquakes Canada, the BC Energy Regulator and the BC Seismic Research Consortium)">Quakes</button><button id="ug-qfilter" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Filter the earthquakes: dates, magnitude, undetermined depths">Filter</button><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-png" type="button" title="Save this view as a PNG image">PNG</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Arrow keys move, Shift + arrows turn and tilt, + / − zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
 document.body.append(overlay);
 const padPage=document.createElement('iframe');padPage.className='ug-pad-page';padPage.title='Pad data';padPage.hidden=true;overlay.append(padPage);
 const returnButton=document.createElement('button');returnButton.id='ug-return';returnButton.textContent='← Back to underground';returnButton.hidden=true;overlay.querySelector('.ug-tools').prepend(returnButton);
@@ -59,6 +59,7 @@ async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.
  overlay.querySelector('.ug-sub').textContent=`${d.pads.length} pads / ${d.pads.reduce((n,p)=>n+p.wells.length,0)} surveyed well paths · metres`;
  if(gamma)attachGamma(gamma);
  if(quakes)attachQuakes();
+ UGX.dom=null;asofRange();if(colorBy==='metric')ensureMetrics();if(colorBy!=='pad'&&colorBy!=='gamma')renderLegend();
  return d;}
 // ---------- Earthquakes ----------
 // Natural Resources Canada's catalog. Each event is a ring on the surface at its
@@ -73,12 +74,14 @@ function attachQuakes(){if(!quakes||!data||!data.xy)return;
  const byWa={};data.pads.forEach(p=>p.wells.forEach(w=>byWa[String(w.well.wa).padStart(5,'0')]=w));
  // catalogue depths are below sea level; the scene measures down from the wellheads
  const elev=data.pads.flatMap(p=>p.wells).reduce((a,w,_,all)=>a+(w.well.elev_m||0)/all.length,0);
- data.quakes=quakes.rows.map(r=>{const [x,z]=data.xy(r[2],r[1]),m=r[11];const e={t:Date.parse(r[0]),date:r[0].slice(0,16).replace('T',' ')+' UTC',x,z,depth:r[3]==null?null:r[3]*1000+elev,mag:r[4],type:r[5],fixed:!!r[6]||r[3]==null,industry:!!r[7],src:r[8],herr:r[9],derr:r[10],match:m,matched:!!m};
+ data.quakes=quakes.rows.map(r=>{const [x,z]=data.xy(r[2],r[1]),m=r[11];const e={t:Date.parse(r[0]),date:r[0].slice(0,16).replace('T',' ')+' UTC',x,z,depth:r[3]==null?null:r[3]*1000+elev,mag:r[4],type:r[5],fixed:!!r[6]||r[3]==null,industry:!!r[7],src:r[8],herr:r[9],derr:r[10],match:m,matched:!!m,maj:r[12],min:r[13],az:r[14]};
   if(m){const w=byWa[m[0]];e.near=`coincides with the frac of WA ${m[0]}${w?' ('+w.pad.name+')':''}: stage ${m[1]} ${m[2]==='after'?'had ended '+m[3]+' min before':'was pumping'}, ${m[4]} km away`+(m[5]!=null?`, ${Math.abs(m[5])} m ${m[5]>0?'below':'above'} it`:'')}
   return e}).filter(e=>Math.abs(e.x)<=data.gridR&&Math.abs(e.z)<=data.gridR);}
-function drawQuakes(){for(const e of data.quakes||[]){if(!SQ.pass(e))continue;const s=project([e.x,0,e.z]),r=3+Math.max(0,e.mag)*2.6;
+// located on a local or regional velocity model (the consortium's relocations, the BCER catalogue): drawn firmer than Earthquakes Canada's km-scale fixes
+const located=e=>e.src==='bcsrc'||e.src==='bcer';
+function drawQuakes(){for(const e of data.quakes||[]){if(!SQ.pass(e)||(UGX.asOf!=null&&e.t>(UGX.asOf+1)*DAY))continue;const s=project([e.x,0,e.z]),r=3+Math.max(0,e.mag)*2.6;
   if(!e.fixed){const h=project([e.x,-e.depth,e.z]);ctx.setLineDash([2,3]);ctx.strokeStyle=UK.quake;ctx.globalAlpha=.55;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(s[0],s[1]);ctx.lineTo(h[0],h[1]);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=.9;ctx.fillStyle=UK.quake;ctx.beginPath();ctx.arc(h[0],h[1],2.2,0,Math.PI*2);ctx.fill();}
-  ctx.globalAlpha=e.near?.5:e.src==='bcsrc'?.32:.18;ctx.fillStyle=UK.quake;ctx.beginPath();ctx.arc(s[0],s[1],r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=e.near?1:.75;ctx.strokeStyle=UK.quake;ctx.lineWidth=e.near?1.8:1;ctx.stroke();ctx.globalAlpha=1;
+  ctx.globalAlpha=e.near?.5:located(e)?.32:.18;ctx.fillStyle=UK.quake;ctx.beginPath();ctx.arc(s[0],s[1],r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=e.near?1:.75;ctx.strokeStyle=UK.quake;ctx.lineWidth=e.near?1.8:1;ctx.stroke();ctx.globalAlpha=1;
   hits.push({x:s[0],y:s[1],q:e,r:Math.max(6,r)});}}
 overlay.querySelector('#ug-quakes').onclick=async e=>{showQuakes=!showQuakes;e.currentTarget.setAttribute('aria-pressed',String(showQuakes));qfButton.hidden=!showQuakes;if(!showQuakes)SQ.close();await quakesReady;if(data&&!data.quakes)attachQuakes();renderPanel()};
 // the quake filter (quake-filter.js) is shared with the map and the well charts: one setting, every view
@@ -94,13 +97,13 @@ function gammaBucket(v){return SG.bucket(v,gamma.scale,GAMMA_N)}
 // another scheme chosen, here or in another window: recolour everything that shows gamma
 addEventListener('stratum:gammapalette',()=>{GAMMA_RAMP=SG.stops();GAMMA_INK=SG.steps(GAMMA_N);if(gamma)attachGamma(gamma);if(data)renderPanel()});
 // light or dark (theme.js): the pads take that theme's colours; the scene redraws on its next frame
-addEventListener('stratum:theme',()=>{UK=UGK[isDark()?'dark':'light'];if(data)data.pads.forEach(p=>{p.color=padColor(p.ci)});if(data)renderPanel()});
+addEventListener('stratum:theme',()=>{UK=UGK[isDark()?'dark':'light'];if(data)data.pads.forEach(p=>{p.color=padColor(p.ci)});UGX.ver++;renderLegend();if(data)renderPanel()});
 // Each bin becomes one segment of the path between its two MD edges; segments are
 // grouped by colour once here so a frame strokes one path per colour, not per bin.
 function attachGamma(g){gamma=g;const bin=g.bin_m;if(data)data.pads.forEach(p=>p.wells.forEach(w=>{const x=g.wells[String(w.well.wa).padStart(5,'0')];if(!x)return;w.gmd0=x.md0;w.gbin=bin;w.gv=x.v;w.gruns=x.runs;w.gest=!!x.estimated;w.gfrom=x.from||[];w.gpts=x.v.concat([null]).map((_,i)=>pointAt(w,x.md0+i*bin));w.gby=GAMMA_INK.map(()=>[]);x.v.forEach((v,i)=>{if(v!=null)w.gby[gammaBucket(v)].push(i)})}));renderLegend();}
-function renderLegend(){const L=overlay.querySelector('.ug-legend');if(!gamma){L.hidden=true;return}const s=gamma.scale,all=data?data.pads.flatMap(p=>p.wells):[],n=all.filter(w=>w.gv&&!w.gest).length,est=all.filter(w=>w.gest).length,none=all.length-n-est,E=gamma.estimate;
- L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${SG.PALETTES[SG.current()].diverging?'median '+s.p50:Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone ug-gest"><i></i>Estimated from offset logs · ${est} wells</div><div class="ug-gnone"><i></i>No gamma · ${none} wells</div><div class="ug-gfoot">${n} measured (LAS logs from the BCER eLibrary)${est&&E?`; ${est} estimated: neighbours' gamma at the same subsea depth, smoothed to ${E.smoothed_m} m. Tested on ${E.tested} logged wells, an estimate's lateral level is off by ${E.level_mae} API on average`:''}. Scale spans the laterals (P2–P98).</div>`;L.querySelector('.ug-gbar').after(SG.picker());L.hidden=colorBy!=='gamma';}
-async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}colorBy=m;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));renderLegend();if(data)renderPanel();}
+function renderLegend(){const L=overlay.querySelector('.ug-legend');if(colorBy==='metric'||colorBy==='relation'||colorBy==='date'){modeLegend(L);return}if(!gamma){L.hidden=true;return}const s=gamma.scale,all=data?data.pads.flatMap(p=>p.wells):[],n=all.filter(w=>w.gv&&!w.gest).length,est=all.filter(w=>w.gest).length,none=all.length-n-est,E=gamma.estimate;
+ L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${SG.PALETTES[SG.current()].diverging?'median '+s.p50:Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone ug-gest"><i></i>Estimated from offset logs · ${est} wells</div><div class="ug-gnone"><i></i>No gamma · ${none} wells</div><div class="ug-gfoot">${n} measured (LAS logs from the BCER eLibrary)${est&&E?`; ${est} estimated: neighbours' gamma at the same subsea depth, smoothed to ${E.smoothed_m} m. Tested on ${E.tested} logged wells, an estimate's lateral level is off by ${E.level_mae} API on average`:''}. Scale spans the laterals (P2–P98).</div>`;L.querySelector('.ug-gbar').after(SG.picker());L.hidden=colorBy!=='gamma';placeLegend();}
+async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}if(m!=='pad'&&m!=='gamma'&&!FVM())m='pad';colorBy=m;UGX.ver++;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));if(m==='metric')ensureMetrics();if(m==='relation')ensureRels();renderLegend();if(data)renderPanel();}
 overlay.querySelectorAll('.ug-color button').forEach(b=>b.onclick=()=>setColor(b.dataset.color));
 function pointAt(w,md){const t=w.trajectory;let i=t.md.findIndex(m=>m>=md);if(i<0)i=t.md.length-1;if(i===0)return w.points[0];const a=w.points[i-1],b=w.points[i],v=(md-t.md[i-1])/(t.md[i]-t.md[i-1]||1);return a.map((x,k)=>x+(b[k]-x)*v);}
 function focusInterval(w,d){well=w;interval=d;goal.target=d.point.slice();goal.scale=Math.max(goal.scale,.45);camera.pan=[width>640?145:70,0];renderPanel();}
@@ -129,6 +132,7 @@ function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.fl
  const title=document.createElement('div');title.textContent=well.well.name;content.append(title);
  if(window.stratumSection){const vw=document.createElement('button');vw.type='button';vw.className='ug-viewwell';vw.textContent='View well';vw.title='The whole well in 2D, below; pop it out to keep it beside this view';vw.onclick=()=>window.stratumSection.view(well.well.wa,stage?stage.label:null);content.append(vw);window.stratumSection.follow(well.well.wa,stage?stage.label:null)}
  const W_=well.well,facts=[W_.operator,W_.formation,W_.year,W_.cum_gas_e3m3!=null?fmt(W_.cum_gas_e3m3)+' e³m³ gas to date':null,W_.refracs?W_.refracs+' later completion'+(W_.refracs>1?'s':'')+' on file':null].filter(Boolean);if(facts.length){const f=document.createElement('div');f.className='ug-facts';f.textContent=facts.join(' · ');content.append(f)}
+ const rl=UGX.rel&&UGX.rel.get(String(+W_.wa));if(rl){const f=document.createElement('div');f.className='ug-facts';f.textContent='Spacing: '+relWords(rl)+(rl.parents&&rl.depletionDays!=null?` · its parent${rl.parents>1?'s':''} had produced up to ${fmt(rl.depletionDays)} days`:'');content.append(f)}
  if(colorBy==='gamma')gammaPanel(well);
  gmmrPanel(pad);
  const depthSelect=document.createElement('select');depthSelect.setAttribute('aria-label','Measured depth interval');const empty=document.createElement('option');empty.value='';empty.textContent='Measured intervals · select to focus';depthSelect.append(empty);well.depth_intervals.forEach(d=>{const o=document.createElement('option');o.value=d.n;o.textContent='Depth order '+d.n+' · '+fmt(d.top_m,1)+'–'+fmt(d.base_m,1)+' m';depthSelect.append(o)});depthSelect.value=interval?.n||'';depthSelect.onchange=()=>{const d=well.depth_intervals.find(d=>String(d.n)===depthSelect.value);if(d)focusInterval(well,d)};content.append(depthSelect);if(interval){const x=document.createElement('div');x.textContent='Selected interval: '+fmt(interval.top_m,1)+'–'+fmt(interval.base_m,1)+' m MD. Depth-order ID '+interval.n+'.';content.append(x)}
@@ -139,8 +143,8 @@ function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.fl
 }
 // The selected well's gamma as a log strip along MD: bar height and colour are both
 // the reading, so the strip reads without the legend. Hover it for a value.
-function quakeSummary(){const q=data.quakes.filter(e=>SQ.pass(e)),n=q.length,rel=q.filter(e=>e.src==='bcsrc').length,near=q.filter(e=>e.near).length,big=n?Math.max(...q.map(e=>e.mag||0)):0,c=quakes.control;
- return `<p class="ug-quake"><b>${n} earthquakes</b> here since 2013${n?`, largest M${big}; ${rel} relocated by the BC Seismic Research Consortium (May 2022–Apr 2024, located to a few hundred metres), the rest from Earthquakes Canada (km-scale)`:''}. <b>${near}</b> coincide with a frac stage on a nearby well${c&&c.share_beyond_chance!=null?`; across the region about ${Math.round(c.share_beyond_chance*100)}% of such coincidences are more than chance (matching the same events with dates shifted by weeks finds ${c.by_chance} of ${c.matched})`:''}. A coincidence names the stage that was pumping, not a proven cause. Ring size is magnitude; a dashed line drops to the solved depth.${SQ.active()?` <b>Filtered:</b> ${SQ.describe()} (${n} of ${data.quakes.length} here).`:''}</p>`}
+function quakeSummary(){const q=data.quakes.filter(e=>SQ.pass(e)),n=q.length,rel=q.filter(e=>e.src==='bcsrc').length,bcer=q.filter(e=>e.src==='bcer').length,near=q.filter(e=>e.near).length,big=n?Math.max(...q.map(e=>e.mag||0)):0,c=quakes.control;
+ return `<p class="ug-quake"><b>${n} earthquakes</b> here since 2013${n?`, largest M${big}; ${rel} relocated by the BC Seismic Research Consortium (May 2022–Apr 2024, located to a few hundred metres), ${bcer} from the BC Energy Regulator’s catalogue (suspected induced, M1.5 and up, located on regional velocity models), the rest from Earthquakes Canada (km-scale)`:''}. <b>${near}</b> coincide with a frac stage on a nearby well${c&&c.share_beyond_chance!=null?`; across the region about ${Math.round(c.share_beyond_chance*100)}% of such coincidences are more than chance (matching the same events with dates shifted by weeks finds ${c.by_chance} of ${c.matched})`:''}. A coincidence names the stage that was pumping, not a proven cause. Ring size is magnitude; a dashed line drops to the solved depth.${SQ.active()?` <b>Filtered:</b> ${SQ.describe()} (${n} of ${data.quakes.length} here).`:''}</p>`}
 // The pad's ground-motion monitoring reports, once each: wells on a pad file
 // copies of the same report, so they are grouped by content.
 function gmmrPanel(p){if(!gmmr)return;const reps={};p.wells.forEach(w=>{const r=gmmr[String(w.well.wa).padStart(5,'0')];if(r&&!reps[r.pad_report])reps[r.pad_report]=r});const list=Object.values(reps);if(!list.length)return;
@@ -178,13 +182,17 @@ function draw(){if(!active)return;raf=requestAnimationFrame(draw);keyNav();camer
  const GR=data.gridR||6000,GD=data.gridD||3000,GS=GR>12000?2000:1000;for(let d=0;d<=GD;d+=1000){for(let a=-GR;a<=GR;a+=GS){path([[a,-d,-GR],[a,-d,GR]],UK.grid,.6,UK.gridA[d===0?0:1]);path([[-GR,-d,a],[GR,-d,a]],UK.grid,.6,UK.gridA[d===0?0:1])}const t=project([-GR*.6,-d,0]);ctx.fillStyle=UK.depth;ctx.font='11px monospace';ctx.fillText(d+' m TVD',t[0],t[1]);}
  if(showQuakes&&data.quakes)drawQuakes();
  const wells=data.pads.flatMap(p=>p.wells).sort((a,b)=>project(a.points.at(-1))[2]-project(b.points.at(-1))[2]);
- // In gamma mode colour means gamma only: pads, toes and intervals go neutral.
- const g=colorBy==='gamma',ink=c=>g?UK.neutral:c;
+ // In gamma mode colour means gamma only, as it does the stage, parent/child and date colours: pads, toes and intervals go neutral.
+ const g=colorBy==='gamma',ink=c=>colorBy!=='pad'?UK.neutral:c;
  // the well under the pointer is picked out: an outline of ink, and thicker
  const hw=hover&&hover.w&&!hover.q?hover.w:null;
- wells.forEach(w=>{const selected=w===well,bright=!pad||w.pad===pad,hov=w===hw&&bright;if(hov)path(w.points,UK.hl,(selected?3.5:3)+4,.85);if(g)gammaWell(w,selected||hov,bright);else path(w.points,w.pad.color,selected?3.5:hov?3:bright?1.7:1,bright?(hov?1:.88):.25);
+ wells.forEach(w=>{const selected=w===well,bright=!pad||w.pad===pad,hov=w===hw&&bright;
+  // not fracked yet on the "as of" date: a faint dashed trace with nothing to hover
+  if(ghost(w)){ctx.setLineDash([2,5]);path(w.points,UK.none,1,bright?.3:.1);ctx.setLineDash([]);return}
+  if(hov)path(w.points,UK.hl,(selected?3.5:3)+4,.85);if(g)gammaWell(w,selected||hov,bright);else if(colorBy==='metric')metricWell(w,selected||hov,bright);else path(w.points,colorBy==='pad'?w.pad.color:wellInk(w),selected?3.5:hov?3:bright?1.7:1,bright?(hov?1:.88):.25);
   // hover targets along the path, so a well can be caught anywhere, not only at its toe
-  if(bright)for(let i=2;i<w.points.length-1;i+=3){const a=project(w.points[i]);hits.push({x:a[0],y:a[1],w,p:w.pad,r:6,path:true})}const q=project(w.points.at(-1)),lit=rackHover===w.pad;ctx.beginPath();ctx.arc(q[0],q[1],selected?4:lit?5:2,0,Math.PI*2);ctx.fillStyle=lit?UK.lit:ink(w.pad.color);ctx.globalAlpha=bright?1:.18;ctx.fill();ctx.globalAlpha=1;if(bright)hits.push({x:q[0],y:q[1],w,p:w.pad,r:8});w.depth_intervals.forEach(d=>{const a=project(d.point),on=interval===d||hover?.d===d,s=on?4:g?1.2:1.7;ctx.globalAlpha=bright?(g&&!on?.55:1):.22;ctx.fillStyle=on?UK.on:ink(w.pad.color);ctx.fillRect(a[0]-s,a[1]-s,s*2,s*2);ctx.globalAlpha=1;if(bright)hits.push({x:a[0],y:a[1],w,p:w.pad,d,r:5})});});
+  if(bright)for(let i=2;i<w.points.length-1;i+=3){const a=project(w.points[i]);hits.push({x:a[0],y:a[1],w,p:w.pad,r:6,path:true})}if(bright&&colorBy==='metric')metricHits(w);const q=project(w.points.at(-1)),lit=rackHover===w.pad;ctx.beginPath();ctx.arc(q[0],q[1],selected?4:lit?5:2,0,Math.PI*2);ctx.fillStyle=lit?UK.lit:ink(w.pad.color);ctx.globalAlpha=bright?1:.18;ctx.fill();ctx.globalAlpha=1;if(bright)hits.push({x:q[0],y:q[1],w,p:w.pad,r:8});// the stage, parent/child and date colours are the message: interval marks only where one is focused
+  w.depth_intervals.forEach(d=>{if(colorBy!=='pad'&&colorBy!=='gamma'&&interval!==d)return;const a=project(d.point),on=interval===d||hover?.d===d,s=on?4:colorBy!=='pad'?1.2:1.7;ctx.globalAlpha=bright?(colorBy!=='pad'&&!on?.55:1):.22;ctx.fillStyle=on?UK.on:ink(w.pad.color);ctx.fillRect(a[0]-s,a[1]-s,s*2,s*2);ctx.globalAlpha=1;if(bright)hits.push({x:a[0],y:a[1],w,p:w.pad,d,r:5})});});
  const labels=[];data.pads.forEach(p=>{const q=project(p.point),selectable=!pad||p===pad,pc=ink(p.color);ctx.globalAlpha=selectable?1:.18;const on=p===pad||hover?.p===p;ctx.beginPath();ctx.arc(q[0],q[1],on?12:9,0,Math.PI*2);ctx.fillStyle=on?UK.padOn:pc;ctx.shadowColor=pc;ctx.shadowBlur=UK.glow?(on?20:8):(on?10:0);ctx.fill();ctx.shadowBlur=0;ctx.strokeStyle=UK.padRing;ctx.lineWidth=UK.glow?1:1.5;ctx.stroke();ctx.fillStyle=on?UK.padOn:pc;ctx.font=(on?'600 ':'')+'12px system-ui';let ly=q[1];while(labels.some(l=>Math.abs(l.x-q[0])<115&&Math.abs(l.y-ly)<20))ly+=22;labels.push({x:q[0],y:ly});if(ly!==q[1]){ctx.beginPath();ctx.moveTo(q[0]+7,q[1]);ctx.lineTo(q[0]+14,ly);ctx.strokeStyle=pc;ctx.stroke();}ctx.fillText(p.name,q[0]+14,ly+4);if(selectable){hits.push({x:q[0],y:q[1],p,r:18});hits.push({x:q[0]+55,y:ly,p,r:14,label:true});}ctx.globalAlpha=1;});
  placeRackButtons();
 }
@@ -196,19 +204,110 @@ function gammaWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,UK.no
  w.gby.forEach((ix,k)=>{if(!ix.length)return;ctx.beginPath();ix.forEach(i=>{ctx.moveTo(P[i][0],P[i][1]);ctx.lineTo(P[i+1][0],P[i+1][1])});ctx.strokeStyle=GAMMA_INK[k];ctx.stroke()});
  ctx.setLineDash([]);ctx.globalAlpha=1;ctx.lineCap='butt';
  if(bright)for(let i=1;i<w.gv.length;i+=3)if(w.gv[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
-function resize(){width=overlay.clientWidth;height=canvas.clientHeight;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=height*d;ctx.setTransform(d,0,0,d,0,0)}
+// ---------- Colour by stage metric, parent/child or frac date; "as of" a date ----------
+// metrics.js (FVMetrics) works out the measures and the labels. Colours are cached on
+// each well with UGX.ver: a new measure, theme, area or spacing limits bump it and a well
+// rebuilds its colours on its next frame, not every frame.
+const UGX={metric:'avgP',asOf:null,rows:new Map(),rel:null,dom:null,dateDom:null,span:null,loading:false,ver:0,play:0};
+const FVM=()=>(typeof window!=='undefined'&&window.FVMetrics)||null;
+const dayOf=s=>{const m=/^(\d{4})-?(\d{2})-?(\d{2})/.exec(String(s||''));return m?Date.UTC(+m[1],m[2]-1,+m[3])/864e5:null};
+const dayStr=d=>d==null?'':new Date(Math.round(d)*864e5).toISOString().slice(0,10);
+// a well's frac start: its first filed stage date, in days
+function fracDay(w){if(w.fracDay===undefined){const d=(w.stages||[]).map(s=>dayOf(s.date)).filter(v=>v!=null);w.fracDay=d.length?Math.min(...d):null}return w.fracDay}
+// not fracked yet on the "as of" date; a well with no dates on file always shows
+const ghost=w=>UGX.asOf!=null&&fracDay(w)!=null&&fracDay(w)>UGX.asOf;
+const wa5=w=>String(w.well.wa).padStart(5,'0');
+// each stage owns the hole halfway to its neighbours, as on the well section; where the filed
+// stages carry no depths (the Gundy pads) the filed stage depths stand in by number, as there
+function stageZones(w){if(w.zones)return w.zones;let src=(w.stages||[]).filter(s=>s.top_m!=null).map(s=>({label:String(s.label),top:s.top_m,base:s.base_m}));
+ if(!src.length)src=(w.depth_intervals||[]).filter(d=>d.top_m!=null).map(d=>({label:String(d.n),top:d.top_m,base:d.base_m}));
+ const st=src.map(s=>({label:s.label,mid:(s.top+(s.base??s.top))/2})).sort((a,b)=>a.mid-b.mid);
+ return w.zones=st.map((z,i)=>({label:z.label,mid:z.mid,z0:i?(st[i-1].mid+z.mid)/2:z.mid-((st[1]?.mid??z.mid+60)-z.mid)/2,z1:i<st.length-1?(z.mid+st[i+1].mid)/2:z.mid+(z.mid-(st[i-1]?.mid??z.mid-60))/2}))}
+function metricVal(w,label){const M=FVM(),r=UGX.rows.get(wa5(w)),row=r&&r.get(label);return M&&row?M.value(row,UGX.metric):null}
+// the lateral in stage pieces, grouped by colour so a frame strokes one path per colour
+function metricSegs(w){if(w.mseg&&w.mseg.ver===UGX.ver)return w.mseg;const M=FVM(),t=w.trajectory.md,by=new Map(),marks=[];
+ stageZones(w).forEach(z=>{const v=metricVal(w,z.label),col=M?M.colour(v,UGX.dom,UGX.metric):UK.none,seg=[pointAt(w,z.z0)];t.forEach((m,i)=>{if(m>z.z0&&m<z.z1&&w.points[i])seg.push(w.points[i])});seg.push(pointAt(w,z.z1));
+  if(!by.has(col))by.set(col,[]);by.get(col).push(seg);marks.push({z,v,p:pointAt(w,z.mid)})});
+ return w.mseg={ver:UGX.ver,by,marks}}
+// outside every stage the path stays the neutral colour, under the stage pieces
+function metricWell(w,selected,bright){path(w.points,UK.none,selected?1.8:1.1,bright?.75:.2);const S=metricSegs(w);ctx.lineWidth=selected?4.5:bright?2.6:1.2;ctx.globalAlpha=bright?.96:.22;
+ S.by.forEach((segs,col)=>{ctx.beginPath();segs.forEach(seg=>seg.forEach((q,i)=>{const a=project(q);i?ctx.lineTo(a[0],a[1]):ctx.moveTo(a[0],a[1])}));ctx.strokeStyle=col;ctx.stroke()});ctx.globalAlpha=1}
+// each stage's hover target, after the well's own so a stage wins where both are under the pointer
+function metricHits(w){metricSegs(w).marks.forEach(m=>{const a=project(m.p);hits.push({x:a[0],y:a[1],w,p:w.pad,m,r:5})})}
+// a whole well's colour: its parent/child label, or when it was fracked
+function wellInk(w){if(w.ink&&w.ink.ver===UGX.ver)return w.ink.c;const M=FVM();let c=UK.none;
+ if(M&&colorBy==='relation'){const r=UGX.rel&&UGX.rel.get(String(+w.well.wa));if(r)c=M.relColour(r.relation)}
+ else if(M&&colorBy==='date'&&fracDay(w)!=null&&UGX.dateDom)c=M.colour(fracDay(w),UGX.dateDom);
+ w.ink={ver:UGX.ver,c};return c}
+function resize(){width=overlay.clientWidth;height=canvas.clientHeight;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=height*d;ctx.setTransform(d,0,0,d,0,0);placeLegend()}
+// The stage rows for every well in the area, by stage label (metrics.js caches each pad's file);
+// the range spans every stage drawn here
+function ensureMetrics(){const M=FVM();if(!M||!data)return;const ds=data;UGX.loading=true;
+ Promise.all(ds.pads.flatMap(p=>p.wells.map(async w=>{if(!UGX.rows.has(wa5(w)))UGX.rows.set(wa5(w),new Map((await M.rows(p.id,w.well.wa)).map(r=>[String(r.label),r])))}))).catch(e=>console.warn('stage metrics',e))
+  .then(()=>{UGX.loading=false;if(data===ds){metricDomain();renderLegend()}})}
+function metricDomain(){const M=FVM();if(!M||!data)return;const vals=[];data.pads.forEach(p=>p.wells.forEach(w=>{const r=UGX.rows.get(wa5(w));if(r)r.forEach(row=>vals.push(M.value(row,UGX.metric)))}));UGX.dom=M.domain(vals,UGX.metric);UGX.ver++}
+function dateDomain(){const d=data?data.pads.flatMap(p=>p.wells.map(fracDay)).filter(v=>v!=null):[];UGX.span=d.length?[Math.min(...d),Math.max(...d)]:null;UGX.dateDom=UGX.span&&[UGX.span[0],Math.max(UGX.span[1],UGX.span[0]+1)];UGX.ver++}
+function ensureRels(){const M=FVM();if(!M)return;M.relations().then(m=>{UGX.rel=m;UGX.ver++;renderLegend();if(data&&pad)renderPanel()}).catch(e=>console.warn('spacing labels',e))}
+// the limits changed in Settings, here or in another window: relabel
+addEventListener('stratum:spacing',()=>{if(UGX.rel||colorBy==='relation')ensureRels()});
+// metrics.js missing (it loads with the page): the three colours stand down
+regionReady.then(()=>{if(!FVM())overlay.querySelectorAll('.ug-color [data-color=metric],.ug-color [data-color=relation],.ug-color [data-color=date]').forEach(b=>{b.disabled=true;b.title='Stage metrics unavailable'})}).catch(()=>{});
+const relWords=r=>{const M=FVM(),L=M&&r&&M.REL[r.relation];return L?`${L.t}${M.BOUNDED[r.bounded]?' · '+M.BOUNDED[r.bounded].toLowerCase():''}`:''};
+const stageTip=h=>{const M=FVM();return 'WA '+h.w.well.wa+' · stage '+h.m.z.label+(M?' · '+M.BY[UGX.metric].t+(h.m.v==null?': no value':' '+M.fmt(h.m.v,UGX.metric)):'')};
+const wellTip=w=>colorBy==='relation'?(UGX.rel&&UGX.rel.get(String(+w.well.wa))?' · '+relWords(UGX.rel.get(String(+w.well.wa))):''):colorBy==='date'?(fracDay(w)!=null?' · fracked '+dayStr(fracDay(w)):' · no frac dates on file'):'';
+function modeLegend(L){const M=FVM();if(!M){L.hidden=true;return}
+ if(colorBy==='metric'){L.innerHTML=`<div class="ug-glabel">Stages coloured by</div><select class="ug-metric" aria-label="Stage metric">${M.METRICS.map(m=>`<option value="${m.k}">${m.t}${m.u?' ('+m.u+')':''}</option>`).join('')}</select><div class="ug-mkey">${UGX.loading?'Loading the stage metrics…':UGX.dom?M.legend(UGX.metric,UGX.dom):'No values for these wells'}</div><div class="ug-gfoot">Each stage owns the lateral halfway to its neighbours. Worked out from the treatment curves where the Lab has read them, else as filed; grey where neither has it. The range spans these wells’ stages (P5–P95).</div>`;
+  const sel=L.querySelector('select');sel.value=UGX.metric;sel.onchange=()=>{UGX.metric=sel.value;metricDomain();renderLegend()}}
+ else if(colorBy==='relation'){const l=M.limits();L.innerHTML=`<div class="ug-glabel">Wells coloured by parent/child</div>${Object.entries(M.REL).map(([k,x])=>`<div class="ug-rel"><b style="background:${M.relColour(k)}">${x.s}</b><span><span class="ug-relt">${x.t}</span> · ${x.d}</span></div>`).join('')}<button type="button" class="ug-limits" title="Change the limits in Settings">Spacing limits: ${fmt(l.across)} m across · ${fmt(l.vertical)} m vertical · ${fmt(l.siblingDays)} days</button>${UGX.rel?'':'<div class="ug-gfoot">Loading the offsets…</div>'}`;
+  L.querySelector('.ug-limits').onclick=()=>{if(window.StratumMenu)StratumMenu.open('settings')}}
+ else{const sp=UGX.span,stops=Array.from({length:7},(_,i)=>M.colour(i/6,[0,1]));L.innerHTML=`<div class="ug-glabel">Wells coloured by frac date</div><div class="ug-gbar" style="background:linear-gradient(90deg,${stops.join(',')})"></div><div class="ug-gticks"><span>${sp?dayStr(sp[0]):''}</span><span>${sp?dayStr(sp[1]):''}</span></div><div class="ug-gticks ug-gends"><span>oldest</span><span>newest</span></div><div class="ug-gnone ug-nodate"><i style="background:${UK.none}"></i>No stage dates on file</div><div class="ug-gfoot">The date of each well’s first filed stage.</div>`}
+ L.hidden=false;placeLegend()}
+// the key sits under the tools, which wrap onto a second row in a narrow window (on a phone it sits at the foot)
+function placeLegend(){const L=overlay.querySelector('.ug-legend'),t=overlay.querySelector('.ug-tools');if(!L||L.hidden)return;if(innerWidth<=640){L.style.top='';return}
+ const z=parseFloat(getComputedStyle(L).zoom)||1;L.style.top=Math.max(76,t.getBoundingClientRect().bottom-overlay.getBoundingClientRect().top+10)/z+'px'}
+// "As of" a date: laterals fracked after it ghost, earthquakes after it hide; the right end is every well
+const asof=document.createElement('div');asof.className='ug-asof';
+asof.innerHTML=`<div class="ug-asof-row"><label for="ug-asof">As of</label><button type="button" class="ug-asof-play" aria-label="Play the fracs through time">▶</button><input type="range" id="ug-asof" step="1" title="Laterals fracked after this date are ghosted and earthquakes after it hidden"></div><div class="ug-asof-when" aria-live="polite"></div>`;
+padMenu.after(asof);
+const asofInput=asof.querySelector('input'),asofPlay=asof.querySelector('button');
+function asofRange(){dateDomain();const sp=UGX.span;asofInput.disabled=asofPlay.disabled=!sp||sp[1]<=sp[0];if(sp){asofInput.min=sp[0];asofInput.max=sp[1]}if(UGX.asOf!=null&&(!sp||UGX.asOf>=sp[1]||UGX.asOf<sp[0]))UGX.asOf=null;asofLabel()}
+function asofLabel(){const sp=UGX.span,all=data?data.pads.flatMap(p=>p.wells):[];asofInput.value=UGX.asOf??(sp?sp[1]:0);asofInput.setAttribute('aria-valuetext',UGX.asOf==null?'All wells':dayStr(UGX.asOf));
+ asof.querySelector('.ug-asof-when').textContent=!sp?'No frac dates on file':UGX.asOf==null?`All wells · fracked ${dayStr(sp[0])}${sp[1]>sp[0]?' to '+dayStr(sp[1]):''}`:`${dayStr(UGX.asOf)} · ${all.filter(w=>!ghost(w)).length} of ${all.length} wells fracked`}
+function setAsOf(d){const sp=UGX.span;UGX.asOf=d==null||!sp||d>=sp[1]?null:Math.max(sp[0],Math.floor(d));if(hover&&hover.w&&ghost(hover.w)){hover=null;tip.style.display='none'}asofLabel()}
+function stopAsOf(){cancelAnimationFrame(UGX.play);UGX.play=0;asofPlay.textContent='▶';asofPlay.setAttribute('aria-label','Play the fracs through time')}
+asofInput.oninput=()=>{stopAsOf();setAsOf(+asofInput.value)};
+// about twelve seconds from the area's first frac to its last, a day at a time at least
+asofPlay.onclick=()=>{if(UGX.play){stopAsOf();return}const sp=UGX.span;if(!sp||sp[1]<=sp[0])return;let t=UGX.asOf??sp[0],last=performance.now();asofPlay.textContent='❚❚';asofPlay.setAttribute('aria-label','Pause');setAsOf(t);
+ const step=now=>{const dt=Math.min(.1,(now-last)/1000);last=now;t+=Math.max(1,(sp[1]-sp[0])/12)*dt;setAsOf(t);if(t>=sp[1]){stopAsOf();return}UGX.play=requestAnimationFrame(step)};UGX.play=requestAnimationFrame(step)};
+// ---------- PNG ----------
+// The scene as drawn, on the backdrop the page paints behind it (CSS, so not on the canvas),
+// with its title and key, since the panels over it are not part of the picture
+function modeKey(c,x,y){const M=FVM();c.font='12px system-ui,sans-serif';c.textBaseline='middle';
+ const bar=(stops,a,b,label)=>{c.fillStyle=UK.mut;c.fillText(label,x,y);let px=x+c.measureText(label).width+10;c.fillText(a,px,y);px+=c.measureText(a).width+6;const gr=c.createLinearGradient(px,0,px+110,0);stops.forEach((s,i)=>gr.addColorStop(i/(stops.length-1),s));c.fillStyle=gr;c.fillRect(px,y-4,110,8);c.fillStyle=UK.mut;c.fillText(b,px+116,y)};
+ if(colorBy==='gamma'&&gamma)bar(GAMMA_RAMP,'≤'+gamma.scale.lo,'≥'+gamma.scale.hi+' API','Gamma ray');
+ else if(colorBy==='metric'&&M&&UGX.dom)bar(Array.from({length:7},(_,i)=>M.colour(UGX.dom[0]+i/6*(UGX.dom[1]-UGX.dom[0]),UGX.dom,UGX.metric)),M.fmt(UGX.dom[0],UGX.metric),M.fmt(UGX.dom[1],UGX.metric),'Stages: '+M.BY[UGX.metric].t);
+ else if(colorBy==='date'&&M&&UGX.span)bar(Array.from({length:7},(_,i)=>M.colour(i/6,[0,1])),dayStr(UGX.span[0]),dayStr(UGX.span[1]),'Frac date');
+ else if(colorBy==='relation'&&M){let px=x;Object.entries(M.REL).forEach(([k,r])=>{c.fillStyle=M.relColour(k);c.beginPath();c.arc(px+5,y,5,0,Math.PI*2);c.fill();c.fillStyle=UK.mut;c.fillText(r.t,px+14,y);px+=c.measureText(r.t).width+30})}
+ c.textBaseline='alphabetic'}
+function ugPng(){if(!active||!canvas.width)return Promise.resolve(null);const out=document.createElement('canvas'),W=out.width=canvas.width,H=out.height=canvas.height,c=out.getContext('2d'),dk=isDark(),k=devicePixelRatio||1;
+ const bg=c.createRadialGradient(W*.6,H*.4,0,W*.6,H*.4,Math.hypot(W*.6,H*.6));bg.addColorStop(0,dk?'#122b36':'#ffffff');bg.addColorStop(.75,dk?'#080f18':'#e6edf1');bg.addColorStop(1,dk?'#080f18':'#e6edf1');
+ c.fillStyle=bg;c.fillRect(0,0,W,H);c.drawImage(canvas,0,0);c.setTransform(k,0,0,k,0,0);
+ c.fillStyle=UK.hl;c.font='600 18px system-ui,sans-serif';c.fillText((pad?pad.name:areaTitle.replace(/ · Below the surface$/,''))+' · below the surface',20,32);
+ c.fillStyle=UK.mut;c.font='12px system-ui,sans-serif';c.fillText(`${UGX.asOf==null?'All wells':'As of '+dayStr(UGX.asOf)} · surveyed well paths, metres TVD · FracView`,20,52);modeKey(c,20,72);
+ return new Promise(res=>out.toBlob(res,'image/png'))}
+overlay.querySelector('#ug-png').onclick=async e=>{const b=e.currentTarget;b.disabled=true;try{const blob=await ugPng();if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='FracView-3D.png';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}finally{b.disabled=false}};
 async function openArea(ids,opts={}){button.disabled=true;button.textContent='Loading…';if(window.stratumSection)window.stratumSection.closeMapDock();
  try{await loadArea(ids);if(opts.title){areaTitle=opts.title+' · Below the surface';overlay.querySelector('.ug-title').textContent=areaTitle}areaName=opts.title||'';active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();selectPad('');camera.scale=goal.scale*.75;cancelAnimationFrame(raf);draw();
   if(opts.pad)selectPad(opts.pad);else overlay.querySelector('#ug-all').focus();button.textContent='Change View'}
  catch(e){button.textContent='Retry Change View';console.error(e)}finally{button.disabled=false}}
 button.onclick=()=>openArea(areaIds());
 // for the map: open 3D on the pads around one pad, locked to it
-window.stratum3D={section,open:padId=>openArea(idsAround(padId),{pad:padId}),openArea:(ids,opts={})=>openArea(ids,opts),ready:regionReady};
+window.stratum3D={section,open:padId=>openArea(idsAround(padId),{pad:padId}),openArea:(ids,opts={})=>openArea(ids,opts),ready:regionReady,png:()=>ugPng()};
 function close(){active=false;cancelAnimationFrame(raf);overlay.classList.remove('active');overlay.setAttribute('aria-hidden','true');overlay.inert=true;positionButton();button.focus()}
 overlay.querySelector('#ug-back').onclick=close;overlay.querySelector('#ug-all').onclick=()=>selectPad('');overlay.querySelector('#ug-reset').onclick=()=>{camera.yaw=-.5;camera.pitch=.4;fit(pad)};padMenu.onchange=()=>selectPad(padMenu.value);
 window.addEventListener('resize',()=>{resize();if(active)fit(pad)});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(pad)returnToCluster();else close()}});
 canvas.oncontextmenu=e=>e.preventDefault();canvas.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,pan:e.shiftKey||e.button===2};canvas.setPointerCapture(e.pointerId);tip.style.display='none'};
-canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.q?`M${hover.q.mag} ${hover.q.type} · ${hover.q.date} · ${hover.q.src==='bcsrc'?'relocated (BC Seismic Research Consortium), ±'+(hover.q.herr??'?')+' m across, ±'+(hover.q.derr??'?')+' m deep':'Earthquakes Canada'+(hover.q.fixed?', depth not solved':'')}${hover.q.industry?' · suspected industry-related':''}${hover.q.near?' · '+hover.q.near:''}`:hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+(hover.w.gest?'~':'')+hover.w.gv[hover.g]+' API'+(hover.w.gest?' (estimated from WA '+hover.w.gfrom.map(f=>f.wa).join(', ')+')':''):hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries':hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
+canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.q?`M${hover.q.mag} ${hover.q.type} · ${hover.q.date} · ${hover.q.src==='bcsrc'?'relocated (BC Seismic Research Consortium), ±'+(hover.q.herr??'?')+' m across, ±'+(hover.q.derr??'?')+' m deep':hover.q.src==='bcer'?'BC Energy Regulator catalogue, ±'+fmt(hover.q.maj??hover.q.herr)+' × '+fmt(hover.q.min)+' m (az '+fmt(hover.q.az)+'°), ±'+fmt(hover.q.derr)+' m deep':'Earthquakes Canada'+(hover.q.fixed?', depth not solved':'')}${hover.q.industry?' · suspected industry-related':''}${hover.q.near?' · '+hover.q.near:''}`:hover.m?stageTip(hover):hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+(hover.w.gest?'~':'')+hover.w.gv[hover.g]+' API'+(hover.w.gest?' (estimated from WA '+hover.w.gfrom.map(f=>f.wa).join(', ')+')':''):hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries'+wellTip(hover.w):hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
 canvas.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)<5){const hit=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);if(hit&&!hit.q&&(!pad||hit.p===pad)){if(!pad)selectPad(hit.p.id);if(hit.w){well=hit.w;if(hit.d)focusInterval(well,hit.d);else renderPanel();viewPicked()}}}drag=null};canvas.onpointercancel=()=>drag=null;canvas.onpointerleave=()=>{hover=null;tip.style.display='none'};
 canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,Math.min(2,goal.scale*Math.exp(-e.deltaY*.0015)))},{passive:false});
 // ---------- the keyboard ----------
@@ -262,7 +361,7 @@ function ugSave(){if(!active)return;try{sessionStorage.setItem(UG_KEY,JSON.strin
 function ugState(){return({
  yaw:camera.yaw,pitch:camera.pitch,scale:camera.scale,target:camera.target.slice(),pan:camera.pan.slice(),
  pad:pad?pad.id:'',wa:well&&well.well?well.well.wa:'',entryCamera,
- stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,area:data?data.pads.map(p=>p.id):null,areaName,
+ stage:stage?stage.label:null,interval:interval?interval.n:null,colorBy,metric:UGX.metric,asOf:UGX.asOf,area:data?data.pads.map(p=>p.id):null,areaName,
  panelScroll:overlay.querySelector('.ug-panel').scrollTop,section:sectionOn,label:pad?pad.name:areaTitle.replace(/ · Below the surface$/,''),
  surface:{center:map.getCenter().toArray(),zoom:map.getZoom(),bearing:map.getBearing(),pitch:map.getPitch()}})}
 function ugClear(){try{sessionStorage.removeItem(UG_KEY)}catch(e){}}
@@ -275,7 +374,9 @@ if(typeof window!=='undefined'&&window.StratumSession)StratumSession.provide(()=
  try{if(!s.area)return;await loadArea(s.area)}catch(e){return}
  if(s.areaName){areaName=s.areaName;areaTitle=areaName+' · Below the surface';overlay.querySelector('.ug-title').textContent=areaTitle}
  active=true;overlay.inert=false;overlay.classList.add('active');overlay.setAttribute('aria-hidden','false');resize();
- if(s.colorBy==='gamma')await setColor('gamma');
+ if(s.metric)UGX.metric=s.metric;
+ if(s.colorBy&&s.colorBy!=='pad')await setColor(s.colorBy);
+ if(s.asOf!=null)setAsOf(s.asOf);
  selectPad(s.pad||'');
  if(s.wa&&pad){const w=pad.wells.find(x=>x.well&&x.well.wa===s.wa);if(w){well=w;stage=w.stages.find(x=>x.label===s.stage)||null;interval=w.depth_intervals.find(x=>x.n===s.interval)||null;renderPanel()}}
  if(s.section&&pad&&well&&window.stratumSection)window.stratumSection.view(well.well.wa,stage?stage.label:null);

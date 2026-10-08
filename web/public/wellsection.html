@@ -26,7 +26,10 @@
       </div>
       <select id="ws-palette" aria-label="Gamma colours" hidden></select>
       <button type="button" id="ws-curves" aria-pressed="true" title="Each stage's pressure and rate, above the well">Curves</button>
+      <select id="ws-metric" aria-label="Colour stages by" title="Colour each stage by a number from its treatment curves (or its filing)" hidden></select>
       <button type="button" id="ws-charts">Charts →</button>
+      <button type="button" id="ws-report" title="This well's stage report: every stage's numbers, flags and curves, printable">Stage report ↗</button>
+      <button type="button" id="ws-png" title="Save this section as a PNG picture" aria-label="Save the section as a PNG picture">PNG</button>
       <button type="button" id="ws-pop" hidden title="Open in its own window, to keep beside the map or the charts">Pop out ↗</button>
       <button type="button" id="ws-dock" hidden title="Put the section back under the map">↙ Dock</button>
       <span class="ws-theme" data-theme-toggle></span>
@@ -47,10 +50,12 @@
   <canvas></canvas>
   <div class="ws-card-l"></div>
   <div class="ws-card-p"></div>
+  <div class="ws-card-m"></div>
   <div class="ws-card-r"></div>
   <div class="ws-card-f"></div>
 </div>
 <script src="gamma-palettes.js"></script>
+<script src="metrics.js"></script>
 <script src="wellsection.js"></script>
 </body>
 </html>

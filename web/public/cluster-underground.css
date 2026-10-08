@@ -24,6 +24,23 @@
 #rack-blocked a{color:#0d7a6d;font-weight:600}#rack-blocked button{background:none;border:0;color:inherit;font-size:16px;cursor:pointer;padding:0 2px}
 [data-theme=dark] #rack-blocked{background:#102733;color:#e7f4fa;border-color:#5ccbb7;box-shadow:0 10px 26px #000a}[data-theme=dark] #rack-blocked a{color:#5ee2d0}
 
+/* colour by stage metric, parent/child or frac date: the key is the legend box, with its own select */
+.ug-legend select,.ug-legend button{pointer-events:auto}
+#underground .ug-legend select.ug-metric{width:100%;margin:0 0 8px;padding:6px 8px;font-size:12px}
+.ug-mkey{margin:2px 0 4px;color:#c9dbe3;font-size:11.5px}
+.ug-rel{display:flex;gap:8px;align-items:flex-start;margin:6px 0;line-height:1.4}.ug-rel b{flex:none;display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;color:#0b1620;font-size:10.5px}.ug-relt{color:#e3f6fc;font-weight:600}
+#underground .ug-limits{display:block;width:100%;margin-top:8px;padding:6px 8px;font-size:11.5px;text-align:left;color:#5ee2d0;background:none;border:1px dashed #345260}
+#underground .ug-limits:hover{border-style:solid}
+.ug-nodate i{border-top:0!important;height:3px;border-radius:2px}
+/* as of a date */
+.ug-asof{margin:0 0 10px;padding:8px 0;border-top:1px solid #263c48;border-bottom:1px solid #263c48;font-size:12px}
+.ug-asof-row{display:flex;align-items:center;gap:8px}.ug-asof label{color:#93adb9}
+.ug-asof input{flex:1;min-width:0;accent-color:#5ee2d0}
+#underground .ug-asof-play{padding:4px 9px;font-size:11px;line-height:1.2}
+#underground .ug-asof-play:disabled,.ug-asof input:disabled{opacity:.4;cursor:default}
+.ug-asof-when{color:#c9dbe3;font-variant-numeric:tabular-nums;margin-top:5px;font-size:11.5px}
+.ug-tools{flex-wrap:wrap;justify-content:flex-end}
+
 /* ---------- the light theme (the default): the rules above are the dark one ---------- */
 :root:not([data-theme=dark]) #change-view{border-color:#0d8577;background:linear-gradient(135deg,#0f9484,#0b7466);color:#ffffff;box-shadow:0 6px 18px rgba(13,133,119,.25)}
 :root:not([data-theme=dark]) #underground{background:radial-gradient(ellipse at 60% 40%,#ffffff,#e6edf1 75%);color:#14212b}
@@ -57,3 +74,10 @@
 :root:not([data-theme=dark]) #underground .ug-viewwell{background:#0d8577;border-color:#0d8577;color:#ffffff;box-shadow:0 4px 14px rgba(13,133,119,.22)}
 :root:not([data-theme=dark]) #underground .ug-viewwell:hover{background:#0b6f64}
 :root:not([data-theme=dark]) #underground #ug-qfilter.on{border-color:#d6336c;color:#a3194a}
+:root:not([data-theme=dark]) .ug-mkey,:root:not([data-theme=dark]) .ug-asof-when{color:#3d505c}
+:root:not([data-theme=dark]) .ug-rel b{color:#ffffff}
+:root:not([data-theme=dark]) .ug-relt{color:#14212b}
+:root:not([data-theme=dark]) #underground .ug-limits{color:#0b6f64;border-color:#b9c8d2;background:none}
+:root:not([data-theme=dark]) .ug-asof{border-color:#e4eaef}
+:root:not([data-theme=dark]) .ug-asof label{color:#566b78}
+:root:not([data-theme=dark]) .ug-asof input{accent-color:#0d8577}

@@ -12,7 +12,20 @@ Two catalogues, best first:
     time: km-scale locations, and more than half the depths are the network's
     fixed defaults (0, 1, 5, 10, 15, 20 km), flagged `fixed`.
 
-Inside the consortium's window its events replace Earthquakes Canada's.
+  BC Energy Regulator (its public seismicity layer, GEOLOGY/SEISMIC_EVENT_PT),
+    2014 on: confirmed suspected-induced events, ML 1.5 and up, located on
+    regional velocity models, with an error ellipse (major and minor axis, m,
+    and azimuth) and a depth error. Updated daily.
+
+Inside the consortium's window its events replace the others'. Outside it,
+an Earthquakes Canada event that is also in the regulator's catalogue (within
+20 s and 15 km) gives way to the regulator's.
+
+The regulator's seismic monitoring areas (GEOLOGY/SEISMIC_AREA_PY) and the
+rules each sets are written to seismic/areas.json, and every pad gets a
+traffic light (seismic/padlights.json): the largest event within the rule's
+distance of any of its laterals while the pad was being fracked (to two days
+after its last stage), graded against today's rules for where the pad sits.
 
 Each event is then matched to a frac stage: stage windows come from the Lab's
 curves where a well has them (date, start and length, read off the chart) or
@@ -33,7 +46,8 @@ weeks (CONTROL_DAYS): the shortfall is the share of matches the frac jobs
 explain, and it is written out with the events.
 
 Writes web/public/data/seismic/events.json:
-  {fields: [t, lat, lon, depth_km, mag, mag_type, fixed, industry, src, herr_m, derr_m, match], rows}
+  {fields: [t, lat, lon, depth_km, mag, mag_type, fixed, industry, src, herr_m, derr_m, match, maj_m, min_m, az], rows}
+  src: bcsrc | bcer | nrcan; maj_m/min_m/az: the regulator's error ellipse (bcer only)
   match: [WA, stage label, "during"|"after", minutes after the stage ended, km to the stage,
           m between the event's depth and the stage's subsea depth (or null)] or null
 """
@@ -60,6 +74,18 @@ BCSRC = {
         "https://www.geosciencebc.com/i/project_data/GBCReport2012-SEIS/Appendix_C_May2023-Apr2024_NEBC_Seismicity_Catalogue.csv",
     "May_2022-May_2023_NEBC_Seismicity_Catalogue_Revised_July26_2023.csv":
         "https://www.geosciencebc.com/i/project_data/GBCReport2012-SEIS/May_2022-May_2023_NEBC_Seismicity_Catalogue_Revised_July26_2023.csv",
+}
+BCER_EVENTS = "https://geoweb-ags.bc-er.ca/arcgis/rest/services/GEOLOGY/SEISMIC_EVENT_PT/MapServer/0/query"
+BCER_AREAS = "https://geoweb-ags.bc-er.ca/arcgis/rest/services/GEOLOGY/SEISMIC_AREA_PY/FeatureServer/0/query"
+# today's rules (BCER Induced Seismicity Operational Manual, Feb 2025; TU 2025-02):
+# local magnitude, within `km` of the well's trajectory
+RULES = {
+    "KSMMA": {"name": "Kiskatinaw Seismic Monitoring and Mitigation Area", "km": 5, "since": "2018-05-21",
+              "notify": 1.5, "mitigate": 2.0, "suspend": 3.0, "resuspend": 2.7},
+    "NMSMMA": {"name": "North Montney Seismic Monitoring and Mitigation Area", "km": 5, "since": "2025-02-13",
+               "notify": 2.5, "mitigate": 3.0, "suspend": 4.0, "resuspend": 3.7},
+    "BC": {"name": "Province-wide (Drilling and Production Regulation s.21.1)", "km": 3, "since": None,
+           "notify": 4.0, "mitigate": None, "suspend": 4.0, "resuspend": None},
 }
 EDGE_KM = 5
 FIXED = {0.0, 1.0, 5.0, 10.0, 15.0, 20.0}
@@ -156,6 +182,127 @@ def read_nrcan(lat0, lon0, radius, since):
     return out
 
 
+def read_bcer(lat0, lon0, radius):
+    """the regulator's catalogue around the region, paged 2,000 at a time"""
+    dlat = radius / 111.32
+    dlon = radius / (111.32 * math.cos(math.radians(lat0)))
+    where = (f"LATITUDE >= {lat0 - dlat:.4f} AND LATITUDE <= {lat0 + dlat:.4f} AND "
+             f"LONGITUDE >= {lon0 - dlon:.4f} AND LONGITUDE <= {lon0 + dlon:.4f}")
+    out, offset_ = [], 0
+    from urllib.parse import urlencode
+    while True:
+        q = BCER_EVENTS + "?" + urlencode({"where": where, "outFields": "*", "returnGeometry": "false", "f": "json",
+                                           "orderByFields": "OBJECTID", "resultOffset": offset_, "resultRecordCount": 2000})
+        page = json.loads(subprocess.run(["curl", "-sSL", "-m", "300", q], capture_output=True, text=True, check=True).stdout)
+        feats = page.get("features") or []
+        for f in feats:
+            a = f["attributes"]
+            if a.get("EVENT_DATE_TIME") is None or a.get("LATITUDE") is None:
+                continue
+            dz = a.get("DEPTH_ERROR")
+            out.append({"t": datetime.fromtimestamp(a["EVENT_DATE_TIME"] / 1000, tz=timezone.utc).replace(tzinfo=None),
+                        "lat": a["LATITUDE"], "lon": a["LONGITUDE"], "depth": a.get("DEPTH_KM"),
+                        "mag": a.get("MAGNITUDE"), "type": a.get("MAGNITUDE_TYPE") or "ML", "fixed": 0,
+                        "industry": 1 if "induced" in str(a.get("EVENT_TYPE") or "").lower() else 0, "src": "bcer",
+                        "herr": round(a["MAJOR_AXIS_ERROR"]) if a.get("MAJOR_AXIS_ERROR") else None,
+                        "derr": round(dz * 1000) if dz else None,
+                        "maj": round(a["MAJOR_AXIS_ERROR"]) if a.get("MAJOR_AXIS_ERROR") else None,
+                        "min": round(a["MINOR_AXIS_ERROR"]) if a.get("MINOR_AXIS_ERROR") else None,
+                        "az": round(a["AZIMUTH"], 1) if a.get("AZIMUTH") is not None else None})
+        if not page.get("exceededTransferLimit") and len(feats) < 2000:
+            break
+        offset_ += len(feats)
+    return out
+
+
+def same_event(a, b):
+    return abs((a["t"] - b["t"]).total_seconds()) <= 20 and \
+        math.hypot((a["lat"] - b["lat"]) * 111.32, (a["lon"] - b["lon"]) * 111.32 * math.cos(math.radians(a["lat"]))) <= 15
+
+
+def read_areas():
+    q = BCER_AREAS + "?where=1%3D1&outFields=NAME&outSR=4326&f=geojson"
+    g = json.loads(subprocess.run(["curl", "-sSL", "-m", "120", q], capture_output=True, text=True, check=True).stdout)
+    for f in g.get("features", []):
+        name = f["properties"].get("NAME", "")
+        f["properties"] = {"name": name, "rule": "KSMMA" if "KSMMA" in name else ("NMSMMA" if "NMSMMA" in name else None)}
+    return g
+
+
+def inside(lon, lat, geom):
+    """point in a GeoJSON Polygon / MultiPolygon (outer rings, holes honoured)"""
+    polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
+    for poly in polys:
+        hit = False
+        for k, ring in enumerate(poly):
+            c = False
+            for i in range(len(ring)):
+                x1, y1 = ring[i - 1][:2]
+                x2, y2 = ring[i][:2]
+                if (y1 > lat) != (y2 > lat) and lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1:
+                    c = not c
+            if k == 0:
+                hit = c
+            elif c:
+                hit = False
+        if hit:
+            return True
+    return False
+
+
+def pad_lights(events, areas):
+    """every pad's largest event near its laterals while it was being fracked,
+    graded against today's rules for where it sits"""
+    out = {}
+    for f in sorted(glob.glob(os.path.join(_DATA, "region", "pads", "*.json"))):
+        pad = json.load(open(f))
+        rule = "BC"
+        for a in areas.get("features", []):
+            if a["properties"]["rule"] and inside(pad["lon"], pad["lat"], a["geometry"]):
+                rule = a["properties"]["rule"]
+        R = RULES[rule]
+        pts, dates = [], []
+        for w in pad["wells"]:
+            W, t = w["well"], w.get("trajectory") or {}
+            ns, ew = t.get("ns") or [], t.get("ew") or []
+            for i in range(0, len(ns), 3):
+                if ns[i] is not None and ew[i] is not None:
+                    pts.append(offset(W["lat"], W["lon"], ns[i], ew[i]))
+            dates += [str(s["date"])[:10] for s in w.get("stages") or [] if s.get("date")]
+        if not pts or not dates:
+            out[pad["id"]] = {"rule": rule}
+            continue
+        t0 = datetime.strptime(min(dates), "%Y-%m-%d")
+        t1 = datetime.strptime(max(dates), "%Y-%m-%d") + timedelta(days=3)
+        lat_c = sum(p[0] for p in pts) / len(pts)
+        kx = 111.32 * math.cos(math.radians(lat_c))
+
+        def dist(e):
+            return min(math.hypot((e["lat"] - p[0]) * 111.32, (e["lon"] - p[1]) * kx) for p in pts)
+        during = []
+        for e in events:
+            if e["mag"] is None or not (t0 <= e["t"] + timedelta(hours=-7) <= t1):
+                continue
+            if abs(e["lat"] - lat_c) > 0.2:
+                continue
+            d = dist(e)
+            if d <= R["km"]:
+                during.append((e["mag"], d, e))
+        top = max(during, key=lambda x: x[0]) if during else None
+        level = "none"
+        if top:
+            m = top[0]
+            level = ("suspend" if R["suspend"] and m >= R["suspend"] else
+                     "mitigate" if R["mitigate"] and m >= R["mitigate"] else
+                     "notify" if R["notify"] and m >= R["notify"] else "below")
+        out[pad["id"]] = {"rule": rule, "from": t0.strftime("%Y-%m-%d"), "to": t1.strftime("%Y-%m-%d"),
+                          "n": len(during), "max": round(top[0], 2) if top else None,
+                          "maxAt": iso(top[2]["t"]) if top else None, "maxKm": round(top[1], 2) if top else None,
+                          "maxSrc": top[2]["src"] if top else None,
+                          "n15": sum(1 for x in during if x[0] >= 1.5), "level": level}
+    return out
+
+
 def stage_windows():
     """Every region stage with a time: (start_utc, end_utc, wa, label, lat, lon, subsea_m)."""
     idx = json.load(open(os.path.join(_DATA, "region", "index.json")))
@@ -240,8 +387,17 @@ def main():
     near = lambda e: math.hypot((e["lat"] - lat0) * 111.32, (e["lon"] - lon0) * 111.32 * math.cos(math.radians(lat0))) <= radius
     bc = [e for e in read_bcsrc(a.bcsrc) if near(e)]
     w0, w1 = min(e["t"] for e in bc), max(e["t"] for e in bc)
-    nr = [e for e in read_nrcan(lat0, lon0, radius, a.since) if near(e) and not (w0 <= e["t"] <= w1)]
-    events = sorted(bc + nr, key=lambda e: e["t"])
+    er = [e for e in read_bcer(lat0, lon0, radius) if near(e) and not (w0 <= e["t"] <= w1)]
+    er_by_day = {}
+    for e in er:
+        er_by_day.setdefault(e["t"].date(), []).append(e)
+
+    def in_bcer(e):
+        return any(same_event(e, x) for d in (e["t"].date() - timedelta(days=1), e["t"].date(), e["t"].date() + timedelta(days=1))
+                   for x in er_by_day.get(d, []))
+    nr_all = [e for e in read_nrcan(lat0, lon0, radius, a.since) if near(e) and not (w0 <= e["t"] <= w1)]
+    nr = [e for e in nr_all if not in_bcer(e)]
+    events = sorted(bc + er + nr, key=lambda e: e["t"])
     stages = stage_windows()
     match(events, stages)
     real = sum(1 for e in events if e["match"])
@@ -255,16 +411,29 @@ def main():
                "share_beyond_chance": round(max(0.0, 1 - by_chance / real), 2) if real else None}
     rows = [[iso(e["t"]), round(e["lat"], 5), round(e["lon"], 5), round(e["depth"], 3) if e["depth"] is not None else None,
              round(e["mag"], 2) if e["mag"] is not None else None, e["type"], e["fixed"], e["industry"], e["src"],
-             e["herr"], e["derr"], e["match"]] for e in events]
+             e["herr"], e["derr"], e["match"], e.get("maj"), e.get("min"), e.get("az")] for e in events]
     out = os.path.join(_DATA, "seismic")
     os.makedirs(out, exist_ok=True)
     json.dump({"source": "BC Seismic Research Consortium relocated catalogues (Geoscience BC), May 2022-Apr 2024; "
-                         "Earthquakes Canada (NRCan) for every other date",
+                         "BC Energy Regulator seismicity catalogue and Earthquakes Canada (NRCan) for every other date",
                "window": [iso(w0), iso(w1)], "fetched": time.strftime("%Y-%m-%d"), "since": a.since, "control": control,
-               "fields": ["t", "lat", "lon", "depth_km", "mag", "mag_type", "fixed", "industry", "src", "herr_m", "derr_m", "match"],
+               "fields": ["t", "lat", "lon", "depth_km", "mag", "mag_type", "fixed", "industry", "src", "herr_m", "derr_m", "match",
+                          "maj_m", "min_m", "az"],
                "rows": rows}, open(os.path.join(out, "events.json"), "w"), separators=(",", ":"))
+    areas = read_areas()
+    json.dump({"v": 1, "source": "BC Energy Regulator, GEOLOGY/SEISMIC_AREA_PY; rules from the BCER Induced Seismicity "
+                                 "Operational Manual (Feb 2025) and TU 2025-02",
+               "rules": RULES, "areas": areas}, open(os.path.join(out, "areas.json"), "w"), separators=(",", ":"))
+    lights = pad_lights(events, areas)
+    json.dump({"v": 1, "rules": RULES, "built": time.strftime("%Y-%m-%d"),
+               "note": "largest event within the rule's distance of a lateral from the pad's first frac stage to two days "
+                       "after its last, graded against the rules in force today",
+               "pads": lights}, open(os.path.join(out, "padlights.json"), "w"), separators=(",", ":"))
+    from collections import Counter
+    print("pad lights:", dict(Counter(v.get("level") for v in lights.values())), dict(Counter(v["rule"] for v in lights.values())))
     m = [e for e in events if e["match"]]
-    print(f"{len(events)} events ({len(bc)} relocated, {len(nr)} Earthquakes Canada); {len(m)} matched to a stage "
+    print(f"{len(events)} events ({len(bc)} relocated, {len(er)} BCER, {len(nr)} Earthquakes Canada only, "
+          f"{len(nr_all) - len(nr)} also in the BCER's); {len(m)} matched to a stage "
           f"({sum(1 for e in m if e['match'][2] == 'during')} during, {sum(1 for e in m if e['match'][2] == 'after')} within {TAIL_H:g} h after); "
           f"{len({e['match'][0] for e in m})} wells; matching the same events shifted {CONTROL_DAYS} days gives "
           f"{control['by_chance']} on average, so ~{round(100 * (control['share_beyond_chance'] or 0))}% of matches are beyond chance")

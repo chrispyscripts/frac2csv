@@ -1,7 +1,9 @@
 // The earthquake filter, one for every view that shows quakes (the map, the 3D
 // view, a well's charts): a date range, a magnitude range, and whether to leave
 // out events whose depth the network did not solve, events that do not
-// coincide with a frac stage, and events located only to the kilometre.
+// coincide with a frac stage, and events located only to the kilometre (keeping
+// those located on a local velocity model: the BC Seismic Research Consortium's
+// relocations and the BC Energy Regulator's own catalogue).
 //
 // Kept as a setting (localStorage stratum.quakeFilter), so it carries across
 // windows, reloads and saved sessions; a change fires `stratum:quakefilter` on
@@ -11,6 +13,7 @@
 const KEY = 'stratum.quakeFilter';
 const DEFAULT = { from: null, to: null, magMin: null, magMax: null, hideFixed: false, onlyMatched: false, onlyRelocated: false };
 const DAY = 864e5;
+const LOCAL = new Set(['bcsrc', 'bcer']);
 const isDate = s => typeof s === 'string' && /^\d{4}-\d\d-\d\d$/.test(s);
 const num = v => v === '' || v == null || !isFinite(+v) ? null : +v;
 
@@ -39,7 +42,7 @@ function pass(q, f = get()) {
   if (f.magMax != null && !(q.mag != null && q.mag <= f.magMax)) return false;
   if (f.hideFixed && q.fixed) return false;
   if (f.onlyMatched && !q.matched) return false;
-  if (f.onlyRelocated && q.src !== 'bcsrc') return false;
+  if (f.onlyRelocated && !LOCAL.has(q.src)) return false;
   return true;
 }
 // a row of data/seismic/events.json as that event
@@ -54,7 +57,7 @@ function mapFilter(f = get()) {
   if (f.magMax != null) all.push(['<=', ['coalesce', ['get', 'mag'], 99], f.magMax]);
   if (f.hideFixed) all.push(['!', ['to-boolean', ['get', 'fixed']]]);
   if (f.onlyMatched) all.push(['!=', ['get', 'm'], '']);
-  if (f.onlyRelocated) all.push(['==', ['get', 'src'], 'bcsrc']);
+  if (f.onlyRelocated) all.push(['in', ['get', 'src'], ['literal', [...LOCAL]]]);
   return all.length > 1 ? all : null;
 }
 // in words, for a summary line
@@ -66,7 +69,7 @@ function describe(f = get()) {
   if (f.from && f.to) bits.push(`${f.from} to ${f.to}`); else if (f.from) bits.push(`from ${f.from}`); else if (f.to) bits.push(`to ${f.to}`);
   if (f.hideFixed) bits.push('solved depths only');
   if (f.onlyMatched) bits.push('coinciding with a stage');
-  if (f.onlyRelocated) bits.push('relocated only');
+  if (f.onlyRelocated) bits.push('located on a local model only');
   return bits.join(' · ');
 }
 
@@ -115,7 +118,7 @@ function panel(anchor, o = {}) {
     <div class="row"><span>Magnitude</span><input type="number" name="magMin" step="0.1" aria-label="Minimum magnitude"><input type="number" name="magMax" step="0.1" aria-label="Maximum magnitude"></div>
     <label class="ck"><input type="checkbox" name="hideFixed"><span>Hide undetermined depths<small>events whose depth the network fixed rather than solved</small></span></label>
     <label class="ck"><input type="checkbox" name="onlyMatched"><span>Only those coinciding with a frac stage</span></label>
-    <label class="ck"><input type="checkbox" name="onlyRelocated"><span>Only relocated events<small>BC Seismic Research Consortium, May 2022–Apr 2024, located to a few hundred metres</small></span></label>
+    <label class="ck"><input type="checkbox" name="onlyRelocated"><span>Only events located on a local model<small>the BC Energy Regulator’s catalogue (ML 1.5 and up, with error ellipses) and the BC Seismic Research Consortium’s relocations, to a few hundred metres</small></span></label>
     <div class="foot"><span class="count"></span><button type="button" name="reset">Show all</button></div>`;
   const q = n => el.querySelector(`[name=${n}]`);
   if (b.first) { q('from').min = q('to').min = b.first; q('from').placeholder = b.first; }

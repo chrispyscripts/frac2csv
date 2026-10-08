@@ -20,7 +20,7 @@
 // FracView was Stratum: files saved under the old name still open
 const KIND = 'fracview-session', KINDS = [KIND, 'stratum-session'];
 const LIST_KEY = 'stratum.sessions', HAND = 'stratum.handoff.', PENDING = 'stratum.pendingWindows';
-const PAGES = /^(map|wellview|wellsection|compare|pad|winerack|stages)\.html(\?[^#]*)?$/;
+const PAGES = /^(map|wellview|wellsection|compare|pad|winerack|stages|report)\.html(\?[^#]*)?$/;
 const TOP = window.top === window;
 const ME = Math.random().toString(36).slice(2);
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -110,6 +110,7 @@ function describe(w, settings) {
   }
   if (page === 'wellview') return `Charts · ${t}`;
   if (page === 'wellsection') return `Well section · ${t}`;
+  if (page === 'report') return `Stage report · ${t.replace(/^FracView\s*[—-]\s*/, '') || 'WA ' + (new URLSearchParams(w.url.split('?')[1] || '').get('wa') || '')}`;
   if (page === 'compare') { const n = (parse(settings && settings['stratum.compare']) || []).length; return `Compare · ${n} well${n === 1 ? '' : 's'}`; }
   if (page === 'pad') return `Pad · ${t}`;
   if (page === 'stages') { const n = (new URLSearchParams(w.url.split('?')[1] || '').get('s') || '').split(',').filter(Boolean).length; return `Stage charts · ${n} stage${n === 1 ? '' : 's'}`; }
@@ -185,18 +186,44 @@ function readFile() {
   });
 }
 
+// ---------- share links (/api/share): a saved session as a link, for colleagues with FracView ----------
+async function shareApi(body, q = '') {
+  let r;
+  try {
+    r = await fetch('/api/share' + q, body ? { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+                                          : { credentials: 'same-origin', cache: 'no-store' });
+  } catch (e) { throw Error('Share links could not be reached. Check the connection and try again.'); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Error(j.error || 'Share links could not be reached. Try again in a moment.');
+  return j;
+}
+const shareLink = token => `${location.origin}/map.html?share=${encodeURIComponent(token)}`;
+const share = id => shareApi({ action: 'create', id }).then(j => ({ ...j, url: shareLink(j.token) }));
+const unshare = token => shareApi({ action: 'revoke', token });
+const shares = () => shareApi(null).then(j => j.shares || []);
+// map.html?share=<token>: the shared session's windows, this person's own settings
+async function openShared(token) {
+  const j = await shareApi(null, '?t=' + encodeURIComponent(token));
+  try { sessionStorage.setItem('fv.sharedFrom', JSON.stringify({ name: j.name, by: j.by, mine: j.mine })); } catch (e) { /* private mode */ }
+  open(j.session, { keepSettings: true });
+}
+
 // ---------- opening one ----------
 function handOff(w, pending) {
   const t = rid();
   localStorage.setItem(HAND + t, JSON.stringify({ session: w.session, pending, at: Date.now() }));
   return t;
 }
-function open(raw) {
+// o.keepSettings: someone else's session (a share link) opens its windows and
+// views, and this person keeps their own settings
+function open(raw, o = {}) {
   const s = clean(raw);
   if (chan) chan.postMessage({ type: 'restoring', from: ME });
-  // the settings, as they were: nothing kept from now that the session did not have
-  keys(localStorage).filter(ours).forEach(k => localStorage.removeItem(k));
-  for (const [k, v] of Object.entries(s.settings)) localStorage.setItem(k, v);
+  if (!o.keepSettings) {
+    // the settings, as they were: nothing kept from now that the session did not have
+    keys(localStorage).filter(ours).forEach(k => localStorage.removeItem(k));
+    for (const [k, v] of Object.entries(s.settings)) localStorage.setItem(k, v);
+  }
   // this window becomes the saved main window (a tab, not a pop-up, where there is one)
   const main = s.windows.find(w => w.role === 'main' && !w.popup) || s.windows.find(w => !w.popup) || s.windows[0];
   const rest = s.windows.filter(w => w !== main);
@@ -336,8 +363,26 @@ function pendingBar() {
   document.body.append(bar);
 }
 
+function sharedNote() {
+  let n = null;
+  try { n = JSON.parse(sessionStorage.getItem('fv.sharedFrom') || 'null'); sessionStorage.removeItem('fv.sharedFrom'); } catch (e) { /* private mode */ }
+  if (!n) return;
+  const bar = el('div', { className: 'ss-bar', role: 'status' });
+  bar.append(el('span', { textContent: n.mine ? `Opened your shared session “${n.name}”.` : `Opened a copy of “${n.name}”, shared by ${n.by}. Your settings are your own; save it under Sessions to keep it.` }),
+    el('button', { type: 'button', textContent: 'OK', onclick: () => bar.remove() }));
+  style(); document.body.append(bar);
+  setTimeout(() => bar.remove(), 15000);
+}
+
 function ready() {
   if (!TOP) return;
+  const tok = new URLSearchParams(location.search).get('share');
+  if (tok && pagePath() === 'map.html') {
+    history.replaceState(history.state, '', location.pathname);
+    openShared(tok).catch(e => { const b = el('div', { className: 'ss-bar', role: 'alert' }); b.append(el('span', { textContent: e.message }), el('button', { type: 'button', textContent: 'OK', onclick: () => b.remove() })); style(); document.body.append(b); });
+    return;
+  }
+  sharedNote();
   // the Sessions buttons: the main menu's Sessions screen where the page has the menu (menu.js), the dialog otherwise
   document.querySelectorAll('[data-sessions]').forEach(b => b.addEventListener('click', () => { if (window.StratumMenu) StratumMenu.open('sessions'); else panel(false); }));
   pendingBar();
@@ -346,12 +391,13 @@ function ready() {
   let fromUs = false;
   try { const r = new URL(document.referrer); fromUs = r.origin === location.origin && PAGES.test(r.pathname.replace(/^.*\//, '')); } catch (e) { /* no referrer */ }
   // ... as the main menu's home screen where there is one (it lists them too)
-  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs && !/[?&](pad|group|wells|wa|show)=/.test(location.search)) {
+  if (pagePath() === 'map.html' && !handedOff && (!nav || nav.type === 'navigate') && !fromUs && !/[?&](pad|group|wells|wa|show|share)=/.test(location.search)) {
     if (window.StratumMenu) StratumMenu.open('home');
     else list().then(items => { if (items.length && !document.querySelector('.ss-dlg')) panel(true, items); }).catch(() => { /* offline or signed out: nothing to offer */ });
   }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready); else ready();
 
-window.StratumSession = { provide, panel: () => panel(false), capture, open, clean, describe, summary, list, fetchOne, remember, forget, download, readFile };
+window.StratumSession = { provide, panel: () => panel(false), capture, open, clean, describe, summary, list, fetchOne, remember, forget, download, readFile,
+                          share, unshare, shares, shareLink };
 })();

@@ -1,8 +1,19 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/index.html" }
+    {
+      "source": "/",
+      "destination": "/index.html"
+    }
   ],
   "functions": {
-    "api/extract.py": { "maxDuration": 60 }
-  }
+    "api/extract.py": {
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/digest",
+      "schedule": "0 14 * * *"
+    }
+  ]
 }

@@ -5,9 +5,14 @@
 //     POST {action:'save', group:{id?, name, pads, note}}   a new group, or one changed
 //     POST {action:'delete', id}
 //   prefs    the settings that follow the person: theme, text size, gamma colours,
-//            the quake filter, the map's well filter, the well section's and charts' choices
+//            the quake filter, the map's well filter, the well section's and charts' choices,
+//            the parent/child limits and what the map and section colour by
 //     GET                                       {prefs: {key: value}, updated}
 //     POST {prefs: {key: value | null}}         merged in; null removes a key
+//   watch    the pads the person watches, and what to be told about them
+//     GET                                       {pads: [{id, name, lat, lon, km, mag}], digest, quakeAlerts, email, seen, updated}
+//     POST {action:'set', watch:{pads, digest, quakeAlerts, email}}   the list and choices, replaced
+//     POST {action:'seen', at}                  the feed read up to this time
 //
 // In the private Blob store beside the accounts: mine/<account>/<kind>.json, the account
 // id taken only from the signed cookie (lib/saved-sessions.js signedIn), and every change
@@ -15,15 +20,18 @@
 // another's edits.
 import { signedIn } from './saved-sessions.js';
 
-export const MAX_GROUPS = 100, MAX_PADS = 80;
+export const MAX_GROUPS = 100, MAX_PADS = 80, MAX_WATCH = 50;
 export const PREF_KEYS = ['stratum.theme', 'stratum.textSize', 'stratum.gammaPalette', 'stratum.quakeFilter', 'stratum.allWells',
-                          'stratum.section', 'stratum.hiddenCurves'];
+                          'stratum.section', 'stratum.hiddenCurves', 'stratum.spacingLimits', 'stratum.sectionMetric', 'stratum.mapColour'];
+export const DIGESTS = ['off', 'daily', 'weekly'];
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 const fail = (status, error) => json(status, { error });
 const docPath = (uid, kind) => `mine/${uid}/${kind}.json`;
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
 const now = () => new Date().toISOString();
-const EMPTY = { groups: () => ({ groups: [] }), prefs: () => ({ prefs: {}, updated: null }) };
+const EMPTY = { groups: () => ({ groups: [] }), prefs: () => ({ prefs: {}, updated: null }),
+                watch: () => ({ pads: [], digest: 'off', quakeAlerts: false, email: false, seen: null, updated: null }) };
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?Z$/;
 
 async function update(store, uid, kind, fn) {
   for (let i = 0; i < 5; i++) {
@@ -45,6 +53,23 @@ function cleanGroup(g) {
   if (!pads.length) return { error: 'A group needs at least one pad.' };
   if (pads.length > MAX_PADS) return { error: `A group holds up to ${MAX_PADS} pads.` };
   return { name, pads, note: typeof g.note === 'string' ? g.note.trim().slice(0, 300) : '' };
+}
+
+// a watch list as the page sends it, made safe: pads as the region names them, a place
+// and the reach and size of earthquake that matters for each
+function cleanWatch(w) {
+  if (!w || typeof w !== 'object') return { error: 'That is not a watch list.' };
+  const seen = new Set(), pads = [];
+  for (const p of Array.isArray(w.pads) ? w.pads : []) {
+    if (!p || typeof p.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(p.id) || seen.has(p.id)) continue;
+    const lat = Number(p.lat), lon = Number(p.lon);
+    if (!(lat > 48 && lat < 61 && lon > -140 && lon < -110)) continue;
+    seen.add(p.id);
+    pads.push({ id: p.id, name: typeof p.name === 'string' ? p.name.trim().slice(0, 80) : p.id, lat: +lat.toFixed(5), lon: +lon.toFixed(5),
+                km: Math.min(50, Math.max(1, Number(p.km) || 10)), mag: Math.min(6, Math.max(0, Number(p.mag) || 2)) });
+  }
+  if (pads.length > MAX_WATCH) return { error: `You can watch up to ${MAX_WATCH} pads.` };
+  return { pads, digest: DIGESTS.includes(w.digest) ? w.digest : 'off', quakeAlerts: !!w.quakeAlerts, email: !!w.email };
 }
 
 export async function handle(request, store, secret) {
@@ -83,6 +108,18 @@ export async function handle(request, store, secret) {
       const id = String(b.id || '');
       const next = await update(store, uid, 'groups', cur => ({ groups: cur.groups.filter(x => x.id !== id) }));
       return json(200, { groups: next.groups });
+    }
+    return fail(400, 'Unknown action.');
+  }
+  if (kind === 'watch') {
+    if (b.action === 'set') {
+      const w = cleanWatch(b.watch);
+      if (w.error) return fail(400, w.error);
+      return json(200, await update(store, uid, 'watch', cur => ({ ...cur, ...w, updated: now() })));
+    }
+    if (b.action === 'seen') {
+      const at = typeof b.at === 'string' && ISO.test(b.at) && b.at <= now() ? b.at : now();
+      return json(200, await update(store, uid, 'watch', cur => ({ ...cur, seen: cur.seen && cur.seen > at ? cur.seen : at })));
     }
     return fail(400, 'Unknown action.');
   }

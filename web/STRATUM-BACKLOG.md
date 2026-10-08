@@ -234,6 +234,57 @@ each entry.
   while no admin exists, so earlier invitees signing up first can't block it). Later: per-user saved sessions on the server, rate limiting
   on sign-in (Vercel Firewall), email for resets.
 
+- **Competitor research → eight features** (2026-10-08). Chris asked for
+  research on competing services (report: `reports/FracView competitor feature
+  ideas.md` in the vault) and then "do all 8" of its shortlist:
+  1. *Stage metrics from the curves* (`web/scripts/build_stage_metrics.py` →
+     `data/metrics/pads/<pad>.json`, `stages.json`, `summary.json`; shared
+     browser helper `metrics.js`). Per stage: pump time, time at rate, ramp,
+     shutdowns, average/peak pressure, trend at rate, rate, peak concentration,
+     slurry/clean volume and proppant integrated from the 1-second Lab exports
+     (925 of 1,048 charted wells; the rest from the ~360-point series), sand rate,
+     ISIP from the falloff where the chart runs past shut-in, frac gradient,
+     shape, and flags (possible screenout, mid-stage shutdown, pressure spike or
+     break at steady rate, short stage, gaps; and disagreements with the filing).
+     Checked against the BCER filings: proppant median ratio 1.01 (80% of wells
+     within 10%), fluid 89% within 10%, ISIP 72% of stages within 2 MPa. Charts
+     are matched to filed stages by pumping time; that found 298 wells (2,129
+     charts) the import had put at the wrong interval (the port table numbered
+     differently), now moved (`--fix-depths`; a chart whose report printed its
+     own depth is flagged, never moved).
+  2. *Colour by any measure*: the map (Colour wells by, legend), the 3D view and
+     the wine rack (stage metric, parent/child, when fracked), and a stage ribbon
+     with flag markers on the 2D well section.
+  3. *Stage report* (`report.html?wa=`): QC against the filing, flags, overlays
+     of every stage (P10–P90 envelope), the stage table, production, CSV, print
+     to PDF. From a well's popup (Stage report ↗) and the 2D section.
+  4. *Parent/child*: labels (parent, child, co-completed, standalone), bounded /
+     half / unbounded, depletion days, from `data/discover/neighbours.json` with
+     limits in Settings (stratum.spacingLimits, default 400 m / 100 m / 90 days);
+     the map's, rack's and 3D's "as of" date slider.
+  5. *Production*: BCER monthly volumes (`build_production.py`, prod_csv.zip from
+     iris.bcogc.ca, kept in ~/stratum-lab/bcer-prod) → `data/prod/wells.json`;
+     Discover type curves and spacing vs performance.
+  6. *Seismicity*: the BCER's own catalogue (with error ellipses) merged in
+     `build_seismic.py`; its monitoring areas and today's rules
+     (`seismic/areas.json`); a traffic light per pad (`seismic/padlights.json`);
+     Discover's seismicity tool (Gutenberg–Richter, b-value, moment vs injected
+     volume with the McGarr bound, distance–time, traffic-light table).
+  7. *Watchlist* (`watch.js`, Menu › Watchlist, `/api/mine?k=watch`): pads
+     watched from their popup or a group; live from the BCER (earthquakes, frac
+     notices) and FracView's own changes (`build_updates.py` →
+     `data/updates.json`); a badge on ☰, browser notifications while open, and a
+     daily/weekly email digest (`api/digest.js`, Vercel cron) that stays off
+     until CRON_SECRET, RESEND_API_KEY and DIGEST_FROM are set.
+  8. *Share links and exports*: a saved session as a link (`/api/share`,
+     `lib/shares.js`; a copy, opened with the recipient's own settings, for
+     FracView accounts only; Stop sharing withdraws it); the map as PNG (pad
+     names drawn in), wells in view as GeoJSON/KML; PNGs of the rack, 3D and
+     section.
+  Rebuild order now: build_gamma, build_region, build_stage_metrics
+  --fix-depths then build_stage_metrics, build_production, build_seismic,
+  build_gmmr, build_discover, build_updates, tests.
+
 ## Asked for, not started
 
 - **All BC wells.** Estimate given 2026-10-03: paths, stage summaries and

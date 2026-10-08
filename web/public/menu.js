@@ -7,8 +7,12 @@
 //   Groups     pads gathered under a name: the prepared areas, and the person's
 //              own (made with Group mode on the map, or from Discover's results)
 //   Discover   tools for finding wells by what was done to them (discover.js)
+//   Watchlist  pads to keep an eye on, and what is new near them: earthquakes and
+//              frac jobs from the BC Energy Regulator, charts and production in
+//              FracView (watch.js); alerts in the browser, a digest by email
 //   Settings   theme, text size, gamma colours, the quake filter, the map's and
-//              the well section's defaults; they follow the account (account.js)
+//              the well section's defaults, parent/child limits; they follow the
+//              account (account.js)
 //
 // A thing to show on the map goes to the map in place when this is the map,
 // and by its address otherwise (map.html?pads=…, or a hand-off in
@@ -41,10 +45,18 @@ const ICON = {
   sessions: '<rect x="3" y="5" width="13" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 19h12V9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
   groups: '<circle cx="7" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="17" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="16.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 4h16v16H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2.5 2.5"/>',
   discover: '<circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 5.5 5.5M8 12.5l2-4 2 3 1.5-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  watch: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   settings: '<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
 };
 const svgIcon = k => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>`;
-const SCREENS = [['home', 'Home'], ['sessions', 'Sessions'], ['groups', 'Groups'], ['discover', 'Discover'], ['settings', 'Settings']];
+const SCREENS = [['home', 'Home'], ['sessions', 'Sessions'], ['groups', 'Groups'], ['discover', 'Discover'], ['watch', 'Watchlist'], ['settings', 'Settings']];
+// a page's script, once, when a screen needs it
+const loaded = {};
+const need = (src, test) => test() ? Promise.resolve() : (loaded[src] = loaded[src] || new Promise((res, rej) => {
+  const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => { delete loaded[src]; rej(Error(src + ' could not be loaded.')); }; document.head.append(el);
+}));
+const watchJs = () => need('watch.js', () => !!window.StratumWatch);
+const metricsJs = () => need('metrics.js', () => !!window.FVMetrics);
 
 // ---------- shared data ----------
 let regionP = null, presetsP = null;
@@ -63,7 +75,11 @@ async function mine(kind, body) {
   return j;
 }
 let groupsCache = null;
-const myGroups = fresh => (!fresh && groupsCache) ? Promise.resolve(groupsCache) : mine('groups').then(j => (groupsCache = j.groups || []));
+// a failed load is remembered for a minute, so tools that ask often don't keep retrying
+let groupsFail = 0;
+const myGroups = fresh => (!fresh && groupsCache) ? Promise.resolve(groupsCache)
+  : (!fresh && Date.now() - groupsFail < 60e3) ? Promise.reject(Error('Your groups could not be reached.'))
+  : mine('groups').then(j => (groupsCache = j.groups || [])).catch(e => { groupsFail = Date.now(); throw e; });
 async function saveGroup(g) { const j = await mine('groups', { action: 'save', group: g }); groupsCache = j.groups || []; return j.group; }
 async function deleteGroup(id) { const j = await mine('groups', { action: 'delete', id }); groupsCache = j.groups || []; }
 
@@ -116,7 +132,7 @@ function show(which, opts = {}) {
   root.querySelectorAll('[data-screen]').forEach(b => b.setAttribute('aria-current', b.dataset.screen === which ? 'page' : 'false'));
   main.replaceChildren();
   main.scrollTop = 0;
-  ({ home, sessions, groups, discover, settings }[which] || home)(opts);
+  ({ home, sessions, groups, discover, watch, settings }[which] || home)(opts);
   const first = main.querySelector('h1');
   if (first) { first.tabIndex = -1; first.focus({ preventScroll: true }); }
 }
@@ -147,6 +163,7 @@ function home() {
   const tS = tile('sessions', 'Sessions', 'Every window you had open, saved under a name, opened again where it was.', () => show('sessions'));
   const tG = tile('groups', 'Groups', 'Pads gathered under a name: the prepared areas and your own.', () => show('groups'));
   const tD = tile('discover', 'Discover', 'Find wells by what was pumped, how they produced, their spacing and the earthquakes at their stages.', () => show('discover'));
+  const tW = tile('watch', 'Watchlist', 'Pads you keep an eye on: new earthquakes and frac jobs near them, and new charts and production.', () => show('watch'));
   const tSet = tile('settings', 'Settings', 'Light or dark, text size, gamma colours, the earthquake filter, defaults.', () => show('settings'));
   tMap.em.textContent = onMap() ? 'Esc closes this menu' : '';
   tSet.em.textContent = `${store.get('stratum.theme') === 'dark' ? 'Dark' : 'Light'} · text ${({ s: 'small', m: 'default', l: 'large', xl: 'extra large' })[store.get('stratum.textSize') || 'm'] || 'default'}`;
@@ -157,7 +174,7 @@ function home() {
   if (!u) addEventListener('stratum:user', e => { if (current === 'home' && e.detail && e.detail.name) title.textContent += ', ' + e.detail.name.split(/\s+/)[0]; }, { once: true });
   main.append(h('div', { class: 'fvm-screen' },
     title, sub,
-    h('div', { class: 'fvm-tiles' }, tMap.b, tS.b, tG.b, tD.b, tSet.b),
+    h('div', { class: 'fvm-tiles' }, tMap.b, tS.b, tG.b, tD.b, tW.b, tSet.b),
     h('div', { class: 'fvm-row' },
       h('div', { class: 'fvm-card' }, h('h2', { text: 'Recent sessions' }), recent),
       h('div', { class: 'fvm-card' }, h('h2', { text: 'Groups' }), chips))));
@@ -168,6 +185,12 @@ function home() {
       h('button', { type: 'button', class: 'go', text: 'Open', onclick: e => openSession(x.id, e.currentTarget) }))) :
       [h('li', { class: 'fvm-empty', text: 'Nothing saved yet. Open Sessions to save the windows you have open.' })]));
   }).catch(e => recent.replaceChildren(h('li', { class: 'fvm-empty', text: e.message })));
+  watchJs().then(() => StratumWatch.get()).then(async d => {
+    if (!d.pads.length) { tW.em.textContent = 'Watch a pad from its popup on the map'; return; }
+    tW.em.textContent = `${d.pads.length} pad${d.pads.length === 1 ? '' : 's'} watched · checking…`;
+    const n = await StratumWatch.count();
+    tW.em.textContent = `${d.pads.length} pad${d.pads.length === 1 ? '' : 's'} watched · ${n ? n + ' new' : 'nothing new'}`;
+  }).catch(() => { tW.em.textContent = ''; });
   Promise.all([presets(), myGroups().catch(() => [])]).then(([pre, own]) => {
     tG.em.textContent = `${pre.length} prepared · ${own.length} your own`;
     chips.replaceChildren(...[...own, ...pre].map(g => h('button', { type: 'button', text: g.name + (g.preset ? '' : ' ★'), title: `${g.pads.length} pads`, onclick: () => show('groups', { id: g.id }) })),
@@ -181,7 +204,7 @@ async function openSession(id, btn) {
 }
 
 // ---------- Sessions ----------
-const PAGE = { map: 'Map', wellview: 'Well charts', wellsection: 'Well section', winerack: 'Wine racks', stages: 'Stage charts', compare: 'Compare', pad: 'Pad' };
+const PAGE = { map: 'Map', wellview: 'Well charts', wellsection: 'Well section', winerack: 'Wine racks', stages: 'Stage charts', compare: 'Compare', pad: 'Pad', report: 'Stage report' };
 // what one saved window shows, in words: [kind, headline, details]
 function windowWords(w, settings, pads) {
   const page = w.url.split('?')[0].replace('.html', ''), q = new URLSearchParams(w.url.split('?')[1] || ''), s = w.session || {};
@@ -200,8 +223,10 @@ function windowWords(w, settings, pads) {
   if (page === 'winerack') { const ids = (q.get('pads') || '').split(',').filter(Boolean); return ['Wine racks', `${ids.length} pad${ids.length === 1 ? '' : 's'}`, ids.map(padName).join(', ')]; }
   if (page === 'stages') { const st = (q.get('s') || '').split(',').filter(Boolean); return ['Stage charts', `${st.length} stage${st.length === 1 ? '' : 's'}`, st.map(x => { const [wa, l] = x.split(':').map(decodeURIComponent); return `WA ${wa} stage ${l}`; }).join(', ')]; }
   if (page === 'compare') { const n = (parse(settings && settings['stratum.compare']) || []).length; return ['Compare', `${n} well${n === 1 ? '' : 's'}`, 'curves side by side']; }
+  if (page === 'report') return ['Stage report', `WA ${q.get('wa') || '?'}`, 'metrics, flags and checks for every stage'];
   return [PAGE[page] || page, w.title || '', ''];
 }
+let sharesCache = null;
 function sessions(opts = {}) {
   const list = h('div', { class: 'fvm-items', role: 'listbox', 'aria-label': 'Saved sessions' });
   const detail = h('div', { class: 'fvm-detail' }, h('div', { class: 'fvm-empty', text: 'Pick a session on the left to see the windows it opens.' }));
@@ -234,6 +259,28 @@ function sessions(opts = {}) {
     if (picked !== x.id) return;
     const open = h('button', { type: 'button', class: 'go', text: 'Open this session', onclick: () => { close(); StratumSession.open(s); } });
     const dl = h('button', { type: 'button', text: 'Download file', onclick: () => StratumSession.download(s) });
+    // a link for colleagues: a copy of this session, opened with their own settings
+    const shareBox = h('div', { class: 'fvm-share' });
+    const drawShare = sh => {
+      if (!sh) {
+        shareBox.replaceChildren(h('button', { type: 'button', text: 'Share link…', title: 'A link to a copy of this session, for anyone with a FracView account', onclick: async e => {
+          e.currentTarget.disabled = true;
+          try { const j = await StratumSession.share(x.id); sharesCache = null; drawShare({ token: j.token, url: j.url }); }
+          catch (err) { say(err.message); e.currentTarget.disabled = false; }
+        } }));
+        return;
+      }
+      const url = sh.url || StratumSession.shareLink(sh.token);
+      const inp = h('input', { type: 'text', value: url, readOnly: true, 'aria-label': 'Share link', onfocus: e => e.target.select() });
+      shareBox.replaceChildren(h('div', { class: 'fvm-share-on' },
+        h('b', { text: 'Shared' }), inp,
+        h('button', { type: 'button', text: 'Copy', onclick: async e => { try { await navigator.clipboard.writeText(url); e.target.textContent = 'Copied'; } catch (err) { inp.select(); } } }),
+        h('button', { type: 'button', text: 'Update the copy', title: 'Share this session as it is saved now, same link', onclick: async () => { try { await StratumSession.share(x.id); say('The link now opens the session as saved.'); } catch (err) { say(err.message); } } }),
+        h('button', { type: 'button', class: 'danger', text: 'Stop sharing', onclick: async () => { try { await StratumSession.unshare(sh.token); sharesCache = null; drawShare(null); } catch (err) { say(err.message); } } })),
+        h('p', { class: 'fvm-preview', text: 'Anyone signed in to FracView can open this link: they get a copy of the windows and views, with their own settings. Changes they make never reach yours.' }));
+    };
+    drawShare(null);
+    if (StratumSession.shares) (sharesCache = sharesCache || StratumSession.shares()).then(list => { const sh = list.find(y => y.sessionId === x.id); if (sh && picked === x.id) drawShare(sh); }).catch(() => {});
     const del = h('button', { type: 'button', class: 'danger', text: 'Delete', onclick: async () => {
       if (!confirm(`Delete “${s.name}” from your saved sessions? Files you downloaded are kept.`)) return;
       del.disabled = true;
@@ -246,6 +293,7 @@ function sessions(opts = {}) {
           h('div', { class: 'fvm-facts' }, h('span', { html: `Saved <b>${when(s.saved)}</b>` }), s.area ? h('span', { html: `Area <b></b>` }) : null,
             h('span', { html: `<b>${s.windows.length}</b> window${s.windows.length > 1 ? 's' : ''}` }))),
         h('div', { class: 'fvm-acts' }, open, dl, del)),
+      shareBox,
       screenMap(s, pads),
       h('h2', { text: 'Windows' }),
       h('div', { class: 'fvm-wins' }, s.windows.map((w, i) => {
@@ -347,6 +395,15 @@ function groups(opts = {}) {
       h('button', { type: 'button', class: 'go', text: 'Show on the map', onclick: () => toMap({ pads: g.pads, title: g.name }) }),
       h('button', { type: 'button', text: 'Open in 3D', onclick: () => toMap({ pads: g.pads, title: g.name, view: '3d' }) }),
       h('button', { type: 'button', text: 'Wine racks ↗', title: 'Every pad in the group, stacked in the wine rack window', onclick: () => toMap({ pads: g.pads, title: g.name, racks: true }) }),
+      h('button', { type: 'button', text: '☆ Watch its pads', title: 'Add every pad in the group to your watch list', onclick: async () => {
+        try {
+          await watchJs();
+          const d = await StratumWatch.get(), have = new Set(d.pads.map(p => p.id));
+          const add = ps.filter(p => !p.missing && !have.has(p.id) && p.lat != null).map(p => ({ id: p.id, name: p.name, lat: p.lat, lon: p.lon, km: 10, mag: 2 }));
+          await StratumWatch.set({ pads: [...d.pads, ...add] });
+          msg.textContent = add.length ? `Watching ${add.length} more pad${add.length === 1 ? '' : 's'} (Menu › Watchlist).` : 'Every pad in this group is watched already.';
+        } catch (e) { msg.textContent = e.message; }
+      } }),
       g.preset ? h('button', { type: 'button', text: 'Save a copy as mine', onclick: async () => { try { const n = await saveGroup({ name: g.name + ' (mine)', pads: g.pads, note: g.note }); msg.textContent = `Saved “${n.name}” to your groups.`; load(n.id); } catch (e) { msg.textContent = e.message; } } })
                : h('button', { type: 'button', text: 'Change pads on the map', onclick: () => startGroupMode(g) }),
       g.preset ? null : h('button', { type: 'button', class: 'danger', text: 'Delete', onclick: async () => {
@@ -424,9 +481,109 @@ function discover(opts = {}) {
   const box = h('div', { class: 'fvm-screen split' }, h('div', { class: 'fvm-empty', text: 'Loading Discover…', style: 'padding:2em' }));
   main.append(box);
   discoverP = discoverP || new Promise((res, rej) => { const s = h('script', { src: 'discover.js' }); s.onload = res; s.onerror = () => { discoverP = null; rej(Error('Discover could not be loaded.')); }; document.head.append(s); });
-  discoverP.then(() => { if (current !== 'discover') return; box.replaceChildren(); window.StratumDiscover.render(box, { h, fmt, tip, hideTip, toMap, saveGroup, padsById, tool: opts.tool, show }); })
+  discoverP.then(() => { if (current !== 'discover') return; box.replaceChildren(); window.StratumDiscover.render(box, { h, fmt, tip, hideTip, toMap, saveGroup, myGroups, presets, padsById, tool: opts.tool, show }); })
     .catch(e => { box.replaceChildren(h('div', { class: 'fvm-empty', text: e.message, style: 'padding:2em' })); });
 }
+
+// ---------- Watchlist ----------
+const KIND = {
+  quake: { t: 'Earthquake', i: '◉' }, frac: { t: 'Frac job', i: '▲' }, charts: { t: 'New charts', i: '▤' }, production: { t: 'New production', i: '▮' },
+};
+function watch() {
+  const list = h('div', { class: 'fvm-items' }), feedBox = h('div', { class: 'fvm-feed' }, h('div', { class: 'fvm-empty', text: 'Loading…' }));
+  const msg = h('div', { class: 'fvm-msg', role: 'status' }), say = t => { msg.textContent = t || ''; };
+  const opts = h('div', { class: 'fvm-watch-opts' });
+  let filter = 'all', data = null;
+  const head = h('div', { class: 'fvm-detail-head' }, h('div', { class: 'id' }, h('h1', { text: 'What’s new near your pads' }),
+    h('p', { class: 'fvm-sub', style: 'margin:.2em 0 0', text: 'Earthquakes (BC Energy Regulator catalogue, last 30 days), frac jobs the regulator was told about, and new charts and production in FracView.' })),
+    h('div', { class: 'fvm-acts' }, h('button', { type: 'button', text: 'Mark all as seen', onclick: async () => { await StratumWatch.seen(); load(); badge(); } })));
+  const tabs = h('div', { class: 'fvm-seg', role: 'group', 'aria-label': 'Show' });
+  [['all', 'All'], ['quake', 'Earthquakes'], ['frac', 'Frac jobs'], ['fracview', 'FracView data']].forEach(([v, t]) => tabs.append(h('button', { type: 'button', 'data-v': v, text: t,
+    'aria-pressed': String(v === filter), onclick: () => { filter = v; tabs.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v))); drawFeed(); } })));
+  function drawPads(d) {
+    list.replaceChildren(...(d.pads.length ? d.pads.map(p => {
+      const km = h('input', { type: 'number', min: 1, max: 50, step: 1, value: p.km, 'aria-label': `Reach around ${p.name}, km` });
+      const mg = h('input', { type: 'number', min: 0, max: 6, step: 0.1, value: p.mag, 'aria-label': `Smallest earthquake for ${p.name}` });
+      const save = () => StratumWatch.set({ pads: d.pads.map(x => x.id === p.id ? { ...x, km: +km.value || 10, mag: +mg.value || 0 } : x) }).then(load).catch(e => say(e.message));
+      km.onchange = save; mg.onchange = save;
+      return h('div', { class: 'fvm-item fvm-watch-pad' },
+        h('b', { text: p.name }),
+        h('div', { class: 'fvm-pair' }, h('label', null, h('span', { text: 'within km' }), km), h('label', null, h('span', { text: 'from M' }), mg)),
+        h('div', { class: 'fvm-acts' },
+          h('button', { type: 'button', text: 'On the map', onclick: () => toMap({ pads: [p.id], pad: p.id, title: 'Watched' }) }),
+          h('button', { type: 'button', class: 'danger', text: 'Stop watching', onclick: () => StratumWatch.toggle(p).then(load).catch(e => say(e.message)) })));
+    }) : [h('div', { class: 'fvm-empty', text: 'No pads watched yet. Open a pad’s popup on the map and choose ☆ Watch, or watch a whole group from Groups.' })]));
+  }
+  function drawOpts(d) {
+    const dig = h('div', { class: 'fvm-seg', role: 'group', 'aria-label': 'Email digest' });
+    [['off', 'Off'], ['daily', 'Daily'], ['weekly', 'Weekly']].forEach(([v, t]) => dig.append(h('button', { type: 'button', 'data-v': v, text: t, 'aria-pressed': String((d.email ? d.digest : 'off') === v),
+      onclick: () => StratumWatch.set({ digest: v, email: v !== 'off' }).then(x => drawOpts(x)).catch(e => say(e.message)) })));
+    const mailNote = h('small', { text: '' });
+    fetch('/api/digest?status=1', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => {
+      mailNote.textContent = j && j.configured ? 'Sent at about 7 am Mountain time to the email you sign in with, only when something is new.'
+        : 'Saved with your watch list; FracView’s mail service isn’t switched on yet, so no email goes out until it is.';
+    }).catch(() => {});
+    const alertsOn = d.quakeAlerts && 'Notification' in window && Notification.permission === 'granted';
+    opts.replaceChildren(
+      h('div', { class: 'field' }, h('span', { text: 'Email digest' }), dig, mailNote),
+      h('div', { class: 'field' }, h('span', { text: 'Alerts in this browser' }),
+        alertsOn ? h('div', null, h('span', { class: 'fvm-pill', text: 'on' }), ' ', h('button', { type: 'button', text: 'Turn off', onclick: () => StratumWatch.set({ quakeAlerts: false }).then(drawOpts) }))
+          : h('button', { type: 'button', text: 'Notify me of new earthquakes', onclick: () => StratumWatch.allowAlerts().then(() => StratumWatch.get()).then(drawOpts).catch(e => say(e.message)) }),
+        h('small', { text: 'While a FracView window is open, it checks every ten minutes and shows a notification for an earthquake near a watched pad.' })));
+  }
+  function line(it) {
+    const k = KIND[it.kind], when_ = it.t ? new Date(it.t) : null;
+    const date = when_ ? when_.toLocaleString(undefined, it.kind === 'quake' ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }) : '';
+    let what, more, act;
+    if (it.kind === 'quake') { what = `M${fmt(it.mag, 2)} ${it.type}`; more = `${fmt(it.km, 1)} km from ${it.pad.name}${it.depth != null ? ` · ${fmt(it.depth, 1)} km deep` : ''}${it.err ? ` · located to ±${fmt(it.err)} m` : ''}`; }
+    else if (it.kind === 'frac') { what = `${it.operator || ''} ${it.well}`.trim(); more = `WA ${it.wa} · expected ${it.t ? it.t.slice(0, 10) : '?'} to ${it.end ? it.end.slice(0, 10) : '?'} · ${fmt(it.km, 1)} km from ${it.pad.name}`; }
+    else if (it.kind === 'charts') { what = it.well; more = `Treatment charts now in FracView · WA ${it.wa} · ${fmt(it.km, 1)} km from ${it.pad.name}`; act = () => toMap({ wells: [it.wa], wa: it.wa, title: 'New charts' }); }
+    else { what = it.well; more = `Production reported through ${it.through} · WA ${it.wa} · ${fmt(it.km, 1)} km from ${it.pad.name}`; act = () => toMap({ wells: [it.wa], wa: it.wa, title: 'New production' }); }
+    if (!act) act = () => toMap({ pads: [it.pad.id], pad: it.pad.id, title: k.t });
+    return h('div', { class: 'fvm-feed-item' + (it.fresh ? ' fresh' : '') },
+      h('span', { class: 'ic k-' + it.kind, 'aria-hidden': 'true', text: k.i }),
+      h('div', { class: 'what' }, h('b', null, h('span', { text: `${k.t}${it.fresh ? ' · new' : ''}: ` }), what), h('span', { text: [date, more].filter(Boolean).join(' · ') })),
+      h('button', { type: 'button', text: 'On the map', onclick: act }));
+  }
+  function drawFeed() {
+    if (!data) return;
+    const items = data.items.filter(i => filter === 'all' || i.kind === filter || (filter === 'fracview' && (i.kind === 'charts' || i.kind === 'production')));
+    feedBox.replaceChildren(...(data.errors.length ? [h('div', { class: 'fvm-msg', text: 'Not reached: ' + data.errors.join('; ') })] : []),
+      ...(items.length ? items.slice(0, 200).map(line) : [h('div', { class: 'fvm-empty', text: data.items.length ? 'Nothing of that kind near your pads.' : 'Nothing near your watched pads in the last 30 days.' })]));
+  }
+  async function load() {
+    say('');
+    let d;
+    try { await watchJs(); d = await StratumWatch.get(); } catch (e) { feedBox.replaceChildren(h('div', { class: 'fvm-empty', text: e.message })); return; }
+    drawPads(d); drawOpts(d);
+    if (StratumWatch.offline()) say('Your account could not be reached: this list is kept in this browser for now.');
+    if (!d.pads.length) { data = { items: [], errors: [] }; drawFeed(); return; }
+    feedBox.replaceChildren(h('div', { class: 'fvm-empty', text: 'Asking the BC Energy Regulator…' }));
+    data = await StratumWatch.feed();
+    if (current === 'watch') drawFeed();
+  }
+  main.append(h('div', { class: 'fvm-screen split' },
+    h('div', { class: 'fvm-list' }, h('div', { class: 'fvm-list-head' }, h('h1', { text: 'Watchlist' }), msg), list, h('div', { class: 'fvm-list-foot' }, opts)),
+    h('div', { class: 'fvm-detail' }, head, tabs, feedBox)));
+  load();
+}
+// how many things are new near the watched pads, on every ☰ button
+async function badge() {
+  try {
+    if (!document.querySelector('link[href="menu.css"]')) document.head.append(h('link', { rel: 'stylesheet', href: 'menu.css' }));
+    await watchJs();
+    const d = await StratumWatch.get();
+    const n = d.pads.length ? await StratumWatch.count() : 0;
+    document.querySelectorAll('[data-menu]').forEach(b => {
+      let el = b.querySelector('.fvm-badge');
+      if (!n) { if (el) el.remove(); return; }
+      if (!el) { el = document.createElement('span'); el.className = 'fvm-badge'; b.append(el); }
+      el.textContent = n > 99 ? '99+' : String(n);
+      el.title = `${n} new near your watched pads`;
+    });
+  } catch (e) { /* the badge is a nicety */ }
+}
+addEventListener('stratum:watch', () => badge());
 
 // ---------- Settings ----------
 function settings() {
@@ -472,7 +629,7 @@ function settings() {
     field('Magnitude', h('div', { class: 'fvm-pair' }, mn, mx)),
     qBox('hideFixed', 'Hide undetermined depths', 'events whose depth the network fixed rather than solved'),
     qBox('onlyMatched', 'Only those coinciding with a frac stage'),
-    qBox('onlyRelocated', 'Only relocated events', 'BC Seismic Research Consortium, May 2022–Apr 2024, located to a few hundred metres'),
+    qBox('onlyRelocated', 'Only events located on a local model', 'the BC Energy Regulator’s catalogue (ML 1.5 and up, with error ellipses) and the BC Seismic Research Consortium’s relocations'),
     h('div', { style: 'margin-top:.8em' }, h('button', { type: 'button', text: 'Show all earthquakes', onclick: () => { Q.set({}); show('settings'); prefsChanged(); } })),
     qCount) : null;
 
@@ -488,8 +645,31 @@ function settings() {
     field('A well in 2D opens on', seg('Well section extent', [['well', 'The whole well'], ['lateral', 'The lateral']], sec.mode || 'well', v => setSec('mode', v))),
     field('Its lateral coloured by', seg('Well section colour', [['stages', 'Stages'], ['gamma', 'Gamma']], sec.color || 'stages', v => setSec('color', v))),
     check('Pressure and rate above each stage', 'the curves strip along the top of the 2D view', sec.curves !== false, on => setSec('curves', on)),
+    field('Stages coloured by', (() => {
+      const cur = store.get('stratum.sectionMetric') || '';
+      const sel = h('select', { 'aria-label': 'Stages coloured by', onchange: e => { store.set('stratum.sectionMetric', e.target.value || null); prefsChanged(); } },
+        h('option', { value: '', text: 'Nothing (the stages as ticks)' }));
+      metricsJs().then(() => { FVMetrics.METRICS.forEach(m => sel.append(h('option', { value: m.k, text: m.t + (m.u ? ` (${m.u})` : '') }))); sel.value = cur; }).catch(() => {});
+      return sel;
+    })()),
     field('Curves hidden on the stage charts', hidden.length ? h('div', null, h('span', { text: hidden.join(', ') + ' ' }),
       h('button', { type: 'button', text: 'Show them all again', onclick: () => { store.set('stratum.hiddenCurves', null); prefsChanged(); show('settings'); } })) : h('span', { class: 'fvm-pill', text: 'none' })));
+
+  // parent, child and co-completed: the limits every view labels wells by (metrics.js)
+  const spacing = h('section', null, h('h2', { text: 'Parent and child wells' }), h('div', { class: 'fvm-empty', text: 'Loading…' }));
+  metricsJs().then(() => {
+    const L = FVMetrics.limits(), num = (key, label, unit, min, max, step) => {
+      const i = h('input', { type: 'number', min, max, step, value: L[key], 'aria-label': label });
+      i.onchange = () => { const v = Math.max(min, Math.min(max, +i.value || FVMetrics.DEF_LIMITS[key])); i.value = v; FVMetrics.setLimits({ [key]: v }); prefsChanged(); };
+      return field(label, h('div', { class: 'fvm-unit' }, i, h('span', { text: unit })));
+    };
+    spacing.replaceChildren(h('h2', { text: 'Parent and child wells' }),
+      num('across', 'Offsets count within, across', 'm', 50, 805, 10),
+      num('vertical', 'and up or down within', 'm', 10, 300, 5),
+      num('siblingDays', 'Fracked together when within', 'days', 0, 365, 5),
+      h('p', { class: 'fvm-preview', text: 'A child had an offset already producing when it was fracked; co-completed wells were fracked with their offsets; a parent saw offsets come later. Bounded wells have offsets on both sides. The wine racks, the 3D view, the map and Discover all use these.' }),
+      h('button', { type: 'button', text: 'Back to 400 m, 100 m, 90 days', onclick: () => { FVMetrics.setLimits(FVMetrics.DEF_LIMITS); prefsChanged(); show('settings'); } }));
+  }).catch(() => spacing.remove());
 
   const u = window.stratumUser;
   const account = h('section', null, h('h2', { text: 'Account' }),
@@ -500,14 +680,15 @@ function settings() {
       h('button', { type: 'button', text: 'Reset settings to defaults', onclick: () => {
         if (!confirm('Put every setting back to its default? Your sessions and groups are kept.')) return;
         T && T.set('light'); T && T.setText('m'); window.StratumGamma && StratumGamma.set('amber'); Q && Q.set({});
-        ['stratum.allWells', 'stratum.section', 'stratum.hiddenCurves'].forEach(k => store.set(k, null));
+        ['stratum.allWells', 'stratum.section', 'stratum.hiddenCurves', 'stratum.sectionMetric', 'stratum.mapColour'].forEach(k => store.set(k, null));
+        if (window.FVMetrics) FVMetrics.setLimits(FVMetrics.DEF_LIMITS); else store.set('stratum.spacingLimits', null);
         prefsChanged(); show('settings');
       } }),
       h('button', { type: 'button', class: 'danger', text: 'Sign out', onclick: async () => { try { await fetch('/api/auth?a=logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* signed out below anyway */ } location.replace('/login.html'); } })));
 
   main.append(h('div', { class: 'fvm-screen' }, h('h1', { text: 'Settings' }),
     h('p', { class: 'fvm-sub', text: 'Changes apply straight away, in every FracView window you have open.' }),
-    h('div', { class: 'fvm-set' }, appearance, quakes, defaults, account)));
+    h('div', { class: 'fvm-set' }, appearance, quakes, defaults, spacing, account)));
 }
 
 // ---------- the buttons that open it ----------
@@ -515,5 +696,7 @@ function bind() {
   document.querySelectorAll('[data-menu]').forEach(b => { if (!b.dataset.menuBound) { b.dataset.menuBound = '1'; b.addEventListener('click', () => open(b.dataset.menu || 'home')); } });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();
-window.StratumMenu = { open, close, show: k => open(k), saveGroup, myGroups, toMap };
+setTimeout(badge, 4000);
+setInterval(badge, 15 * 60e3);
+window.StratumMenu = { open, close, show: k => open(k), saveGroup, myGroups, presets, toMap, badge };
 })();
