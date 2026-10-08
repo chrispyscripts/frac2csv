@@ -1080,6 +1080,17 @@ def _no_flip_back(sub, py, med, tall):
         if not len(w):
             return v
         return min(max(v, float(w.min())), float(w.max()))
+    def pen_row(j):
+        # the middle of a column's longest run: the pen line itself, not a
+        # gridline dot or the other curve's fringe that the median of all
+        # its ink would average in (00005 p181's conc mask put "where the
+        # move began" at 715 kg/m3 that way, and a repair followed it there)
+        ys = np.flatnonzero(sub[:, j])
+        if not len(ys):
+            return None
+        runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
+        g = max(runs_j, key=len)
+        return float(np.median(g))
     # each reading's run, from either end (the envelope moves readings off
     # the middle), joining the breaks of a thin, anti-aliased stroke
     rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
@@ -1117,10 +1128,10 @@ def _no_flip_back(sub, py, med, tall):
             # the ink of the columns just before, by pixel, not the one
             # reading there: 00049 p136's last reading before its rise is a
             # stray dot at row 516, the baseline it rose from is at 643
-            ink_before = np.concatenate([np.flatnonzero(sub[:, j])
-                                         for j in range(max(0, c - 3), c)] or [np.empty(0, int)])
-            if before >= 0 and c - before <= 3 and len(ink_before) >= 4:
-                p0 = float(np.median(ink_before))
+            pens = [pen_row(j) for j in range(max(0, c - 3), c)]
+            pens = [r for r in pens if r is not None]
+            if before >= 0 and c - before <= 3 and pens:
+                p0 = float(np.median(pens))
             elif before >= 0 and c - before <= 3:
                 p0 = py[before]
             else:
@@ -1130,8 +1141,8 @@ def _no_flip_back(sub, py, med, tall):
                 # there is nothing to judge by, and nothing is repaired —
                 # guessing the far end of the first column turned 00051
                 # p179's opening pressure test (a hold at 93 MPa) upside down.
-                lvl = [float(np.median(np.flatnonzero(sub[:, j])))
-                       for j in range(max(0, c - 6), c) if sub[:, j].any()]
+                lvl = [pen_row(j) for j in range(max(0, c - 6), c)]
+                lvl = [r for r in lvl if r is not None]
                 if len(lvl) < 2:
                     c = e + 1
                     continue
@@ -1162,7 +1173,7 @@ def _no_flip_back(sub, py, med, tall):
                         continue
                     base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near]
                     if base:
-                        out[j] = float(np.median(np.concatenate(base)))
+                        out[j] = capped(j, float(np.median(np.concatenate(base))))
             # A repair is a reading back where the move began (`back`) AND
             # fallen more than `tall` behind the furthest the move has read
             # (`reached`): a steady climb whose readings lag at the foot of
