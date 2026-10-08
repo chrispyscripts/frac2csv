@@ -1046,6 +1046,9 @@ def _despeckle(py, join=2, island=3, need=40):
     return out
 
 
+FLIP_REACH = 6      # columns either side whose readings bound a repair
+
+
 def _no_flip_back(sub, py, med, tall):
     """Inside a steep move, a column that reads back at the level the move
     started from — though its own ink reaches far past it — takes the
@@ -1065,6 +1068,18 @@ def _no_flip_back(sub, py, med, tall):
     """
     n = len(py)
     out = np.array(py, float)
+    orig = np.array(py, float)
+
+    def capped(k, v):
+        # never past the furthest the curve itself reads within FLIP_REACH
+        # columns: a column's ink can run on into something that is not the
+        # curve, and its edge then invents a spike (00006 p144's Prop Conc
+        # steps to ~470; its riser's ink ran to 691)
+        w = orig[max(0, k - FLIP_REACH):k + FLIP_REACH + 1]
+        w = w[np.isfinite(w)]
+        if not len(w):
+            return v
+        return min(max(v, float(w.min())), float(w.max()))
     # each reading's run, from either end (the envelope moves readings off
     # the middle), joining the breaks of a thin, anti-aliased stroke
     rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
@@ -1119,9 +1134,9 @@ def _no_flip_back(sub, py, med, tall):
                 if (up and at_top) or (down and at_bot):
                     reached = True
                 elif reached and back and up and at_bot and rtop[k] < p0 - tall:
-                    out[k] = rtop[k] + med / 2.0           # read from the leading end
+                    out[k] = capped(k, rtop[k] + med / 2.0)   # read from the leading end
                 elif reached and back and down and at_top and rbot[k] > p0 + tall:
-                    out[k] = rbot[k] - med / 2.0
+                    out[k] = capped(k, rbot[k] - med / 2.0)
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,
@@ -1129,8 +1144,11 @@ def _no_flip_back(sub, py, med, tall):
             # draws a small notch at ~22). A real dip after an overshoot is
             # shallower (p156's 30 -> 23 is drawn) and a hold is longer; both
             # keep their level.
-            if up or down:
-                sign = 1 if up else -1
+            # Rises only: on a fall the stroke's trailing edge reads its top,
+            # and so does a real spike — 00048 p139's Btm Prop Conc needle to
+            # 304 was cut to 282 by this rule run on falls.
+            if up:
+                sign = 1
                 k = c + 1
                 while k <= e:
                     tail_end = k
@@ -1151,7 +1169,7 @@ def _no_flip_back(sub, py, med, tall):
                                         and sign * (out[j] - nx) > 2 * tall
                                         for j in range(k, tail_end))):
                             for j in range(k, tail_end):
-                                out[j] = (rtop[j] + med / 2.0) if up else (rbot[j] - med / 2.0)
+                                out[j] = capped(j, rtop[j] + med / 2.0)
                     k = max(tail_end, k + 1)
         c = e + 1
     return out
