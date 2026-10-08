@@ -112,6 +112,56 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(m, py, 6.0, 18.0)
         self.assertEqual(out[14], 40.0)
 
+    def test_an_overshoot_at_the_top_of_a_fall_is_kept(self):
+        # 00200 p189: the pressure tops out ~30 rows over its hold on the very
+        # stroke it falls by; that top is the stage's peak, not a flip back
+        m = np.zeros((H, W), bool)
+        m[168:173, 0:10] = True                  # the hold
+        for c in range(10, 14):
+            m[140:290, c] = True                 # up past it, then all the way down
+        m[284:290, 14:40] = True
+        py = np.full(W, np.nan)
+        py[0:10] = 170.0
+        py[10:14] = [289.0, 140.0, 289.0, 289.0]
+        py[14:] = 287.0
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertEqual(out[11], 140.0)
+
+    def test_a_peak_under_another_series_is_not_a_stray(self):
+        # 00163 p207: the pen at the frame top shows as a dot; the columns
+        # around it carry only another curve's fringe, lower down. That fringe
+        # is not where the move began — the curve's readings just before say so
+        m = np.zeros((H, W), bool)
+        m[60:65, 0:10] = True                    # the curve, high
+        m[248:253, 10:13] = True                 # another series' fringe
+        m[2:4, 12] = True                        # the curve's peak, all that shows
+        for c in range(13, 16):
+            m[10:60, c] = True                   # coming down off it
+        m[38:43, 16:40] = True
+        py = np.full(W, np.nan)
+        py[0:10] = 62.0
+        py[12] = 2.5
+        py[13:16] = [26.0, 16.0, 30.0]
+        py[16:] = 40.0
+        out = step1._no_flip_back(m, py, 5.0, 15.0)
+        np.testing.assert_array_equal(out, py)
+
+    def test_a_stray_dot_before_a_rise_takes_the_baseline(self):
+        # 00049 p136: the two readings before the rise are a dot at row 516,
+        # over the baseline at 642-644 that the rise starts from
+        m = np.zeros((H * 3, W), bool)
+        m[640:645, 0:6] = True                   # the baseline
+        m[516, 4:6] = True                       # a stray dot
+        for c in range(6, 10):
+            m[470:645, c] = True                 # the rise
+        m[468:473, 10:40] = True
+        py = np.full(W, np.nan)
+        py[4:6] = 516.0
+        py[6:10] = [644.0, 644.0, 470.0, 470.0]
+        py[10:] = 470.0
+        out = step1._no_flip_back(m, py, 5.0, 15.0)
+        self.assertTrue(np.all(np.abs(out[4:6] - 642.0) <= 1.0), out[3:8])
+
     def test_a_needle_keeps_its_depth(self):
         m = np.zeros((H, W), bool)
         m[160:166, :] = True                 # a level line

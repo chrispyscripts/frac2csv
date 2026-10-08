@@ -1091,6 +1091,12 @@ def _no_flip_back(sub, py, med, tall):
         runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
         g = max(runs_j, key=len)
         return float(np.median(g))
+    def run_len(j):
+        # pixels in the run a column's reading sits on
+        ys = np.flatnonzero(sub[:, j])
+        runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1) if len(ys) else []
+        g = next((g for g in runs_j if g[0] - 1 <= orig[j] <= g[-1] + 1), None)
+        return 0 if g is None else len(g)
     # each reading's run, from either end (the envelope moves readings off
     # the middle), joining the breaks of a thin, anti-aliased stroke
     rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
@@ -1132,6 +1138,18 @@ def _no_flip_back(sub, py, med, tall):
             pens = [r for r in pens if r is not None]
             if before >= 0 and c - before <= 3 and pens:
                 p0 = float(np.median(pens))
+                # ...but not where the curve's own readings just before, on
+                # its line and not on a dot, all say otherwise. Where the pen
+                # is hidden under another series, the longest run in those
+                # columns is that series' fringe: 00163 p207's pressure peaks
+                # at the frame top under the rate's yellow, its "began" came
+                # out at row 466 (the orange curve), and the peak was taken
+                # for a stray and pulled down 9 MPa.
+                seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
+                if (any(run_len(j) > 2 for j in seen)
+                        and not any(abs(orig[j] - p0) <= tall for j in seen)):
+                    c = e + 1
+                    continue
             elif before >= 0 and c - before <= 3:
                 p0 = py[before]
             else:
@@ -1204,6 +1222,17 @@ def _no_flip_back(sub, py, med, tall):
                 # 31 inks rows 419-540, nowhere near the 256 it fell from.
                 low_half = out[k] - rtop[k] > rbot[k] - out[k]
                 high_half = rbot[k] - out[k] > out[k] - rtop[k]
+                # Not past where it began, either: a column whose reading lies
+                # beyond the start and everything read since, away from the
+                # move, is an overshoot the page draws — 00200 p189's pressure
+                # tops out at 80 MPa on the stroke it falls by, 4 MPa over the
+                # hold it fell from. (Everything read since, as well as the
+                # start: where the trace opens on the move the start is a
+                # median of the margin's ink, 00048 p142's 77 rows short of
+                # the baseline its first columns read.)
+                w = out[max(0, c - 6):k]
+                w = [p0, *w[np.isfinite(w)]]
+                back = back and (out[k] <= max(w) + tall if up else out[k] >= min(w) - tall)
                 if up and at_top:
                     reached = out[k] if reached is None else min(reached, out[k])
                 elif down and at_bot:
