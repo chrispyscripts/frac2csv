@@ -1136,6 +1136,7 @@ def _no_flip_back(sub, py, med, tall):
             # stray dot at row 516, the baseline it rose from is at 643
             pens = [pen_row(j) for j in range(max(0, c - 3), c)]
             pens = [r for r in pens if r is not None]
+            margin = False
             if before >= 0 and c - before <= 3 and pens:
                 p0 = float(np.median(pens))
                 # ...but not where the curve's own readings just before, on
@@ -1165,6 +1166,7 @@ def _no_flip_back(sub, py, med, tall):
                     c = e + 1
                     continue
                 p0 = float(np.median(lvl))
+                margin = True
             # and where it ends up: the first reading after it. A move that
             # comes back to where it began is a needle, and is left alone.
             after = e + 1
@@ -1223,14 +1225,17 @@ def _no_flip_back(sub, py, med, tall):
                 low_half = out[k] - rtop[k] > rbot[k] - out[k]
                 high_half = rbot[k] - out[k] > out[k] - rtop[k]
                 # Not past where it began, either: a column whose reading lies
-                # beyond the start and everything read since, away from the
-                # move, is an overshoot the page draws — 00200 p189's pressure
+                # beyond the start and the readings before it, away from the
+                # move, is an overshoot the page draws. 00200 p189's pressure
                 # tops out at 80 MPa on the stroke it falls by, 4 MPa over the
-                # hold it fell from. (Everything read since, as well as the
-                # start: where the trace opens on the move the start is a
-                # median of the margin's ink, 00048 p142's 77 rows short of
-                # the baseline its first columns read.)
-                w = out[max(0, c - 6):k]
+                # hold it fell from; 00006 p154's rate needles up to 13.4 on
+                # its way down from 12.6. Judged against the readings before
+                # the move, not the move's own (the needle's first column is
+                # one of those) — except where the trace opens on the move:
+                # there the start is a median of the margin's ink, 00048
+                # p142's 77 rows short of the baseline its first columns read,
+                # and the move's own readings so far count too.
+                w = out[max(0, c - 6):(k if margin else c)]
                 w = [p0, *w[np.isfinite(w)]]
                 back = back and (out[k] <= max(w) + tall if up else out[k] >= min(w) - tall)
                 if up and at_top:

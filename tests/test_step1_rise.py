@@ -127,6 +127,28 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(m, py, 6.0, 18.0)
         self.assertEqual(out[11], 140.0)
 
+    def test_a_needle_up_during_a_fall_is_kept(self):
+        # 00006 p154: the rate steps down from 12.6 to 10.2 and needles up
+        # to 13.4 on the way; the needle's first column reads its top too
+        m = np.zeros((H * 2, W), bool)
+        m[286:291, 0:10] = True                  # the hold, ~12.6
+        for c in range(10, 16):
+            m[286:344, c] = True                 # stepping down
+        m[257:325, 16] = True                    # the needle, first column
+        for c in range(17, 20):
+            m[256:487, c] = True                 # the needle, up and down
+        m[277:487, 20] = True
+        m[377:382, 21:40] = True                 # the new level, ~10.2
+        py = np.full(W, np.nan)
+        py[0:10] = 288.0
+        py[10:16] = 343.0
+        py[16] = 257.0
+        py[17:20] = 256.0
+        py[20] = 307.0
+        py[21:] = 379.0
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertTrue(np.all(out[16:20] <= 257.0), out[15:22])
+
     def test_a_peak_under_another_series_is_not_a_stray(self):
         # 00163 p207: the pen at the frame top shows as a dot; the columns
         # around it carry only another curve's fringe, lower down. That fringe
