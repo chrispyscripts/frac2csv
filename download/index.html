@@ -39,6 +39,23 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.40</h2>
+    <ul>
+      <li><b>STEP: the leftover dips from 1.11.39 (#799).</b> On some steep
+        rises the column after the repaired one still read the bottom of the
+        stroke: 00048 p130&rsquo;s first rise read 20, 21.5, then 7 MPa. It now
+        climbs 20, 21.5, 20, 25.6, 32.7, 36. Sharp falls that jumped back up
+        for a column now go straight down</li>
+      <li><b>Real notches and gentle climbs keep their readings,</b> and the
+        repair never reads further on than the next two columns, so no new
+        peaks</li>
+      <li><b>On 32 STEP filings, 9,538 channels,</b> 501 changed: samples off
+        their curve&rsquo;s trend drop 24% in those, and no maximum moved by
+        more than 2%</li>
+      <li><b>Which templates this release touches: STEP only.</b> Every other
+        template reads exactly as it did under v1.11.39</li>
+    </ul>
+
     <h2>v1.11.39</h2>
     <ul>
       <li><b>STEP: no more false spike before a pressure rise (#799).</b> At
