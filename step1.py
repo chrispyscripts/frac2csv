@@ -1137,17 +1137,36 @@ def _no_flip_back(sub, py, med, tall):
             p1 = py[after] if after < n and after - e <= 3 else np.nan
             up = np.isfinite(p1) and p1 < p0 - tall        # rows grow downward
             down = np.isfinite(p1) and p1 > p0 + tall
-            reached = False
+            # A repair is a reading back where the move began (`back`) AND
+            # fallen more than `tall` behind the furthest the move has read
+            # (`reached`): a steady climb whose readings lag at the foot of
+            # their columns has not fallen back, and replacing those put a
+            # bump in 00006 p152 (24.7 22.4 24.8 -> 30 37 46 50, then 35).
+            # The repaired reading lies between what had been reached and
+            # where the move lands (p1): it fills a false dip and draws no
+            # peak (00048 p130 grew one at 31). And the move has to have got
+            # somewhere first — more than 3 x `tall` — for anything to have
+            # fallen back from it: a climb that has gained a couple of MPa
+            # and reads the lagging edge of its own line is just climbing.
+            reached = None                             # furthest row read so far
             for k in range(c, e + 1):
                 at_top = abs(out[k] - rtop[k]) <= near
                 at_bot = abs(out[k] - rbot[k]) <= near
                 back = abs(out[k] - p0) <= 2 * tall      # back where it began
-                if (up and at_top) or (down and at_bot):
-                    reached = True
-                elif reached and back and up and at_bot and rtop[k] < p0 - tall:
-                    out[k] = capped(k, rtop[k] + med / 2.0)   # read from the leading end
-                elif reached and back and down and at_top and rbot[k] > p0 + tall:
-                    out[k] = capped(k, rbot[k] - med / 2.0)
+                if up and at_top:
+                    reached = out[k] if reached is None else min(reached, out[k])
+                elif down and at_bot:
+                    reached = out[k] if reached is None else max(reached, out[k])
+                elif (reached is not None and back and up and at_bot
+                        and rtop[k] < p0 - tall and out[k] > reached + tall
+                        and p0 - reached > 3 * tall):
+                    lo_r, hi_r = min(p1, reached), max(p1, reached)
+                    out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
+                elif (reached is not None and back and down and at_top
+                        and rbot[k] > p0 + tall and out[k] < reached - tall
+                        and reached - p0 > 3 * tall):
+                    lo_r, hi_r = min(p1, reached), max(p1, reached)
+                    out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,
@@ -1180,7 +1199,9 @@ def _no_flip_back(sub, py, med, tall):
                                         and sign * (out[j] - nx) > 2 * tall
                                         for j in range(k, tail_end))):
                             for j in range(k, tail_end):
-                                out[j] = capped(j, rtop[j] + med / 2.0)
+                                # up out of the dip, no higher than the lower
+                                # of its two sides: a fill, not a peak
+                                out[j] = min(max(capped(j, rtop[j] + med / 2.0), prv, nx), out[j])
                     k = max(tail_end, k + 1)
         c = e + 1
     return out
