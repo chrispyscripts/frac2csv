@@ -241,6 +241,17 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(self._columns(spans), py, 6.0, 18.0)
         self.assertGreater(out[12], 320, out[8:15])
 
+    def test_a_deep_v_after_a_long_climb_keeps_its_bottom(self):
+        # 00051 p199: up from the floor to the top, then a real V two thirds
+        # of the way back down, and the climb resumes from there (lands at
+        # 423, well short of the top at 207)
+        spans = [(688, 698)] * 10 + [(600, 698), (450, 650), (300, 500), (210, 350), (205, 260)] \
+            + [(205, 230)] * 3 + [(207, 538), (210, 539), (404, 539)] + [(415, 430)] * 10
+        py = np.r_[np.full(10, 693.0), [600, 450, 300, 210, 207], np.full(3, 207.0),
+                   [538, 539, 539], np.full(10, 423.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 6.0, 18.0)
+        self.assertTrue(np.all(out[18:21] >= 530), out[15:22])
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
