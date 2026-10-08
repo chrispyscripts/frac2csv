@@ -230,6 +230,17 @@ class Rise(unittest.TestCase):
         for k in range(20, 27):
             self.assertFalse(out[k] < min(out[k + 1], out[k + 2]) - 15, (k, out[14:30]))
 
+    def test_a_rebound_a_quarter_of_the_way_down_a_fall_goes(self):
+        # 00051 p150 (Carmine's Chart 2): the pressure falls from ~72 to ~44;
+        # col 76 reads the top of its ink, 26% of the way down, 61.6 MPa
+        spans = [(160, 174), (163, 182), (170, 182), (171, 182), (172, 183), (179, 193),
+                 (177, 194), (169, 205), (188, 208), (199, 308), (201, 334), (210, 340),
+                 (214, 340), (332, 340), (336, 340)] + [(339, 344)] * 10
+        py = np.r_[[160, 163, 182, 182, 183, 193, 177, 187, 208, 301, 312, 340, 220, 336.5, 338],
+                   np.full(10, 341.5)]
+        out = step1._no_flip_back(self._columns(spans), py, 6.0, 18.0)
+        self.assertGreater(out[12], 320, out[8:15])
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434

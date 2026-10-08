@@ -1212,10 +1212,13 @@ def _no_flip_back(sub, py, med, tall):
                 at_top = abs(out[k] - rtop[k]) <= near
                 at_bot = abs(out[k] - rbot[k]) <= near
                 # back where it began: within two stroke-heights of it, or in
-                # the bottom quarter of the move so far (00049 p136's false
-                # readings sit 29 rows, ~5 MPa, off the floor of a 170-row rise)
+                # the first third of the move so far (00049 p136's false
+                # readings sit 29 rows, ~5 MPa, off the floor of a 170-row rise;
+                # 00051 p150's rebound mid-fall sits 26% of the way down, 61.6
+                # MPa in a fall from 72 to 44). Drawn notches sit far further
+                # on: 00049 p136's at 80% of its rise, 00048 p142's at 81%.
                 back = abs(out[k] - p0) <= max(2 * tall,
-                                               0.25 * abs(p0 - reached) if reached is not None else 0)
+                                               abs(p0 - reached) / 3.0 if reached is not None else 0)
                 # in the trailing half of its column's ink, not only at its
                 # very end: 00009 p169's col 9 reads 14 rows above the foot of
                 # the upright it is part of (5.8 MPa where the page holds 17).
