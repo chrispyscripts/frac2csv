@@ -252,6 +252,18 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(self._columns(spans), py, 6.0, 18.0)
         self.assertTrue(np.all(out[18:21] >= 530), out[15:22])
 
+    def test_a_noisy_band_is_not_a_move_read_from_the_wrong_end(self):
+        # 00163 p260's chem conc: a band so thick that a whole stretch is one
+        # run of tall columns; a reading at the band's top far from where the
+        # band last went deeper is just the band, not a fall-back
+        spans = [(296, 304)] * 7 + [(362, 370)] * 3 + [(352, 521)] * 2 + [(352, 549)] \
+            + [(352, 521)] * 48 + [(307, 532)] * 3 + [(298, 655)] * 17 + [(650, 658)] * 10
+        py = np.r_[np.full(7, 300.0), np.full(3, 366.0), [521, 521, 549], np.full(48, 521.0),
+                   np.full(3, 307.0),
+                   np.full(17, 655.0), np.full(10, 654.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 9.0, 27.0)
+        self.assertTrue(np.all(out[61:64] == 307.0), out[58:66])
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
