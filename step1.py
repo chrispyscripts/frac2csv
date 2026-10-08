@@ -1046,6 +1046,253 @@ def _despeckle(py, join=2, island=3, need=40):
     return out
 
 
+FLIP_REACH = 6      # columns either side whose readings bound a repair
+
+
+def _no_flip_back(sub, py, med, tall):
+    """Inside a steep move, a column that reads back at the level the move
+    started from — though its own ink reaches far past it — takes the
+    move's leading edge instead. -> py, changed only there.
+
+    The 2026 STEP books draw the pressure's opening rise (~1 to ~30 MPa) with
+    a thick line that fills four pixel columns, each inked from the baseline
+    up. curve_positions takes one END of each column's run (the end further
+    from a lagging reference), and it took the top of the first column and
+    the baseline of the next three: 00051 p156 read 18, 0.7, 0.7, 0.8, then
+    the hold — a false spike before every rise on every well of the set
+    (Carmine, #799). A column that falls back to where the move began, while
+    its ink reaches past where the move has already been, is the same stroke
+    read from the wrong end; it is read from the leading end. Nothing else
+    moves: the first column, peaks, holds, needles and every ordinary column
+    keep the reading they had.
+    """
+    n = len(py)
+    out = np.array(py, float)
+    orig = np.array(py, float)
+
+    def capped(k, v):
+        # never past the furthest the curve itself reads within FLIP_REACH
+        # columns: a column's ink can run on into something that is not the
+        # curve, and its edge then invents a spike (00006 p144's Prop Conc
+        # steps to ~470; its riser's ink ran to 691)
+        w = orig[max(0, k - FLIP_REACH):k + FLIP_REACH + 1]
+        w = w[np.isfinite(w)]
+        if not len(w):
+            return v
+        return min(max(v, float(w.min())), float(w.max()))
+    def pen_row(j):
+        # the middle of a column's longest run: the pen line itself, not a
+        # gridline dot or the other curve's fringe that the median of all
+        # its ink would average in (00005 p181's conc mask put "where the
+        # move began" at 715 kg/m3 that way, and a repair followed it there)
+        ys = np.flatnonzero(sub[:, j])
+        if not len(ys):
+            return None
+        runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
+        g = max(runs_j, key=len)
+        return float(np.median(g))
+    def run_len(j):
+        # pixels in the run a column's reading sits on
+        ys = np.flatnonzero(sub[:, j])
+        runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1) if len(ys) else []
+        g = next((g for g in runs_j if g[0] - 1 <= orig[j] <= g[-1] + 1), None)
+        return 0 if g is None else len(g)
+    # each reading's run, from either end (the envelope moves readings off
+    # the middle), joining the breaks of a thin, anti-aliased stroke
+    rtop, rbot = np.full(n, np.nan), np.full(n, np.nan)
+    for c in range(n):
+        if not np.isfinite(py[c]):
+            continue
+        ys = np.flatnonzero(sub[:, c])
+        if not len(ys):
+            continue
+        if len(ys) >= 0.6 * (ys[-1] - ys[0] + 1):
+            rtop[c], rbot[c] = float(ys[0]), float(ys[-1])
+            continue
+        cuts = np.flatnonzero(np.diff(ys) > 6) + 1
+        for g in np.split(ys, cuts):
+            if g[0] - 1 <= py[c] <= g[-1] + 1:
+                rtop[c], rbot[c] = float(g[0]), float(g[-1])
+                break
+    tall_c = np.isfinite(py) & np.isfinite(rtop) & ((rbot - rtop + 1) >= tall)
+    near = max(2.0, med)
+    c = 0
+    while c < n:
+        if not tall_c[c]:
+            c += 1
+            continue
+        e = c
+        while e + 1 < n and tall_c[e + 1]:
+            e += 1
+        if e > c:
+            # where the move began: the reading just before it, or — where
+            # the trace starts on the move (the blank margin at the frame) —
+            # the end opposite the one its first column reads
+            before = c - 1
+            while before >= 0 and not np.isfinite(py[before]):
+                before -= 1
+            # the ink of the columns just before, by pixel, not the one
+            # reading there: 00049 p136's last reading before its rise is a
+            # stray dot at row 516, the baseline it rose from is at 643
+            pens = [pen_row(j) for j in range(max(0, c - 3), c)]
+            pens = [r for r in pens if r is not None]
+            margin = False
+            if before >= 0 and c - before <= 3 and pens:
+                p0 = float(np.median(pens))
+                # ...but not where the curve's own readings just before, on
+                # its line and not on a dot, all say otherwise. Where the pen
+                # is hidden under another series, the longest run in those
+                # columns is that series' fringe: 00163 p207's pressure peaks
+                # at the frame top under the rate's yellow, its "began" came
+                # out at row 466 (the orange curve), and the peak was taken
+                # for a stray and pulled down 9 MPa.
+                seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
+                if (any(run_len(j) > 2 for j in seen)
+                        and not any(abs(orig[j] - p0) <= tall for j in seen)):
+                    c = e + 1
+                    continue
+            elif before >= 0 and c - before <= 3:
+                p0 = py[before]
+            else:
+                # No reading just before: the frame's blank margin. The ink
+                # in those columns still says where the curve was (00051
+                # p156: its baseline at rows 708-713); with none there either
+                # there is nothing to judge by, and nothing is repaired —
+                # guessing the far end of the first column turned 00051
+                # p179's opening pressure test (a hold at 93 MPa) upside down.
+                lvl = [pen_row(j) for j in range(max(0, c - 6), c)]
+                lvl = [r for r in lvl if r is not None]
+                if len(lvl) < 2:
+                    c = e + 1
+                    continue
+                p0 = float(np.median(lvl))
+                margin = True
+            # and where it ends up: the first reading after it. A move that
+            # comes back to where it began is a needle, and is left alone.
+            after = e + 1
+            while after < n and not np.isfinite(py[after]):
+                after += 1
+            p1 = py[after] if after < n and after - e <= 3 else np.nan
+            up = np.isfinite(p1) and p1 < p0 - tall        # rows grow downward
+            down = np.isfinite(p1) and p1 > p0 + tall
+            # Just before the move: a reading on a lone dot (a run of one or
+            # two pixels) in a column that also carries ink at the level the
+            # move starts from is a stray, and the curve is on that level —
+            # 00049 p136 read a dot at row 516 (20 MPa) in the two columns
+            # before its rise, over the baseline at 642-644.
+            if up or down:
+                for j in range(max(0, c - 3), c):
+                    if not np.isfinite(out[j]):
+                        continue
+                    ys = np.flatnonzero(sub[:, j])
+                    if not len(ys):
+                        continue
+                    runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
+                    mine = next((g for g in runs_j if g[0] - 1 <= out[j] <= g[-1] + 1), None)
+                    if mine is None or len(mine) > 2 or abs(out[j] - p0) <= 2 * tall:
+                        continue
+                    base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near]
+                    if base:
+                        out[j] = capped(j, float(np.median(np.concatenate(base))))
+            # A repair is a reading back where the move began (`back`) AND
+            # fallen more than `tall` behind the furthest the move has read
+            # (`reached`): a steady climb whose readings lag at the foot of
+            # their columns has not fallen back, and replacing those put a
+            # bump in 00006 p152 (24.7 22.4 24.8 -> 30 37 46 50, then 35).
+            # The repaired reading lies between what had been reached and
+            # where the move lands (p1): it fills a false dip and draws no
+            # peak (00048 p130 grew one at 31). And the move has to be a big
+            # one (start to landing more than 3 x `tall`) that had got
+            # somewhere (more than 2 x `tall`) before anything fell back from
+            # it: a climb that has gained a couple of MPa and reads the
+            # lagging edge of its own line is just climbing (00006 p152).
+            reached = None                             # furthest row read so far
+            for k in range(c, e + 1):
+                at_top = abs(out[k] - rtop[k]) <= near
+                at_bot = abs(out[k] - rbot[k]) <= near
+                # back where it began: within two stroke-heights of it, or in
+                # the bottom quarter of the move so far (00049 p136's false
+                # readings sit 29 rows, ~5 MPa, off the floor of a 170-row rise)
+                back = abs(out[k] - p0) <= max(2 * tall,
+                                               0.25 * abs(p0 - reached) if reached is not None else 0)
+                # in the trailing half of its column's ink, not only at its
+                # very end: 00009 p169's col 9 reads 14 rows above the foot of
+                # the upright it is part of (5.8 MPa where the page holds 17).
+                # And the column's OWN ink reaches the level already reached:
+                # it is still the upright. A real V drawn after a climb has
+                # left that level — 00048 p142's dip from 67 to 32 MPa at col
+                # 31 inks rows 419-540, nowhere near the 256 it fell from.
+                low_half = out[k] - rtop[k] > rbot[k] - out[k]
+                high_half = rbot[k] - out[k] > out[k] - rtop[k]
+                # Not past where it began, either: a column whose reading lies
+                # beyond the start and the readings before it, away from the
+                # move, is an overshoot the page draws. 00200 p189's pressure
+                # tops out at 80 MPa on the stroke it falls by, 4 MPa over the
+                # hold it fell from; 00006 p154's rate needles up to 13.4 on
+                # its way down from 12.6. Judged against the readings before
+                # the move, not the move's own (the needle's first column is
+                # one of those) — except where the trace opens on the move:
+                # there the start is a median of the margin's ink, 00048
+                # p142's 77 rows short of the baseline its first columns read,
+                # and the move's own readings so far count too.
+                w = out[max(0, c - 6):(k if margin else c)]
+                w = [p0, *w[np.isfinite(w)]]
+                back = back and (out[k] <= max(w) + tall if up else out[k] >= min(w) - tall)
+                if up and at_top:
+                    reached = out[k] if reached is None else min(reached, out[k])
+                elif down and at_bot:
+                    reached = out[k] if reached is None else max(reached, out[k])
+                elif (reached is not None and back and up and low_half
+                        and rtop[k] <= reached + tall and out[k] > reached + tall
+                        and p0 - reached > 2 * tall and p0 - p1 > 3 * tall):
+                    lo_r, hi_r = min(p1, reached), max(p1, reached)
+                    out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
+                elif (reached is not None and back and down and high_half
+                        and rbot[k] >= reached - tall and out[k] < reached - tall
+                        and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
+                    lo_r, hi_r = min(p1, reached), max(p1, reached)
+                    out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)
+            # The stroke's trailing edge after the top: one or two columns
+            # still reading the bottom of the thick upright, far below both
+            # the reading before them and the one after (00051 p159: 26.5,
+            # then 12.3 and 11.2 off the upright's edge, then 21-27 — the page
+            # draws a small notch at ~22). A real dip after an overshoot is
+            # shallower (p156's 30 -> 23 is drawn) and a hold is longer; both
+            # keep their level.
+            # Rises only: on a fall the stroke's trailing edge reads its top,
+            # and so does a real spike — 00048 p139's Btm Prop Conc needle to
+            # 304 was cut to 282 by this rule run on falls.
+            if up:
+                sign = 1
+                k = c + 1
+                while k <= e:
+                    tail_end = k
+                    while (tail_end <= e and tail_end - k < 3
+                           and abs(out[tail_end] - (rbot[tail_end] if up else rtop[tail_end])) <= near):
+                        tail_end += 1
+                    run = tail_end - k
+                    if 1 <= run <= 2 and tail_end <= e + 1:
+                        # judged against the readings around it, three a side,
+                        # not one: the column after p156's real dip to 23 is
+                        # itself a tall column read at its top (31)
+                        lft = [out[j] for j in range(k - 1, max(-1, k - 6), -1) if np.isfinite(out[j])][:3]
+                        rgt = [out[j] for j in range(tail_end, min(n, tail_end + 6)) if np.isfinite(out[j])][:3]
+                        prv = float(np.median(lft)) if lft else np.nan
+                        nx = float(np.median(rgt)) if rgt else np.nan
+                        if (np.isfinite(prv) and np.isfinite(nx)
+                                and all(sign * (out[j] - prv) > 2 * tall
+                                        and sign * (out[j] - nx) > 2 * tall
+                                        and rtop[j] <= min(prv, nx) + tall   # still the upright
+                                        for j in range(k, tail_end))):
+                            for j in range(k, tail_end):
+                                # up out of the dip, no higher than the lower
+                                # of its two sides: a fill, not a peak
+                                out[j] = min(max(capped(j, rtop[j] + med / 2.0), prv, nx), out[j])
+                    k = max(tail_end, k + 1)
+        c = e + 1
+    return out
+
+
 def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
     """Curve rows -> (column positions, rows), splitting near-vertical strokes.
 
@@ -1084,6 +1331,7 @@ def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
         nxt[c] = last
         if np.isfinite(py[c]):
             last = py[c]
+    py = _no_flip_back(sub, py, med, tall)
     xs, rows = [], []
     for c in range(n):
         if not np.isfinite(py[c]):

@@ -39,6 +39,24 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.39</h2>
+    <ul>
+      <li><b>STEP: no more false spike before a pressure rise (#799).</b> At
+        pump start the thick line covers several columns of pixels, and the
+        reader took the top of one and the bottom of the next, so the export
+        jumped up, dropped back to zero and rose again. Those columns are now
+        read from the leading end: 00051&rsquo;s 14:31 stage goes 18, 20.7,
+        27.4, 29.7 instead of 17.1, 7, 0.7, 0.7, 13.4</li>
+      <li><b>Real spikes and dips stay:</b> drawn dips, an overshoot at the top
+        of a fall, a needle during a move, a peak hidden under another
+        curve</li>
+      <li><b>On 32 STEP filings, 9,538 channels,</b> samples off their
+        curve&rsquo;s trend drop 22% and V-shaped dips 8%. No pressure or rate
+        maximum dropped</li>
+      <li><b>Which templates this release touches: STEP only.</b> Every other
+        template reads exactly as it did under v1.11.38</li>
+    </ul>
+
     <h2>v1.11.38</h2>
     <ul>
       <li><b>BJ 2026 charts read (#796, #797).</b> BJ&rsquo;s 2026 Ovintiv books
