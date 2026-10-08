@@ -39,6 +39,21 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.41</h2>
+    <ul>
+      <li><b>STEP: no rebound in the middle of a fall (#799).</b> On 00051&rsquo;s
+        Chart 2 the pressure falls from 72 to 44 MPa at 13:46, and one column
+        read the top of the line instead of the bottom: a spike back up to 61.6.
+        It now reads down with the fall</li>
+      <li><b>Real V-shaped dips keep their bottom,</b> and noisy chemical bands
+        are left as drawn</li>
+      <li><b>On 32 STEP filings, 9,538 channels,</b> 199 changed: samples off
+        their curve&rsquo;s trend drop 42% in those, and no maximum moved by
+        more than 2%</li>
+      <li><b>Which templates this release touches: STEP only.</b> Every other
+        template reads exactly as it did under v1.11.40</li>
+    </ul>
+
     <h2>v1.11.40</h2>
     <ul>
       <li><b>STEP: the leftover dips from 1.11.39 (#799).</b> On some steep

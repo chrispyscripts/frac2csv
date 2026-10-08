@@ -1207,15 +1207,27 @@ def _no_flip_back(sub, py, med, tall):
             # it: a climb that has gained a couple of MPa and reads the
             # lagging edge of its own line is just climbing (00006 p152).
             reached = None                             # furthest row read so far
+            reached_at = -1                            # the column that read it
             fixed = np.zeros(n, bool)                  # repaired in this move
             for k in range(c, e + 1):
                 at_top = abs(out[k] - rtop[k]) <= near
                 at_bot = abs(out[k] - rbot[k]) <= near
                 # back where it began: within two stroke-heights of it, or in
-                # the bottom quarter of the move so far (00049 p136's false
+                # the first quarter of the move so far (00049 p136's false
                 # readings sit 29 rows, ~5 MPa, off the floor of a 170-row rise)
-                back = abs(out[k] - p0) <= max(2 * tall,
-                                               0.25 * abs(p0 - reached) if reached is not None else 0)
+                # — the first third where the move then lands at least as far
+                # as it had got: 00051 p150's rebound to 61.6 MPa sits 26% of
+                # the way down a fall from 72 that lands at 44. A real V after
+                # a climb lands short of the top (00051 p199's falls 68% of the
+                # way back and climbs again from there), and keeps its bottom.
+                # And only just after the move got there, within four columns:
+                # a noisy band thick enough that a whole stretch of chart is
+                # one "move" (00163 p260's chem conc, 181 columns) is not a
+                # stroke read from the wrong end, and a third invented a dip.
+                span = abs(p0 - reached) if reached is not None else 0.0
+                landed = reached is not None and k - reached_at <= 4 and (
+                    p1 <= reached + tall if up else p1 >= reached - tall)
+                back = abs(out[k] - p0) <= max(2 * tall, span / 3.0 if landed else 0.25 * span)
                 # in the trailing half of its column's ink, not only at its
                 # very end: 00009 p169's col 9 reads 14 rows above the foot of
                 # the upright it is part of (5.8 MPa where the page holds 17).
@@ -1275,9 +1287,11 @@ def _no_flip_back(sub, py, med, tall):
                 ahead = orig[k + 1:k + 3]
                 ahead = ahead[np.isfinite(ahead)]
                 if up and at_top:
-                    reached = out[k] if reached is None else min(reached, out[k])
+                    if reached is None or out[k] < reached:
+                        reached, reached_at = out[k], k
                 elif down and at_bot:
-                    reached = out[k] if reached is None else max(reached, out[k])
+                    if reached is None or out[k] > reached:
+                        reached, reached_at = out[k], k
                 elif (reached is not None and back and up and low_half
                         and rtop[k] <= reached + tall and out[k] > ref + tall
                         and p0 - reached > 2 * tall and p0 - p1 > 3 * tall):
