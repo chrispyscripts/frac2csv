@@ -1207,6 +1207,7 @@ def _no_flip_back(sub, py, med, tall):
             # it: a climb that has gained a couple of MPa and reads the
             # lagging edge of its own line is just climbing (00006 p152).
             reached = None                             # furthest row read so far
+            fixed = np.zeros(n, bool)                  # repaired in this move
             for k in range(c, e + 1):
                 at_top = abs(out[k] - rtop[k]) <= near
                 at_bot = abs(out[k] - rbot[k]) <= near
@@ -1224,6 +1225,27 @@ def _no_flip_back(sub, py, med, tall):
                 # 31 inks rows 419-540, nowhere near the 256 it fell from.
                 low_half = out[k] - rtop[k] > rbot[k] - out[k]
                 high_half = rbot[k] - out[k] > out[k] - rtop[k]
+                # Or right behind a column just repaired, falling back more
+                # than `tall` from it onto the edge of the stroke: once the
+                # move reads from its leading end, the next column read from
+                # its trailing end puts the same zigzag one column on (00048
+                # p130's rise read 20, 21.5, then 7 MPa; 00005 p203's fall 57,
+                # 50, 60, 45). On the edge, that is — the trailing edge still
+                # closing on the leading level by more than 1.5 x `tall` a
+                # column (00048 p130's: 42, 76, 71, 59 rows, `tall` 24). A
+                # notch drawn just after a rise has an edge that holds its
+                # level (00048 p142's 582, 566, 566, 566), and a steady climb
+                # one that creeps (00200 p189's 16 rows a column); both keep
+                # their readings.
+                ref = reached
+                if k > c and fixed[k - 1] and k + 1 < n and (
+                        out[k] > out[k - 1] + tall if up else out[k] < out[k - 1] - tall):
+                    edge, nxt = (rbot[k], rbot[k + 1]) if up else (rtop[k], rtop[k + 1])
+                    if np.isfinite(nxt) and (nxt < edge - 1.5 * tall if up
+                                             else nxt > edge + 1.5 * tall):
+                        back = True
+                        ref = (min(reached, out[k - 1]) if up
+                               else max(reached, out[k - 1]))
                 # Not past where it began, either: a column whose reading lies
                 # beyond the start and the readings before it, away from the
                 # move, is an overshoot the page draws. 00200 p189's pressure
@@ -1243,15 +1265,17 @@ def _no_flip_back(sub, py, med, tall):
                 elif down and at_bot:
                     reached = out[k] if reached is None else max(reached, out[k])
                 elif (reached is not None and back and up and low_half
-                        and rtop[k] <= reached + tall and out[k] > reached + tall
+                        and rtop[k] <= ref + tall and out[k] > ref + tall
                         and p0 - reached > 2 * tall and p0 - p1 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rtop[k] + med / 2.0), lo_r), hi_r)
+                    fixed[k] = True
                 elif (reached is not None and back and down and high_half
-                        and rbot[k] >= reached - tall and out[k] < reached - tall
+                        and rbot[k] >= ref - tall and out[k] < ref - tall
                         and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
                     lo_r, hi_r = min(p1, reached), max(p1, reached)
                     out[k] = min(max(capped(k, rbot[k] - med / 2.0), lo_r), hi_r)
+                    fixed[k] = True
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,

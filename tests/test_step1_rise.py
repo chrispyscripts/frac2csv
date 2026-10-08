@@ -184,6 +184,35 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(m, py, 5.0, 15.0)
         self.assertTrue(np.all(np.abs(out[4:6] - 642.0) <= 1.0), out[3:8])
 
+    @staticmethod
+    def _columns(spans, rows=H * 3):
+        m = np.zeros((rows, len(spans)), bool)
+        for c, (a, b) in enumerate(spans):
+            m[a:b + 1, c] = True
+        return m
+
+    def test_the_column_after_a_repair_does_not_dip_either(self):
+        # 00048 p130: the rise's trailing edge recedes 780, 738, 662, 591 a
+        # column after the repaired one; reading it read 20, 21.5, then 7 MPa
+        spans = [(785, 789)] * 9 + [(743, 788), (631, 788), (615, 788), (519, 780),
+                                    (519, 738), (512, 662), (511, 591)] + [(509, 532)] * 4 \
+            + [(521, 534)] * 11                  # the hold
+        py = np.r_[np.full(9, 787.0), [788, 631, 788, 738, 738, 631, 588],
+                   np.full(4, 509.0), np.full(11, 534.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 8.0, 24.0)
+        self.assertTrue(np.all(out[12:16] <= 540), out[9:17])
+
+    def test_a_notch_just_after_a_rise_is_kept(self):
+        # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
+        # 582, 566, 566), then on up to ~434
+        spans = [(784, 788)] * 10 + [(759, 786), (743, 786), (561, 786), (515, 784),
+                                     (513, 742), (513, 731), (513, 582), (513, 566),
+                                     (536, 566), (517, 566), (451, 563)] + [(428, 440)] * 10
+        py = np.r_[np.full(10, 786.0), [786, 786, 563, 515, 742, 715, 572, 566, 566, 517, 452],
+                   np.full(10, 434.0)]
+        out = step1._no_flip_back(self._columns(spans), py, 5.0, 15.0)
+        self.assertTrue(np.all(out[16:19] >= 560), out[13:21])
+
     def test_a_needle_keeps_its_depth(self):
         m = np.zeros((H, W), bool)
         m[160:166, :] = True                 # a level line
