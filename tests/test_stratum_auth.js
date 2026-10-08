@@ -20,3 +20,13 @@ const assert=require('node:assert/strict'),path=require('node:path'),crypto=requ
   assert.equal(await m.userPath('a@b.test'),'users/'+crypto.createHash('sha256').update('a@b.test').digest('hex')+'.json','the edge and Node name an account alike');
   console.log('PASS: sign-in cookie signing, tampering, expiry and account paths');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
+// the old extractor at the root is closed to everyone: the root goes to the map, its API is gone
+import('../web/lib/closed.js').then(({ closed }) => {
+  assert.equal(closed('/'), 'map'); assert.equal(closed('/index.html'), 'map');
+  for (const p of ['/api/extract', '/api/extract.py', '/api/bcer', '/api/raster_core.py', '/api/wellfiles', '/api/well-extract', '/api/well-intervals/'])
+    assert.equal(closed(p), 'gone', p);
+  for (const p of ['/map.html', '/login.html', '/api/auth', '/api/sessions', '/api/mine', '/api/share', '/api/digest', '/data/region/index.json', '/report.html'])
+    assert.equal(closed(p), null, p);
+  console.log('PASS: the extractor page and its API are closed; FracView is untouched');
+}).catch(e => { console.error(e); process.exit(1); });

@@ -2,7 +2,8 @@
 // signed-in user. Runs before anything is served (Vercel Routing Middleware),
 // so the well data cannot be fetched around the sign-in page. Only the sign-in
 // page itself and the account API are open, and the daily watch-list digest,
-// which the cron job's own secret guards (lib/digest.js).
+// which the cron job's own secret guards (lib/digest.js). The old extractor at
+// the root is closed to everyone (lib/closed.js).
 //
 // The cookie is checked by its signature on every request. Once an hour of use
 // the account itself is looked up too, and the cookie renewed: an account an
@@ -10,6 +11,7 @@
 import { next } from '@vercel/functions';
 import { get } from '@vercel/blob';
 import { readCookie, verify, sign, setCookie, clearCookie, userPath, MAX_AGE } from './lib/session.js';
+import { closed } from './lib/closed.js';
 
 const OPEN = new Set(['/login.html', '/login.css', '/login.js', '/favicon.ico', '/api/auth', '/api/digest']);
 const RECHECK_S = 3600;
@@ -35,6 +37,9 @@ function refuse(request, url, signedOut) {
 
 export default async function middleware(request) {
   const url = new URL(request.url);
+  const shut = closed(url.pathname);
+  if (shut === 'map') return new Response(null, { status: 302, headers: { Location: '/map.html' + url.search, 'Cache-Control': 'no-store' } });
+  if (shut === 'gone') return new Response('Not found.', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
   if (OPEN.has(url.pathname)) return next();
   const secret = process.env.SESSION_SECRET;
   const s = await verify(readCookie(request.headers.get('cookie')), secret);
