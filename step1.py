@@ -1110,9 +1110,16 @@ def _off_the_dots(sub, py, med, tall):
                 continue
         elif not py[c] > max(u for _, u in sides) + tall:
             continue
-        # the line's end on the fleck's side, a half-pen in
+        # the line's end on the fleck's side, a half-pen in — but between
+        # the readings either side, not past them: on a slanted stroke that
+        # end runs ahead of the curve (00049 p144's cols 10-11 would have
+        # read 40 MPa between 33 and 36)
         lo, hi = float(line[0]), float(line[-1])
-        out[c] = min(lo + med / 2.0, (lo + hi) / 2.0) if py[c] < lo else max(hi - med / 2.0, (lo + hi) / 2.0)
+        v = min(lo + med / 2.0, (lo + hi) / 2.0) if py[c] < lo else max(hi - med / 2.0, (lo + hi) / 2.0)
+        nb = [py[j] for j in (a - 1, b + 1) if 0 <= j < n and np.isfinite(py[j])]
+        if len(nb) == 2:
+            v = min(max(v, min(nb)), max(nb))
+        out[c] = v
     return out
 
 
@@ -1269,6 +1276,28 @@ def _no_flip_back(sub, py, med, tall):
                     ys = np.flatnonzero(sub[:, c:min(e + 1, c + 4)].any(axis=1))
                     p0 = float(ys[-1] if q1 < ys[0] else ys[0])
                     frame_edge = True
+                    # A flat-topped entry: where the ink's leading edge holds
+                    # the level the trace entered at until the climb sets
+                    # off, the block under it is the stroke's own corner, and
+                    # the trace is on that edge — Chart 2's cols 1-5 read
+                    # 16, then 13 three times, along the foot of a block whose
+                    # top stays at 19.5 MPa. Where the edge drops first, the
+                    # sag is drawn and stays (00052 p150's, 00050 p145's).
+                    sgn = 1 if q1 < p0 else -1         # +1: climbing (rows fall)
+                    edg = rtop if sgn == 1 else rbot
+                    first = [edg[j] for j in (c, c + 1) if j <= e and np.isfinite(edg[j])]
+                    if first:
+                        lvl0 = min(first) if sgn == 1 else max(first)
+                        flat, m = True, c
+                        while m <= e and np.isfinite(edg[m]) and sgn * (lvl0 - edg[m]) <= tall:
+                            if sgn * (edg[m] - lvl0) > tall / 2.0:
+                                flat = False
+                                break
+                            m += 1
+                        if flat:
+                            for j in range(c, m):
+                                if np.isfinite(out[j]) and sgn * (out[j] - edg[j]) > tall:
+                                    out[j] = edg[j] + sgn * med / 2.0
                 margin = True
             # and where it ends up: the first reading after it. A move that
             # comes back to where it began is a needle, and is left alone.
@@ -1332,6 +1361,16 @@ def _no_flip_back(sub, py, med, tall):
                 landed = reached is not None and k - reached_at <= 4 and (
                     p1 <= reached + tall if up else p1 >= reached - tall)
                 back = abs(out[k] - p0) <= max(2 * tall, span / 3.0 if landed else 0.25 * span)
+                if back and frame_edge:
+                    # at the frame's edge, only one or two columns reading
+                    # the far end: a level held longer is drawn (00050
+                    # p145's opening sags to 402 for six columns)
+                    a0 = b0 = k
+                    while a0 - 1 >= c and np.isfinite(orig[a0 - 1]) and abs(orig[a0 - 1] - orig[k]) <= tall:
+                        a0 -= 1
+                    while b0 + 1 <= e and np.isfinite(orig[b0 + 1]) and abs(orig[b0 + 1] - orig[k]) <= tall:
+                        b0 += 1
+                    back = b0 - a0 + 1 <= 2
                 # in the trailing half of its column's ink, not only at its
                 # very end: 00009 p169's col 9 reads 14 rows above the foot of
                 # the upright it is part of (5.8 MPa where the page holds 17).
@@ -1393,6 +1432,13 @@ def _no_flip_back(sub, py, med, tall):
                 back = back and (out[k] <= max(w) + tall if up else out[k] >= min(w) - tall)
                 ahead = orig[k + 1:k + 3]
                 ahead = ahead[np.isfinite(ahead)]
+                # a repair in a move opening at the frame's edge, too, reads
+                # no further on than the furthest of the next three: the top
+                # of a slanted stroke runs ahead of the curve, and 00049
+                # p144's opening grew a peak at 40 MPa that way, 00050 p145's
+                # one at 55
+                ahead3 = orig[k + 1:k + 4]
+                ahead3 = ahead3[np.isfinite(ahead3)]
                 if up and at_top:
                     lead[k] = True
                     if reached is None or out[k] < reached:
@@ -1409,6 +1455,8 @@ def _no_flip_back(sub, py, med, tall):
                     fixed[k] = True
                     if follow and len(ahead):
                         out[k] = max(out[k], float(np.min(ahead)))
+                    elif frame_edge and len(ahead3):
+                        out[k] = max(out[k], float(np.min(ahead3)))
                 elif (reached is not None and back and down and high_half
                         and rbot[k] >= reached - tall and out[k] < ref - tall
                         and reached - p0 > 2 * tall and p1 - p0 > 3 * tall):
@@ -1417,6 +1465,8 @@ def _no_flip_back(sub, py, med, tall):
                     fixed[k] = True
                     if follow and len(ahead):
                         out[k] = min(out[k], float(np.max(ahead)))
+                    elif frame_edge and len(ahead3):
+                        out[k] = min(out[k], float(np.max(ahead3)))
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,

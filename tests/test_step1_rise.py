@@ -268,8 +268,9 @@ class Rise(unittest.TestCase):
         # Carmine's Chart 2 (00051 p150): the pressure enters at the frame's
         # left edge from the floor and climbs; the opening read 18, 16, 1, 13,
         # 13, 13, 21, 28, 16, 39, 39, 31 MPa. Col 2 read the floor end of
-        # the entry bar, col 8 the foot of its stroke, cols 9-10 a fleck
-        # where two gridlines cross. The sag at cols 3-5 is drawn.
+        # the entry bar, cols 1-5 the foot of a block whose top holds the
+        # entry level, col 8 the foot of its stroke, cols 9-10 a fleck where
+        # two gridlines cross. It climbs, and never drops back.
         runs = [[(465, 472), (477, 492), (503, 568)], [(457, 484), (488, 568)], [(458, 568)],
                 [(457, 500), (502, 502), (505, 520)], [(457, 497)], [(458, 498)],
                 [(441, 450), (457, 469), (472, 498)], [(413, 416), (419, 482), (489, 492)],
@@ -283,10 +284,25 @@ class Rise(unittest.TestCase):
         py = np.r_[[468.5, 484, 568, 502, 497, 498, 450, 414.5, 480, 347.5, 347.5, 395, 392,
                     376, 376, 362.5], np.full(10, 353.0)]
         out = step1._no_flip_back(m, py, 6.0, 18.0)
-        self.assertLess(out[2], 470, out[:12])                    # not the floor
-        self.assertLess(out[8], 430, out[:12])                    # not the foot
-        self.assertTrue(np.all((out[9:11] > 375) & (out[9:11] < 395)), out[:12])
-        self.assertTrue(np.all(out[3:6] > 490), out[:12])         # the sag stays
+        for k in range(1, 13):                   # rows grow downward
+            self.assertLessEqual(out[k], np.min(out[:k]) + 18, (k, out[:13]))
+        self.assertTrue(np.all((out[9:11] > 375) & (out[9:11] <= 400)), out[:12])
+
+    def test_a_sag_drawn_after_the_entry_is_kept(self):
+        # 00052 p150: in at the frame's edge to 485, then the ink's top edge
+        # itself drops (527 at col 6) and the climb sets off from 574: a sag
+        # the page draws. The floor reads at cols 2-3 still go.
+        runs = [[(485, 530)]] * 2 + [[(485, 722)]] * 2 + [[(487, 574)]] * 2 + [[(527, 574)]] * 2 \
+            + [[(428, 570)], [(391, 564)], [(313, 534)], [(313, 518)], [(312, 406)]] + [[(302, 310)]] * 10
+        m = np.zeros((800, len(runs)), bool)
+        for c, rs in enumerate(runs):
+            for a, b in rs:
+                m[a:b + 1, c] = True
+        py = np.r_[[485.5, 485.5, 722, 722, 574, 574, 574, 574, 563, 564, 534, 518, 406],
+                   np.full(10, 306.0)]
+        out = step1._no_flip_back(m, py, 4.0, 12.0)
+        self.assertTrue(np.all(out[2:4] < 600), out[:13])         # not the floor
+        self.assertTrue(np.all(out[4:8] >= 560), out[:13])        # the sag stays
 
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
