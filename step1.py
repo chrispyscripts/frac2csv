@@ -1186,7 +1186,7 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
             return None
         runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
         g = max(runs_j, key=len)
-        return float(np.median(g)) if len(g) > 2 or not pressure else None
+        return float(np.median(g))
     def run_len(j):
         # pixels in the run a column's reading sits on
         ys = np.flatnonzero(sub[:, j])
