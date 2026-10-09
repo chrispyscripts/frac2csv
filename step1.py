@@ -1393,6 +1393,7 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
             fixed = np.zeros(n, bool)                  # repaired in this move
             lead = np.zeros(n, bool)                   # read at its leading end
             new_far = np.zeros(n, bool)                # took the move further
+            footed = np.zeros(n, bool)                 # repaired by foot_fix
             reached_now = np.full(n, np.nan)           # furthest, as column k came
             fr = rtop if up else rbot
 
@@ -1457,7 +1458,7 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                             offs.append(o)
                 off = max(med / 2.0, float(np.median(offs))) if offs else med / 2.0
                 out[k] = fr[k] + off if up else fr[k] - off
-                fixed[k] = True
+                fixed[k] = footed[k] = True
                 return True
 
             for k in range(c, e + 1):
@@ -1614,6 +1615,28 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
             for k in range(e - 1, c - 1, -1):
                 if not fixed[k]:
                     foot_fix(k, k + 1)
+            # Repairs from one of those on (the follow-on takes the columns
+            # after it too) that end on a foot further back than the step
+            # they took away are undone: after a thin tip read at the front,
+            # a slow climb read at its foot is left late but monotone, and
+            # lifting only its first columns moved the step back on and made
+            # it bigger (00187 p192: 593, then 617 -> 568, 558, 522, then 586;
+            # 00119 p141, 00232 p191 by one column each)
+            k = c
+            while k <= e:
+                if not fixed[k]:
+                    k += 1
+                    continue
+                a = k
+                while k + 1 <= e and fixed[k + 1]:
+                    k += 1
+                b, k = k, k + 1
+                f = next((j for j in range(a, b + 1) if footed[j]), None)
+                if (f is not None and b + 1 < n and f - 1 >= 0
+                        and np.isfinite(out[b + 1]) and np.isfinite(out[f - 1])
+                        and out[b + 1] - out[b] > max(tall, orig[f] - out[f - 1])):
+                    out[f:b + 1] = orig[f:b + 1]
+                    fixed[f:b + 1] = footed[f:b + 1] = False
             # The stroke's trailing edge after the top: one or two columns
             # still reading the bottom of the thick upright, far below both
             # the reading before them and the one after (00051 p159: 26.5,
