@@ -264,6 +264,30 @@ class Rise(unittest.TestCase):
         out = step1._no_flip_back(self._columns(spans), py, 9.0, 27.0)
         self.assertTrue(np.all(out[61:64] == 307.0), out[58:66])
 
+    def test_a_trace_opening_mid_rise_at_the_frame_edge(self):
+        # Carmine's Chart 2 (00051 p150): the pressure enters at the frame's
+        # left edge from the floor and climbs; the opening read 18, 16, 1, 13,
+        # 13, 13, 21, 28, 16, 39, 39, 31 MPa. Col 2 read the floor end of
+        # the entry bar, col 8 the foot of its stroke, cols 9-10 a fleck
+        # where two gridlines cross. The sag at cols 3-5 is drawn.
+        runs = [[(465, 472), (477, 492), (503, 568)], [(457, 484), (488, 568)], [(458, 568)],
+                [(457, 500), (502, 502), (505, 520)], [(457, 497)], [(458, 498)],
+                [(441, 450), (457, 469), (472, 498)], [(413, 416), (419, 482), (489, 492)],
+                [(409, 480), (489, 489)], [(347, 348), (381, 440)],
+                [(347, 348), (381, 381), (383, 440)], [(370, 392), (394, 395)], [(367, 392)],
+                [(363, 376)], [(363, 376)], [(359, 366)]] + [[(350, 356)]] * 10
+        m = np.zeros((600, len(runs)), bool)
+        for c, rs in enumerate(runs):
+            for a, b in rs:
+                m[a:b + 1, c] = True
+        py = np.r_[[468.5, 484, 568, 502, 497, 498, 450, 414.5, 480, 347.5, 347.5, 395, 392,
+                    376, 376, 362.5], np.full(10, 353.0)]
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertLess(out[2], 470, out[:12])                    # not the floor
+        self.assertLess(out[8], 430, out[:12])                    # not the foot
+        self.assertTrue(np.all((out[9:11] > 375) & (out[9:11] < 395)), out[:12])
+        self.assertTrue(np.all(out[3:6] > 490), out[:12])         # the sag stays
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
