@@ -7,6 +7,7 @@ read 0 -> 18 -> 0.7 -> 30 -> 0.8 — a false spike before every rise. A needle
 
   python3 -m unittest tests.test_step1_rise
 """
+import glob
 import os
 import sys
 import unittest
@@ -386,6 +387,20 @@ class OnThePage(unittest.TestCase):
         # a V drawn after the climb, its bottom at row 540 in col 31
         out = _pressure_columns(_spud("00048"), 142)
         self.assertGreater(out[31], 530, out[28:34])
+
+
+ARC_00100 = glob.glob("/Volumes/CnC-2TB-ssd/AER-Frac-*/00100-103141106404W600_0489643_COMP.pdf")
+
+
+@unittest.skipUnless(ARC_00100, "the CnC drive is not mounted")
+class SpeckAfterAClimb(unittest.TestCase):
+
+    def test_00100_p173_reads_the_stroke_not_the_orange_pixel(self):
+        # cols 281-282 read one pixel of the orange curve at row 680 under the
+        # red stroke at 80-235, just after a climb from row 746 to 235
+        out = _pressure_columns(ARC_00100[0], 173)
+        fin = [v for v in out[268:285] if np.isfinite(v)]
+        self.assertTrue(np.all(np.diff(fin) <= 0), out[268:285])
 
 
 if __name__ == "__main__":

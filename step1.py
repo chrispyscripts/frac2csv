@@ -1143,11 +1143,12 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
     keep the reading they had.
     
     `pressure`: the surface chart's pressure trace. The repairs added for
-    Carmine's charts in 1.11.43 — a climb read at its front throughout, the
-    opening's floor reads, flecks as no start — apply to it alone, and the
-    front rule to climbs; every other channel reads as it did in 1.11.42.
-    The broader rule changed nearly every channel and took 00051 p174's
-    opening pressure test, a fall from the top of the frame.
+    Carmine's charts in 1.11.43 — a climb read at its front throughout,
+    flecks as no start, a speck just after a climb — apply to its climbs
+    alone, and the opening's floor reads to its opening; every other
+    channel, and every fall, reads as it did in 1.11.42. The broader rule
+    changed nearly every channel and took 00051 p174's opening pressure
+    test, a fall from the top of the frame.
     """
     n = len(py)
     py = np.array(py, float)
@@ -1212,6 +1213,114 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                 break
     tall_c = np.isfinite(py) & np.isfinite(rtop) & ((rbot - rtop + 1) >= tall)
     near = max(2.0, med)
+    def setup(c, e, pr):
+        """Where the move over columns c..e began (p0) and where it lands
+        (p1) -> None where there is no telling, else (p0, p1, margin,
+        frame_edge, flat_rows), `flat_rows` the flat-topped entry's columns
+        and the rows they take. `pr`: read with the 1.11.43 pressure rules."""
+        # where the move began: the reading just before it, or — where
+        # the trace starts on the move (the blank margin at the frame) —
+        # the end opposite the one its first column reads
+        before = c - 1
+        # (a reading on a fleck of one or two pixels is no reading: 00051
+        # p163's col 0 reads one at row 440 over a floor at 713, and as
+        # "where the move began" it turned the opening into a fall)
+        while before >= 0 and (not np.isfinite(py[before])
+                               or pr and run_len(before) <= 2):
+            before -= 1
+        # the ink of the columns just before, by pixel, not the one
+        # reading there: 00049 p136's last reading before its rise is a
+        # stray dot at row 516, the baseline it rose from is at 643
+        pens = [pen_row(j) for j in range(max(0, c - 3), c)]
+        pens = [r for r in pens if r is not None]
+        margin = False
+        frame_edge = False
+        flat_rows = []
+        if before >= 0 and c - before <= 3 and pens:
+            p0 = float(np.median(pens))
+            # ...but not where the curve's own readings just before, on
+            # its line and not on a dot, all say otherwise. Where the pen
+            # is hidden under another series, the longest run in those
+            # columns is that series' fringe: 00163 p207's pressure peaks
+            # at the frame top under the rate's yellow, its "began" came
+            # out at row 466 (the orange curve), and the peak was taken
+            # for a stray and pulled down 9 MPa.
+            seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
+            # (two stroke-heights: 00051 p191's entry starts at its floor,
+            # 580, against pens a few rows up at 560)
+            # (and not at the frame's left edge: 00053 p138's col 0 holds a
+            # scrap of ink at row 447 beside an entry from the floor)
+            if ((c > 3 or not pr) and any(run_len(j) > 2 for j in seen)
+                    and not any(abs(orig[j] - p0) <= (2 * tall if pr else tall)
+                                for j in seen)):
+                return None
+        elif before >= 0 and c - before <= 3:
+            p0 = py[before]
+        else:
+            # No reading just before: the frame's blank margin. The ink
+            # in those columns still says where the curve was (00051
+            # p156: its baseline at rows 708-713).
+            lvl = [pen_row(j) for j in range(max(0, c - 6), c)]
+            lvl = [r for r in lvl if r is not None]
+            if len(lvl) >= 2:
+                p0 = float(np.median(lvl))
+            else:
+                # With none there either, this is the frame's own left
+                # edge with the trace already moving: Carmine's Chart 2
+                # (00051 p150) enters from the floor and climbs, and its
+                # first columns read 18, 16, 1, 13 ... 39 MPa. Nothing
+                # before says where the move began, but where it lands
+                # can: clear beyond all of the first column's ink, the
+                # move began at that column's far end. Landing within
+                # it, there is no telling — 00051 p179 opens on a
+                # pressure test held at the top of the frame and then
+                # dropped, and guessing turned it upside down — and
+                # nothing is repaired.
+                after = e + 1
+                while after < n and not np.isfinite(py[after]):
+                    after += 1
+                q1 = py[after] if after < n and after - e <= 3 else np.nan
+                ys = np.flatnonzero(sub[:, c])
+                if (c > 3 or not len(ys) or not np.isfinite(q1)
+                        or ys[0] - tall <= q1 <= ys[-1] + tall):
+                    return None
+                # the far end over its first few columns: the frame's
+                # own line can break up the first (00052 p150's col 0
+                # shows 485-530 of a climb from the floor at 722)
+                ys = np.flatnonzero(sub[:, c:min(e + 1, c + 4)].any(axis=1))
+                p0 = float(ys[-1] if q1 < ys[0] else ys[0])
+                frame_edge = True
+                # A flat-topped entry: where the ink's leading edge holds
+                # the level the trace entered at until the climb sets
+                # off, the block under it is the stroke's own corner, and
+                # the trace is on that edge — Chart 2's cols 1-5 read
+                # 16, then 13 three times, along the foot of a block whose
+                # top stays at 19.5 MPa. Where the edge drops first, the
+                # sag is drawn and stays (00052 p150's, 00050 p145's).
+                sgn = 1 if q1 < p0 else -1         # +1: climbing (rows fall)
+                edg = rtop if sgn == 1 else rbot
+                first = [edg[j] for j in (c, c + 1) if j <= e and np.isfinite(edg[j])]
+                if first:
+                    lvl0 = min(first) if sgn == 1 else max(first)
+                    flat, m = True, c
+                    while m <= e and np.isfinite(edg[m]) and sgn * (lvl0 - edg[m]) <= tall:
+                        if sgn * (edg[m] - lvl0) > tall / 2.0:
+                            flat = False
+                            break
+                        m += 1
+                    if flat:
+                        for j in range(c, m):
+                            if np.isfinite(out[j]) and sgn * (out[j] - edg[j]) > tall:
+                                flat_rows.append((j, edg[j] + sgn * med / 2.0))
+            margin = True
+        # and where it ends up: the first reading after it. A move that
+        # comes back to where it began is a needle, and is left alone.
+        after = e + 1
+        while after < n and not np.isfinite(py[after]):
+            after += 1
+        p1 = py[after] if after < n and after - e <= 3 else np.nan
+        return p0, p1, margin, frame_edge, flat_rows
+
     c = 0
     while c < n:
         if not tall_c[c]:
@@ -1221,108 +1330,20 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
         while e + 1 < n and tall_c[e + 1]:
             e += 1
         if e > c:
-            # where the move began: the reading just before it, or — where
-            # the trace starts on the move (the blank margin at the frame) —
-            # the end opposite the one its first column reads
-            before = c - 1
-            # (a reading on a fleck of one or two pixels is no reading: 00051
-            # p163's col 0 reads one at row 440 over a floor at 713, and as
-            # "where the move began" it turned the opening into a fall)
-            while before >= 0 and (not np.isfinite(py[before])
-                                   or pressure and run_len(before) <= 2):
-                before -= 1
-            # the ink of the columns just before, by pixel, not the one
-            # reading there: 00049 p136's last reading before its rise is a
-            # stray dot at row 516, the baseline it rose from is at 643
-            pens = [pen_row(j) for j in range(max(0, c - 3), c)]
-            pens = [r for r in pens if r is not None]
-            margin = False
-            frame_edge = False
-            if before >= 0 and c - before <= 3 and pens:
-                p0 = float(np.median(pens))
-                # ...but not where the curve's own readings just before, on
-                # its line and not on a dot, all say otherwise. Where the pen
-                # is hidden under another series, the longest run in those
-                # columns is that series' fringe: 00163 p207's pressure peaks
-                # at the frame top under the rate's yellow, its "began" came
-                # out at row 466 (the orange curve), and the peak was taken
-                # for a stray and pulled down 9 MPa.
-                seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
-                # (two stroke-heights: 00051 p191's entry starts at its floor,
-                # 580, against pens a few rows up at 560)
-                # (and not at the frame's left edge: 00053 p138's col 0 holds a
-                # scrap of ink at row 447 beside an entry from the floor)
-                if ((c > 3 or not pressure) and any(run_len(j) > 2 for j in seen)
-                        and not any(abs(orig[j] - p0) <= (2 * tall if pressure else tall)
-                                    for j in seen)):
-                    c = e + 1
-                    continue
-            elif before >= 0 and c - before <= 3:
-                p0 = py[before]
-            else:
-                # No reading just before: the frame's blank margin. The ink
-                # in those columns still says where the curve was (00051
-                # p156: its baseline at rows 708-713).
-                lvl = [pen_row(j) for j in range(max(0, c - 6), c)]
-                lvl = [r for r in lvl if r is not None]
-                if len(lvl) >= 2:
-                    p0 = float(np.median(lvl))
-                else:
-                    # With none there either, this is the frame's own left
-                    # edge with the trace already moving: Carmine's Chart 2
-                    # (00051 p150) enters from the floor and climbs, and its
-                    # first columns read 18, 16, 1, 13 ... 39 MPa. Nothing
-                    # before says where the move began, but where it lands
-                    # can: clear beyond all of the first column's ink, the
-                    # move began at that column's far end. Landing within
-                    # it, there is no telling — 00051 p179 opens on a
-                    # pressure test held at the top of the frame and then
-                    # dropped, and guessing turned it upside down — and
-                    # nothing is repaired.
-                    after = e + 1
-                    while after < n and not np.isfinite(py[after]):
-                        after += 1
-                    q1 = py[after] if after < n and after - e <= 3 else np.nan
-                    ys = np.flatnonzero(sub[:, c])
-                    if (c > 3 or not len(ys) or not np.isfinite(q1)
-                            or ys[0] - tall <= q1 <= ys[-1] + tall):
-                        c = e + 1
-                        continue
-                    # the far end over its first few columns: the frame's
-                    # own line can break up the first (00052 p150's col 0
-                    # shows 485-530 of a climb from the floor at 722)
-                    ys = np.flatnonzero(sub[:, c:min(e + 1, c + 4)].any(axis=1))
-                    p0 = float(ys[-1] if q1 < ys[0] else ys[0])
-                    frame_edge = True
-                    # A flat-topped entry: where the ink's leading edge holds
-                    # the level the trace entered at until the climb sets
-                    # off, the block under it is the stroke's own corner, and
-                    # the trace is on that edge — Chart 2's cols 1-5 read
-                    # 16, then 13 three times, along the foot of a block whose
-                    # top stays at 19.5 MPa. Where the edge drops first, the
-                    # sag is drawn and stays (00052 p150's, 00050 p145's).
-                    sgn = 1 if q1 < p0 else -1         # +1: climbing (rows fall)
-                    edg = rtop if sgn == 1 else rbot
-                    first = [edg[j] for j in (c, c + 1) if j <= e and np.isfinite(edg[j])]
-                    if first:
-                        lvl0 = min(first) if sgn == 1 else max(first)
-                        flat, m = True, c
-                        while m <= e and np.isfinite(edg[m]) and sgn * (lvl0 - edg[m]) <= tall:
-                            if sgn * (edg[m] - lvl0) > tall / 2.0:
-                                flat = False
-                                break
-                            m += 1
-                        if flat:
-                            for j in range(c, m):
-                                if np.isfinite(out[j]) and sgn * (out[j] - edg[j]) > tall:
-                                    out[j] = edg[j] + sgn * med / 2.0
-                margin = True
-            # and where it ends up: the first reading after it. A move that
-            # comes back to where it began is a needle, and is left alone.
-            after = e + 1
-            while after < n and not np.isfinite(py[after]):
-                after += 1
-            p1 = py[after] if after < n and after - e <= 3 else np.nan
+            # The 1.11.43 pressure rules are for climbs alone: a move they
+            # don't read as a climb is read as before, so every fall reads as
+            # in 1.11.42 (they put a false dip just before 00107 p244's drop
+            # from 45 to 24 MPa, and zigzags on 00100's shutdown steps)
+            st = setup(c, e, True) if pressure else None
+            prm = bool(st is not None and np.isfinite(st[1]) and st[1] < st[0] - tall)
+            if not prm:
+                st = setup(c, e, False)
+            if st is None:
+                c = e + 1
+                continue
+            p0, p1, margin, frame_edge, flat_rows = st
+            for j, v in flat_rows:
+                out[j] = v
             up = np.isfinite(p1) and p1 < p0 - tall        # rows grow downward
             down = np.isfinite(p1) and p1 > p0 + tall
             # Just before the move: a reading on a lone dot (a run of one or
@@ -1345,7 +1366,7 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                     # p132's col 4 reads the dotted top of its entry bar, and the
                     # bar's body, 84 px, is no baseline; 00200 p189's hold is 19)
                     base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near
-                            and (len(g) <= 2 * tall or not pressure)]
+                            and (len(g) <= 2 * tall or not prm)]
                     if base:
                         out[j] = capped(j, float(np.median(np.concatenate(base))))
             # A repair is a reading back where the move began (`back`) AND
@@ -1373,7 +1394,7 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                 front side (or repaired to it): read k at its front too, if
                 its front holds. A climb read at the foot throughout is late
                 but monotone, and is left alone (00052 p154)."""
-                if not (pressure and up):
+                if not (prm and up):
                     return False
                 recent = (reached is None or k - reached_at <= 6) if nb < k \
                     else bool(new_far[k + 1:k + 7].any())
@@ -1612,6 +1633,32 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                                 # of its two sides: a fill, not a peak
                                 out[j] = min(max(capped(j, rtop[j] + med / 2.0), prv, nx), out[j])
                     k = max(tail_end, k + 1)
+            # Just after the move, a reading on a speck of one or two pixels,
+            # back behind where the move had got, in a column whose own
+            # stroke carries the move on: a pixel of another line in the
+            # mask, and the curve is on the stroke. 00100 p173 climbs from 9
+            # to 89 MPa over cols 272-283, and cols 281-282 read a pixel of
+            # the orange curve at row 680 under the red stroke at 80-235 — a
+            # peak and a drop once the climb itself read right. Up to the
+            # first reading off a speck, and no further on than it.
+            far = np.nanmin(out[c:e + 1]) if prm and up else np.nan
+            for j in range(e + 1, min(n, e + 7)) if np.isfinite(far) else ():
+                if not np.isfinite(out[j]):
+                    continue
+                if run_len(j) > 2 or not (out[j] > far + tall if up else out[j] < far - tall):
+                    break
+                ys = np.flatnonzero(sub[:, j])
+                on = [g for g in np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
+                      if len(g) >= tall and (g[0] <= far + tall if up else g[-1] >= far - tall)]
+                if not on:
+                    break
+                v = (min(g[0] for g in on) + med / 2.0 if up
+                     else max(g[-1] for g in on) - med / 2.0)
+                ahead = [out[i] for i in range(j + 1, min(n, j + 4))
+                         if np.isfinite(out[i]) and run_len(i) > 2]
+                if ahead:
+                    v = max(v, min(ahead)) if up else min(v, max(ahead))
+                out[j] = v
         c = e + 1
     # Last, a trace's opening: one to three columns reading at (or within two
     # stroke-heights of) the frame's floor
