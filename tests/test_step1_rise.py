@@ -304,6 +304,28 @@ class Rise(unittest.TestCase):
         self.assertTrue(np.all(out[2:4] < 600), out[:13])         # not the floor
         self.assertTrue(np.all(out[4:8] >= 560), out[:13])        # the sag stays
 
+    def test_a_long_thick_climb_read_front_and_foot_is_monotone(self):
+        # Stage 6 (00051 p155): after a short hold the pressure climbs ~350
+        # rows through a thick stroke; the columns read its front and its
+        # foot by turns: 523, 397, 482, 293, 463, 375, 361, 263, 262, 168
+        runs = [[(712, 717)]] * 7 + [
+            [(541, 559), (563, 569), (571, 572), (575, 715)], [(502, 502), (513, 715)],
+            [(497, 713)], [(497, 695)], [(498, 523)], [(498, 525)], [(488, 489), (494, 523)],
+            [(473, 523)], [(397, 398), (401, 415), (418, 523)], [(392, 482), (486, 520)],
+            [(293, 293), (304, 471)], [(280, 287), (289, 463)], [(216, 375), (379, 379)],
+            [(206, 361)], [(182, 263)], [(175, 262)], [(168, 168), (170, 205)], [(169, 203)],
+            [(170, 205), (207, 207)], [(171, 207)], [(178, 206)], [(178, 204), (207, 207)],
+            [(177, 191), (200, 200)], [(176, 189), (191, 191)]] + [[(176, 185)]] * 10
+        m = np.zeros((720, len(runs)), bool)
+        for c, rs in enumerate(runs):
+            for a, b in rs:
+                m[a:b + 1, c] = True
+        py = np.r_[np.full(7, np.nan), [559, 502, 713, 695, 523, 525, 488.5, 523, 397.5, 482, 293,
+                                        463, 375, 361, 263, 262, 168, 169, 170, 171, 206, 204,
+                                        200, 176], np.full(10, 180.0)]
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertTrue(np.all(np.diff(out[13:24]) <= 18), out[11:25])   # never back down
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
