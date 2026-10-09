@@ -1354,6 +1354,7 @@ def _no_flip_back(sub, py, med, tall):
             fixed = np.zeros(n, bool)                  # repaired in this move
             lead = np.zeros(n, bool)                   # read at its leading end
             new_far = np.zeros(n, bool)                # took the move further
+            reached_now = np.full(n, np.nan)           # furthest, as column k came
             fr = rtop if up else rbot
 
             def foot_fix(k, nb):
@@ -1363,6 +1364,13 @@ def _no_flip_back(sub, py, med, tall):
                 but monotone, and is left alone (00052 p154)."""
                 recent = (reached is None or k - reached_at <= 6) if nb < k \
                     else bool(new_far[k + 1:k + 7].any())
+                # (a front fallen back behind where the move had got is a dip
+                # the page draws: 00048 p142's V at col 31, its front at 419
+                # under the 256 the climb had reached)
+                rn = reached_now[k]
+                if np.isfinite(rn) and np.isfinite(fr[k]) and (fr[k] > rn + tall if up
+                                                               else fr[k] < rn - tall):
+                    return False
                 if not ((up or down) and np.isfinite(out[k]) and np.isfinite(fr[k])
                         and recent
                         and (out[k] - fr[k] > tall if up else fr[k] - out[k] > tall)
@@ -1478,6 +1486,8 @@ def _no_flip_back(sub, py, med, tall):
                 # began. And only within six columns of the move's last new
                 # furthest reading: a noisy band thick enough to be one long
                 # "move" is not a stroke (00163 p260's chem conc).
+                if reached is not None:
+                    reached_now[k] = reached
                 if foot_fix(k, k - 1):
                     if reached is None or (out[k] < reached if up else out[k] > reached):
                         reached, reached_at = out[k], k

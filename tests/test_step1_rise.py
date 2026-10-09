@@ -347,5 +347,46 @@ class Rise(unittest.TestCase):
         self.assertGreaterEqual(rows.max(), 285)    # the needle's tip survives
 
 
+SPUD = os.path.expanduser("~/frac-data/BCER-Frac-Spud-2026")
+
+
+def _spud(num):
+    import glob
+    hits = glob.glob(os.path.join(SPUD, f"{num}-*.pdf"))
+    return hits[0] if hits else None
+
+
+def _pressure_columns(pdf, pno):
+    """The surface pressure's column readings after the flip-back repair."""
+    import fitz
+    got = []
+    real = step1._no_flip_back
+
+    def keep(sub, py, med, tall):
+        out = real(sub, py, med, tall)
+        got.append(out)
+        return out
+    step1._no_flip_back = keep
+    try:
+        step1.extract_page(fitz.open(pdf)[pno - 1])
+    finally:
+        step1._no_flip_back = real
+    return got[0]
+
+
+@unittest.skipUnless(_spud("00051") and _spud("00048"), "the 2026 STEP filings are not on this machine")
+class OnThePage(unittest.TestCase):
+
+    def test_stage_6_climbs_without_turning_back(self):
+        # Carmine's Stage 6 (00051 p155): front and foot by turns in v1.11.42
+        out = _pressure_columns(_spud("00051"), 155)
+        self.assertTrue(np.all(np.diff(out[13:24]) <= 18), out[11:25])
+
+    def test_00048_p142_keeps_its_v(self):
+        # a V drawn after the climb, its bottom at row 540 in col 31
+        out = _pressure_columns(_spud("00048"), 142)
+        self.assertGreater(out[31], 530, out[28:34])
+
+
 if __name__ == "__main__":
     unittest.main()
