@@ -39,6 +39,24 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.42</h2>
+    <ul>
+      <li><b>STEP: no more spikes at the start of a chart (#799).</b> On
+        00051&rsquo;s Chart 2 the pressure enters at the chart&rsquo;s left edge
+        and climbs; its first minutes read 18, 16, 1, 13, 13, 13, 21, 28, 16,
+        39 MPa and now read 18, 19.6, 19.5, 19.6, 19.6, 19.5, 21, 28, 28,
+        31</li>
+      <li><b>Four misreadings fixed:</b> the foot of the entry bar, the bottom
+        of the line&rsquo;s corner, the foot of the climbing stroke, and a speck
+        where two gridlines cross. A dip the page really draws after the entry
+        stays</li>
+      <li><b>On 32 STEP filings, 9,538 channels,</b> 77 changed, all within
+        their chart&rsquo;s first 10 minutes. No maximum moved by more than
+        2%</li>
+      <li><b>Which templates this release touches: STEP only.</b> Every other
+        template reads exactly as it did under v1.11.41</li>
+    </ul>
+
     <h2>v1.11.41</h2>
     <ul>
       <li><b>STEP: no rebound in the middle of a fall (#799).</b> On 00051&rsquo;s
