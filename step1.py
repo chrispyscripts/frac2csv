@@ -1177,7 +1177,7 @@ def _no_flip_back(sub, py, med, tall):
             return None
         runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
         g = max(runs_j, key=len)
-        return float(np.median(g))
+        return float(np.median(g)) if len(g) > 2 else None
     def run_len(j):
         # pixels in the run a column's reading sits on
         ys = np.flatnonzero(sub[:, j])
@@ -1216,7 +1216,10 @@ def _no_flip_back(sub, py, med, tall):
             # the trace starts on the move (the blank margin at the frame) —
             # the end opposite the one its first column reads
             before = c - 1
-            while before >= 0 and not np.isfinite(py[before]):
+            # (a reading on a fleck of one or two pixels is no reading: 00051
+            # p163's col 0 reads one at row 440 over a floor at 713, and as
+            # "where the move began" it turned the opening into a fall)
+            while before >= 0 and (not np.isfinite(py[before]) or run_len(before) <= 2):
                 before -= 1
             # the ink of the columns just before, by pixel, not the one
             # reading there: 00049 p136's last reading before its rise is a
@@ -1235,8 +1238,10 @@ def _no_flip_back(sub, py, med, tall):
                 # out at row 466 (the orange curve), and the peak was taken
                 # for a stray and pulled down 9 MPa.
                 seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
+                # (two stroke-heights: 00051 p191's entry starts at its floor,
+                # 580, against pens a few rows up at 560)
                 if (any(run_len(j) > 2 for j in seen)
-                        and not any(abs(orig[j] - p0) <= tall for j in seen)):
+                        and not any(abs(orig[j] - p0) <= 2 * tall for j in seen)):
                     c = e + 1
                     continue
             elif before >= 0 and c - before <= 3:
@@ -1402,10 +1407,59 @@ def _no_flip_back(sub, py, med, tall):
                 # false dip to 27 MPa for a false peak at 44.
                 ref = reached
                 follow = False
-                # (in a move opening at the frame's edge, behind a column
-                # read at its leading end, too: Chart 2's col 8 reads 480,
-                # the foot of a stroke topping at 409, after col 7's 414.5)
-                if k > c and (fixed[k - 1] or frame_edge and lead[k - 1]) and k + 1 < n and (
+                took = False
+                # A column read at its foot — more than `tall` behind its own
+                # front — is read at its front, while that front holds or keeps
+                # advancing over this column and the next two. A long thick
+                # climb read top, foot, top, foot zigzags its whole length
+                # (Stage 6, 00051 p155: rows 523, 397, 482, 293, 463, 375 ... on
+                # a front climbing 473, 397, 392, 293, 280, 216); a step's flat
+                # top over the block of its corner reads the foot (00051 p170:
+                # 647, 647, 503, 493 under a front held at 424); a trace rising
+                # off the floor reads it before any column has read a front
+                # (00051 p181: 713, 679, 663 under 496, 472, 472). Read at the
+                # front, all three are monotone. A dip the page draws takes the
+                # front down with it (00048 p142's notch, its front to 536) and
+                # keeps its reading; so does a level held more than two columns
+                # (00051 p156's 30 -> 23), and a reading beyond where the move
+                # began. And only within six columns of the move's last new
+                # furthest reading: a noisy band thick enough to be one long
+                # "move" is not a stroke (00163 p260's chem conc).
+                fr = rtop if up else rbot
+                if ((up or down) and np.isfinite(out[k]) and np.isfinite(fr[k])
+                        and (reached is None or k - reached_at <= 6)
+                        and (out[k] - fr[k] > tall if up else fr[k] - out[k] > tall)):
+                    ha = hb = k                  # the columns holding this level
+                    while ha - 1 >= c and np.isfinite(orig[ha - 1]) and abs(orig[ha - 1] - orig[k]) <= tall:
+                        ha -= 1
+                    while hb + 1 <= e and np.isfinite(orig[hb + 1]) and abs(orig[hb + 1] - orig[k]) <= tall:
+                        hb += 1
+                    held = hb - ha + 1
+                    nxt3 = [fr[j] for j in range(k, min(n, k + 3)) if np.isfinite(fr[j])]
+                    wb = out[max(0, c - 6):(k if margin else c)]
+                    wb = [p0, *wb[np.isfinite(wb)]]
+                    beyond = out[k] > max(wb) + tall if up else out[k] < min(wb) - tall
+                    if (held <= 2 and not beyond
+                            and (max(nxt3) <= fr[k] + tall / 2.0 if up
+                                 else min(nxt3) >= fr[k] - tall / 2.0)):
+                        # as far in from the front as the columns around read
+                        # theirs: on a near-vertical climb that is the front
+                        # itself, on a slanted one the pen's half-width (read
+                        # at the very front, 00163 p207's climb poked out
+                        # above its own line)
+                        offs = []
+                        for j in (k - 2, k - 1, k + 1, k + 2):
+                            if c <= j <= e and np.isfinite(orig[j]) and np.isfinite(fr[j]):
+                                o = orig[j] - fr[j] if up else fr[j] - orig[j]
+                                if 0 <= o <= tall:
+                                    offs.append(o)
+                        off = max(med / 2.0, float(np.median(offs))) if offs else med / 2.0
+                        out[k] = fr[k] + off if up else fr[k] - off
+                        fixed[k] = True
+                        if reached is None or (out[k] < reached if up else out[k] > reached):
+                            reached, reached_at = out[k], k
+                        continue
+                if not took and k > c and (fixed[k - 1] or frame_edge and lead[k - 1]) and k + 1 < n and (
                         out[k] > out[k - 1] + tall if up else out[k] < out[k - 1] - tall):
                     edge, nxt = (rbot[k], rbot[k + 1]) if up else (rtop[k], rtop[k + 1])
                     if np.isfinite(nxt) and (nxt < edge - 1.5 * tall if up
@@ -1413,7 +1467,7 @@ def _no_flip_back(sub, py, med, tall):
                         # (only where the repair is this rule's alone)
                         follow = not (back and (out[k] > reached + tall if up
                                                 else out[k] < reached - tall))
-                        back = True
+                        back = took = True
                         ref = (min(reached, out[k - 1]) if up
                                else max(reached, out[k - 1]))
                 # Not past where it began, either: a column whose reading lies
