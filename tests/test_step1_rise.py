@@ -388,6 +388,13 @@ class OnThePage(unittest.TestCase):
         out = _pressure_columns(_spud("00048"), 142)
         self.assertGreater(out[31], 530, out[28:34])
 
+    def test_00051_p163_starts_from_the_floor(self):
+        # Carmine, #808: cols 0-1 read scraps of 2 and 4 rows at 440 and 470
+        # over the floor and the stroke rising from it; the chart began at
+        # 39 MPa, and bridging from those scraps kept it off the floor
+        out = _pressure_columns(_spud("00051"), 163)
+        self.assertTrue(np.all(out[:5] > 700), out[:6])
+
     @unittest.skipUnless(_spud("00053"), "00053 is not on this machine")
     def test_00053_p163_opens_on_its_floor(self):
         # col 1 reads a fleck at row 486 over the floor ink at 680-717; the
