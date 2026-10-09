@@ -1712,18 +1712,22 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
     fin = np.flatnonzero(np.isfinite(out))
     if pressure and len(fin):
         # First, the trace's first readings on a scrap of ink no thicker
-        # than the pen, well up the chart, in a column whose ink runs down to the
-        # floor: the pressure comes up off the floor, and starts from it.
-        # 00051 p163 (Carmine, #808) read 440 and 470 on scraps of 2 and 4
-        # rows over the floor and the stroke rising from it — and began at
-        # 39 MPa instead of 0
+        # than the pen, well up the chart, over a stroke rising from the floor
+        # (in that column or the next): the pressure comes up off the floor,
+        # and starts from it. 00051 p163 (Carmine, #808) read 440 and 470 on
+        # scraps of 2 and 4 rows over the stroke rising from the floor — and
+        # began at 39 MPa instead of 0. A pen line along the top with only
+        # the frame's own line at the floor stays (00107 p253's 355)
+        def runs_of(j):
+            ys = np.flatnonzero(sub[:, j])
+            return np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1) if len(ys) else []
         flr = [out[j] for j in fin[:8] if out[j] >= fl - 2 * tall]
         for j in fin[:2]:
-            ys = np.flatnonzero(sub[:, j])
-            runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1) if len(ys) else []
+            runs_j = runs_of(j)
             mine = next((g for g in runs_j if g[0] - 1 <= out[j] <= g[-1] + 1), None)
-            if (mine is not None and len(mine) <= med and out[j] < fl - 3 * tall
-                    and any(g[-1] >= fl - tall for g in runs_j)):
+            rising = [g for jj in (j, j + 1) if jj < n for g in runs_of(jj)
+                      if g[-1] >= fl - tall and len(g) >= tall]
+            if mine is not None and len(mine) <= med and out[j] < fl - 3 * tall and rising:
                 out[j] = float(np.median(flr)) if flr else fl - med / 2.0
         j = fin[0]
         while j < min(n, fin[0] + 10):
