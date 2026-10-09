@@ -388,6 +388,14 @@ class OnThePage(unittest.TestCase):
         out = _pressure_columns(_spud("00048"), 142)
         self.assertGreater(out[31], 530, out[28:34])
 
+    @unittest.skipUnless(_spud("00053"), "00053 is not on this machine")
+    def test_00053_p163_opens_on_its_floor(self):
+        # col 1 reads a fleck at row 486 over the floor ink at 680-717; the
+        # trace rises from the floor at col 3, and bridging from the fleck
+        # drew a V
+        out = _pressure_columns(_spud("00053"), 163)
+        self.assertGreater(out[1], 680, out[:7])
+
 
 ARC_00100 = glob.glob("/Volumes/CnC-2TB-ssd/AER-Frac-*/00100-103141106404W600_0489643_COMP.pdf")
 

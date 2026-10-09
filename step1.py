@@ -1213,6 +1213,8 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                 break
     tall_c = np.isfinite(py) & np.isfinite(rtop) & ((rbot - rtop + 1) >= tall)
     near = max(2.0, med)
+    fin0 = int(np.flatnonzero(np.isfinite(py))[0]) if np.isfinite(py).any() else n
+
     def setup(c, e, pr):
         """Where the move over columns c..e began (p0) and where it lands
         (p1) -> None where there is no telling, else (p0, p1, margin,
@@ -1222,11 +1224,14 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
         # the trace starts on the move (the blank margin at the frame) —
         # the end opposite the one its first column reads
         before = c - 1
-        # (a reading on a fleck of one or two pixels is no reading: 00051
-        # p163's col 0 reads one at row 440 over a floor at 713, and as
-        # "where the move began" it turned the opening into a fall)
+        # (a reading on a fleck of one or two pixels in the trace's first
+        # columns is no reading: 00051 p163's col 0 reads one at row 440
+        # over a floor at 713, and as "where the move began" it turned the
+        # opening into a fall. Further on, a climb's thin tip reads one-
+        # and two-pixel runs too — 00200 p168's 363, 314, 297.5, 248 — and
+        # skipping those put its start back down the climb)
         while before >= 0 and (not np.isfinite(py[before])
-                               or pr and run_len(before) <= 2):
+                               or pr and before <= fin0 + 2 and run_len(before) <= 2):
             before -= 1
         # the ink of the columns just before, by pixel, not the one
         # reading there: 00049 p136's last reading before its rise is a
@@ -1364,9 +1369,11 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                         continue
                     # (a line at that level, not a tall stroke through it: 00053
                     # p132's col 4 reads the dotted top of its entry bar, and the
-                    # bar's body, 84 px, is no baseline; 00200 p189's hold is 19)
+                    # bar's body, rows 489-572, reaches 71 rows up the move from
+                    # where it began, no baseline; 00053 p163's floor ink at
+                    # 680-717, 22 rows either side, is one)
                     base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near
-                            and (len(g) <= 2 * tall or not prm)]
+                            and (max(p0 - g[0], g[-1] - p0) <= 2 * tall or not prm)]
                     if base:
                         out[j] = capped(j, float(np.median(np.concatenate(base))))
             # A repair is a reading back where the move began (`back`) AND
@@ -1417,6 +1424,14 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                     ha -= 1
                 while hb + 1 <= e and np.isfinite(orig[hb + 1]) and abs(orig[hb + 1] - orig[k]) <= tall:
                     hb += 1
+                # A foot followed by a foot further down is a fall, not a
+                # climb lagging: 00054 p159 falls into a V drawn after its
+                # climb, 410, 422, 438 under a front the V's own arms hold
+                # at 224; a climb read at its foot moves up with the climb
+                nx = k + 1
+                if (nx <= e and np.isfinite(orig[nx]) and np.isfinite(fr[nx])
+                        and orig[nx] - fr[nx] > tall and orig[nx] > orig[k] + tall / 2.0):
+                    return False
                 held = hb - ha + 1
                 nxt3 = [fr[j] for j in range(k, min(n, k + 3)) if np.isfinite(fr[j])]
                 wb = out[max(0, c - 6):(k if margin else c)]
@@ -1426,7 +1441,10 @@ def _no_flip_back(sub, py, med, tall, pressure=True):
                 at_floor = (out[k] >= sub.shape[0] - 1 - tall if up else out[k] <= tall)
                 if at_floor:
                     beyond = False
-                limit = 3 if at_floor and k <= 8 else 2
+                # (three at the floor where the climb sets off from it: the
+                # opening, or 00051 p167's first rise after the trace has lain
+                # on the floor, 707, 715, 715 under ink up to 648, 475, 456)
+                limit = 3 if at_floor and (k <= 8 or p0 >= sub.shape[0] - 1 - tall) else 2
                 if (held > limit or beyond
                         or not (max(nxt3) <= fr[k] + tall / 2.0 if up
                                 else min(nxt3) >= fr[k] - tall / 2.0)):
