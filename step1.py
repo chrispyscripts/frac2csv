@@ -858,7 +858,9 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         fam, name, unit, sub, cov, py = (tr["fam"], tr["name"], tr["unit"],
                                          tr["sub"], tr["cov"], tr["py"])
         a, b, ntick = tr["cal"]
-        cx, py = _keep_excursions(sub, py)
+        # the surface chart's pressure: where its climbs are read (#799)
+        cx, py = _keep_excursions(sub, py, pressure=(
+            lqty == "pressure" and NEW_SURFACE.get(base, (None, None, None))[2] == "pressure"))
         py = py + y0
         # same round-bound snap as the tiled path (see auto_raster.snap_axis):
         # applied before values are read so it reaches the exported numbers
@@ -1123,7 +1125,7 @@ def _off_the_dots(sub, py, med, tall):
     return out
 
 
-def _no_flip_back(sub, py, med, tall):
+def _no_flip_back(sub, py, med, tall, pressure=True):
     """Inside a steep move, a column that reads back at the level the move
     started from — though its own ink reaches far past it — takes the
     move's leading edge instead. -> py, changed only there.
@@ -1139,6 +1141,13 @@ def _no_flip_back(sub, py, med, tall):
     read from the wrong end; it is read from the leading end. Nothing else
     moves: the first column, peaks, holds, needles and every ordinary column
     keep the reading they had.
+    
+    `pressure`: the surface chart's pressure trace. The repairs added for
+    Carmine's charts in 1.11.43 — a climb read at its front throughout, the
+    opening's floor reads, flecks as no start — apply to it alone, and the
+    front rule to climbs; every other channel reads as it did in 1.11.42.
+    The broader rule changed nearly every channel and took 00051 p174's
+    opening pressure test, a fall from the top of the frame.
     """
     n = len(py)
     py = np.array(py, float)
@@ -1177,7 +1186,7 @@ def _no_flip_back(sub, py, med, tall):
             return None
         runs_j = np.split(ys, np.flatnonzero(np.diff(ys) > 1) + 1)
         g = max(runs_j, key=len)
-        return float(np.median(g)) if len(g) > 2 else None
+        return float(np.median(g)) if len(g) > 2 or not pressure else None
     def run_len(j):
         # pixels in the run a column's reading sits on
         ys = np.flatnonzero(sub[:, j])
@@ -1219,7 +1228,8 @@ def _no_flip_back(sub, py, med, tall):
             # (a reading on a fleck of one or two pixels is no reading: 00051
             # p163's col 0 reads one at row 440 over a floor at 713, and as
             # "where the move began" it turned the opening into a fall)
-            while before >= 0 and (not np.isfinite(py[before]) or run_len(before) <= 2):
+            while before >= 0 and (not np.isfinite(py[before])
+                                   or pressure and run_len(before) <= 2):
                 before -= 1
             # the ink of the columns just before, by pixel, not the one
             # reading there: 00049 p136's last reading before its rise is a
@@ -1242,8 +1252,9 @@ def _no_flip_back(sub, py, med, tall):
                 # 580, against pens a few rows up at 560)
                 # (and not at the frame's left edge: 00053 p138's col 0 holds a
                 # scrap of ink at row 447 beside an entry from the floor)
-                if (c > 3 and any(run_len(j) > 2 for j in seen)
-                        and not any(abs(orig[j] - p0) <= 2 * tall for j in seen)):
+                if ((c > 3 or not pressure) and any(run_len(j) > 2 for j in seen)
+                        and not any(abs(orig[j] - p0) <= (2 * tall if pressure else tall)
+                                    for j in seen)):
                     c = e + 1
                     continue
             elif before >= 0 and c - before <= 3:
@@ -1334,7 +1345,7 @@ def _no_flip_back(sub, py, med, tall):
                     # p132's col 4 reads the dotted top of its entry bar, and the
                     # bar's body, 84 px, is no baseline; 00200 p189's hold is 19)
                     base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near
-                            and len(g) <= 2 * tall]
+                            and (len(g) <= 2 * tall or not pressure)]
                     if base:
                         out[j] = capped(j, float(np.median(np.concatenate(base))))
             # A repair is a reading back where the move began (`back`) AND
@@ -1362,6 +1373,8 @@ def _no_flip_back(sub, py, med, tall):
                 front side (or repaired to it): read k at its front too, if
                 its front holds. A climb read at the foot throughout is late
                 but monotone, and is left alone (00052 p154)."""
+                if not (pressure and up):
+                    return False
                 recent = (reached is None or k - reached_at <= 6) if nb < k \
                     else bool(new_far[k + 1:k + 7].any())
                 # (a front fallen back behind where the move had got is a dip
@@ -1609,7 +1622,7 @@ def _no_flip_back(sub, py, med, tall):
     # drop to the floor held longer is drawn (00051 p179's, five columns).
     fl = sub.shape[0] - 1
     fin = np.flatnonzero(np.isfinite(out))
-    if len(fin):
+    if pressure and len(fin):
         j = fin[0]
         while j < min(n, fin[0] + 10):
             if not (np.isfinite(out[j]) and out[j] >= fl - 2 * tall):
@@ -1631,7 +1644,7 @@ def _no_flip_back(sub, py, med, tall):
     return out
 
 
-def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
+def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25, pressure=True):
     """Curve rows -> (column positions, rows), splitting near-vertical strokes.
 
     One reading per column is right while the curve is drawn as a stroke: the
@@ -1669,7 +1682,7 @@ def _keep_excursions(sub, py, min_px=6, factor=3.0, split=0.25):
         nxt[c] = last
         if np.isfinite(py[c]):
             last = py[c]
-    py = _no_flip_back(sub, py, med, tall)
+    py = _no_flip_back(sub, py, med, tall, pressure=pressure)
     xs, rows = [], []
     for c in range(n):
         if not np.isfinite(py[c]):

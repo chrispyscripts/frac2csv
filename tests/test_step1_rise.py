@@ -362,8 +362,8 @@ def _pressure_columns(pdf, pno):
     got = []
     real = step1._no_flip_back
 
-    def keep(sub, py, med, tall):
-        out = real(sub, py, med, tall)
+    def keep(sub, py, med, tall, **kw):
+        out = real(sub, py, med, tall, **kw)
         got.append(out)
         return out
     step1._no_flip_back = keep
