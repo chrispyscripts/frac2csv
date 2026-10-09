@@ -39,6 +39,25 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.43</h2>
+    <ul>
+      <li><b>STEP: pressure climbs no longer zigzag (#799).</b> On 00051&rsquo;s
+        Stage 6 the pressure climbs from 30 to 76 MPa; minutes 3 to 5 read 29,
+        30, 41, 40, 33, 48, 55, 41, 40, 48 &hellip; and now read 33, 36, 42, 45,
+        45, 53, 59, 60, 64, 69 &hellip; 76</li>
+      <li><b>A chart that rises off the floor starts from 0 (#808).</b>
+        00051&rsquo;s Stage 14 started at 39 MPa and dropped to 0; it now starts
+        at 0.7 and climbs. A chart that really opens high is unchanged</li>
+      <li><b>Readings taken off the foot of a thick climbing stroke now follow
+        its front.</b> A dip the page really draws keeps its bottom</li>
+      <li><b>Only the pressure channel changes,</b> on climbs and at a
+        chart&rsquo;s start; falls, rates and concentrations read as before. On
+        32 STEP filings, 9,538 channels: 1,620 changed, early pressure spikes
+        473 &rarr; 275, no maximum fell</li>
+      <li><b>Which templates this release touches: STEP only.</b> Every other
+        template reads exactly as it did under v1.11.42</li>
+    </ul>
+
     <h2>v1.11.42</h2>
     <ul>
       <li><b>STEP: no more spikes at the start of a chart (#799).</b> On

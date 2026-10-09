@@ -7,6 +7,7 @@ read 0 -> 18 -> 0.7 -> 30 -> 0.8 — a false spike before every rise. A needle
 
   python3 -m unittest tests.test_step1_rise
 """
+import glob
 import os
 import sys
 import unittest
@@ -304,6 +305,28 @@ class Rise(unittest.TestCase):
         self.assertTrue(np.all(out[2:4] < 600), out[:13])         # not the floor
         self.assertTrue(np.all(out[4:8] >= 560), out[:13])        # the sag stays
 
+    def test_a_long_thick_climb_read_front_and_foot_is_monotone(self):
+        # Stage 6 (00051 p155): after a short hold the pressure climbs ~350
+        # rows through a thick stroke; the columns read its front and its
+        # foot by turns: 523, 397, 482, 293, 463, 375, 361, 263, 262, 168
+        runs = [[(712, 717)]] * 7 + [
+            [(541, 559), (563, 569), (571, 572), (575, 715)], [(502, 502), (513, 715)],
+            [(497, 713)], [(497, 695)], [(498, 523)], [(498, 525)], [(488, 489), (494, 523)],
+            [(473, 523)], [(397, 398), (401, 415), (418, 523)], [(392, 482), (486, 520)],
+            [(293, 293), (304, 471)], [(280, 287), (289, 463)], [(216, 375), (379, 379)],
+            [(206, 361)], [(182, 263)], [(175, 262)], [(168, 168), (170, 205)], [(169, 203)],
+            [(170, 205), (207, 207)], [(171, 207)], [(178, 206)], [(178, 204), (207, 207)],
+            [(177, 191), (200, 200)], [(176, 189), (191, 191)]] + [[(176, 185)]] * 10
+        m = np.zeros((720, len(runs)), bool)
+        for c, rs in enumerate(runs):
+            for a, b in rs:
+                m[a:b + 1, c] = True
+        py = np.r_[np.full(7, np.nan), [559, 502, 713, 695, 523, 525, 488.5, 523, 397.5, 482, 293,
+                                        463, 375, 361, 263, 262, 168, 169, 170, 171, 206, 204,
+                                        200, 176], np.full(10, 180.0)]
+        out = step1._no_flip_back(m, py, 6.0, 18.0)
+        self.assertTrue(np.all(np.diff(out[13:24]) <= 18), out[11:25])   # never back down
+
     def test_a_notch_just_after_a_rise_is_kept(self):
         # 00048 p142: up to 515, a notch drawn at ~566 (its lower edge holds
         # 582, 566, 566), then on up to ~434
@@ -323,6 +346,76 @@ class Rise(unittest.TestCase):
         py[20] = 224.5                       # the run's middle, as traced
         xs, rows = step1._keep_excursions(m, py)
         self.assertGreaterEqual(rows.max(), 285)    # the needle's tip survives
+
+
+SPUD = os.path.expanduser("~/frac-data/BCER-Frac-Spud-2026")
+
+
+def _spud(num):
+    import glob
+    hits = glob.glob(os.path.join(SPUD, f"{num}-*.pdf"))
+    return hits[0] if hits else None
+
+
+def _pressure_columns(pdf, pno):
+    """The surface pressure's column readings after the flip-back repair."""
+    import fitz
+    got = []
+    real = step1._no_flip_back
+
+    def keep(sub, py, med, tall, **kw):
+        out = real(sub, py, med, tall, **kw)
+        got.append(out)
+        return out
+    step1._no_flip_back = keep
+    try:
+        step1.extract_page(fitz.open(pdf)[pno - 1])
+    finally:
+        step1._no_flip_back = real
+    return got[0]
+
+
+@unittest.skipUnless(_spud("00051") and _spud("00048"), "the 2026 STEP filings are not on this machine")
+class OnThePage(unittest.TestCase):
+
+    def test_stage_6_climbs_without_turning_back(self):
+        # Carmine's Stage 6 (00051 p155): front and foot by turns in v1.11.42
+        out = _pressure_columns(_spud("00051"), 155)
+        self.assertTrue(np.all(np.diff(out[13:24]) <= 18), out[11:25])
+
+    def test_00048_p142_keeps_its_v(self):
+        # a V drawn after the climb, its bottom at row 540 in col 31
+        out = _pressure_columns(_spud("00048"), 142)
+        self.assertGreater(out[31], 530, out[28:34])
+
+    def test_00051_p163_starts_from_the_floor(self):
+        # Carmine, #808: cols 0-1 read scraps of 2 and 4 rows at 440 and 470
+        # over the floor and the stroke rising from it; the chart began at
+        # 39 MPa, and bridging from those scraps kept it off the floor
+        out = _pressure_columns(_spud("00051"), 163)
+        self.assertTrue(np.all(out[:5] > 700), out[:6])
+
+    @unittest.skipUnless(_spud("00053"), "00053 is not on this machine")
+    def test_00053_p163_opens_on_its_floor(self):
+        # col 1 reads a fleck at row 486 over the floor ink at 680-717; the
+        # trace rises from the floor at col 3, and bridging from the fleck
+        # drew a V
+        out = _pressure_columns(_spud("00053"), 163)
+        self.assertGreater(out[1], 680, out[:7])
+
+
+ARC_00100 = glob.glob("/Volumes/CnC-2TB-ssd/AER-Frac-*/00100-103141106404W600_0489643_COMP.pdf")
+
+
+@unittest.skipUnless(ARC_00100, "the CnC drive is not mounted")
+class SpeckAfterAClimb(unittest.TestCase):
+
+    def test_00100_p173_reads_the_stroke_not_the_orange_pixel(self):
+        # cols 281-282 read one pixel of the orange curve at row 680 under the
+        # red stroke at 80-235, just after a climb from row 746 to 235
+        out = _pressure_columns(ARC_00100[0], 173)
+        fin = [v for v in out[268:285] if np.isfinite(v)]
+        self.assertTrue(np.all(np.diff(fin) <= 0), out[268:285])
 
 
 if __name__ == "__main__":
