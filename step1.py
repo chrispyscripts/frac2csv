@@ -1240,7 +1240,9 @@ def _no_flip_back(sub, py, med, tall):
                 seen = [j for j in range(max(0, c - 12), c) if np.isfinite(orig[j])]
                 # (two stroke-heights: 00051 p191's entry starts at its floor,
                 # 580, against pens a few rows up at 560)
-                if (any(run_len(j) > 2 for j in seen)
+                # (and not at the frame's left edge: 00053 p138's col 0 holds a
+                # scrap of ink at row 447 beside an entry from the floor)
+                if (c > 3 and any(run_len(j) > 2 for j in seen)
                         and not any(abs(orig[j] - p0) <= 2 * tall for j in seen)):
                     c = e + 1
                     continue
@@ -1328,7 +1330,11 @@ def _no_flip_back(sub, py, med, tall):
                     mine = next((g for g in runs_j if g[0] - 1 <= out[j] <= g[-1] + 1), None)
                     if mine is None or len(mine) > 2 or abs(out[j] - p0) <= 2 * tall:
                         continue
-                    base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near]
+                    # (a line at that level, not a tall stroke through it: 00053
+                    # p132's col 4 reads the dotted top of its entry bar, and the
+                    # bar's body, 84 px, is no baseline; 00200 p189's hold is 19)
+                    base = [g for g in runs_j if abs(float(np.median(g)) - p0) <= near
+                            and len(g) <= 2 * tall]
                     if base:
                         out[j] = capped(j, float(np.median(np.concatenate(base))))
             # A repair is a reading back where the move began (`back`) AND
@@ -1438,8 +1444,19 @@ def _no_flip_back(sub, py, med, tall):
                     nxt3 = [fr[j] for j in range(k, min(n, k + 3)) if np.isfinite(fr[j])]
                     wb = out[max(0, c - 6):(k if margin else c)]
                     wb = [p0, *wb[np.isfinite(wb)]]
-                    beyond = out[k] > max(wb) + tall if up else out[k] < min(wb) - tall
-                    if (held <= 2 and not beyond
+                    beyond = (out[k] > max(wb) + 1.5 * tall if up
+                              else out[k] < min(wb) - 1.5 * tall)
+                    # The foot of an entry bar standing on the frame's floor is
+                    # no overshoot past the start (00053 p132's col 5 reads 572,
+                    # the floor, under a bar to 337), and in a trace's first
+                    # columns it can read the floor for three columns running
+                    # (00051 p163, 00053 p138). A drop to the floor held longer
+                    # is drawn: 00051 p179's after its opening pressure test.
+                    at_floor = (out[k] >= sub.shape[0] - 1 - tall if up else out[k] <= tall)
+                    if at_floor:
+                        beyond = False
+                    limit = 3 if at_floor and k <= 8 else 2
+                    if (held <= limit and not beyond
                             and (max(nxt3) <= fr[k] + tall / 2.0 if up
                                  else min(nxt3) >= fr[k] - tall / 2.0)):
                         # as far in from the front as the columns around read
@@ -1559,6 +1576,33 @@ def _no_flip_back(sub, py, med, tall):
                                 out[j] = min(max(capped(j, rtop[j] + med / 2.0), prv, nx), out[j])
                     k = max(tail_end, k + 1)
         c = e + 1
+    # Last, a trace's opening: one to three columns reading the frame's floor
+    # between readings well clear of it are the foot of the bar the trace
+    # comes in by — 00051 p163 reads 470, then the floor three times, then
+    # 517 — where the move they sit in could not be judged. Each takes the
+    # point of its own ink nearest the straight line between its sides. A
+    # drop to the floor held longer is drawn (00051 p179's, five columns).
+    fl = sub.shape[0] - 1
+    fin = np.flatnonzero(np.isfinite(out))
+    if len(fin):
+        j = fin[0]
+        while j < min(n, fin[0] + 10):
+            if not (np.isfinite(out[j]) and out[j] >= fl - tall):
+                j += 1
+                continue
+            b = j
+            while b + 1 < n and np.isfinite(out[b + 1]) and out[b + 1] >= fl - tall:
+                b += 1
+            lj = next((i for i in range(j - 1, max(-1, j - 4), -1) if np.isfinite(out[i])), None)
+            rj = next((i for i in range(b + 1, min(n, b + 4)) if np.isfinite(out[i])), None)
+            if (b - j + 1 <= 3 and lj is not None and rj is not None
+                    and out[lj] < fl - 3 * tall and out[rj] < fl - 3 * tall):
+                for i in range(j, b + 1):
+                    ys = np.flatnonzero(sub[:, i])
+                    want = out[lj] + (out[rj] - out[lj]) * (i - lj) / float(rj - lj)
+                    if len(ys) and ys[0] < fl - 3 * tall:
+                        out[i] = float(ys[np.argmin(np.abs(ys - want))])
+            j = b + 1
     return out
 
 
