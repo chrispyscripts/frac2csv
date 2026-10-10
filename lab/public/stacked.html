@@ -60,6 +60,25 @@
          max-width:56ch; margin:0 auto; }
   .foot { color:var(--mut); font-size:11.5px; padding:0 18px 22px; }
   .foot b { color:var(--carmine); }
+  /* The filter: the master across the top, the same one as the Lab's
+     toolbar, and each chart's own under its title. */
+  .filtbar { flex-basis:100%; display:flex; align-items:center; gap:8px;
+             flex-wrap:wrap; font-size:12px; padding-top:2px; }
+  .flbl { color:var(--mut); font-size:11.5px; }
+  .filtbar select, .cfilt select { font:inherit; font-size:12px; color:var(--ink);
+    border:1px solid var(--line); border-radius:6px; padding:2px 6px;
+    background:var(--panel); }
+  .filtbar input[type=range], .cfilt input[type=range] { width:130px;
+    accent-color:var(--carmine); }
+  .fnote { font-family:var(--mono); font-size:11px; color:var(--mut); }
+  .fsaid { font-size:11.5px; color:var(--ok); }
+  .btn.sm { padding:1px 8px; font-size:11.5px; font-weight:600; }
+  .cfilt { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+           margin:0 0 4px; font-size:12px; }
+  .cfilt .area { font-family:var(--mono); font-size:11px; color:var(--mut); }
+  .cfilt .area b { color:var(--carmine); font-weight:600; }
+  .cfilt .area.hint { color:var(--carmine); }
+  .charts canvas.picking { cursor:col-resize; }
 </style>
 </head>
 <body>
@@ -93,6 +112,23 @@ drawn against it sits in the bottom tenth of its row. Off, every chart is drawn
 against the axis its source page prints.">Fit to data</button>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
+    </div>
+    <div class="filtbar" id="filtbar" hidden>
+      <span class="flbl" title="The master filter: the same setting as the Lab
+window's toolbar, for every curve on this chart. Change it here or there and
+both follow. A chart below can take a filter of its own instead.">Filter &middot; every chart</span>
+      <select id="mkind"></select>
+      <input type="range" id="mamt" min="0" max="100" step="1">
+      <span class="fnote" id="mnote"></span>
+      <span class="flbl" id="mthen">then</span>
+      <select id="mkind2"></select>
+      <input type="range" id="mamt2" min="0" max="100" step="1">
+      <span class="fnote" id="mnote2"></span>
+      <button type="button" class="btn sm" id="fsave"
+              title="Save every filter setting on this page — the master and each
+chart's own, areas included — for this stage. The same as the Lab's Save ▾ ›
+Save for this chart only.">Save for this stage</button>
+      <span class="fsaid" id="fsaid" hidden></span>
     </div>
   </div>
 
@@ -235,6 +271,7 @@ window.addEventListener("message", e => {
   if (d.type === "stacked:stage") { if (fresher(d)) applyStage(d); }
   else if (d.type === "stacked:none") { if (fresher(d)) applyNone(d); }
   else if (d.type === "stacked:view") applyView(d);
+  else if (d.type === "stacked:values") applyValues(d);
   else if (d.type === "stacked:page") applyPage(d);
 });
 $("missing").addEventListener("click", () => {
@@ -314,6 +351,10 @@ function applyStage(d) {
   state.t0 = d.t0; state.t1 = d.t1; state.clock0 = d.clock0;
   state.page = d.page; state.pageCount = d.pageCount || 0;
   state.hoverT = null;
+  state.filt = d.filt || null;
+  state.filtKinds = d.filtKinds || [];
+  state.filtNotes = d.filtNotes || {};
+  pick = null; sel = null;
   $("title").textContent = d.title || "";
   $("sub").textContent = d.sub || "";
   setStamp(d);
@@ -521,15 +562,15 @@ function flatNote(c) {
 function build() {
   const host = $("charts");
   host.innerHTML = "";
+  buildFiltBar();
   blocks = state.channels.map((c, i) => {
-    const gs = gapStats(c.values);
     c._ded = null;
-    let nded = 0;
+    c._nded = 0;
     if (c.deduced && c.deduced.length && c.values) {
       c._ded = new Uint8Array(c.values.length);
       for (const [a, b] of c.deduced)
         for (let k = Math.max(0, a); k < Math.min(b, c.values.length); k++) {
-          if (!c._ded[k]) nded++;
+          if (!c._ded[k]) c._nded++;
           c._ded[k] = 1;
         }
     }
@@ -540,7 +581,27 @@ function build() {
         '<span class="nm"><i style="background:' + esc(c.color) + '"></i>' +
           esc(c.name) + (c.unit ? ' <span class="u">' + esc(c.unit) + "</span>" : "") +
         "</span>" +
-        '<span class="rng">' + fmtV(c.lo) + " – " + fmtV(c.hi) +
+        '<span class="rng">' + headRange(c) + "</span>" +
+        '<span class="ro"></span>' +
+      "</div>" + filtRowHtml(c) + "<canvas></canvas>";
+    host.appendChild(el);
+    const b = { c, el, cv: el.querySelector("canvas"), rng: el.querySelector(".rng"),
+                ro: el.querySelector(".ro"), last: i === state.channels.length - 1,
+                ck: el.querySelector(".ck"), ca: el.querySelector(".ca"),
+                cn: el.querySelector(".cn"), area: el.querySelector(".area"),
+                cpick: el.querySelector(".cpick"), cclear: el.querySelector(".cclear") };
+    wireFiltRow(b);
+    return b;
+  });
+  syncFiltUI();
+  layout();
+}
+
+// The line beside a chart's name: its scale, and what is missing or drawn.
+function headRange(c) {
+  const gs = gapStats(c.values);
+  const nded = c._nded || 0;
+  return fmtV(c.lo) + " – " + fmtV(c.hi) +
           (c.fitted ? " · this file"
                     : (c.printed ? " · chart axis" : " · auto")) +
           (c.off ? " · hidden in the Lab" : "") +
@@ -552,14 +613,7 @@ function build() {
             ? " · " + (100 * nded / c.values.length).toFixed(1) + "% deduced (dashed)"
             : "") +
           (state.isolate ? " · Isolate Interpolation" : "") +
-          (showMissing ? flatNote(c) : "") + "</span>" +
-        '<span class="ro"></span>' +
-      "</div><canvas></canvas>";
-    host.appendChild(el);
-    return { c, el, cv: el.querySelector("canvas"),
-             ro: el.querySelector(".ro"), last: i === state.channels.length - 1 };
-  });
-  layout();
+          (showMissing ? flatNote(c) : "");
 }
 
 function layout() {
@@ -627,6 +681,26 @@ function drawChart(b) {
     g.moveTo(x, PAD.T); g.lineTo(x, bot);
   }
   g.stroke();
+
+  // The stretch this chart's filter is held to, and the one being dragged
+  // out right now. Under the curve, so the trace reads through it.
+  const ent = filtEntry(c.key);
+  const shade = (ta, tb, fill, edge) => {
+    const xa = Math.max(PAD.L, xOf(Math.min(ta, tb), W));
+    const xb = Math.min(W - PAD.R, xOf(Math.max(ta, tb), W));
+    if (xb <= xa) return;
+    g.fillStyle = fill; g.fillRect(xa, PAD.T, xb - xa, plotH);
+    g.strokeStyle = edge; g.lineWidth = 1; g.setLineDash([4, 3]);
+    g.beginPath();
+    g.moveTo(xa + 0.5, PAD.T); g.lineTo(xa + 0.5, bot);
+    g.moveTo(xb - 0.5, PAD.T); g.lineTo(xb - 0.5, bot);
+    g.stroke(); g.setLineDash([]);
+  };
+  if (ent && ent.range)
+    shade(ent.range[0] * state.dsec, ent.range[1] * state.dsec,
+          "rgba(163,22,49,0.06)", "rgba(163,22,49,0.55)");
+  if (sel && sel.key === c.key)
+    shade(sel.a, sel.b, "rgba(105,112,119,0.16)", "rgba(105,112,119,0.8)");
 
   // the curve, decimated to about two samples per pixel
   const vals = c.values;
@@ -782,6 +856,243 @@ function updateReadouts() {
       (v != null && b.c.unit ? " " + esc(b.c.unit) : "");
   }
 }
+
+// ---------- the filter ----------
+// The Lab owns it — the export reads the curves it filters — so this window
+// only ever ASKS: every change goes to the Lab as a whole spec, the Lab
+// re-filters the chart, its own toolbar and the export, and sends the curves
+// back. The master is the Lab toolbar's own setting, so moving it here moves
+// it there, and the other way round. Each chart can instead take a filter of
+// its own, and either can be held to one stretch of the chart (Carmine,
+// 2026-10-09).
+state.filt = null; state.filtKinds = []; state.filtNotes = {};
+let pick = null;          // { key } — a chart waiting for its area to be dragged
+let sel = null;           // { key, a, b, rect } — the area being dragged, seconds
+const FILT_START = 35;    // what a filter opens at, as in the Lab
+const clone = o => JSON.parse(JSON.stringify(o || {}));
+function filtEntry(key) {
+  const ch = state.filt && state.filt.chans;
+  return (ch && key && ch[key]) || null;
+}
+function kindLabel(id) {
+  const k = state.filtKinds.find(x => x.id === id);
+  return k ? k.label : id;
+}
+function fillKinds(selEl, withMaster) {
+  selEl.innerHTML = (withMaster ? '<option value="master">Master filter</option>' : "") +
+    state.filtKinds.map(k => '<option value="' + esc(k.id) + '">' + esc(k.label) + "</option>").join("");
+}
+// One change: shown here at once, and sent to the Lab once a frame.
+let sendRaf = null, pending = null;
+function sendFilt(spec) {
+  state.filt = spec;
+  syncFiltUI();
+  schedule();
+  pending = spec;
+  if (sendRaf) return;
+  sendRaf = requestAnimationFrame(() => {
+    sendRaf = null;
+    toLab({ type: "stacked:filter", seq: state.seq, spec: pending });
+  });
+}
+// A chart's entry after an edit: dropped when it says nothing the master
+// does not already say, so "back to the master, whole chart" leaves no trace.
+function putEntry(spec, key, ent) {
+  spec.chans = spec.chans || {};
+  if (!ent || (ent.use !== "own" && !ent.range)) delete spec.chans[key];
+  else spec.chans[key] = ent;
+  if (!Object.keys(spec.chans).length) delete spec.chans;
+  return spec;
+}
+
+function buildFiltBar() {
+  $("filtbar").hidden = !state.filt || !state.filtKinds.length;
+  if ($("filtbar").hidden) return;
+  fillKinds($("mkind"), false);
+  fillKinds($("mkind2"), false);
+}
+(() => {
+  const read = () => clone(state.filt);
+  $("mkind").addEventListener("change", () => {
+    const s = read();
+    s.kind = $("mkind").value;
+    if (s.kind === "none") { s.amount = 0; s.kind2 = "none"; s.amount2 = 0; }
+    else if (!(s.amount > 0)) s.amount = FILT_START;
+    sendFilt(s);
+  });
+  $("mamt").addEventListener("input", () => {
+    const s = read();
+    s.amount = Number($("mamt").value) || 0;
+    if (s.kind === "none") s.kind = "both";
+    sendFilt(s);
+  });
+  $("mkind2").addEventListener("change", () => {
+    const s = read();
+    s.kind2 = $("mkind2").value;
+    if (s.kind2 === "none") s.amount2 = 0;
+    else if (!(s.amount2 > 0)) s.amount2 = FILT_START;
+    sendFilt(s);
+  });
+  $("mamt2").addEventListener("input", () => {
+    const s = read();
+    s.amount2 = Number($("mamt2").value) || 0;
+    if (s.kind2 === "none") s.kind2 = "sg";
+    sendFilt(s);
+  });
+  $("fsave").addEventListener("click", () => {
+    toLab({ type: "stacked:filtsave", seq: state.seq });
+    const m = $("fsaid");
+    m.textContent = "saved for this stage"; m.hidden = false;
+    clearTimeout(m._t); m._t = setTimeout(() => { m.hidden = true; }, 4000);
+  });
+})();
+
+function filtRowHtml(c) {
+  if (!state.filt || !state.filtKinds.length || !c.key) return "";
+  return '<div class="cfilt">' +
+      '<span class="flbl">Filter</span>' +
+      '<select class="ck" title="Follow the master filter, or give this chart a filter of its own"></select>' +
+      '<input type="range" class="ca" min="0" max="100" step="1" title="How hard this chart\'s own filter works">' +
+      '<span class="fnote cn"></span>' +
+      '<span class="area"></span>' +
+      '<button type="button" class="btn sm cpick" title="Drag across this chart to hold its filter to that stretch; the rest stays as read">Pick area</button>' +
+      '<button type="button" class="btn sm cclear" title="Filter the whole chart again">Whole chart</button>' +
+    "</div>";
+}
+function wireFiltRow(b) {
+  if (!b.ck) return;
+  fillKinds(b.ck, true);
+  const key = b.c.key;
+  b.ck.addEventListener("change", () => {
+    const s = clone(state.filt), v = b.ck.value;
+    const ent = { ...(filtEntry(key) || {}) };
+    if (v === "master") { ent.use = "master"; delete ent.kind; delete ent.amount; }
+    else {
+      ent.use = "own"; ent.kind = v;
+      ent.amount = v === "none" ? 0 : (ent.amount > 0 ? ent.amount : FILT_START);
+    }
+    sendFilt(putEntry(s, key, ent));
+  });
+  b.ca.addEventListener("input", () => {
+    const s = clone(state.filt);
+    const ent = { ...(filtEntry(key) || {}), use: "own" };
+    ent.amount = Number(b.ca.value) || 0;
+    if (!ent.kind || ent.kind === "none") ent.kind = "both";
+    sendFilt(putEntry(s, key, ent));
+  });
+  b.cpick.addEventListener("click", () => {
+    pick = pick && pick.key === key ? null : { key };
+    sel = null;
+    syncFiltUI(); schedule();
+  });
+  b.cclear.addEventListener("click", () => {
+    const s = clone(state.filt);
+    const ent = { ...(filtEntry(key) || {}) };
+    delete ent.range;
+    sendFilt(putEntry(s, key, ent));
+  });
+}
+
+// The controls say what the spec says. The control under the pointer is left
+// alone: the Lab's echo of a slider being dragged is a frame behind it.
+function syncFiltUI() {
+  const s = state.filt;
+  if (!s) return;
+  const busy = el => el === document.activeElement;
+  const setSel = (el, v) => { if (!busy(el) && el.value !== v) el.value = v; };
+  const setAmt = (el, v) => { if (!busy(el) && Number(el.value) !== v) el.value = v; };
+  const n = state.filtNotes || {};
+  const k1 = s.kind || "none", k2 = s.kind2 || "none";
+  setSel($("mkind"), k1); setAmt($("mamt"), Number(s.amount) || 0);
+  $("mamt").disabled = k1 === "none";
+  $("mnote").textContent = k1 === "none" ? "off" : (s.amount || 0) + "%  " + (n.m1 || "");
+  const chained = k1 !== "none";
+  for (const id of ["mthen", "mkind2", "mamt2", "mnote2"]) $(id).hidden = !chained;
+  setSel($("mkind2"), k2); setAmt($("mamt2"), Number(s.amount2) || 0);
+  $("mamt2").disabled = k2 === "none";
+  $("mnote2").textContent = k2 === "none" ? "" : (s.amount2 || 0) + "%  " + (n.m2 || "");
+  const masterOn = k1 !== "none" && s.amount > 0 || k2 !== "none" && s.amount2 > 0;
+  for (const b of blocks) {
+    if (!b.ck) continue;
+    const ent = filtEntry(b.c.key);
+    const own = !!ent && ent.use === "own";
+    setSel(b.ck, own ? (ent.kind || "none") : "master");
+    b.ca.hidden = !own || ent.kind === "none";
+    setAmt(b.ca, own ? Number(ent.amount) || 0 : 0);
+    b.cn.textContent = own
+      ? (ent.kind === "none" ? "no filter on this chart"
+                             : (ent.amount || 0) + "%  " + ((n.chans || {})[b.c.key] || ""))
+      : (masterOn ? "as the master" : "the master is off");
+    const picking = pick && pick.key === b.c.key;
+    b.area.classList.toggle("hint", !!picking);
+    if (picking) b.area.textContent = "· drag across the chart to pick the stretch · Esc cancels";
+    else if (ent && ent.range)
+      b.area.innerHTML = "· only <b>" + esc(stamp(ent.range[0] * state.dsec)) + " – " +
+        esc(stamp(ent.range[1] * state.dsec)) + "</b>";
+    else b.area.textContent = "· whole chart";
+    b.cpick.textContent = picking ? "Cancel" : (ent && ent.range ? "Re-pick area" : "Pick area");
+    b.cclear.hidden = !(ent && ent.range);
+    b.cv.classList.toggle("picking", !!picking);
+  }
+}
+
+// The Lab re-filtered the chart: new curves, same chart. Updated in place —
+// a rebuild would pull the slider out from under a drag.
+function applyValues(d) {
+  if (!forThisStage(d) || !state.haveStage) return;
+  const by = {};
+  for (const u of d.channels || []) by[u.key] = u;
+  for (const c of state.channels) {
+    const u = by[c.key];
+    if (!u) continue;
+    c.values = u.values; c.dataLo = u.dataLo; c.dataHi = u.dataHi;
+    c.filtered = u.filtered; c.area = u.area;
+  }
+  if (d.filt) state.filt = d.filt;
+  if (d.filtNotes) state.filtNotes = d.filtNotes;
+  applyScale();
+  for (const b of blocks) if (b.rng) b.rng.innerHTML = headRange(b.c);
+  syncFiltUI();
+  schedule();
+}
+
+// Picking an area: press on the chart that is waiting for one and drag.
+function tAtX(rect, clientX) {
+  const W = rect.width, span = state.t1 - state.t0;
+  const f = (clientX - rect.left - PAD.L) / Math.max(1, W - PAD.L - PAD.R);
+  return Math.max(0, Math.min(state.tMax, state.t0 + Math.max(0, Math.min(1, f)) * span));
+}
+$("charts").addEventListener("mousedown", e => {
+  if (!pick || e.button !== 0) return;
+  const cv = e.target.closest("canvas");
+  const b = cv && blocks.find(x => x.cv === cv);
+  if (!b || b.c.key !== pick.key) return;
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const t = tAtX(rect, e.clientX);
+  sel = { key: b.c.key, a: t, b: t, rect };
+  schedule();
+});
+window.addEventListener("mousemove", e => {
+  if (!sel) return;
+  sel.b = tAtX(sel.rect, e.clientX);
+  schedule();
+});
+window.addEventListener("mouseup", () => {
+  if (!sel) return;
+  const key = sel.key, dsec = state.dsec || 1;
+  const i0 = Math.max(0, Math.floor(Math.min(sel.a, sel.b) / dsec));
+  const i1 = Math.min(state.n, Math.ceil(Math.max(sel.a, sel.b) / dsec) + 1);
+  sel = null; pick = null;
+  if (i1 - i0 >= 2) {
+    const s = clone(state.filt);
+    const ent = { ...(filtEntry(key) || { use: "master" }), range: [i0, i1] };
+    sendFilt(putEntry(s, key, ent));
+  } else { syncFiltUI(); schedule(); }
+});
+window.addEventListener("keydown", e => {
+  if (e.key === "Escape" && (pick || sel)) { pick = null; sel = null; syncFiltUI(); schedule(); }
+});
 
 // ---------- interaction ----------
 // Every chart here shares ONE time axis, so a wheel over any of them zooms

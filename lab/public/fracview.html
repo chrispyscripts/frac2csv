@@ -460,7 +460,7 @@ let dispMap = [];        // per stage: real [a,b] -> display [da,db]
 // stretch after a stage's last sample and before the next one begins.
 function buildDispMap() {
   dispMap = [];
-  let d = 0;
+  let d = 0, row = CSV_HEADER_ROWS;
   for (let i = 0; i < nStages(); i++) {
     const a = edits.bounds[i], b = edits.bounds[i + 1];
     const src = well.stages[edits.origin ? edits.origin[i] : i];
@@ -474,19 +474,53 @@ function buildDispMap() {
     // next stage's start and the void was indistinguishable from pumping.
     const hi = src ? Math.min(b, src.t0 + src.n * src.dsec * 1000) : b;
     if (spacing() === "real") { dispMap.push({ a, b, hi, da: a, db: b }); continue; }
-    const wdt = Math.max(1000, hi - a);
-    dispMap.push({ a, b, hi, da: d, db: d + wdt });
-    d += wdt;
+    // Plot by row lays the band out as the CSV writes it: every source
+    // stage's samples inside the band as a block of their own, one after the
+    // other in the order they begin. Placing them by the clock instead put two
+    // stages whose clocks overlap on the SAME stretch of x — one drawn over the
+    // other where the file holds them one after the other (Carmine,
+    // 2026-10-09: "the 2 stages still overlap").
+    const parts = [];
+    well.stages.forEach((st, k) => {
+      const step = (st.dsec || 1) * 1000;
+      if (st.t0 + st.n * step <= a || st.t0 >= b) return;
+      const j0 = Math.max(0, Math.ceil((a - st.t0) / step));
+      const j1 = Math.min(st.n, Math.ceil((b - st.t0) / step));
+      if (j1 > j0) parts.push({ k, t0: st.t0, step, j0, j1, off: 0, len: 0, row: 0 });
+    });
+    parts.sort((x, y) => (x.t0 + x.j0 * x.step) - (y.t0 + y.j0 * y.step));
+    let off = 0, rows = 0;
+    for (const p of parts) {
+      p.off = off; p.len = (p.j1 - p.j0) * p.step; p.row = row + rows;
+      off += p.len; rows += p.j1 - p.j0;
+    }
+    const wdt = Math.max(1000, off);
+    dispMap.push({ a, b, hi, da: d, db: d + wdt, parts });
+    d += wdt; row += rows;
   }
+}
+// The block of a band that holds moment t — stage k's own where it is given
+// (a sample knows its stage; a bare moment takes the first block holding it).
+function partAt(m, t, k) {
+  let first = null;
+  for (const p of m.parts) {
+    if (t < p.t0 + p.j0 * p.step || t >= p.t0 + p.j1 * p.step) continue;
+    if (k == null || p.k === k) return p;
+    if (!first) first = p;
+  }
+  return k == null ? first : (first || null);
 }
 // real -> display. Outside the stages the mapping continues linearly, so a
 // sample that sits just past the last boundary still draws where it belongs.
-function toDisp(t) {
+// `k`, where the caller has it, is the source stage the moment is a sample of.
+function toDisp(t, k) {
   if (spacing() === "real" || !dispMap.length) return t;
   if (t < dispMap[0].a) return dispMap[0].da + (t - dispMap[0].a);
   for (const m of dispMap) {
-    if (t < m.hi) return m.da + (t - m.a);
-    if (t < m.b) return m.db;          // idle tail collapses to the band's end
+    if (t >= m.b) continue;
+    const p = partAt(m, t, k);
+    if (p) return m.da + p.off + (t - (p.t0 + p.j0 * p.step));
+    return t <= m.a ? m.da : m.db;     // idle tail collapses to the band's end
   }
   const L = dispMap[dispMap.length - 1];
   return L.db + Math.max(0, t - L.hi);
@@ -494,9 +528,34 @@ function toDisp(t) {
 function fromDisp(x) {
   if (spacing() === "real" || !dispMap.length) return x;
   if (x < dispMap[0].da) return dispMap[0].a + (x - dispMap[0].da);
-  for (const m of dispMap) if (x < m.db) return m.a + (x - m.da);
+  for (const m of dispMap) {
+    if (x >= m.db) continue;
+    const o = x - m.da;
+    for (const p of m.parts)
+      if (o >= p.off && o < p.off + p.len) return p.t0 + p.j0 * p.step + (o - p.off);
+    return m.parts.length ? m.hi : m.a + o;
+  }
   const L = dispMap[dispMap.length - 1];
   return L.hi + (x - L.db);
+}
+// Plot by row: the CSV line and the band under a display position, read off
+// the position itself. Two stages can hold the same moment, so going through
+// the clock (fromDisp, then rowAt) named the first one's row under the
+// second one's curve.
+function rowAtDisp(x) {
+  for (const m of dispMap) {
+    if (x < m.da || x >= m.db || !m.parts) continue;
+    const o = x - m.da;
+    for (const p of m.parts)
+      if (o >= p.off && o < p.off + p.len) return p.row + Math.floor((o - p.off) / p.step) + 1;
+    return 0;
+  }
+  return 0;
+}
+function stageAtDisp(x) {
+  for (let i = 0; i < dispMap.length; i++)
+    if (x >= dispMap[i].da && x < dispMap[i].db) return i;
+  return -1;
 }
 
 // ---------- where a moment lands in the exported CSV ----------
@@ -688,7 +747,9 @@ function fit() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, w, h };
 }
-const X = (t, w) => PAD.l + (toDisp(t) - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
+const X = (t, w, k) => PAD.l + (toDisp(t, k) - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
+const XD = (d, w) => PAD.l + (d - view.a) / (view.b - view.a) * (w - PAD.l - PAD.r);
+const D = (x, w) => view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a);
 const T = (x, w) => fromDisp(view.a + (x - PAD.l) / (w - PAD.l - PAD.r) * (view.b - view.a));
 
 // The stretch between one stage's last reading and the next stage's first.
@@ -771,7 +832,9 @@ function draw() {
     // dispMap already knows where a stage's samples end: `hi` is the number
     // Plot by row collapses to, and it is exactly the edge wanted here.
     const m = dispMap[i] || null;
-    const xh = m ? Math.min(x1, Math.max(x0, X(Math.min(m.hi, s.b), w))) : x1;
+    // (Plot by row has no idle to show: a band there is its rows and nothing else)
+    const xh = m && spacing() !== "row"
+      ? Math.min(x1, Math.max(x0, X(Math.min(m.hi, s.b), w))) : x1;
     ctx.fillStyle = bandFill(i);
     ctx.fillRect(x0, PAD.t, xh - x0, plotH);
     if (xh < x1 - 0.5) drawVoid(ctx, xh, x1, plotH, m ? m.hi : s.a, s.b);
@@ -905,7 +968,7 @@ function draw() {
     // was the thing that disappeared the moment you let go of the mouse.
     for (const ghost of (edits.cuts.length ? [true, false] : [false])) {
     ctx.globalAlpha = ghost ? 0.22 : 1;
-    for (const st of well.stages) {
+    for (const [k, st] of well.stages.entries()) {
       const ch = st.channels.find(c => c.name === name);
       if (!ch) continue;
       const step = st.dsec * 1000;
@@ -948,7 +1011,7 @@ function draw() {
         // ghost pass: draw straight through it — that IS the point.
         if (!ghost && inCut(t)) { pen = false; continue; }
         if (!isFinite(v)) { pen = false; continue; }
-        const x = X(t, w);
+        const x = X(t, w, k);
         const y = PAD.t + plotH - (v / mx) * (plotH - 6) - 3;
         if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
       }
@@ -1187,13 +1250,13 @@ function drawTimeAxis(ctx, w, h, plotW, plotH) {
   const first = Math.ceil(view.a / step) * step;
   for (let dt = first; dt <= view.b; dt += step) {
     const t = fromDisp(dt);          // label the real clock at that position
-    const x = X(t, w);
+    const x = XD(dt, w);
     ctx.strokeStyle = "#eceef1";
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     if (spacing() === "row") {
       // The row leads, because it is the number being carried to the CSV; the
       // clock stays under it, because a row on its own says nothing about when.
-      const r = rowAt(t);
+      const r = rowAtDisp(dt);
       ctx.fillStyle = "#14181d";
       ctx.fillText(r ? String(r) : "—", x, h - 31);
       ctx.fillStyle = "#697077";
@@ -1246,16 +1309,17 @@ function drawTimeAxis(ctx, w, h, plotW, plotH) {
 function drawHover(ctx, w, h, plotH) {
   // hover readout
   if (hover && !drag) {
-    const x = X(hover.t, w);
+    const row = spacing() === "row" && hover.d != null;
+    const x = row ? XD(hover.d, w) : X(hover.t, w);
     ctx.strokeStyle = "rgba(20,24,29,0.35)"; ctx.lineWidth = 1;
     ctx.setLineDash([2, 3]);
     ctx.beginPath(); ctx.moveTo(x, PAD.t); ctx.lineTo(x, PAD.t + plotH); ctx.stroke();
     ctx.setLineDash([]);
-    const si = stageAtX(hover.t);
+    const si = row ? stageAtDisp(hover.d) : stageAtX(hover.t);
     // Row first: this is the box read while pointing at a feature that then
     // has to be found in the CSV. The clock and the day ride with it so the
     // number can be checked against the file's own DATETIME column.
-    const hr = rowAt(hover.t);
+    const hr = row ? rowAtDisp(hover.d) : rowAt(hover.t);
     const hday = printedDay(hover.t);
     const bits = [];
     if (hr) bits.push(`row ${hr}`);
@@ -1601,7 +1665,7 @@ cv.addEventListener("mousedown", e => {
 window.addEventListener("mousemove", e => {
   if (!well) return;
   const p = pos(e);
-  hover = { x: p.x, t: T(p.x, p.w) };
+  hover = { x: p.x, t: T(p.x, p.w), d: D(p.x, p.w) };
   if (!drag) {
     cv.style.cursor = cutEdgeNear(p.x, p.w) ? "col-resize"
       : mode === "trim" ? "crosshair"

@@ -232,5 +232,23 @@ function close(a, b, tol, what) {
      "a second filter alone still counts as on");
 }
 
+// ---- never past the samples it was fitted to ------------------------------
+// Carmine, 2026-10-09: the SG filter sometimes put the curve below zero. A
+// pump shutdown is a sharp corner, and a polynomial through a corner rings:
+// 60 MPa dropping to 0 in three samples came out at -4.2 below the floor and
+// 64.8 over a 60.8 hold.
+{
+  const v = [];
+  for (let i = 0; i < 80; i++)
+    v.push(i < 40 ? 60 + (i % 3) * 0.4 : i < 43 ? 60 - (i - 39) * 20
+           : 0.3 * ((i * 7) % 3 === 0 ? 1 : 0));
+  const top = Math.max(...v);
+  for (const [kind, amt] of [["sg", 30], ["sg", 80], ["both", 50], ["loess", 30]]) {
+    const o = filtApply(v, kind, amt);
+    ok(Math.min(...o) >= 0, `${kind} ${amt} stays at or above the floor (${Math.min(...o)})`);
+    ok(Math.max(...o) <= top + 1e-9, `${kind} ${amt} stays under the hold (${Math.max(...o)})`);
+  }
+}
+
 console.log(failed ? `${failed} FAILED` : "filters: all assertions passed");
 process.exit(failed ? 1 : 0);

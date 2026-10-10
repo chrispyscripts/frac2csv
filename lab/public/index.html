@@ -5368,9 +5368,20 @@ function filtSavGol(v, win, order) {
     const key = hh + ":" + p;
     const w = cache[key] || (cache[key] = filtSavGolCoef(hh, p));
     if (!w) continue;
-    let s = 0;
-    for (let k = -hh; k <= hh; k++) s += w[k + hh] * v[i + k];
-    out[i] = s;
+    let s = 0, lo = Infinity, hi = -Infinity;
+    for (let k = -hh; k <= hh; k++) {
+      const x = v[i + k];
+      s += w[k + hh] * x;
+      if (x < lo) lo = x;
+      if (x > hi) hi = x;
+    }
+    // Never past the samples it was fitted to. A polynomial run through a
+    // sharp corner rings: at a pump shutdown (60 MPa to 0 in three samples)
+    // the fit swung to -4.2 below the floor and 64.8 over a 60.8 hold, and a
+    // negative pressure or rate is a reading the sheet never drew (Carmine,
+    // 2026-10-09). Inside the window's own range the fit is untouched, so a
+    // straight run and a peak read exactly as before.
+    out[i] = s < lo ? lo : s > hi ? hi : s;
   }
   return out;
 }
@@ -5411,9 +5422,18 @@ function filtLoess(v, frac, iters) {
       const det = sw * sxx - sx * sx;
       // A degenerate neighbourhood (every weight on one x) has no slope to
       // find; the weighted mean is the honest answer there.
-      fit[a] = Math.abs(det) < 1e-12
+      let f = Math.abs(det) < 1e-12
         ? (sw ? sy / sw : v[x0])
         : (sxx * sy - sx * sxy) / det;
+      // and never past the readings it was fitted to — a local line through
+      // a corner overshoots it the same way Savitzky-Golay's does
+      let nlo = Infinity, nhi = -Infinity;
+      for (let b = lo; b <= hi; b++) {
+        const y = v[idx[b]];
+        if (y < nlo) nlo = y;
+        if (y > nhi) nhi = y;
+      }
+      fit[a] = f < nlo ? nlo : f > nhi ? nhi : f;
     }
     if (pass === rounds) break;
     const res = [];
@@ -5581,7 +5601,85 @@ function filtIsOff(spec) {
   const s = spec || {};
   const one = !s.kind || s.kind === "none" || !(Number(s.amount) > 0);
   const two = !s.kind2 || s.kind2 === "none" || !(Number(s.amount2) > 0);
-  return one && two;
+  if (!(one && two)) return false;
+  // a channel given a filter of its own in the stacked window still filters
+  // with the master off
+  for (const k in (s.chans || {})) if (filtOwnOn(s.chans[k])) return false;
+  return true;
+}
+
+// ---- per channel, from the stacked window ---------------------------------
+//
+// The master filter above is one setting for every curve on the chart. The
+// stacked window (one chart per channel) adds a setting PER CHANNEL on top of
+// it, asked for by Carmine (2026-10-09): each curve can follow the master or
+// take a filter of its own, and either can be held to one stretch of the
+// chart — the stretch that has the noise — leaving the rest as read.
+//
+//   spec.chans = { [channel key]: { use: "master" | "own",
+//                                   kind, amount,       (when "own")
+//                                   range: [i0, i1] } } (sample indices, or none)
+//
+// A channel with no entry follows the master over the whole chart, which is
+// exactly what every setting saved before this reads as. The range is in
+// SAMPLES of this stage, so it belongs to the stage: carried with "save for
+// this chart", left behind by "every stage in this file" and the provider
+// default, where the same samples mean another moment.
+function filtOwnOn(o) {
+  return !!o && o.use === "own" && !!o.kind && o.kind !== "none" && Number(o.amount) > 0;
+}
+function filtChanKey(c) { return (c && (c.key || c.label)) || ""; }
+function filtChanEntry(spec, c) {
+  const ch = spec && spec.chans;
+  return ch ? ch[filtChanKey(c)] || null : null;
+}
+// The filter one channel is read through: its own, or the master's.
+function filtChanSpec(spec, c) {
+  const s = spec || FILT_OFF;
+  const o = filtChanEntry(s, c);
+  if (o && o.use === "own")
+    return { ...FILT_OFF, kind: o.kind || "none", amount: Number(o.amount) || 0 };
+  const m = { ...s };
+  delete m.chans;
+  return m;
+}
+// The stretch a channel's filter is held to, or null for the whole chart.
+function filtChanRange(spec, c) {
+  const o = filtChanEntry(spec, c);
+  const r = o && o.range;
+  return (Array.isArray(r) && r.length === 2 && isFinite(r[0]) && isFinite(r[1])
+          && r[1] > r[0]) ? [Math.max(0, Math.floor(r[0])), Math.ceil(r[1])] : null;
+}
+// The channel entries that change anything, in a fixed key order, so two
+// specs that mean the same compare equal however they were built.
+function filtChansNorm(chans, keepRange) {
+  const out = {};
+  for (const k of Object.keys(chans || {}).sort()) {
+    const o = chans[k];
+    if (!o) continue;
+    const range = keepRange !== false && Array.isArray(o.range) && o.range[1] > o.range[0]
+      ? [Math.floor(o.range[0]), Math.ceil(o.range[1])] : null;
+    if (o.use === "own")
+      out[k] = { use: "own", kind: o.kind || "none", amount: Number(o.amount) || 0, range };
+    else if (range) out[k] = { use: "master", range };
+  }
+  return out;
+}
+// Made safe to store: whatever the stacked window sent, only what a spec can
+// hold. Kinds outside the list are off.
+function filtClean(spec) {
+  const s = spec || {};
+  const kinds = new Set(FILT_KINDS.map(k => k.id));
+  const kind = k => (kinds.has(k) ? k : "none");
+  const amt = a => Math.max(0, Math.min(100, Math.round(Number(a) || 0)));
+  const chans = {};
+  for (const [k, o] of Object.entries(filtChansNorm(s.chans))) {
+    chans[k] = o.use === "own" ? { ...o, kind: kind(o.kind), amount: amt(o.amount) } : o;
+  }
+  return { kind: kind(s.kind), amount: amt(s.amount),
+           kind2: kind(s.kind2), amount2: amt(s.amount2),
+           gate: !!s.gate, gatePct: Number(s.gatePct) || FILT_OFF.gatePct,
+           ...(Object.keys(chans).length ? { chans } : {}) };
 }
 
 // Run one filter spec over one channel's samples. The single entry point the
@@ -5789,7 +5887,8 @@ function filtSpecEq(a, b) {
   const x = { ...FILT_OFF, ...(a || {}) }, y = { ...FILT_OFF, ...(b || {}) };
   return x.kind === y.kind && Number(x.amount) === Number(y.amount)
       && x.kind2 === y.kind2 && Number(x.amount2) === Number(y.amount2)
-      && !!x.gate === !!y.gate && Number(x.gatePct) === Number(y.gatePct);
+      && !!x.gate === !!y.gate && Number(x.gatePct) === Number(y.gatePct)
+      && JSON.stringify(filtChansNorm(x.chans)) === JSON.stringify(filtChansNorm(y.chans));
 }
 // The height of a channel's axis, for the gate. The chart's printed axis when
 // the template reports one; otherwise the span of what was read.
@@ -5819,10 +5918,24 @@ function filtToChannels(channels, spec) {
   let n = 0;
   for (const c of channels || []) {
     const base = filtBase(c);
-    const g = filtRunGated(base, s, filtGated(s) ? filtGateSpan(c) : 0);
-    c.values = g.values;
-    c.__gateRuns = g.runs;
-    c.__filt = filtIsOff(s) ? null : s;
+    const cs = filtChanSpec(s, c);
+    const g = filtRunGated(base, cs, filtGated(cs) ? filtGateSpan(c) : 0);
+    const r = filtIsOff(cs) ? null : filtChanRange(s, c);
+    if (r) {
+      // Filtered over the whole curve, so a window at the edge of the stretch
+      // still sees the samples beside it, and taken INSIDE the stretch only.
+      const i0 = Math.min(base.length, r[0]), i1 = Math.min(base.length, r[1]);
+      const v = base.slice();
+      for (let i = i0; i < i1; i++) v[i] = g.values[i];
+      c.values = v;
+      c.__gateRuns = g.runs && g.runs.map(([a, b]) => [Math.max(a, i0), Math.min(b, i1)])
+                                     .filter(([a, b]) => b > a);
+    } else {
+      c.values = g.values;
+      c.__gateRuns = g.runs;
+    }
+    c.__filt = filtIsOff(cs) ? null : cs;
+    c.__filtRange = c.__filt ? r : null;
     if (c.__filt) n++;
   }
   return n;
@@ -5866,9 +5979,11 @@ function filtSyncUI() {
   // on the toolbar rather than in the Save menu.
   const src = filtSourceOf(gState.meta);
   const el = $("filtsrc");
-  el.textContent = src === "stage" ? "\u00b7 this chart\u2019s own setting"
+  const nOwn = Object.keys(filtChansNorm(spec.chans)).length;
+  el.textContent = (src === "stage" ? "\u00b7 this chart\u2019s own setting"
     : src === "provider" ? `\u00b7 ${filtProvider()} default`
-      : "";
+      : "")
+    + (nOwn ? ` \u00b7 ${nOwn} curve${nOwn === 1 ? "" : "s"} set in Stacked` : "");
   el.classList.toggle("own", src === "stage");
   // Say what is SAVED, not what is on screen: the difference between the two
   // is the whole reason the button is there.
@@ -5915,6 +6030,7 @@ function filtPreview(spec) {
     filtToChannels(gState.channels, gState.filt);
     filtGateNote();
     redrawGraph(); buildLegend();
+    stackSendValues();
   });
 }
 function filtMenu() {
@@ -5958,6 +6074,15 @@ function filtStagesWithOwnSetting() {
 }
 
 function filtCommit(scope, spec) {
+  // A per-channel stretch is samples of THIS stage. Saved for the chart it
+  // goes too; applied to the well or as a provider default it would land on
+  // another moment of every other chart, so those take the settings without
+  // their stretches.
+  if (scope === "file" || scope === "provider") {
+    const chans = filtChansNorm(spec && spec.chans, false);
+    spec = { ...spec };
+    if (Object.keys(chans).length) spec.chans = chans; else delete spec.chans;
+  }
   const off = filtIsOff(spec);
   // Clearing a well REMOVES each chart's own setting so every one of them
   // follows the default again. Deliberately not the same as applying "off" to
@@ -5977,7 +6102,7 @@ function filtCommit(scope, spec) {
     filtSave();
     gState.filt = { ...filtSpecFor(gState.meta) };
     filtToChannels(gState.channels, gState.filt);
-    filtSyncUI(); redrawGraph(); buildLegend();
+    filtSyncUI(); redrawGraph(); buildLegend(); stackSendValues();
     filtSay(n === 1 ? "1 chart follows the default again"
                     : `${n} charts follow the default again`);
     return;
@@ -5986,7 +6111,7 @@ function filtCommit(scope, spec) {
     filtClearStage(gState.meta);
     gState.filt = { ...filtSpecFor(gState.meta) };
     filtToChannels(gState.channels, gState.filt);
-    filtSyncUI(); redrawGraph(); buildLegend();
+    filtSyncUI(); redrawGraph(); buildLegend(); stackSendValues();
     filtSay("this chart follows the default again");
     return;
   }
@@ -6029,7 +6154,7 @@ function filtCommit(scope, spec) {
     filtStore.byStage[key] = { ...spec };
     if (st.channels) { filtToChannels(st.channels, spec); n++; }
   }
-  filtSave(); filtSyncUI(); redrawGraph(); buildLegend();
+  filtSave(); filtSyncUI(); redrawGraph(); buildLegend(); stackSendValues();
   filtSay(off ? `cleared on ${n} stage(s)` : `applied to ${n} stage(s)`);
 }
 // The stages of the file on screen, however the Lab happens to be holding it.
@@ -7087,7 +7212,8 @@ function stackPayload() {
       if (ok) { if (v < dLo) dLo = v; if (v > dHi) dHi = v; }
     }
     const has = isFinite(dLo) && isFinite(dHi);
-    chans.push({ name: chanName(c), unit: c.unit || "", color: c._color,
+    chans.push({ key: filtChanKey(c), filtered: !!c.__filt, area: c.__filtRange || null,
+                 name: chanName(c), unit: c.unit || "", color: c._color,
                  lo: r.lo, hi: r.hi, printed: !!r.printed,
                  dataLo: has ? dLo : null, dataHi: has ? dHi : null,
                  vmax: round2(c._vmax), off: gState.hidden.has(ci),
@@ -7118,7 +7244,34 @@ function stackPayload() {
     pageCount: pages.length,
     isolate: !!gState.isolate,
     channels: chans,
+    // The filter, so the stacked window can show and change it: the master
+    // (the same one as this window's toolbar) and any per-channel settings.
+    filt: filtClean(gState.filt),
+    filtKinds: FILT_KINDS,
+    filtNotes: stackFiltNotes(),
   };
+}
+// What each slider chose, in samples, as this window's toolbar prints it.
+function stackFiltNotes() {
+  const s = gState.filt || FILT_OFF, out = { chans: {} };
+  if (s.kind && s.kind !== "none") out.m1 = filtWindowNote({ kind: s.kind, amount: s.amount });
+  if (s.kind2 && s.kind2 !== "none") out.m2 = filtWindowNote({ kind: s.kind2, amount: s.amount2 });
+  for (const [k, o] of Object.entries(filtChansNorm(s.chans)))
+    if (o.use === "own" && o.kind !== "none")
+      out.chans[k] = filtWindowNote({ kind: o.kind, amount: o.amount });
+  return out;
+}
+// The filter changed, here or there: the stacked window gets the re-filtered
+// curves and the spec, under the SAME seq — it is the same chart, and a full
+// stage push would rebuild the window under a slider being dragged.
+function stackSendValues() {
+  if (!stackAlive()) return;
+  const p = stackPayload();
+  if (p.type !== "stacked:stage") return;
+  stackPost({ type: "stacked:values", seq: stackSeq, filt: p.filt,
+              filtNotes: p.filtNotes,
+              channels: p.channels.map(c => ({ key: c.key, values: c.values,
+                dataLo: c.dataLo, dataHi: c.dataHi, filtered: c.filtered, area: c.area })) });
 }
 
 // The stage-level state changed: new seq, and the child owes us a fresh ack.
@@ -7212,6 +7365,14 @@ window.addEventListener("message", e => {
   } else if (d.type === "stacked:applied") {
     if (e.source !== stackWin) return;
     stackAckSeq = ackSeq(d);
+  } else if (d.type === "stacked:filter") {
+    // Only for the chart this window is showing: a setting made on the
+    // previous stage must not land on this one.
+    if (e.source !== stackWin || d.seq !== stackSeq || !gState.channels.length) return;
+    filtPreview(filtClean(d.spec));
+  } else if (d.type === "stacked:filtsave") {
+    if (e.source !== stackWin || d.seq !== stackSeq || !gState.channels.length) return;
+    filtCommit("stage", filtClean(gState.filt));
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
   } else if (d.type === "stacked:zoom") {
@@ -7908,7 +8069,9 @@ $("retraceundo").addEventListener("click", () => {
       sel.appendChild(o);
     }
   }
-  // The spec on screen, read off both control pairs.
+  // The spec on screen, read off both control pairs — and the per-channel
+  // settings made in the stacked window, which these controls do not show and
+  // must not drop.
   const read = () => ({
     kind: $("filtsel").value,
     amount: Number($("filtamt").value) || 0,
@@ -7916,6 +8079,7 @@ $("retraceundo").addEventListener("click", () => {
     amount2: Number($("filtamt2").value) || 0,
     gate: $("filtgate").checked,
     gatePct: Number($("filtgateamt").value) || FILT_OFF.gatePct,
+    ...(gState.filt && gState.filt.chans ? { chans: gState.filt.chans } : {}),
   });
   // Picking a filter with the slider at zero would look broken — it is the one
   // setting where doing nothing is not what was asked for.

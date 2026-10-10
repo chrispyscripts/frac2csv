@@ -148,5 +148,51 @@ is(printedDay(T0 - 99999), "", "off a synthetic clock, no date is invented");
 well.synthetic = false;
 is(printedDay(T0 - 99999), fmtDay(T0 - 99999), "on a real clock, fall back to it");
 
+console.log("\nPlot by row: two stages whose clocks overlap sit side by side");
+// Carmine, 2026-10-09: "plot by row, there is an example that is coming in
+// where the 2 stages still overlap". Stage 1 runs 10 s and stage 2 starts 6 s
+// into it, so 4 s of the two clocks are the same. The CSV writes stage 1's
+// four samples and then stage 2's five, one after the other — and the plot,
+// which placed every sample by its clock, drew both blocks on the same x.
+{
+  let dispMap = [];
+  const spacing = () => "row";
+  eval(lift("buildDispMap"));
+  eval(lift("partAt"));
+  eval(lift("toDisp"));
+  eval(lift("fromDisp"));
+  eval(lift("rowAtDisp"));
+  eval(lift("stageAtDisp"));
+  const S2 = T0 + 6000;
+  well = { stages: [mk(T0, 10, 1, "2024-05-26"), mk(S2, 5, 1, "2024-05-26")],
+           synthetic: false };
+  edits = { bounds: [T0, S2, S2 + 5000] };
+  buildRowMap();
+  buildDispMap();
+  // every sample, as (stage, index), in the order the CSV writes them
+  const want = [];
+  for (let i = 0; i < nStages(); i++) {
+    const a = edits.bounds[i], b = edits.bounds[i + 1], parts = [];
+    well.stages.forEach((st, k) => {
+      const step = st.dsec * 1000;
+      if (st.t0 + st.n * step <= a || st.t0 >= b) return;
+      const j0 = Math.max(0, Math.ceil((a - st.t0) / step));
+      const j1 = Math.min(st.n, Math.ceil((b - st.t0) / step));
+      if (j1 > j0) parts.push({ k, st, step, j0, j1 });
+    });
+    parts.sort((x, y) => (x.st.t0 + x.j0 * x.step) - (y.st.t0 + y.j0 * y.step));
+    for (const p of parts)
+      for (let j = p.j0; j < p.j1; j++) want.push({ k: p.k, t: p.st.t0 + j * p.step });
+  }
+  const xs = want.map(s => toDisp(s.t, s.k));
+  is(new Set(xs).size, want.length, "every sample has a position of its own");
+  is(xs.every((x, i) => i === 0 || x > xs[i - 1]), true,
+     "positions run in the CSV's own order");
+  is(want.map((s, i) => rowAtDisp(xs[i])), want.map((_, i) => i + 3),
+     "the row under each sample is its own CSV line");
+  is(stageAtDisp(toDisp(T0 + 7000, 0)), 1, "stage 1's tail is in band 2, where the CSV puts it");
+  is(fromDisp(toDisp(S2 + 2000, 1)), S2 + 2000, "a position maps back to its own clock");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
