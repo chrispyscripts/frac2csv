@@ -178,6 +178,9 @@ const state = {
   // own monotonic counter; id names the same thing in words (file · chart) so
   // "which stage is this?" has an answer that does not depend on counting.
   seq: -1, id: "",
+  // Which load of the Lab window that seq counts in: a reloaded Lab starts
+  // its seq again from 0, and a new load is taken up whatever its seq.
+  gen: "",
 };
 let blocks = [];          // { c, el, cv, ro, last }
 let raf = null;
@@ -220,7 +223,15 @@ function stamp(t) {
 // back a window with no opener), and to nothing at all when we are on our own
 // — the Lab pushes to its own handle either way, so a missing back-channel
 // costs only the handshake and the Open-PDF button.
+// The Lab window that last sent a chart here comes first: this window answers
+// whoever is driving it. Its opener is only the window that opened it, and a
+// Lab opened since (in a new tab, or on another port) that re-used this
+// window drove it while every filter change went back to the old one.
+let labSrc = null;
 function lab() {
+  try {
+    if (labSrc && !labSrc.closed) return labSrc;
+  } catch (e) { /* gone */ }
   try {
     if (window.opener && !window.opener.closed) return window.opener;
   } catch (e) { /* cross-origin or gone */ }
@@ -246,7 +257,7 @@ function toLab(msg) {
 //      stale chart indefinitely while still printing "Linked to the Lab
 //      window". Now any message from here re-adopts the handle.
 function ack() {
-  toLab({ type: "stacked:applied", seq: state.seq, id: state.id });
+  toLab({ type: "stacked:applied", seq: state.seq, gen: state.gen, id: state.id });
 }
 let askedAt = -1e9;
 function askLab() {
@@ -255,12 +266,13 @@ function askLab() {
   const now = performance.now();
   if (now - askedAt < 400) return;
   askedAt = now;
-  toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
+  toLab({ type: "stacked:sync", seq: state.seq, gen: state.gen, id: state.id });
 }
 // Is this stage payload news? Older is dropped outright; the same state again
 // is a re-send, which only needs acking.
 function fresher(d) {
   if (typeof d.seq !== "number") return true;      // a Lab that doesn't stamp
+  if (d.gen && d.gen !== state.gen) return true;   // a reloaded Lab: its seq restarts
   if (d.seq < state.seq) return false;
   if (d.seq === state.seq && (d.id || "") === state.id) { ack(); return false; }
   return true;
@@ -269,6 +281,7 @@ function fresher(d) {
 // message went missing. Ask, rather than paint it over the wrong charts.
 function forThisStage(d) {
   if (typeof d.seq !== "number") return true;
+  if (d.gen && d.gen !== state.gen) { askLab(); return false; }
   if (d.seq === state.seq) return true;
   if (d.seq > state.seq) askLab();
   return false;
@@ -278,6 +291,7 @@ window.addEventListener("message", e => {
   if (ORIGIN !== "*" && e.origin !== ORIGIN) return;
   const d = e.data;
   if (!d || typeof d.type !== "string") return;
+  if (d.type.indexOf("stacked:") === 0 && e.source) labSrc = e.source;
   if (d.type === "stacked:stage") { if (fresher(d)) applyStage(d); }
   else if (d.type === "stacked:none") { if (fresher(d)) applyNone(d); }
   else if (d.type === "stacked:view") applyView(d);
@@ -327,13 +341,14 @@ setInterval(() => {
   // at rest this costs one small message every second and a half and nothing
   // comes back — and it is how a Lab that has been reloaded finds this window
   // again without anyone having to reopen it.
-  if (!gone) toLab({ type: "stacked:sync", seq: state.seq, id: state.id });
+  if (!gone) toLab({ type: "stacked:sync", seq: state.seq, gen: state.gen, id: state.id });
 }, 1500);
 
 // ---------- incoming state ----------
 function applyNone(d) {
   d = d || {};
   if (typeof d.seq === "number") state.seq = d.seq;
+  state.gen = d.gen || "";
   state.id = d.id || "";
   state.haveStage = false;
   state.channels = []; blocks = []; state.hoverT = null;
@@ -352,6 +367,7 @@ function applyStage(d) {
   // The seq moves first: everything below belongs to THIS stage, and a page
   // or view stamped for an older one must be rejected from here on.
   if (typeof d.seq === "number") state.seq = d.seq;
+  state.gen = d.gen || "";
   state.id = d.id || "";
   state.haveStage = true;
   state.channels = d.channels || [];
@@ -905,7 +921,7 @@ function updateReadouts() {
 state.filt = null; state.filtKinds = []; state.filtNotes = {};
 let pick = null;          // { key } — a chart waiting for its area to be dragged
 let sel = null;           // { key, a, b, rect } — the area being dragged, seconds
-const FILT_START = 35;    // what a filter opens at, as in the Lab
+const FILT_START = 14;    // what a filter opens at, as in the Lab (17-19 samples)
 const clone = o => JSON.parse(JSON.stringify(o || {}));
 function filtEntry(key) {
   const ch = state.filt && state.filt.chans;
@@ -929,7 +945,7 @@ function sendFilt(spec) {
   if (sendRaf) return;
   sendRaf = requestAnimationFrame(() => {
     sendRaf = null;
-    toLab({ type: "stacked:filter", seq: state.seq, spec: pending });
+    toLab({ type: "stacked:filter", seq: state.seq, gen: state.gen, id: state.id, spec: pending });
   });
 }
 // A chart's entry after an edit: dropped when it says nothing the master
@@ -964,7 +980,7 @@ function statText(st, unit, on) {
   return "changed " + st.changed + " of " + st.n + " samples · max " +
     fmtV(st.maxd) + (unit ? " " + unit : "");
 }
-const NEW_AREA = { use: "own", kind: "both", amount: 50 };   // a new area does something
+const NEW_AREA = { use: "own", kind: "both", amount: 20 };   // a new area does something: 23 + 25 samples
 
 function buildFiltBar() {
   $("filtbar").hidden = !state.filt || !state.filtKinds.length;
@@ -1001,7 +1017,7 @@ function buildFiltBar() {
     sendFilt(s);
   });
   $("fsave").addEventListener("click", () => {
-    toLab({ type: "stacked:filtsave", seq: state.seq });
+    toLab({ type: "stacked:filtsave", seq: state.seq, gen: state.gen, id: state.id });
     const m = $("fsaid");
     m.textContent = "saved for this stage"; m.hidden = false;
     clearTimeout(m._t); m._t = setTimeout(() => { m.hidden = true; }, 4000);

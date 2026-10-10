@@ -5472,10 +5472,19 @@ function filtOdd(x) {
 }
 
 // amount 0..100 -> the window each filter wants.
-//   Hampel  3..41 samples, the span a digitising spike occupies
-//   SG     5..51 with order 2
-//   LOESS  2%..30% of the stage
+//   Hampel  3..101 samples, the span a digitising spike occupies
+//   Median  3..101
+//   SG      5..101 with order 2
+//   LOESS   2%..30% of the stage
 //
+// v1.11.46 raised the window filters' top from 41 (Hampel, median) and 51
+// (SG) to 101 samples, asked for by Carmine (2026-10-10: "increase the limit
+// on all filters from 41 to 100"; a centred window has a middle sample, so
+// it is odd and the top is 101). A setting saved on the old scale is
+// rescaled once as it is read (filtRescale), so it keeps the window it had
+// rather than coming back two and a half times stronger.
+//
+// The history before that:
 // Each ceiling is 10 units higher than it shipped in v1.11.28 -- 10 samples
 // for the window filters, 10 percentage points for LOESS, which is the unit
 // each one reports beside the slider. The far end of the old slider was not
@@ -5489,13 +5498,45 @@ function filtOdd(x) {
 // what to write down and repeat, not the percentage.
 function filtParams(kind, amount) {
   const a = Math.max(0, Math.min(100, Number(amount) || 0)) / 100;
-  if (kind === "hampel") return { win: filtOdd(3 + a * 38), nSigma: 3 };
-  if (kind === "median") return { win: filtOdd(3 + a * 38) };
-  if (kind === "sg") return { win: filtOdd(5 + a * 46), order: 2 };
-  if (kind === "both") return { win: filtOdd(3 + a * 38), nSigma: 3,
-                                win2: filtOdd(5 + a * 46), order: 2 };
+  if (kind === "hampel") return { win: filtOdd(3 + a * 98), nSigma: 3 };
+  if (kind === "median") return { win: filtOdd(3 + a * 98) };
+  if (kind === "sg") return { win: filtOdd(5 + a * 96), order: 2 };
+  if (kind === "both") return { win: filtOdd(3 + a * 98), nSigma: 3,
+                                win2: filtOdd(5 + a * 96), order: 2 };
   if (kind === "loess") return { frac: 0.02 + a * 0.28 };
   return {};
+}
+// The slider scale a spec's amounts are on. Specs from before v1.11.46 carry
+// none and are on scale 1, where 100% was a 41-sample Hampel or median and
+// a 51-sample SG.
+const FILT_SCALE = 2;
+// A spec saved on scale 1, on scale 2 with the same windows (to the nearest
+// odd sample; Hampel → SG shares one slider, so its SG half can land a step
+// lower). LOESS did not change.
+function filtRescale(spec) {
+  if (!spec || typeof spec !== "object" || Number(spec.scale) >= FILT_SCALE) return spec;
+  const conv = (kind, amt) => {
+    const a = Number(amt) || 0;
+    if (!(a > 0)) return a;
+    const r = kind === "sg" ? 46 / 96
+      : (kind === "hampel" || kind === "median" || kind === "both") ? 38 / 98 : 1;
+    return Math.max(1, Math.round(a * r));
+  };
+  const out = { ...spec, scale: FILT_SCALE,
+                amount: conv(spec.kind, spec.amount), amount2: conv(spec.kind2, spec.amount2) };
+  if (spec.chans && typeof spec.chans === "object") {
+    out.chans = {};
+    for (const [k, o] of Object.entries(spec.chans)) {
+      if (!o) continue;
+      const n = { ...o };
+      if (o.use === "own") n.amount = conv(o.kind, o.amount);
+      if (Array.isArray(o.areas))
+        n.areas = o.areas.map(ar => ar && ar.use === "own"
+          ? { ...ar, amount: conv(ar.kind, ar.amount) } : ar);
+      out.chans[k] = n;
+    }
+  }
+  return out;
 }
 
 // Two filters, in order. The second reads what the first produced.
@@ -5704,6 +5745,7 @@ function filtClean(spec) {
   return { kind: kind(s.kind), amount: amt(s.amount),
            kind2: kind(s.kind2), amount2: amt(s.amount2),
            gate: !!s.gate, gatePct: Number(s.gatePct) || FILT_OFF.gatePct,
+           scale: FILT_SCALE,
            ...(Object.keys(chans).length ? { chans } : {}) };
 }
 
@@ -5833,7 +5875,19 @@ function keepTailApplyAll(items) {
 let filtStore = (() => {
   try {
     const j = JSON.parse(localStorage.getItem("f2c.filters") || "{}");
-    return { byStage: j.byStage || {}, byProvider: j.byProvider || {} };
+    const st = { byStage: j.byStage || {}, byProvider: j.byProvider || {} };
+    // Saved on the old slider scale: rescaled here, once, and written back,
+    // so every chart opens with the window it was saved with.
+    let moved = false;
+    for (const scope of [st.byStage, st.byProvider])
+      for (const k of Object.keys(scope)) {
+        const v = filtRescale(scope[k]);
+        if (v !== scope[k]) { scope[k] = v; moved = true; }
+      }
+    if (moved) {
+      try { localStorage.setItem("f2c.filters", JSON.stringify(st)); } catch (e) { /* private mode */ }
+    }
+    return st;
   } catch (e) { return { byStage: {}, byProvider: {} }; }
 })();
 function filtSave() {
@@ -5877,7 +5931,7 @@ function filtCompanyKey() {
 // spelled out twice.
 function filtProvider() { return filtReaderKey(); }
 const FILT_OFF = { kind: "none", amount: 0, kind2: "none", amount2: 0,
-                   gate: false, gatePct: 10 };
+                   gate: false, gatePct: 10, scale: 2 };
 // A stage's own setting wins over the provider default: the default is where
 // you start, not something you cannot get out of.
 //
@@ -7217,6 +7271,14 @@ const STACK_ORIGIN = (location.origin && location.origin !== "null")
   ? location.origin : "*";
 let stackWin = null;
 let stackSeq = 0;          // bumps once per stage-level state change here
+// Which load of THIS window the seq counts in. A reloaded Lab starts its seq
+// at 0 again while an open stacked window still holds the last one it saw,
+// and that window threw away every lower seq as stale — so after a reload it
+// showed the old chart and its filter changes, stamped with the old seq, were
+// dropped here without a word (Carmine, 2026-10-10: "the filters are still
+// not applying in stacked view"). Every message now names the load it
+// belongs to, and a new one is taken up at once.
+const stackGen = Math.random().toString(36).slice(2, 10);
 let stackAckSeq = -1;      // the seq the child last reported it had applied
 let stackSentAt = 0;       // when the current seq last went on the wire
 let stackTries = 0;        // re-sends of the current seq, capped
@@ -7242,7 +7304,7 @@ function stackId() {
 function stackPayload() {
   const it = current && current.item;
   if (!it || it.type !== "stage" || !gState.channels.length)
-    return { type: "stacked:none", seq: stackSeq, id: "" };
+    return { type: "stacked:none", seq: stackSeq, gen: stackGen, id: "" };
   const chans = [];
   gState.channels.forEach((c, ci) => {
     if (!inMode(c) || !(c._vmax > 0)) return;
@@ -7292,7 +7354,7 @@ function stackPayload() {
   const pages = it.pages || [];
   return {
     type: "stacked:stage",
-    seq: stackSeq, id: stackId(),
+    seq: stackSeq, gen: stackGen, id: stackId(),
     file: (current.entry && current.entry.name) || "", chart: it.key,
     title: $("pv-title").textContent, sub: $("pv-sub").textContent,
     // The stage and the day, as their OWN fields rather than left for the
@@ -7336,7 +7398,7 @@ function stackSendValues() {
   if (!stackAlive()) return;
   const p = stackPayload();
   if (p.type !== "stacked:stage") return;
-  stackPost({ type: "stacked:values", seq: stackSeq, filt: p.filt,
+  stackPost({ type: "stacked:values", seq: stackSeq, gen: stackGen, filt: p.filt,
               filtNotes: p.filtNotes,
               channels: p.channels.map(c => ({ key: c.key, values: c.values,
                 dataLo: c.dataLo, dataHi: c.dataHi, filtered: c.filtered,
@@ -7363,7 +7425,7 @@ function stackSend() {
 }
 function pushStackedView() {
   if (!stackAlive()) return;
-  stackPost({ type: "stacked:view", seq: stackSeq,
+  stackPost({ type: "stacked:view", seq: stackSeq, gen: stackGen,
               t0: gState.t0, t1: gState.t1 });
 }
 
@@ -7382,7 +7444,7 @@ function pushStackedPage() {
   if (!stackAlive()) return;
   const it = current && current.item;
   const pages = (it && it.type === "stage" && it.pages) || [];
-  stackPost({ type: "stacked:page", seq: stackSeq,
+  stackPost({ type: "stacked:page", seq: stackSeq, gen: stackGen,
               page: pages[Math.min(orig.pageIdx, pages.length - 1)] || null,
               pageCount: pages.length,
               synced: !!orig.synced, full: !!orig.fullPage,
@@ -7395,6 +7457,8 @@ function pushStackedPage() {
 // screen. pushStacked() clears the ack, so a NEW state still starts from
 // nothing acknowledged.
 function ackSeq(d) {
+  // a seq counted by another load of this window says nothing about this one
+  if (d.gen && d.gen !== stackGen) return -1;
   return (typeof d.seq === "number" && d.seq > stackAckSeq) ? d.seq : stackAckSeq;
 }
 
@@ -7434,14 +7498,17 @@ window.addEventListener("message", e => {
   } else if (d.type === "stacked:applied") {
     if (e.source !== stackWin) return;
     stackAckSeq = ackSeq(d);
-  } else if (d.type === "stacked:filter") {
+  } else if (d.type === "stacked:filter" || d.type === "stacked:filtsave") {
     // Only for the chart this window is showing: a setting made on the
-    // previous stage must not land on this one.
-    if (e.source !== stackWin || d.seq !== stackSeq || !gState.channels.length) return;
-    filtPreview(filtClean(d.spec));
-  } else if (d.type === "stacked:filtsave") {
-    if (e.source !== stackWin || d.seq !== stackSeq || !gState.channels.length) return;
-    filtCommit("stage", filtClean(gState.filt));
+    // previous stage must not land on this one. Matched on the chart itself
+    // (file and chart) as well as on the seq, so a window that has not caught
+    // up with a reload still filters the chart it shows — and one showing
+    // ANOTHER chart is sent this one instead of being ignored in silence.
+    if (e.source !== stackWin || !gState.channels.length) return;
+    const same = (d.gen === stackGen && d.seq === stackSeq) || (d.id && d.id === stackId());
+    if (!same) { stackAckSeq = -1; stackTries = 0; stackSend(); return; }
+    if (d.type === "stacked:filter") filtPreview(filtClean(d.spec));
+    else filtCommit("stage", filtClean(gState.filt));
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
   } else if (d.type === "stacked:zoom") {
@@ -8151,8 +8218,9 @@ $("retraceundo").addEventListener("click", () => {
     ...(gState.filt && gState.filt.chans ? { chans: gState.filt.chans } : {}),
   });
   // Picking a filter with the slider at zero would look broken — it is the one
-  // setting where doing nothing is not what was asked for.
-  const START = 35;
+  // setting where doing nothing is not what was asked for. 14% is a 17-sample
+  // Hampel and a 19-sample SG, where 35% opened before the top went to 101.
+  const START = 14;
   $("filtsel").addEventListener("change", () => {
     const spec = read();
     if (spec.kind === "none") { spec.amount = 0; spec.kind2 = "none"; spec.amount2 = 0; }

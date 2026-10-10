@@ -23,7 +23,8 @@ function lift(name) {
 }
 const NAMES = ["filtFinite", "filtMedianOf", "filtHampel", "filtMedian",
                "filtSavGolCoef", "filtSavGol", "filtLoess", "filtOdd",
-               "filtParams", "filtApply", "filtRun", "filtIsOff"];
+               "filtParams", "filtApply", "filtRun", "filtIsOff", "filtRescale"];
+var FILT_SCALE = 2;
 eval(NAMES.map(lift).join("\n"));
 
 let failed = 0;
@@ -161,16 +162,18 @@ function close(a, b, tol, what) {
   ok(filtOdd(1) >= 3, "and never smaller than three samples");
   const lo = filtParams("sg", 0), hi = filtParams("sg", 100);
   ok(lo.win < hi.win, "more slider is a wider window");
-  // the ceilings each went up by 10 units in v1.11.29
-  ok(filtParams("hampel", 100).win === 41, "Hampel reaches 41 samples");
-  ok(filtParams("median", 100).win === 41, "median reaches 41 samples");
-  ok(hi.win === 51, "SG reaches 51 samples");
+  // the window filters reach 101 samples since v1.11.46 (41 and 51 before;
+  // Carmine: "increase the limit on all filters from 41 to 100")
+  ok(filtParams("hampel", 100).win === 101, "Hampel reaches 101 samples");
+  ok(filtParams("median", 100).win === 101, "median reaches 101 samples");
+  ok(hi.win === 101, "SG reaches 101 samples");
+  ok(filtParams("both", 100).win === 101 && filtParams("both", 100).win2 === 101,
+     "both halves of Hampel → SG reach 101");
   ok(Math.abs(filtParams("loess", 100).frac - 0.30) < 1e-9,
      "LOESS reaches a 30% span");
-  // the workflow's 11-21 SG window is still reachable; a longer range at the
-  // same slider length moved it down from 17-44% to 13-35%
-  ok(filtParams("sg", 13).win >= 11 && filtParams("sg", 35).win <= 21,
-     "the workflow's 11-21 window is in the lower third of the slider");
+  // the workflow's 11-21 SG window is still reachable, now at 6-17%
+  ok(filtParams("sg", 6).win === 11 && filtParams("sg", 17).win === 21,
+     "the workflow's 11-21 window sits at 6-17% of the slider");
   ok(filtParams("sg", 0).win === 5, "and the bottom of the slider is unchanged");
   ok(filtParams("hampel", 0).win === 3, "for every filter");
   ok(filtParams("hampel", 100).nSigma === 3, "the Hampel threshold stays at 3 MAD");
@@ -248,6 +251,28 @@ function close(a, b, tol, what) {
     ok(Math.min(...o) >= 0, `${kind} ${amt} stays at or above the floor (${Math.min(...o)})`);
     ok(Math.max(...o) <= top + 1e-9, `${kind} ${amt} stays under the hold (${Math.max(...o)})`);
   }
+}
+
+// ---- a setting saved on the old slider keeps its window ------------------
+// Rescaled as it is read, so a chart saved at Hampel 35% (17 samples) opens
+// at 17 samples on the longer slider, not at 37.
+{
+  const oldWin = (kind, a) => kind === "sg" ? filtOdd(5 + a / 100 * 46) : filtOdd(3 + a / 100 * 38);
+  for (const kind of ["hampel", "median", "sg"]) for (const a of [5, 14, 35, 60, 100]) {
+    const r = filtRescale({ kind, amount: a });
+    ok(Math.abs(filtParams(kind, r.amount).win - oldWin(kind, a)) <= 2,
+       `${kind} ${a}% keeps its ${oldWin(kind, a)}-sample window (${filtParams(kind, r.amount).win})`);
+  }
+  const r = filtRescale({ kind: "both", amount: 35, kind2: "loess", amount2: 40,
+    chans: { P: { use: "own", kind: "sg", amount: 35,
+                  areas: [{ a: 1, b: 9, use: "own", kind: "hampel", amount: 100 }] } } });
+  ok(filtParams("both", r.amount).win === 17, "Hampel → SG keeps its Hampel half");
+  ok(r.amount2 === 40, "LOESS did not change");
+  ok(filtParams("sg", r.chans.P.amount).win === 21 &&
+     filtParams("hampel", r.chans.P.areas[0].amount).win === 41,
+     "a chart's own filter and its areas are rescaled too");
+  ok(r.scale === 2 && filtRescale(r) === r, "and a rescaled spec is left alone");
+  ok(filtRescale({ kind: "sg", amount: 1 }).amount === 1, "a filter that was on stays on");
 }
 
 console.log(failed ? `${failed} FAILED` : "filters: all assertions passed");

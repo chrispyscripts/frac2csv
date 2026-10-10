@@ -25,7 +25,7 @@ function liftConst(name) {
   if (!m) throw new Error(`${name} is gone from index.html`);
   return m[0];
 }
-for (const k of ["FILT_OFF", "FILT_KINDS", "GATE_GROW"])
+for (const k of ["FILT_OFF", "FILT_KINDS", "GATE_GROW", "FILT_SCALE"])
   eval(liftConst(k).replace(/^const /, "var "));
 const NAMES = ["filtFinite", "filtMedianOf", "filtHampel", "filtMedian", "filtSavGolCoef",
   "filtSavGol", "filtLoess", "filtOdd", "filtParams", "filtApply", "filtRun", "filtIsOff",
