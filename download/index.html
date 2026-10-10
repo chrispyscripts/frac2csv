@@ -39,6 +39,23 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.44</h2>
+    <ul>
+      <li><b>The Savitzky-Golay filter no longer dips below zero.</b> At a pump
+        shutdown it swung to &minus;4.2 MPa under the floor and over the hold
+        before it. Each smoothed sample now stays within the readings it was
+        fitted to</li>
+      <li><b>Filters in the stacked view.</b> The master filter across the top
+        is the Lab toolbar&rsquo;s own, and moves with it. Each chart can follow
+        it or take a filter of its own, and <b>Pick area</b> holds a
+        chart&rsquo;s filter to the stretch you drag across</li>
+      <li><b>Plot by row keeps stages apart.</b> Two charts whose clocks overlap
+        were drawn on top of each other. Each now sits on its own rows, as in
+        the CSV</li>
+      <li><b>Which templates this release touches: none.</b> Every template
+        reads exactly as it did under v1.11.43</li>
+    </ul>
+
     <h2>v1.11.43</h2>
     <ul>
       <li><b>STEP: pressure climbs no longer zigzag (#799).</b> On 00051&rsquo;s
