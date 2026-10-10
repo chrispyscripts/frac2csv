@@ -75,9 +75,19 @@
   .btn.sm { padding:1px 8px; font-size:11.5px; font-weight:600; }
   .cfilt { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
            margin:0 0 4px; font-size:12px; }
-  .cfilt .area { font-family:var(--mono); font-size:11px; color:var(--mut); }
-  .cfilt .area b { color:var(--carmine); font-weight:600; }
-  .cfilt .area.hint { color:var(--carmine); }
+  .fstat { font-family:var(--mono); font-size:11px; color:var(--mut); }
+  .fstat.none { color:var(--carmine); }
+  .areas { display:flex; flex-direction:column; gap:3px; margin:0 0 5px 38px; }
+  .achip { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;
+           border:1px solid var(--line); border-radius:6px; padding:2px 8px;
+           background:var(--panel); width:fit-content; max-width:100%; }
+  .achip.sel { border-color:var(--carmine); box-shadow:0 0 0 1px var(--carmine) inset; }
+  .achip .anm { font-weight:600; color:var(--carmine); cursor:pointer; }
+  .achip .arng { font-family:var(--mono); font-size:11px; color:var(--ink); cursor:pointer; }
+  .achip .adel { border:0; background:none; color:var(--mut); cursor:pointer;
+                 font-size:14px; line-height:1; padding:0 2px; }
+  .achip .adel:hover { color:var(--carmine); }
+  .cfilt .hint { font-size:11.5px; color:var(--carmine); }
   .charts canvas.picking { cursor:col-resize; }
 </style>
 </head>
@@ -354,7 +364,7 @@ function applyStage(d) {
   state.filt = d.filt || null;
   state.filtKinds = d.filtKinds || [];
   state.filtNotes = d.filtNotes || {};
-  pick = null; sel = null;
+  pick = null; sel = null; selArea = null; edgeDrag = null;
   $("title").textContent = d.title || "";
   $("sub").textContent = d.sub || "";
   setStamp(d);
@@ -682,25 +692,36 @@ function drawChart(b) {
   }
   g.stroke();
 
-  // The stretch this chart's filter is held to, and the one being dragged
-  // out right now. Under the curve, so the trace reads through it.
+  // The chart's filter AREAS, under the curve so the trace reads through
+  // them: shaded, numbered, with a handle on each edge to drag. The one
+  // selected is darker. The area being dragged out right now is grey.
   const ent = filtEntry(c.key);
-  const shade = (ta, tb, fill, edge) => {
-    const xa = Math.max(PAD.L, xOf(Math.min(ta, tb), W));
-    const xb = Math.min(W - PAD.R, xOf(Math.max(ta, tb), W));
+  const ax = t => Math.max(PAD.L, Math.min(W - PAD.R, xOf(t, W)));
+  (ent ? ent.areas || [] : []).forEach((ar, k) => {
+    const xa = ax(ar.a * state.dsec), xb = ax(ar.b * state.dsec);
     if (xb <= xa) return;
-    g.fillStyle = fill; g.fillRect(xa, PAD.T, xb - xa, plotH);
-    g.strokeStyle = edge; g.lineWidth = 1; g.setLineDash([4, 3]);
+    const on = selArea && selArea.key === c.key && selArea.i === k;
+    g.fillStyle = on ? "rgba(163,22,49,0.13)" : "rgba(163,22,49,0.06)";
+    g.fillRect(xa, PAD.T, xb - xa, plotH);
+    g.strokeStyle = "rgba(163,22,49,0.75)"; g.lineWidth = on ? 2 : 1.25;
     g.beginPath();
     g.moveTo(xa + 0.5, PAD.T); g.lineTo(xa + 0.5, bot);
     g.moveTo(xb - 0.5, PAD.T); g.lineTo(xb - 0.5, bot);
-    g.stroke(); g.setLineDash([]);
-  };
-  if (ent && ent.range)
-    shade(ent.range[0] * state.dsec, ent.range[1] * state.dsec,
-          "rgba(163,22,49,0.06)", "rgba(163,22,49,0.55)");
-  if (sel && sel.key === c.key)
-    shade(sel.a, sel.b, "rgba(105,112,119,0.16)", "rgba(105,112,119,0.8)");
+    g.stroke();
+    g.fillStyle = "#a31631";
+    for (const x of [xa, xb]) g.fillRect(x - 3, PAD.T + plotH / 2 - 10, 6, 20);
+    g.font = "600 11px ui-monospace,Menlo,monospace";
+    g.textAlign = "left"; g.textBaseline = "top";
+    if (xb - xa > 14) g.fillText(String(k + 1), xa + 5, PAD.T + 3);
+  });
+  if (sel && sel.key === c.key) {
+    const xa = ax(Math.min(sel.a, sel.b)), xb = ax(Math.max(sel.a, sel.b));
+    if (xb > xa) {
+      g.fillStyle = "rgba(105,112,119,0.16)"; g.fillRect(xa, PAD.T, xb - xa, plotH);
+      g.strokeStyle = "rgba(105,112,119,0.8)"; g.lineWidth = 1; g.setLineDash([4, 3]);
+      g.strokeRect(xa + 0.5, PAD.T + 0.5, xb - xa - 1, plotH - 1); g.setLineDash([]);
+    }
+  }
 
   // the curve, decimated to about two samples per pixel
   const vals = c.values;
@@ -735,6 +756,22 @@ function drawChart(b) {
       g.setLineDash([]);
     }
     g.restore();
+  }
+
+  // The curve AS READ, faint, behind the filtered one — wherever a filter
+  // changed anything. Where the two are one line the filter left it alone;
+  // where the grey shows, that is what the filter took out.
+  if (c.raw && !state.isolate) {
+    g.strokeStyle = "rgba(20,24,29,0.24)"; g.lineWidth = 1;
+    g.beginPath();
+    let rp = false;
+    for (let i = i0; i <= i1; i += step) {
+      const v = c.raw[i];
+      if (!isFinite(v)) { rp = false; continue; }
+      const x = xOf(i * state.dsec, W), y = yOf(v);
+      if (rp) g.lineTo(x, y); else { g.moveTo(x, y); rp = true; }
+    }
+    g.stroke();
   }
 
   // The Lab's deduced stretches (supplied, not read off the page) are drawn
@@ -896,14 +933,38 @@ function sendFilt(spec) {
   });
 }
 // A chart's entry after an edit: dropped when it says nothing the master
-// does not already say, so "back to the master, whole chart" leaves no trace.
+// does not already say, so "back to the master, no areas" leaves no trace.
 function putEntry(spec, key, ent) {
   spec.chans = spec.chans || {};
-  if (!ent || (ent.use !== "own" && !ent.range)) delete spec.chans[key];
+  if (!ent || (ent.use !== "own" && !(ent.areas && ent.areas.length))) delete spec.chans[key];
   else spec.chans[key] = ent;
   if (!Object.keys(spec.chans).length) delete spec.chans;
   return spec;
 }
+// Edit one chart's entry: hands a copy to `fn`, sends the result.
+function editEntry(key, fn) {
+  const s = clone(state.filt);
+  const ent = clone(filtEntry(key) || { use: "master" });
+  ent.areas = ent.areas || [];
+  fn(ent);
+  sendFilt(putEntry(s, key, ent));
+}
+// The filter a select names, onto an entry or an area.
+function setKind(o, v) {
+  if (v === "master") { o.use = "master"; delete o.kind; delete o.amount; return; }
+  o.use = "own"; o.kind = v;
+  o.amount = v === "none" ? 0 : (o.amount > 0 ? o.amount : FILT_START);
+}
+// "changed 9 of 277 samples · max 9.6" — whether a filter did anything is a
+// number, not a guess at a line.
+function statText(st, unit, on) {
+  if (!on) return "";
+  if (!st || !st.n) return "";
+  if (!st.changed) return "changes nothing here";
+  return "changed " + st.changed + " of " + st.n + " samples · max " +
+    fmtV(st.maxd) + (unit ? " " + unit : "");
+}
+const NEW_AREA = { use: "own", kind: "both", amount: 50 };   // a new area does something
 
 function buildFiltBar() {
   $("filtbar").hidden = !state.filt || !state.filtKinds.length;
@@ -951,46 +1012,70 @@ function filtRowHtml(c) {
   if (!state.filt || !state.filtKinds.length || !c.key) return "";
   return '<div class="cfilt">' +
       '<span class="flbl">Filter</span>' +
-      '<select class="ck" title="Follow the master filter, or give this chart a filter of its own"></select>' +
+      '<select class="ck" title="The whole chart: follow the master filter, or take a filter of its own"></select>' +
       '<input type="range" class="ca" min="0" max="100" step="1" title="How hard this chart\'s own filter works">' +
       '<span class="fnote cn"></span>' +
-      '<span class="area"></span>' +
-      '<button type="button" class="btn sm cpick" title="Drag across this chart to hold its filter to that stretch; the rest stays as read">Pick area</button>' +
-      '<button type="button" class="btn sm cclear" title="Filter the whole chart again">Whole chart</button>' +
-    "</div>";
+      '<span class="fstat cs"></span>' +
+      '<button type="button" class="btn sm cadd" title="Drag across the chart to add an area with a filter of its own. Areas can overlap; the later one wins.">+ Add area</button>' +
+      '<span class="hint" hidden></span>' +
+    '</div><div class="areas"></div>';
 }
 function wireFiltRow(b) {
   if (!b.ck) return;
+  b.areasEl = b.el.querySelector(".areas");
+  b.hint = b.el.querySelector(".cfilt .hint");
+  b.cadd = b.el.querySelector(".cadd");
+  b.cs = b.el.querySelector(".cs");
+  b.achips = [];
   fillKinds(b.ck, true);
   const key = b.c.key;
-  b.ck.addEventListener("change", () => {
-    const s = clone(state.filt), v = b.ck.value;
-    const ent = { ...(filtEntry(key) || {}) };
-    if (v === "master") { ent.use = "master"; delete ent.kind; delete ent.amount; }
-    else {
-      ent.use = "own"; ent.kind = v;
-      ent.amount = v === "none" ? 0 : (ent.amount > 0 ? ent.amount : FILT_START);
-    }
-    sendFilt(putEntry(s, key, ent));
-  });
-  b.ca.addEventListener("input", () => {
-    const s = clone(state.filt);
-    const ent = { ...(filtEntry(key) || {}), use: "own" };
-    ent.amount = Number(b.ca.value) || 0;
+  b.ck.addEventListener("change", () => editEntry(key, ent => setKind(ent, b.ck.value)));
+  b.ca.addEventListener("input", () => editEntry(key, ent => {
+    ent.use = "own"; ent.amount = Number(b.ca.value) || 0;
     if (!ent.kind || ent.kind === "none") ent.kind = "both";
-    sendFilt(putEntry(s, key, ent));
-  });
-  b.cpick.addEventListener("click", () => {
+  }));
+  b.cadd.addEventListener("click", () => {
     pick = pick && pick.key === key ? null : { key };
     sel = null;
     syncFiltUI(); schedule();
   });
-  b.cclear.addEventListener("click", () => {
-    const s = clone(state.filt);
-    const ent = { ...(filtEntry(key) || {}) };
-    delete ent.range;
-    sendFilt(putEntry(s, key, ent));
+}
+// One chip per area: its number and stretch, its filter, what it changed,
+// and the way to delete it. Rebuilt only when the number of areas changes,
+// so a slider in one is never pulled out from under a drag.
+function renderAreas(b, areas) {
+  b.areasEl.innerHTML = "";
+  b.achips = areas.map((ar, i) => {
+    const el = document.createElement("div");
+    el.className = "achip";
+    el.innerHTML = '<span class="anm" title="Select this area (Delete removes it)">Area ' + (i + 1) + '</span>' +
+      '<span class="arng" title="Drag the area\'s edges on the chart to move them"></span>' +
+      '<select class="asel" title="The filter inside this area. None leaves it exactly as read."></select>' +
+      '<input type="range" class="aamt" min="0" max="100" step="1">' +
+      '<span class="fnote anote"></span><span class="fstat astat"></span>' +
+      '<button type="button" class="adel" title="Delete this area">&times;</button>';
+    b.areasEl.appendChild(el);
+    const ch = { el, rng: el.querySelector(".arng"), sel: el.querySelector(".asel"),
+                 amt: el.querySelector(".aamt"), note: el.querySelector(".anote"),
+                 stat: el.querySelector(".astat") };
+    fillKinds(ch.sel, true);
+    const key = b.c.key;
+    const pickMe = () => { selArea = { key, i }; syncFiltUI(); schedule(); };
+    el.querySelector(".anm").addEventListener("click", pickMe);
+    ch.rng.addEventListener("click", pickMe);
+    ch.sel.addEventListener("change", () => editEntry(key, ent => setKind(ent.areas[i], ch.sel.value)));
+    ch.amt.addEventListener("input", () => editEntry(key, ent => {
+      const ar = ent.areas[i];
+      ar.use = "own"; ar.amount = Number(ch.amt.value) || 0;
+      if (!ar.kind || ar.kind === "none") ar.kind = "both";
+    }));
+    el.querySelector(".adel").addEventListener("click", () => deleteArea(key, i));
+    return ch;
   });
+}
+function deleteArea(key, i) {
+  if (selArea && selArea.key === key) selArea = null;
+  editEntry(key, ent => { ent.areas.splice(i, 1); });
 }
 
 // The controls say what the spec says. The control under the pointer is left
@@ -1012,27 +1097,44 @@ function syncFiltUI() {
   $("mamt2").disabled = k2 === "none";
   $("mnote2").textContent = k2 === "none" ? "" : (s.amount2 || 0) + "%  " + (n.m2 || "");
   const masterOn = k1 !== "none" && s.amount > 0 || k2 !== "none" && s.amount2 > 0;
+  const kindOn = o => o && o.use === "own" ? (o.kind !== "none" && o.amount > 0) : masterOn;
   for (const b of blocks) {
     if (!b.ck) continue;
-    const ent = filtEntry(b.c.key);
+    const key = b.c.key, ent = filtEntry(key);
     const own = !!ent && ent.use === "own";
+    const cn = ((n.chans || {})[key]) || {};
     setSel(b.ck, own ? (ent.kind || "none") : "master");
     b.ca.hidden = !own || ent.kind === "none";
     setAmt(b.ca, own ? Number(ent.amount) || 0 : 0);
     b.cn.textContent = own
-      ? (ent.kind === "none" ? "no filter on this chart"
-                             : (ent.amount || 0) + "%  " + ((n.chans || {})[b.c.key] || ""))
+      ? (ent.kind === "none" ? "no filter on this chart" : (ent.amount || 0) + "%  " + (cn.chart || ""))
       : (masterOn ? "as the master" : "the master is off");
-    const picking = pick && pick.key === b.c.key;
-    b.area.classList.toggle("hint", !!picking);
-    if (picking) b.area.textContent = "· drag across the chart to pick the stretch · Esc cancels";
-    else if (ent && ent.range)
-      b.area.innerHTML = "· only <b>" + esc(stamp(ent.range[0] * state.dsec)) + " – " +
-        esc(stamp(ent.range[1] * state.dsec)) + "</b>";
-    else b.area.textContent = "· whole chart";
-    b.cpick.textContent = picking ? "Cancel" : (ent && ent.range ? "Re-pick area" : "Pick area");
-    b.cclear.hidden = !(ent && ent.range);
+    const any = kindOn(ent || { use: "master" }) ||
+      (ent && (ent.areas || []).some(ar => kindOn(ar)));
+    b.cs.textContent = statText(b.c.stats, b.c.unit, any);
+    b.cs.classList.toggle("none", !!(any && b.c.stats && b.c.stats.n && !b.c.stats.changed));
+    const picking = pick && pick.key === key;
+    b.hint.hidden = !picking;
+    b.hint.textContent = "drag across the chart for the new area · Esc cancels";
+    b.cadd.textContent = picking ? "Cancel" : "+ Add area";
     b.cv.classList.toggle("picking", !!picking);
+    const areas = (ent && ent.areas) || [];
+    if (b.achips.length !== areas.length) renderAreas(b, areas);
+    areas.forEach((ar, i) => {
+      const ch = b.achips[i];
+      const aOwn = ar.use === "own";
+      ch.el.classList.toggle("sel", !!(selArea && selArea.key === key && selArea.i === i));
+      ch.rng.textContent = stamp(ar.a * state.dsec) + " – " + stamp(ar.b * state.dsec);
+      setSel(ch.sel, aOwn ? (ar.kind || "none") : "master");
+      ch.amt.hidden = !aOwn || ar.kind === "none";
+      setAmt(ch.amt, aOwn ? Number(ar.amount) || 0 : 0);
+      ch.note.textContent = aOwn
+        ? (ar.kind === "none" ? "left as read" : (ar.amount || 0) + "%  " + ((cn.areas || [])[i] || ""))
+        : (masterOn ? "as the master" : "the master is off");
+      const st = (b.c.areaStats || [])[i];
+      ch.stat.textContent = statText(st, b.c.unit, kindOn(ar));
+      ch.stat.classList.toggle("none", !!(kindOn(ar) && st && st.n && !st.changed));
+    });
   }
 }
 
@@ -1046,7 +1148,7 @@ function applyValues(d) {
     const u = by[c.key];
     if (!u) continue;
     c.values = u.values; c.dataLo = u.dataLo; c.dataHi = u.dataHi;
-    c.filtered = u.filtered; c.area = u.area;
+    c.filtered = u.filtered; c.raw = u.raw; c.stats = u.stats; c.areaStats = u.areaStats;
   }
   if (d.filt) state.filt = d.filt;
   if (d.filtNotes) state.filtNotes = d.filtNotes;
@@ -1056,42 +1158,113 @@ function applyValues(d) {
   schedule();
 }
 
-// Picking an area: press on the chart that is waiting for one and drag.
+// ---- areas on the chart: add one, move its edges, select it ----------------
+// Pressing on a chart that is waiting for a new area drags one out. Pressing
+// within a few pixels of an area's edge drags that edge. Pressing inside an
+// area selects it (Delete or Backspace removes it, Esc lets go).
+let selArea = null;       // { key, i } — the area selected
+let edgeDrag = null;      // { key, i, edge: "a" | "b", rect }
 function tAtX(rect, clientX) {
   const W = rect.width, span = state.t1 - state.t0;
   const f = (clientX - rect.left - PAD.L) / Math.max(1, W - PAD.L - PAD.R);
   return Math.max(0, Math.min(state.tMax, state.t0 + Math.max(0, Math.min(1, f)) * span));
 }
+// The area edge under the pointer on this chart, if any: { i, edge }.
+function edgeAt(b, rect, clientX) {
+  const ent = filtEntry(b.c.key);
+  if (!ent || !ent.areas) return null;
+  const x = clientX - rect.left;
+  let best = null, bestD = 6;
+  ent.areas.forEach((ar, i) => {
+    for (const edge of ["a", "b"]) {
+      const d = Math.abs(xOf(ar[edge] * state.dsec, rect.width) - x);
+      if (d < bestD) { bestD = d; best = { i, edge }; }
+    }
+  });
+  return best;
+}
+function areaAt(b, rect, clientX) {
+  const ent = filtEntry(b.c.key);
+  if (!ent || !ent.areas) return -1;
+  const t = tAtX(rect, clientX), i = Math.round(t / (state.dsec || 1));
+  for (let k = ent.areas.length - 1; k >= 0; k--)            // the later one wins
+    if (i >= ent.areas[k].a && i < ent.areas[k].b) return k;
+  return -1;
+}
+const blockOf = cv => blocks.find(x => x.cv === cv);
 $("charts").addEventListener("mousedown", e => {
-  if (!pick || e.button !== 0) return;
+  if (e.button !== 0 || !state.filt) return;
   const cv = e.target.closest("canvas");
-  const b = cv && blocks.find(x => x.cv === cv);
-  if (!b || b.c.key !== pick.key) return;
-  e.preventDefault();
+  const b = cv && blockOf(cv);
+  if (!b || !b.c.key) return;
   const rect = cv.getBoundingClientRect();
-  const t = tAtX(rect, e.clientX);
-  sel = { key: b.c.key, a: t, b: t, rect };
-  schedule();
+  if (pick && b.c.key === pick.key) {
+    e.preventDefault();
+    const t = tAtX(rect, e.clientX);
+    sel = { key: b.c.key, a: t, b: t, rect };
+    schedule();
+    return;
+  }
+  const ed = edgeAt(b, rect, e.clientX);
+  if (ed) {
+    e.preventDefault();
+    edgeDrag = { key: b.c.key, ...ed, rect };
+    selArea = { key: b.c.key, i: ed.i };
+    syncFiltUI(); schedule();
+    return;
+  }
+  const k = areaAt(b, rect, e.clientX);
+  if (k >= 0) { selArea = { key: b.c.key, i: k }; syncFiltUI(); schedule(); }
+  else if (selArea) { selArea = null; syncFiltUI(); schedule(); }
 });
 window.addEventListener("mousemove", e => {
-  if (!sel) return;
-  sel.b = tAtX(sel.rect, e.clientX);
-  schedule();
+  if (sel) { sel.b = tAtX(sel.rect, e.clientX); schedule(); return; }
+  if (edgeDrag) {
+    const dsec = state.dsec || 1;
+    const i = Math.round(tAtX(edgeDrag.rect, e.clientX) / dsec);
+    const { key, i: k, edge } = edgeDrag;
+    const s = clone(state.filt), ent = s.chans && s.chans[key];
+    const ar = ent && ent.areas && ent.areas[k];
+    if (!ar) { edgeDrag = null; return; }
+    if (edge === "a") ar.a = Math.max(0, Math.min(i, ar.b - 2));
+    else ar.b = Math.min(state.n, Math.max(i, ar.a + 2));
+    sendFilt(s);
+    return;
+  }
+  // the cursor says what a press would do
+  const cv = e.target && e.target.closest && e.target.closest("canvas");
+  const b = cv && blockOf(cv);
+  if (!b) return;
+  cv.style.cursor = pick && pick.key === b.c.key ? "col-resize"
+    : edgeAt(b, cv.getBoundingClientRect(), e.clientX) ? "ew-resize" : "";
 });
 window.addEventListener("mouseup", () => {
+  if (edgeDrag) { edgeDrag = null; return; }
   if (!sel) return;
   const key = sel.key, dsec = state.dsec || 1;
   const i0 = Math.max(0, Math.floor(Math.min(sel.a, sel.b) / dsec));
   const i1 = Math.min(state.n, Math.ceil(Math.max(sel.a, sel.b) / dsec) + 1);
   sel = null; pick = null;
   if (i1 - i0 >= 2) {
-    const s = clone(state.filt);
-    const ent = { ...(filtEntry(key) || { use: "master" }), range: [i0, i1] };
-    sendFilt(putEntry(s, key, ent));
+    const ent = filtEntry(key);
+    // A new area copies the chart's own filter when it has one; following the
+    // master, it starts on Hampel → Savitzky-Golay so it does something.
+    const like = ent && ent.use === "own" && ent.kind !== "none"
+      ? { use: "own", kind: ent.kind, amount: ent.amount } : NEW_AREA;
+    editEntry(key, en => {
+      en.areas.push({ a: i0, b: i1, ...like });
+      selArea = { key, i: en.areas.length - 1 };
+    });
   } else { syncFiltUI(); schedule(); }
 });
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape" && (pick || sel)) { pick = null; sel = null; syncFiltUI(); schedule(); }
+  if (e.key === "Escape" && (pick || sel || selArea)) {
+    pick = null; sel = null; selArea = null; syncFiltUI(); schedule();
+  } else if ((e.key === "Delete" || e.key === "Backspace") && selArea &&
+             !/^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) {
+    e.preventDefault();
+    deleteArea(selArea.key, selArea.i);
+  }
 });
 
 // ---------- interaction ----------

@@ -30,8 +30,8 @@ for (const k of ["FILT_OFF", "FILT_KINDS", "GATE_GROW"])
 const NAMES = ["filtFinite", "filtMedianOf", "filtHampel", "filtMedian", "filtSavGolCoef",
   "filtSavGol", "filtLoess", "filtOdd", "filtParams", "filtApply", "filtRun", "filtIsOff",
   "filtGate", "gateLevel", "filtGated", "filtRunGated", "filtOwnOn", "filtChanKey",
-  "filtChanEntry", "filtChanSpec", "filtChanRange", "filtChansNorm", "filtClean",
-  "filtSpecEq", "filtBase", "filtToChannels"];
+  "filtChanEntry", "filtMaster", "filtChanSpec", "filtAreaSpec", "filtChanAreas",
+  "filtChansNorm", "filtClean", "filtSpecEq", "filtBase", "filtToChannels"];
 eval(NAMES.map(lift).join("\n"));
 function filtGateSpan() { return 100; }
 
@@ -56,17 +56,44 @@ const SG = { ...FILT_OFF, kind: "sg", amount: 40 };
   ok(p.__filt && p.__filt.kind === "hampel", "the pressure says which filter it is read through");
 }
 
-// ---- held to one stretch ---------------------------------------------------
+// ---- areas, each through a filter of its own -------------------------------
 {
   const r = chan("Slurry Rate", 200), base = r.values.slice();
-  const spec = { ...SG, chans: { "Slurry Rate": { use: "master", range: [40, 90] } } };
+  const spec = { ...SG, chans: { "Slurry Rate": { use: "master", areas: [
+    { a: 20, b: 50, use: "own", kind: "median", amount: 60 },
+    { a: 120, b: 150, use: "own", kind: "none", amount: 0 }] } } };
   filtToChannels([r], spec);
+  const sg = filtApply(base, "sg", 40), med = filtApply(base, "median", 60);
+  ok(same(r.values.slice(0, 20), sg.slice(0, 20)), "outside the areas: the master");
+  ok(same(r.values.slice(20, 50), med.slice(20, 50)),
+     "the first area: its own median, as it reads over the whole curve");
+  ok(same(r.values.slice(50, 120), sg.slice(50, 120)), "between them: the master again");
+  ok(same(r.values.slice(120, 150), base.slice(120, 150)), "the 'None' area: as read");
+  const st = r.__filtAreas;
+  ok(st.length === 2 && st[0].n === 30 && st[0].changed > 0 && st[1].changed === 0,
+     "each area says how many samples it changed");
+  ok(r.__filtStats.changed > 0 && r.__filtStats.maxd > 0, "and so does the chart");
+}
+{
+  // where two areas overlap, the later one wins
+  const r = chan("Slurry Rate", 120), base = r.values.slice();
+  filtToChannels([r], { ...FILT_OFF, chans: { "Slurry Rate": { use: "master", areas: [
+    { a: 10, b: 60, use: "own", kind: "sg", amount: 50 },
+    { a: 40, b: 80, use: "own", kind: "none", amount: 0 }] } } });
+  ok(same(r.values.slice(40, 80), base.slice(40, 80)), "the later area wins the overlap");
+  ok(same(r.values.slice(10, 40), filtApply(base, "sg", 50).slice(10, 40)),
+     "the earlier one keeps the rest of its stretch");
+}
+
+// ---- a v1.11.44 setting keeps its meaning ----------------------------------
+// One stretch read through the chart's filter, the rest of the chart as read.
+{
+  const r = chan("Slurry Rate", 200), base = r.values.slice();
+  filtToChannels([r], { ...SG, chans: { "Slurry Rate": { use: "master", range: [40, 90] } } });
   const full = filtApply(base, "sg", 40);
-  ok(same(r.values.slice(0, 40), base.slice(0, 40)), "before the stretch: as read");
-  ok(same(r.values.slice(90), base.slice(90)), "after the stretch: as read");
-  ok(same(r.values.slice(40, 90), full.slice(40, 90)),
-     "inside it: the filter as it reads over the whole curve, edges included");
-  ok(r.__filtRange && r.__filtRange[0] === 40 && r.__filtRange[1] === 90, "the stretch is reported");
+  ok(same(r.values.slice(0, 40), base.slice(0, 40)), "v1.11.44 range: before it, as read");
+  ok(same(r.values.slice(90), base.slice(90)), "v1.11.44 range: after it, as read");
+  ok(same(r.values.slice(40, 90), full.slice(40, 90)), "v1.11.44 range: inside it, the filter");
 }
 
 // ---- the master off, one channel on ---------------------------------------
@@ -78,8 +105,12 @@ const SG = { ...FILT_OFF, kind: "sg", amount: 40 };
   filtToChannels([p, r], spec);
   ok(same(r.values, rbase) && !r.__filt, "the other channel is untouched");
   ok(!!p.__filt, "the channel with its own filter is filtered");
-  ok(filtIsOff({ ...FILT_OFF, chans: { "Surface Pressure": { use: "master", range: [0, 9] } } }),
-     "a stretch under an off master filters nothing");
+  ok(filtIsOff({ ...FILT_OFF, chans: { "Surface Pressure": { use: "master",
+       areas: [{ a: 0, b: 9, use: "master" }] } } }),
+     "an area following an off master filters nothing");
+  ok(!filtIsOff({ ...FILT_OFF, chans: { "Surface Pressure": { use: "master",
+       areas: [{ a: 0, b: 9, use: "own", kind: "hampel", amount: 40 }] } } }),
+     "an area with a filter of its own is on with the master off");
 }
 
 // ---- a channel set to no filter of its own --------------------------------
@@ -91,18 +122,24 @@ const SG = { ...FILT_OFF, kind: "sg", amount: 40 };
 
 // ---- comparing, cleaning, and the wider scopes ----------------------------
 {
-  const a = { ...SG, chans: { B: { use: "own", kind: "sg", amount: 20 }, A: { use: "master", range: [1, 5] } } };
-  const b = { ...SG, chans: { A: { use: "master", range: [1, 5] }, B: { use: "own", kind: "sg", amount: 20 } } };
+  const A = { use: "master", areas: [{ a: 1, b: 5, use: "master" }] };
+  const a = { ...SG, chans: { B: { use: "own", kind: "sg", amount: 20 }, A } };
+  const b = { ...SG, chans: { A, B: { use: "own", kind: "sg", amount: 20, areas: [] } } };
   ok(filtSpecEq(a, b), "the same channels in another order are the same spec");
   ok(!filtSpecEq(a, SG), "channel settings make a different spec");
   ok(filtSpecEq({ ...SG, chans: { A: { use: "master" } } }, SG),
      "an entry that only says 'follow the master' changes nothing");
-  const noRange = filtChansNorm(a.chans, false);
-  ok(!noRange.A && noRange.B && noRange.B.range === null,
-     "applied to the well, stretches are dropped and an entry left saying nothing goes");
-  const c = filtClean({ kind: "bogus", amount: 250, chans: { X: { use: "own", kind: "evil", amount: -4 } } });
+  const wide = filtChansNorm(a.chans, false);
+  ok(!wide.A && wide.B && wide.B.areas.length === 0,
+     "applied to the well, areas are dropped and an entry left saying nothing goes");
+  const c = filtClean({ kind: "bogus", amount: 250, chans: { X: { use: "own", kind: "evil",
+    amount: -4, areas: [{ a: 3.2, b: 9.7, use: "own", kind: "worse", amount: 400 },
+                        { a: 9, b: 2 }] } } });
   ok(c.kind === "none" && c.amount === 100, "an unknown kind is off and amounts are held to 0..100");
   ok(c.chans.X.kind === "none" && c.chans.X.amount === 0, "so are a channel's");
+  ok(c.chans.X.areas.length === 1 && c.chans.X.areas[0].a === 3 && c.chans.X.areas[0].b === 10
+     && c.chans.X.areas[0].kind === "none" && c.chans.X.areas[0].amount === 100,
+     "and an area's, whole samples, and one that runs backwards is dropped");
 }
 
 console.log(failed ? `${failed} FAILED` : "filter channels: all assertions passed");

@@ -5602,66 +5602,91 @@ function filtIsOff(spec) {
   const one = !s.kind || s.kind === "none" || !(Number(s.amount) > 0);
   const two = !s.kind2 || s.kind2 === "none" || !(Number(s.amount2) > 0);
   if (!(one && two)) return false;
-  // a channel given a filter of its own in the stacked window still filters
-  // with the master off
-  for (const k in (s.chans || {})) if (filtOwnOn(s.chans[k])) return false;
+  // a channel given a filter of its own in the stacked window, or an area
+  // with one, still filters with the master off
+  if (!s.chans) return true;
+  for (const o of Object.values(filtChansNorm(s.chans))) {
+    if (filtOwnOn(o)) return false;
+    for (const ar of o.areas) if (filtOwnOn(ar)) return false;
+  }
   return true;
 }
 
 // ---- per channel, from the stacked window ---------------------------------
 //
 // The master filter above is one setting for every curve on the chart. The
-// stacked window (one chart per channel) adds a setting PER CHANNEL on top of
-// it, asked for by Carmine (2026-10-09): each curve can follow the master or
-// take a filter of its own, and either can be held to one stretch of the
-// chart — the stretch that has the noise — leaving the rest as read.
+// stacked window (one chart per channel) adds settings PER CHANNEL on top of
+// it, asked for by Carmine (2026-10-09/10): each curve can follow the master
+// or take a filter of its own, and any number of AREAS — stretches of the
+// chart dragged out in the stacked window — can each read through a filter of
+// their own: a strong one on the stretch with the noise, "None" to leave a
+// real spike exactly as drawn.
 //
-//   spec.chans = { [channel key]: { use: "master" | "own",
-//                                   kind, amount,       (when "own")
-//                                   range: [i0, i1] } } (sample indices, or none)
+//   spec.chans = { [channel key]: {
+//       use: "master" | "own", kind, amount,            the whole chart
+//       areas: [{ a, b, use: "master" | "own", kind, amount }] } }
+//                                                         samples [a, b) of the stage
 //
 // A channel with no entry follows the master over the whole chart, which is
-// exactly what every setting saved before this reads as. The range is in
-// SAMPLES of this stage, so it belongs to the stage: carried with "save for
-// this chart", left behind by "every stage in this file" and the provider
-// default, where the same samples mean another moment.
+// what every setting saved before this reads as. An area is SAMPLES of this
+// stage, so it belongs to the stage: carried with "save for this chart", left
+// behind by "every stage in this file" and the provider default, where the
+// same samples mean another moment. Where areas overlap, the later one wins.
 function filtOwnOn(o) {
   return !!o && o.use === "own" && !!o.kind && o.kind !== "none" && Number(o.amount) > 0;
 }
 function filtChanKey(c) { return (c && (c.key || c.label)) || ""; }
 function filtChanEntry(spec, c) {
-  const ch = spec && spec.chans;
-  return ch ? ch[filtChanKey(c)] || null : null;
+  const ch = filtChansNorm(spec && spec.chans);
+  return ch[filtChanKey(c)] || null;
 }
-// The filter one channel is read through: its own, or the master's.
-function filtChanSpec(spec, c) {
-  const s = spec || FILT_OFF;
-  const o = filtChanEntry(s, c);
-  if (o && o.use === "own")
-    return { ...FILT_OFF, kind: o.kind || "none", amount: Number(o.amount) || 0 };
-  const m = { ...s };
+function filtMaster(spec) {
+  const m = { ...(spec || FILT_OFF) };
   delete m.chans;
   return m;
 }
-// The stretch a channel's filter is held to, or null for the whole chart.
-function filtChanRange(spec, c) {
+// The filter one channel is read through over the whole chart: its own, or
+// the master's.
+function filtChanSpec(spec, c) {
   const o = filtChanEntry(spec, c);
-  const r = o && o.range;
-  return (Array.isArray(r) && r.length === 2 && isFinite(r[0]) && isFinite(r[1])
-          && r[1] > r[0]) ? [Math.max(0, Math.floor(r[0])), Math.ceil(r[1])] : null;
+  if (o && o.use === "own")
+    return { ...FILT_OFF, kind: o.kind || "none", amount: Number(o.amount) || 0 };
+  return filtMaster(spec);
+}
+// ...and inside one of its areas.
+function filtAreaSpec(spec, ar) {
+  if (ar && ar.use === "own")
+    return { ...FILT_OFF, kind: ar.kind || "none", amount: Number(ar.amount) || 0 };
+  return filtMaster(spec);
+}
+function filtChanAreas(spec, c) {
+  const o = filtChanEntry(spec, c);
+  return o ? o.areas : [];
 }
 // The channel entries that change anything, in a fixed key order, so two
 // specs that mean the same compare equal however they were built.
-function filtChansNorm(chans, keepRange) {
+//
+// v1.11.44 held a channel's filter to ONE stretch with `range`, and read the
+// rest of that chart unfiltered. That reads the same as a chart set to no
+// filter with one area carrying the old setting, so that is what it becomes.
+function filtChansNorm(chans, keepAreas) {
   const out = {};
+  const own = o => ({ use: "own", kind: o.kind || "none", amount: Number(o.amount) || 0 });
   for (const k of Object.keys(chans || {}).sort()) {
     const o = chans[k];
     if (!o) continue;
-    const range = keepRange !== false && Array.isArray(o.range) && o.range[1] > o.range[0]
-      ? [Math.floor(o.range[0]), Math.ceil(o.range[1])] : null;
-    if (o.use === "own")
-      out[k] = { use: "own", kind: o.kind || "none", amount: Number(o.amount) || 0, range };
-    else if (range) out[k] = { use: "master", range };
+    let base = o.use === "own" ? own(o) : { use: "master" };
+    let areas = Array.isArray(o.areas) ? o.areas.slice() : [];
+    if (Array.isArray(o.range) && !Array.isArray(o.areas)) {          // v1.11.44
+      areas = [{ a: o.range[0], b: o.range[1], ...base }];
+      base = { use: "own", kind: "none", amount: 0 };
+    }
+    areas = keepAreas === false ? [] : areas
+      .filter(ar => ar && isFinite(ar.a) && isFinite(ar.b) && ar.b > ar.a)
+      .map(ar => ({ a: Math.max(0, Math.floor(ar.a)), b: Math.ceil(ar.b),
+                    ...(ar.use === "own" ? own(ar) : { use: "master" }) }));
+    if (base.use === "master" && !areas.length) continue;
+    out[k] = { ...base, areas };
   }
   return out;
 }
@@ -5672,10 +5697,10 @@ function filtClean(spec) {
   const kinds = new Set(FILT_KINDS.map(k => k.id));
   const kind = k => (kinds.has(k) ? k : "none");
   const amt = a => Math.max(0, Math.min(100, Math.round(Number(a) || 0)));
+  const fix = o => o.use === "own" ? { ...o, kind: kind(o.kind), amount: amt(o.amount) } : o;
   const chans = {};
-  for (const [k, o] of Object.entries(filtChansNorm(s.chans))) {
-    chans[k] = o.use === "own" ? { ...o, kind: kind(o.kind), amount: amt(o.amount) } : o;
-  }
+  for (const [k, o] of Object.entries(filtChansNorm(s.chans)))
+    chans[k] = { ...fix(o), areas: o.areas.map(fix) };
   return { kind: kind(s.kind), amount: amt(s.amount),
            kind2: kind(s.kind2), amount2: amt(s.amount2),
            gate: !!s.gate, gatePct: Number(s.gatePct) || FILT_OFF.gatePct,
@@ -5920,22 +5945,51 @@ function filtToChannels(channels, spec) {
     const base = filtBase(c);
     const cs = filtChanSpec(s, c);
     const g = filtRunGated(base, cs, filtGated(cs) ? filtGateSpan(c) : 0);
-    const r = filtIsOff(cs) ? null : filtChanRange(s, c);
-    if (r) {
-      // Filtered over the whole curve, so a window at the edge of the stretch
-      // still sees the samples beside it, and taken INSIDE the stretch only.
-      const i0 = Math.min(base.length, r[0]), i1 = Math.min(base.length, r[1]);
-      const v = base.slice();
-      for (let i = i0; i < i1; i++) v[i] = g.values[i];
-      c.values = v;
-      c.__gateRuns = g.runs && g.runs.map(([a, b]) => [Math.max(a, i0), Math.min(b, i1)])
-                                     .filter(([a, b]) => b > a);
-    } else {
-      c.values = g.values;
-      c.__gateRuns = g.runs;
+    let vals = g.values, runs = g.runs, on = !filtIsOff(cs);
+    const areas = filtChanAreas(s, c), stats = [];
+    if (areas.length) {
+      // Each area filtered over the WHOLE curve, so a window at its edge still
+      // sees the samples beside it, and taken inside the area only.
+      vals = vals.slice();
+      const done = {};
+      for (const ar of areas) {
+        const as = filtAreaSpec(s, ar), off = filtIsOff(as);
+        const key = JSON.stringify(as);
+        const f = off ? base : (done[key] || (done[key] =
+          filtRunGated(base, as, filtGated(as) ? filtGateSpan(c) : 0).values));
+        const i0 = Math.min(base.length, ar.a), i1 = Math.min(base.length, ar.b);
+        for (let i = i0; i < i1; i++) vals[i] = f[i];
+        if (!off) on = true;
+        // the chart-wide gate's stretches stop at an area's edge
+        if (runs) runs = runs.flatMap(([a, b]) =>
+          [[a, Math.min(b, i0)], [Math.max(a, i1), b]].filter(([x, y]) => y > x));
+      }
+      // What each area actually changed, read off the curve that goes out:
+      // a later area over an earlier one is counted where it wins.
+      for (const ar of areas) {
+        const i0 = Math.min(base.length, ar.a), i1 = Math.min(base.length, ar.b);
+        let m = 0, changed = 0, maxd = 0;
+        for (let i = i0; i < i1; i++) {
+          const x = base[i], y = vals[i];
+          if (x == null || !isFinite(x)) continue;
+          m++;
+          if (y !== x) { changed++; maxd = Math.max(maxd, Math.abs(y - x)); }
+        }
+        stats.push({ a: i0, b: i1, n: m, changed, maxd });
+      }
     }
-    c.__filt = filtIsOff(cs) ? null : cs;
-    c.__filtRange = c.__filt ? r : null;
+    let m = 0, changed = 0, maxd = 0;
+    for (let i = 0; i < base.length; i++) {
+      const x = base[i], y = vals[i];
+      if (x == null || !isFinite(x)) continue;
+      m++;
+      if (y !== x) { changed++; maxd = Math.max(maxd, Math.abs(y - x)); }
+    }
+    c.values = vals;
+    c.__gateRuns = runs;
+    c.__filt = on ? cs : null;
+    c.__filtAreas = stats;
+    c.__filtStats = { n: m, changed, maxd };
     if (c.__filt) n++;
   }
   return n;
@@ -7212,7 +7266,20 @@ function stackPayload() {
       if (ok) { if (v < dLo) dLo = v; if (v > dHi) dHi = v; }
     }
     const has = isFinite(dLo) && isFinite(dHi);
-    chans.push({ key: filtChanKey(c), filtered: !!c.__filt, area: c.__filtRange || null,
+    // The curve as read goes too, wherever a filter changed it, so the stacked
+    // window can draw it faintly behind and a filter that does little is
+    // SEEN to do little rather than looking like one that did not run.
+    const fs = c.__filtStats || null;
+    let raw = null;
+    if (fs && fs.changed && c.__base) {
+      raw = new Float64Array(len);
+      for (let i = 0; i < len; i++) {
+        const v = c.__base[i];
+        raw[i] = (v != null && isFinite(v)) ? v : NaN;
+      }
+    }
+    chans.push({ key: filtChanKey(c), filtered: !!c.__filt, raw,
+                 stats: fs, areaStats: c.__filtAreas || [],
                  name: chanName(c), unit: c.unit || "", color: c._color,
                  lo: r.lo, hi: r.hi, printed: !!r.printed,
                  dataLo: has ? dLo : null, dataHi: has ? dHi : null,
@@ -7256,9 +7323,10 @@ function stackFiltNotes() {
   const s = gState.filt || FILT_OFF, out = { chans: {} };
   if (s.kind && s.kind !== "none") out.m1 = filtWindowNote({ kind: s.kind, amount: s.amount });
   if (s.kind2 && s.kind2 !== "none") out.m2 = filtWindowNote({ kind: s.kind2, amount: s.amount2 });
+  const note = o => o.use === "own" && o.kind !== "none"
+    ? filtWindowNote({ kind: o.kind, amount: o.amount }) : "";
   for (const [k, o] of Object.entries(filtChansNorm(s.chans)))
-    if (o.use === "own" && o.kind !== "none")
-      out.chans[k] = filtWindowNote({ kind: o.kind, amount: o.amount });
+    out.chans[k] = { chart: note(o), areas: o.areas.map(note) };
   return out;
 }
 // The filter changed, here or there: the stacked window gets the re-filtered
@@ -7271,7 +7339,8 @@ function stackSendValues() {
   stackPost({ type: "stacked:values", seq: stackSeq, filt: p.filt,
               filtNotes: p.filtNotes,
               channels: p.channels.map(c => ({ key: c.key, values: c.values,
-                dataLo: c.dataLo, dataHi: c.dataHi, filtered: c.filtered, area: c.area })) });
+                dataLo: c.dataLo, dataHi: c.dataHi, filtered: c.filtered,
+                raw: c.raw, stats: c.stats, areaStats: c.areaStats })) });
 }
 
 // The stage-level state changed: new seq, and the child owes us a fresh ack.
