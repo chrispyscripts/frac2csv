@@ -6141,6 +6141,36 @@ function filtPreview(spec) {
     stackSendValues();
   });
 }
+// A change from the STACKED window, applied now rather than on this window's
+// next frame. This window is usually behind the stacked one or in a
+// background tab while that is being used, and Chrome runs no animation
+// frames for a window it cannot see: filtPreview's frame never came, nothing
+// was filtered, nothing went back, and the stacked window showed every
+// filter doing nothing (Carmine, 2026-10-10). A message-channel task runs in
+// a hidden window as promptly as in a visible one; a burst of changes (a
+// slider being dragged) collapses into one pass. Only the repaint of THIS
+// window's own chart waits until it is seen.
+const filtSoon = (() => {
+  const ch = new MessageChannel();
+  let fn = null;
+  ch.port1.onmessage = () => { const f = fn; fn = null; if (f) f(); };
+  return f => { const first = !fn; fn = f; if (first) ch.port2.postMessage(0); };
+})();
+let filtFromStack = null;
+function filtApplyFromStack(spec) {
+  filtFromStack = spec;
+  filtSoon(() => {
+    const sp = filtFromStack;
+    filtFromStack = null;
+    if (!sp) return;
+    if (filtPending) { cancelAnimationFrame(filtPending); filtPending = null; }
+    gState.filt = { ...FILT_OFF, ...sp };
+    filtToChannels(gState.channels, gState.filt);
+    filtSyncUI(); filtGateNote();
+    stackSendValues();
+    requestAnimationFrame(() => { redrawGraph(); buildLegend(); });
+  });
+}
 function filtMenu() {
   const m = $("filtmenu");
   if (!m) return;
@@ -7516,7 +7546,7 @@ window.addEventListener("message", e => {
     }
     const same = (d.gen === stackGen && d.seq === stackSeq) || (d.id && d.id === stackId());
     if (!same) { stackAckSeq = -1; stackTries = 0; stackSend(); return; }
-    if (d.type === "stacked:filter") filtPreview(filtClean(d.spec));
+    if (d.type === "stacked:filter") filtApplyFromStack(filtClean(d.spec));
     else filtCommit("stage", filtClean(gState.filt));
   } else if (d.type === "stacked:openpdf") {
     $("origopen").click();            // one place knows how to open the file
