@@ -72,6 +72,8 @@
     accent-color:var(--carmine); }
   .fnote { font-family:var(--mono); font-size:11px; color:var(--mut); }
   .fsaid { font-size:11.5px; color:var(--ok); }
+  .fwarn { font-size:12px; font-weight:600; color:#fff; background:var(--carmine);
+           border-radius:6px; padding:2px 9px; }
   .btn.sm { padding:1px 8px; font-size:11.5px; font-weight:600; }
   .cfilt { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
            margin:0 0 4px; font-size:12px; }
@@ -94,7 +96,7 @@
 <body>
   <div class="top">
     <div class="meta">
-      <div class="wordmark">Carmine's Lab &mdash; stacked charts</div>
+      <div class="wordmark">Carmine's Lab &mdash; stacked charts <span class="pglbl" id="ver"></span></div>
       <div class="title" id="title">&mdash;</div>
       <!-- Which chart this is, in the two terms that identify it: the stage as
            the sheet labels it, and the day it ran. Above the charts and in
@@ -139,6 +141,7 @@ both follow. A chart below can take a filter of its own instead.">Filter &middot
 chart's own, areas included — for this stage. The same as the Lab's Save ▾ ›
 Save for this chart only.">Save for this stage</button>
       <span class="fsaid" id="fsaid" hidden></span>
+      <span class="fwarn" id="fwarn" hidden></span>
     </div>
   </div>
 
@@ -318,6 +321,30 @@ $("interp").addEventListener("click", () => {
   build();                     // the header line changes with it
 });
 
+// This page's own build, beside the title, and checked against the Lab's.
+// Both come from the same server, so two different builds mean one of the two
+// windows was loaded before an update: this one reloads itself once to catch
+// up; if it is the Lab that is behind, it says so.
+let myVer = "";
+fetch("/api/local-info").then(r => r.ok ? r.json() : null)
+  .then(j => { if (j && j.version) { myVer = j.version; $("ver").textContent = "v" + myVer; } })
+  .catch(() => {});
+function checkBuild(d) {
+  if (!d.ver || !myVer || d.ver === myVer) return;
+  const key = "f2c.stackedReloadFor";
+  let done = "";
+  try { done = sessionStorage.getItem(key) || ""; } catch (e) { /* private */ }
+  if (done !== d.ver) {
+    try { sessionStorage.setItem(key, d.ver); } catch (e) { /* private */ }
+    location.reload();
+    return;
+  }
+  const w = $("fwarn");
+  w.textContent = "The Lab window is v" + d.ver + " and this one v" + myVer +
+    " — reload the Lab tab, then press Stacked there.";
+  w.hidden = false;
+}
+
 // Announce ourselves on load. This is what makes the order not matter: opened
 // before a stage is picked, opened after one is, or reloaded by hand — the Lab
 // answers a ready with the stage that is on screen right now.
@@ -364,6 +391,10 @@ function applyNone(d) {
 }
 
 function applyStage(d) {
+  // a new chart: whatever change was waiting belonged to the one before it
+  awaiting = null;
+  $("fwarn").hidden = true;
+  checkBuild(d);
   // The seq moves first: everything below belongs to THIS stage, and a page
   // or view stamped for an older one must be rejected from here on.
   if (typeof d.seq === "number") state.seq = d.seq;
@@ -946,8 +977,30 @@ function sendFilt(spec) {
   sendRaf = requestAnimationFrame(() => {
     sendRaf = null;
     toLab({ type: "stacked:filter", seq: state.seq, gen: state.gen, id: state.id, spec: pending });
+    if (!awaiting) awaiting = { at: performance.now(), relinked: false };
   });
 }
+// A change the Lab has not answered. The Lab re-filters and sends the curves
+// back within a frame or two; when it does not, the change has gone nowhere —
+// it is not on the chart and it will not be in the export — and saying so is
+// the whole point: "the filters do nothing" was this, and it was silent.
+let awaiting = null;
+setInterval(() => {
+  if (!awaiting) return;
+  const age = performance.now() - awaiting.at;
+  if (age < 2000) return;
+  const w = $("fwarn");
+  if (!awaiting.relinked) {
+    // try once to put the link back, and give it the time it needs
+    awaiting.relinked = true;
+    awaiting.at = performance.now();
+    toLab({ type: "stacked:ready" });
+    return;
+  }
+  w.textContent = "Not applied — the Lab window is not answering this one. " +
+    "Reload the Lab tab, then press Stacked there.";
+  w.hidden = false;
+}, 500);
 // A chart's entry after an edit: dropped when it says nothing the master
 // does not already say, so "back to the master, no areas" leaves no trace.
 function putEntry(spec, key, ent) {
@@ -1168,6 +1221,8 @@ function applyValues(d) {
   }
   if (d.filt) state.filt = d.filt;
   if (d.filtNotes) state.filtNotes = d.filtNotes;
+  awaiting = null;
+  $("fwarn").hidden = true;
   applyScale();
   for (const b of blocks) if (b.rng) b.rng.innerHTML = headRange(b.c);
   syncFiltUI();

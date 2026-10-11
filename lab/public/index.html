@@ -7355,6 +7355,7 @@ function stackPayload() {
   return {
     type: "stacked:stage",
     seq: stackSeq, gen: stackGen, id: stackId(),
+    ver: (localInfo && localInfo.version) || "",
     file: (current.entry && current.entry.name) || "", chart: it.key,
     title: $("pv-title").textContent, sub: $("pv-sub").textContent,
     // The stage and the day, as their OWN fields rather than left for the
@@ -7504,7 +7505,15 @@ window.addEventListener("message", e => {
     // (file and chart) as well as on the seq, so a window that has not caught
     // up with a reload still filters the chart it shows — and one showing
     // ANOTHER chart is sent this one instead of being ignored in silence.
-    if (e.source !== stackWin || !gState.channels.length) return;
+    if (!gState.channels.length) return;
+    // A stacked window showing THIS window's chart is this window's stacked
+    // window, whichever handle was kept: one opened from a tab since reloaded,
+    // or a second one opened over it, was ignored in silence and nothing it
+    // set reached the chart or the export.
+    if (e.source !== stackWin) {
+      if (d.id && d.id === stackId() && e.source) stackWin = e.source;
+      else return;
+    }
     const same = (d.gen === stackGen && d.seq === stackSeq) || (d.id && d.id === stackId());
     if (!same) { stackAckSeq = -1; stackTries = 0; stackSend(); return; }
     if (d.type === "stacked:filter") filtPreview(filtClean(d.spec));
