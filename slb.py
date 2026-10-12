@@ -2040,6 +2040,58 @@ def extract_zone_page(page, sample_sec=1.0):
     return meta, samples_s / 60.0, out, units
 
 
+_INTERVAL_SUMMARY = re.compile(r"^\s*Interval\s+(\d+[A-Za-z]?)\s+Summary\s*$",
+                               re.MULTILINE)
+_CLOCK_12H = re.compile(r"\b(\d{1,2}):(\d{2})\s*(AM|PM)\b")
+
+
+def _interval_from_summary(page, sample_sec=1.0, longest_h=16.0, slack=15.0):
+    """A PRC plot that names no interval, numbered by the sheet before it.
+
+    -> (meta, samples, data, units), or None.
+
+    The 2018 Encana filings (00570, AER Duvernay) print every interval as a
+    pair of pages: an "Interval N Summary" sheet with the interval's start
+    and end times, then a PRC plot of that interval alone — whose License
+    line, unlike the 2019-2021 plots, does not say which interval it is.
+    Taken for whole-job plots, all 39 were dropped and the file exported
+    nothing (Carmine, #813: "we should be able to get the stage number for
+    a chart by the single page stage summary before the charts").
+
+    A whole-job plot spans the job, 30 hours and more; one interval spans a
+    few. So the plot is numbered by the sheet before it only when it spans
+    under `longest_h` hours and the sheet's own start and end times (h:mm
+    AM/PM) both fall on its time axis, within `slack` minutes. Neither
+    prints a date: that stays for the user to supply.
+    """
+    doc = getattr(page, "parent", None)
+    if doc is None or page.number < 1:
+        return None
+    prev = doc[page.number - 1].get_text()
+    m = _INTERVAL_SUMMARY.search(prev)
+    if not m:
+        return None
+    meta, samples, data, units, _t0 = _extract_core(page, sample_sec)
+    dur = float(meta.duration_min or 0)
+    if not data or not (0 < dur <= longest_h * 60):
+        return None
+    try:
+        hh, mm, ss = (int(x) for x in str(meta.start_time).split(":"))
+        start = hh * 60 + mm + ss / 60.0
+    except ValueError:
+        return None
+    for h, mi, ap in _CLOCK_12H.findall(prev):
+        t = (int(h) % 12 + (12 if ap == "PM" else 0)) * 60 + int(mi)
+        if (t - start) % 1440.0 > dur + slack and (start - t) % 1440.0 > slack:
+            return None             # the sheet's time is not on this axis
+    meta.stage = m.group(1)
+    meta.title = meta.title.replace(PRC_TITLE, f"{PRC_TITLE} — Interval {meta.stage}", 1)
+    meta.warnings.append(
+        f"interval {meta.stage} read from the \"Interval {meta.stage} Summary\" "
+        f"sheet before this chart — the chart itself names no interval")
+    return meta, samples, data, units
+
+
 def extract_page_blocks(page, sample_sec=1.0):
     """One chart page -> [(meta, samples, {col: values}, {col: unit})].
 
@@ -2052,6 +2104,9 @@ def extract_page_blocks(page, sample_sec=1.0):
     if kind != "vector":
         raise ValueError("slb: not a chart page")
     if page_stage(page) is None:
+        got = _interval_from_summary(page, sample_sec)
+        if got is not None:
+            return [got]
         doc = getattr(page, "parent", None)
         sheets = 0
         if doc is not None:

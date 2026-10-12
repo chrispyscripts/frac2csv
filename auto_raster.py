@@ -414,6 +414,44 @@ def snap_axis(top, bot, tick_vals=None, tol_frac=0.03):
     return top, bot, False
 
 
+def printed_bounds(pts, a, b, y0, y1, tol=0.06):
+    """The axis's printed end labels, when they sit on the frame edges.
+
+    -> (value at y0, value at y1), or None.
+
+    A chart that stacks several axes' labels at each gridline prints them one
+    above another, centred on the line: 00248's offset chart puts four at
+    every gridline (Surface Pressure's red 80.00 over two black 30.00s over a
+    green 30.00), so a colour's labels sit up to 30 px off their gridlines —
+    every one of them, by the same amount. A fit through their centroids is
+    then right in slope and shifted as a whole: red read 3.1 MPa low at the
+    frame's top, and snap_axis, finding that too far from 80 to snap on tens,
+    snapped it on fives to 75..-5 instead.
+
+    But the printed labels themselves say where the axis ends, and on these
+    charts the top and bottom labels name the frame's top and bottom edges.
+    So where the fit puts the lowest and highest labels it explains within a
+    few percent of the two edges — closer than half a tick step, so an axis
+    whose last label stops a tick short of the frame is left alone — those
+    labels ARE the edges.
+    """
+    top, bot = a + b * y0, a + b * y1
+    span = abs(top - bot)
+    if not np.isfinite(span) or span <= 0:
+        return None
+    vals = sorted({float(v) for v, y, st in pts
+                   if st and abs(a + b * y - v) <= 0.04 * span})
+    if len(vals) < 3:
+        return None
+    step = float(np.median(np.diff(vals)))
+    lim = min(tol * span, 0.45 * step)
+    want_top, want_bot = ((vals[-1], vals[0]) if top > bot
+                          else (vals[0], vals[-1]))
+    if abs(top - want_top) <= lim and abs(bot - want_bot) <= lim:
+        return want_top, want_bot
+    return None
+
+
 def ocr_line(img_arr, psm=7):
     """OCR a small crop as plain text (letters allowed, unlike ocr_words)."""
     binpath = tesseract_path()
@@ -516,7 +554,13 @@ LEGEND_VOCAB = [
     "Slurry Rate", "Combined Slurry Rate", "Combined Clean Rate", "Clean Rate",
     "Prop Conc", "Btm Prop Conc", "Bottom Prop Conc",
     "Surf Total Proppant Conc", "Total Proppant Conc",
+    # a coiled-tubing stage's own pair (00248 p91 legends "COIL #1 FLUID RATE
+    # (m3/min)" in magenta beside the slurry rate, #826)
+    "Coil Fluid Rate", "Coil Pressure",
 ]
+# ...whose units have one reading only, for when the superscript in "(m³/min)"
+# does not OCR
+_VOCAB_UNIT = {"Coil Fluid Rate": "m3/min", "Coil Pressure": "MPa"}
 
 
 def match_legend_name(raw, cutoff=0.78):
@@ -613,7 +657,8 @@ def read_legend(img, box):
             if not name:
                 continue
             mu = re.search(r"[\(\{\[]([^\)\}\]]*)[\)\}\]]\s*$", raw)
-            unit = _legend_unit(mu.group(1) if mu else "")
+            unit = (_legend_unit(mu.group(1) if mu else "")
+                    or _VOCAB_UNIT.get(name, ""))
             score = len(name)
             if best is None or score > best[2]:
                 best = (name, unit, score)
@@ -732,9 +777,19 @@ def plausible_floor_axis(v0, v1):
 def fit_ticks_guarded(pts):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
-    can't masquerade as another's."""
+    can't masquerade as another's.
+
+    Every fit here is a VALUE axis, read down the page, and its values rise
+    up it: a line whose values grow downward is a misreading. 00248 p91's
+    rate ladder (16.00, 12.00, 8.000, 4.000, 0.0) came back as 16, 1200,
+    1200, 8, 4000, 0, and RANSAC found a line through 1200 and 4000 rising
+    DOWN the page — the slurry rate exported against a 0..5400 axis, 4311
+    m3/min where the page draws 5 (#826). Refused, the decimal repair below
+    gets its turn and reads the ladder 0..16."""
+    def upright(fit):
+        return fit if fit and fit[1] < 0 else None
     strict = [(v, y) for v, y, s in pts if s]
-    fit = fit_ticks(strict, min_inliers=max(4, len(strict) // 2))
+    fit = upright(fit_ticks(strict, min_inliers=max(4, len(strict) // 2)))
     if fit:
         return fit
     if len(strict) >= 4:
@@ -751,11 +806,11 @@ def fit_ticks_guarded(pts):
                 if good:
                     v = max(good, key=abs)
             repaired.append((v, y))
-        fit = fit_ticks(repaired, min_inliers=max(4, len(repaired) // 2))
+        fit = upright(fit_ticks(repaired, min_inliers=max(4, len(repaired) // 2)))
         if fit:
             return fit
     if len(strict) >= 2:
-        fit = fit_ticks([(v, y) for v, y, _ in pts])
+        fit = upright(fit_ticks([(v, y) for v, y, _ in pts]))
         if fit:
             a, b, _ = fit
             vals = np.array([v for v, _ in strict])
@@ -1268,9 +1323,73 @@ def _rolling_median(v, k):
 TURN_REACH = 4      # columns either side a turn is judged against
 
 
+def _unbracketed(notch, py, ref, cols, spike_run, touch=3):
+    """The notch columns that are NOT a real excursion of the pen.
+
+    A notch is a stretch read far off the trace through pen-thin ink only, and
+    curve_positions drops it as contaminant. But the pen draws exactly that
+    when the curve dips (or jumps) and stays a while: 01289 p202's treating
+    pressure falls from 44 to 27 MPa, runs flat there for 90 seconds and climbs
+    back (#829). Its flat bottom is 12 columns of pen-thin ink a fifth of the
+    plot below the 31-column trend, and it was dropped and bridged with a
+    slanted line straight across the dip.
+
+    What a contaminant does not have is the pen's own fall into it and climb
+    out. So keep a stretch whose ends are each JOINED to a tall run in the
+    column beside it — a vertical stroke that overlaps the stretch's ink and
+    covers at least half the way back to the trend. A legend swatch or a
+    neighbour's fringe sits apart from the curve and is dropped as before.
+    """
+    notch = sorted(notch)
+    keep = set()
+    i = 0
+    while i < len(notch):
+        j = i
+        while j + 1 < len(notch) and notch[j + 1] == notch[j] + 1:
+            j += 1
+        c0, c1 = notch[i], notch[j]
+        if all(_joined(cols, py, ref, c, side, spike_run, touch)
+               for c, side in ((c0, -1), (c1, 1))):
+            keep.update(range(c0, c1 + 1))
+        i = j + 1
+    return [c for c in notch if c not in keep]
+
+
+def _joined(cols, py, ref, c, side, spike_run, touch, reach=6):
+    """Is notch column c joined, on `side`, by the pen's own stroke back
+    toward the trend? See _unbracketed.
+
+    A steep fall is drawn over a few columns, each a tall run that overlaps
+    the next (01289 p202's: rows 170-249, 176-256, 240-256, 245-256 into a
+    flat bottom at 251-257). So walk outward through tall runs that touch,
+    for up to `reach` columns, and ask whether together they climb at least
+    half the way from the notch to the trend.
+    """
+    run = next((r for r in cols[c] if r[0] == py[c]), None) if cols[c] else None
+    if run is None:
+        return False
+    lo, hi = run[2], run[3]
+    up = ref[c] < py[c]                 # rows grow downward: the trend is above
+    goal = py[c] + (ref[c] - py[c]) * 0.5
+    nb = c
+    for _ in range(reach):
+        nb += side
+        if nb < 0 or nb >= len(cols) or not cols[nb]:
+            return False
+        nxt = [r for r in cols[nb] if r[1] > spike_run
+               and r[2] - touch <= hi and r[3] + touch >= lo]
+        if not nxt:
+            return False
+        lo = min(r[2] for r in nxt)
+        hi = max(r[3] for r in nxt)
+        if (lo <= goal) if up else (hi >= goal):
+            return True
+    return False
+
+
 def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
                     spike_run=SPIKE_RUN, glyphs=False, envelope=True,
-                    swept_factor=None, edge_blank=False):
+                    swept_factor=None, edge_blank=False, bracketed=False):
     """One colour mask cropped to the plot -> the curve's row in each column,
     NaN where the curve is not on the page.
 
@@ -1333,7 +1452,8 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
         if not np.array_equal(base, full):
             kw = dict(gap=gap, win=win, iters=iters, spike_tol=spike_tol,
                       spike_run=spike_run, glyphs=False, envelope=envelope,
-                      swept_factor=swept_factor, edge_blank=edge_blank)
+                      swept_factor=swept_factor, edge_blank=edge_blank,
+                      bracketed=bracketed)
             py0 = curve_positions(base, **kw)
             py1 = curve_positions(full, **kw)
             return np.where(np.isfinite(py0), py0, py1)
@@ -1377,12 +1497,16 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
     # the page. A genuine near-vertical move is a TALL run, so spike_run
     # keeps it.
     ref = _rolling_median(py, 31)
+    notch = []
     for cx, rs in enumerate(cols):
         if not rs or not np.isfinite(py[cx]) or not np.isfinite(ref[cx]):
             continue
         hgt = next((h for m, h, _lo, _hi in rs if m == py[cx]), 1)
         if hgt <= spike_run and abs(py[cx] - ref[cx]) > spike_tol * H:
-            py[cx] = np.nan
+            notch.append(cx)
+    if bracketed and notch:
+        notch = _unbracketed(notch, py, ref, cols, spike_run)
+    py[notch] = np.nan
 
     # Ink pinned to the TOP of the frame is a reading the chart did not make.
     #
@@ -1513,6 +1637,10 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
 
     ticks = ocr_tick_strip(img, masks, 0, x0)
     ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks)
+    # the end labels of a stack sit further out than the fit may look (see
+    # printed_bounds): 00248 p24's green 0.0 is 26 px under the frame
+    wide = {k: [(v, y, st) for v, y, st in pts if y0 - 45 <= y <= y1 + 45]
+            for k, pts in ticks.items()}
     ticks = {k: [(v, y, st) for v, y, st in pts if y0 - 25 <= y <= y1 + 25]
              for k, pts in ticks.items()}
     channels, notes = [], []
@@ -1531,8 +1659,14 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
         # The axis bounds are printed round and sit on the frame edges. The fit
         # comes from OCR'd label centroids and lands ~1-2% off them, an error
         # that otherwise rides straight into the exported values. Snap the two
-        # edges onto the tick grid and re-derive the line through them.
-        _vt, _vb, _snapped = snap_axis(a + b * y0, a + b * y1)
+        # edges onto the tick grid and re-derive the line through them —
+        # onto the printed end labels where those are plainly the edges (see
+        # printed_bounds), and onto round numbers otherwise.
+        pb = printed_bounds(wide.get(key, []), a, b, y0, y1)
+        if pb:
+            _vt, _vb, _snapped = pb[0], pb[1], True
+        else:
+            _vt, _vb, _snapped = snap_axis(a + b * y0, a + b * y1)
         if _snapped and abs(y1 - y0) > 1:
             # re-derive through the snapped edges so the correction reaches the
             # exported values, not just the drawing

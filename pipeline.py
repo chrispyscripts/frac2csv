@@ -1412,6 +1412,9 @@ def _is_pressure(r, label):
 # trace stopping in mid-air. gaps.FLOOR is 2%; a pressure bled down to a
 # few hundred kPa on a 0..100 MPa axis reads a little higher than that.
 STEP_REST_FLOOR = 0.05
+# A rate or concentration gap longer than this with one end on the floor is
+# filled along the floor rather than by a straight line (see _bridge_step_gaps)
+STEP_FLOOR_GAP_S = 600
 
 
 def _bridge_step_gaps(results, notes):
@@ -1493,6 +1496,19 @@ def _bridge_step_gaps(results, notes):
                         continue
                     k = np.arange(1, g["n"] + 1) / (g["n"] + 1.0)
                     vals[a:b + 1] = x0 + (x1 - x0) * k
+                    # A rate or a concentration out of sight for more than
+                    # STEP_FLOOR_GAP_S with one end on the floor was on the
+                    # floor, under the frame's bottom rule: it does not slide
+                    # down a straight line for an hour. 00244 p82 opens on the
+                    # last stage's Btm Prop Conc falling to the floor and picks
+                    # up an hour later, and the straight line between drew the
+                    # big X Carmine flagged (#816), down from 376 kg/m3 to the
+                    # floor across 18:25. The step goes at the end that is off
+                    # the floor; a pressure keeps the line.
+                    if (g["n"] * sec > STEP_FLOOR_GAP_S and lo is not None
+                            and not _is_pressure(r, label)
+                            and (resting(x0) != resting(x1))):
+                        vals[a:b + 1] = lo
                     mark[a:b + 1] = True
                 elif g["kind"] == gaps.TRAIL:
                     # After the last reading, to where the chart's ink ends.
@@ -2230,6 +2246,92 @@ def _stage_from_depth(results, table, tol_m=1.5):
     return took
 
 
+def _offset_well_names(results, notes, near=40.0):
+    """One name per offset well, agreed across the file.
+
+    A STEP offset chart names each neighbouring well by one letter in its
+    legend — "A Well (MPa)" — printed eight pixels tall, and a page read on
+    its own gets some of them wrong: 00269 reads its G Well as "S", 00243's
+    first offset page reads its B, H and I Wells as nothing at all. But a
+    book prints the SAME legend, the same well in the same colour, on every
+    stage, so the file as a whole knows. Group the offset curves of the file
+    by their swatch colour and axis group, let every page's reading of the
+    letter vote, and give each group the letter it carried most often (each
+    letter to one group only). A group nobody could read keeps a name by its
+    colour. Without this the same well came out as two or three channels in
+    the Lab under whichever letter each page happened to read.
+    """
+    import collections
+    import numpy as np
+    items = []
+    for r in results:
+        offs = r.pop("offset_wells", None)
+        if offs:
+            for label, info in offs.items():
+                items.append((r, label, info))
+    if not items:
+        return
+    groups = []
+    for r, label, info in items:
+        rgb = np.asarray(info.get("rgb") or (0, 0, 0), float)
+        for g in groups:
+            if (g["group"] == info.get("group")
+                    and np.linalg.norm(g["rgb"] - rgb) <= near):
+                g["members"].append((r, label))
+                break
+        else:
+            g = {"group": info.get("group"), "rgb": rgb, "members": [(r, label)],
+                 "votes": collections.Counter()}
+            groups.append(g)
+        # (glyph alone, the line, glyph settled by shape) as step1 read them.
+        # Where both are a clean letter and disagree, the line is the one to
+        # believe: 00269 reads its G, H and J Wells right in the line and as
+        # S, L and Z alone. Unless the glyph's SHAPE settled it — a bar too
+        # thin for anything but I, an S with B's straight left stroke: 00243's
+        # line reads its B Well as "S" on most pages. The glyph earns its
+        # plain vote where the line reads nothing a letter can be made of,
+        # 00243's "&" and "Cc" for A and C. A single vote is a casing legend's.
+        votes = list(info.get("votes") or ())
+        if len(votes) >= 2:
+            glyph, line = votes[0], votes[1]
+            shaped = len(votes) > 2 and bool(votes[2])
+            if glyph:
+                g["votes"][glyph] += 3 if shaped else 1
+            if line:
+                g["votes"][line] += 2
+        else:
+            for v in votes:
+                if v:
+                    g["votes"][v] += 1
+    taken = {}
+    for g in sorted(groups, key=lambda g: -sum(g["votes"].values())):
+        for letter, _n in g["votes"].most_common():
+            if letter not in taken:
+                taken[letter] = g
+                g["letter"] = letter
+                break
+    renamed = 0
+    for g in groups:
+        tail = step1.OFFSET_GROUP_LABEL.get(g["group"], "Pressure")
+        well = (g["letter"] + " Well" if g.get("letter")
+                else "Well #%02x%02x%02x" % tuple(int(c) for c in g["rgb"]))
+        new = f"{well} {tail}"
+        for r, label in g["members"]:
+            if new == label or new in (r.get("data") or {}):
+                continue
+            for key in ("data", "units", "scales", "frames", "deduced",
+                        "labels", "held_ends"):
+                d = r.get(key)
+                if isinstance(d, dict) and label in d:
+                    d[new] = d.pop(label)
+            renamed += 1
+    if renamed:
+        notes.append(f"{renamed} offset-well curve(s) renamed to the letter the "
+                     f"file's offset charts read most often for that colour — "
+                     f"the legend's one-letter well names are too small to read "
+                     f"reliably on every page")
+
+
 def _step_stage_from_depth(doc, results, notes):
     if step_summary is None or not any(
             r.get("type") == "series" and str(r.get("source") or "").startswith("STEP")
@@ -2244,6 +2346,173 @@ def _step_stage_from_depth(doc, results, notes):
     if took:
         notes.append(f"{took} STEP chart(s) numbered from the Daily Stage Summary by "
                      f"their interval's Top Depth — the header's own number did not read")
+
+
+def _summary_depths(doc):
+    """[(top depth m, stage)] off the Daily Stage Summary, or []."""
+    if step_summary is None:
+        return []
+    try:
+        table = step_summary.parse_stage_summary(doc)
+    except Exception:
+        return []
+    if not table:
+        return []
+    cols = list(table.get("columns") or [])
+    si = next((i for i, c in enumerate(cols) if _STAGE_COL.match(str(c))), None)
+    ti = next((i for i, c in enumerate(cols) if re.search(r"top\s*depth", str(c), re.I)), None)
+    if si is None or ti is None:
+        return []
+    out = []
+    for row in table.get("rows") or []:
+        if max(si, ti) < len(row):
+            try:
+                out.append((float(str(row[ti]).replace(",", "")), str(row[si]).strip()))
+            except ValueError:
+                continue
+    return out
+
+
+def _step_stage_depth_conflicts(results, notes, tol_m=1.5, doc=None):
+    """A STEP chart filed under another stage's number, put back by its depth.
+
+    The 2017 Shell books print each chart's interval as text and its
+    "Treatment N" in the picture, and the OCR reads two-digit numbers as one:
+    00243 filed the treatment charts of stages 13, 15, 21, 22, 23 and 25 as
+    "3" and those of 31-35 as "2" — so stage 12 in the Lab showed only its
+    offset chart, "missing curves" (Carmine, #819), while "3" held seven
+    different intervals. The interval is printed as text on every chart, so
+    it is the join: where the charts under one number print more than one
+    interval, each goes to the stage whose own charts print that interval and
+    no other. An interval nobody owns, between two owned stages two apart,
+    takes the number between them (00243's 2,760.86 m, between 31 and 33).
+    -> the number of charts moved."""
+    from collections import defaultdict
+    step = [r for r in results if r.get("type") == "series"
+            and str(r.get("source") or "").startswith("STEP")
+            and r["meta"].get("top_m") is not None and str(r["meta"].get("stage") or "").strip()]
+    groups = defaultdict(list)
+    for r in step:
+        groups[str(r["meta"]["stage"]).strip()].append(r)
+    same = lambda a, b: abs(a - b) <= tol_m
+    owner = []                       # (top_m, stage) of stages printing one interval
+    mixed = []
+    for st, rs in groups.items():
+        tops = [r["meta"]["top_m"] for r in rs]
+        if all(same(t, tops[0]) for t in tops):
+            owner.append((tops[0], st))
+        else:
+            mixed.append(st)
+    if not mixed:
+        return 0
+    # The Daily Stage Summary prints every stage's Top Depth, and where the
+    # book has one it settles the matter: 00248 filed its first three
+    # treatment charts as "5", stage 5's start time came with the number, and
+    # three charts claiming one clock were cut against each other — "time
+    # issues causes data to not be extracted" (Carmine, #823).
+    table = [(d, st) for d, st in (_summary_depths(doc) if doc is not None else [])
+             if str(st).strip()]
+    num = lambda st: int(st) if re.fullmatch(r"\d+", st) else None
+    moved = 0
+    for st in mixed:
+        for r in groups[st]:
+            md = r["meta"]
+            top = md["top_m"]
+            rows = [t for t in table if same(t[0], top)]
+            to = rows[0][1] if len(rows) == 1 else None
+            hit = [o for o in owner if same(o[0], top) and o[1] != st]
+            if to is None:
+                to = hit[0][1] if len(hit) == 1 else None
+            if to is None and not any(same(o[0], top) for o in owner):
+                # between two owned stages two apart, deeper one first
+                deeper = [o for o in owner if o[0] > top and num(o[1]) is not None]
+                shallower = [o for o in owner if o[0] < top and num(o[1]) is not None]
+                if deeper and shallower:
+                    a = min(deeper, key=lambda o: o[0] - top)
+                    b = max(shallower, key=lambda o: o[0] - top)
+                    if num(b[1]) - num(a[1]) == 2:
+                        to = str(num(a[1]) + 1)
+            if to is None or to == st:
+                continue
+            md["stage"] = to
+            title = str(md.get("title") or "")
+            md["title"] = re.sub(r"^Interval\s+\S+", f"Interval {to}", title) if title else f"Interval {to}"
+            md.setdefault("warnings", []).append(
+                f"filed as stage {to}, not {st}: its interval {top:g} m is stage {to}'s; "
+                f"the header's number misread")
+            moved += 1
+    if moved:
+        notes.append(f"{moved} STEP chart(s) moved to the stage their printed interval belongs "
+                     f"to — the header's stage number misread, several intervals filed under one")
+    return moved
+
+
+def _step_stage_from_order(results, notes):
+    """STEP chart pages whose stage number did not read, numbered by their place.
+
+    The pages read by OCR (00347, 00935: #810, #811) lose a stage number now
+    and then — "Interval ?" — or a digit of one: 00347 p85 read "1" between
+    stages 7 and 11. With no Daily Stage Summary to read either, those charts
+    fell into one nameless stage. But these books print one stage per page,
+    in order. Where the numbered pages either side are exactly as many stages
+    apart as they are pages apart, every page between them is the stage its
+    place says. A number that breaks the order of the numbers around it is
+    treated as unread. Whole numbers only: "1.1" / "1.2" re-treatments are
+    left as printed. -> charts numbered."""
+    step = [r for r in results if r.get("type") == "series"
+            and str(r.get("source") or "").startswith("STEP") and r.get("page") is not None]
+    if not step:
+        return 0
+    num = lambda st: int(st) if re.fullmatch(r"\d+", st) else None
+    by_page = {}
+    for r in step:
+        by_page.setdefault(r["page"], []).append(r)
+    pages = sorted(by_page)
+    label = {}
+    for p in pages:
+        sts = {str(r["meta"].get("stage") or "").strip() for r in by_page[p]}
+        label[p] = sts.pop() if len(sts) == 1 else None
+    # anchors: the longest run of numbered pages whose numbers rise with the page
+    cand = [(i, num(label[p])) for i, p in enumerate(pages)
+            if label[p] and num(label[p]) is not None]
+    best, prev = [1] * len(cand), [-1] * len(cand)
+    for a in range(len(cand)):
+        for b in range(a):
+            if (cand[b][1] - cand[a][1]) * 1 < 0 and cand[a][1] - cand[b][1] >= cand[a][0] - cand[b][0] \
+                    and best[b] + 1 > best[a]:
+                best[a], prev[a] = best[b] + 1, b
+    if not cand:
+        return 0
+    k = max(range(len(cand)), key=lambda a: best[a])
+    chain = []
+    while k >= 0:
+        chain.append(cand[k])
+        k = prev[k]
+    chain.reverse()
+    moved = 0
+    for (i1, s1), (i2, s2) in zip(chain, chain[1:]):
+        if i2 - i1 < 2 or s2 - s1 != i2 - i1:
+            continue
+        for i in range(i1 + 1, i2):
+            p = pages[i]
+            want = str(s1 + (i - i1))
+            if label[p] == want:
+                continue
+            for r in by_page[p]:
+                md = r["meta"]
+                was = str(md.get("stage") or "").strip()
+                md["stage"] = want
+                title = str(md.get("title") or "")
+                md["title"] = re.sub(r"^Interval\s+\S+", f"Interval {want}", title) if title else f"Interval {want}"
+                md.setdefault("warnings", []).append(
+                    f"numbered {want} by its place between stages {s1} and {s2} — "
+                    + (f"the header read {was}, out of order" if was else "the header's number did not read"))
+                moved += 1
+    if moved:
+        notes.append(f"{moved} STEP chart(s) numbered by their place in the book, between "
+                     f"two numbered pages exactly that many stages apart — their own "
+                     f"stage number did not read, or read out of order")
+    return moved
 
 
 def _step_clock(doc, results, notes):
@@ -3586,6 +3855,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 if c.get("ends")}
                         if held:
                             results[-1]["held_ends"] = held
+                        # an offset chart's wells, for _offset_well_names
+                        offs = {c["label"]: c["offset"] for c in chans
+                                if c.get("offset")}
+                        if offs:
+                            results[-1]["offset_wells"] = offs
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue
@@ -3815,7 +4089,10 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
         _calfrac_days(results, notes)
 
+    _offset_well_names(results, notes)
     _step_stage_from_depth(doc, results, notes)
+    _step_stage_depth_conflicts(results, notes, doc=doc)
+    _step_stage_from_order(results, notes)
     _step_clock(doc, results, notes)
     _trican_clock(doc, results, notes)
 

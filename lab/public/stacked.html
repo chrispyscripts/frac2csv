@@ -39,8 +39,11 @@
   .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
   .btn:disabled { opacity:.35; pointer-events:none; }
   .pglbl { font-size:11.5px; color:var(--mut); font-family:var(--mono); }
+  .tools select { font:inherit; font-size:12px; color:var(--ink);
+    border:1px solid var(--line); border-radius:6px; padding:2px 6px;
+    background:var(--panel); }
   .charts { padding:12px 18px 22px; }
-  .chartblock { margin-bottom:12px; }
+  .chartblock { margin-bottom:8px; }
   .chartblock.off { opacity:.42; }
   .chead { display:flex; align-items:baseline; gap:10px; margin-bottom:3px; }
   .chead .nm { font-size:13px; font-weight:600; flex-shrink:0; }
@@ -122,6 +125,14 @@ the axis the sheet prints. A printed axis is the same on every stage — a conc
 axis of 0..1000 whether the stage peaked at 950 or at 40 — so a small stage
 drawn against it sits in the bottom tenth of its row. Off, every chart is drawn
 against the axis its source page prints.">Fit to data</button>
+      <select id="rowsz" title="How tall each chart is drawn. Fit window
+sizes them so every chart on the page is in view at once, no smaller than 110
+pixels each; the others are fixed heights. 384 is the old size.">
+        <option value="fit">Height: fit window</option>
+        <option value="224">Height: small</option>
+        <option value="288">Height: medium</option>
+        <option value="384">Height: large</option>
+      </select>
       <button type="button" class="btn" id="openpdf"
               title="Open this stage's page of the source PDF">Open PDF &#8599;</button>
     </div>
@@ -162,7 +173,7 @@ const ORIGIN = (location.origin && location.origin !== "null") ? location.origin
 // so one time position is one x position all the way down the window.
 const PAD = { L: 64, R: 14, T: 10, B: 10 };
 const AXIS_H = 28;        // extra bottom room on the last chart for time labels
-const ROW_H = 384;        // css px per chart body. 256 originally, doubled to
+const ROW_H = 384;        // largest css px per chart body. 256 originally, doubled to
                           // 512 at Carmine's ask, then back a quarter to 384
                           // at his ask again: 512 reads well on one channel
                           // but pushes the next one off screen, and comparing
@@ -170,6 +181,13 @@ const ROW_H = 384;        // css px per chart body. 256 originally, doubled to
                           // still gets a quarter of its own axis range in most
                           // stages, which is why 256 was too tight — the part
                           // being read sat in a band a few dozen pixels tall
+// …and 384 times four channels, each with its filter row, is taller than a
+// screen: "reduce the stack window chart sizes a bit, right now I have to fully
+// extend the window vertically" (#829). So the default fits every chart into
+// the window, between these two, and the menu keeps the fixed sizes. A
+// four-channel stage fits a 900 px window at 114 px a chart; ten channels do
+// not fit any screen at a readable height, and scroll.
+const ROW_MIN = 110;
 const C = { grid: "#e3e5e8", axisText: "#697077", crosshair: "#b6bcc4",
             ink: "#14181d", mut: "#697077" };
 
@@ -313,6 +331,11 @@ $("fitdata").addEventListener("click", () => {
   $("fitdata").classList.toggle("on", fitData);
   applyScale();
   build();                     // the header line names the scale in use
+});
+$("rowsz").addEventListener("change", () => {
+  rowSize = $("rowsz").value;
+  localStorage.setItem("f2c.rowsz", rowSize);
+  layout();
 });
 $("interp").addEventListener("click", () => {
   interp = !interp;
@@ -509,6 +532,10 @@ let showMissing = localStorage.getItem("f2c.missing") === "1";
 // stage of the file, so the stage that peaked at a twentieth of it gets a
 // twentieth of its row (Carmine, 2026-09-13).
 let fitData = localStorage.getItem("f2c.fitdata") !== "0";
+let rowSize = localStorage.getItem("f2c.rowsz") || "fit";
+let refit = false;        // syncFiltUI: an area chip came or went
+$("rowsz").value = rowSize;
+if ($("rowsz").value !== rowSize) { rowSize = "fit"; $("rowsz").value = "fit"; }
 
 // Round a top-of-axis up to a number worth printing beside a gridline.
 function niceCeil(v) {
@@ -674,12 +701,32 @@ function headRange(c) {
 }
 
 function layout() {
+  const body = rowHeight();
   for (const b of blocks) {
-    const h = ROW_H + (b.last ? AXIS_H : 0);
+    const h = body + (b.last ? AXIS_H : 0);
     b.cv.style.height = h + "px";
     sizeCanvas(b.cv, h);
   }
   drawAll();
+}
+
+// One chart's body height: fixed, or what fits every chart in the window.
+// Fitting counts what sits around each canvas — its title line, its filter
+// row, its areas — as it is drawn now, so a chart with areas open still fits.
+function rowHeight() {
+  const fixed = parseInt(rowSize, 10);
+  if (fixed > 0) return fixed;
+  if (!blocks.length) return ROW_H;
+  const top = document.querySelector(".top").offsetHeight;
+  const host = $("charts"), cs = getComputedStyle(host);
+  let chrome = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + AXIS_H +
+               $("foot").offsetHeight;      // the hint line under the charts
+  for (const b of blocks) {
+    const ms = getComputedStyle(b.el);
+    chrome += b.el.offsetHeight - b.cv.offsetHeight + parseFloat(ms.marginBottom);
+  }
+  const room = (window.innerHeight - top - chrome) / blocks.length;
+  return Math.max(ROW_MIN, Math.min(ROW_H, Math.floor(room)));
 }
 
 // Canvas at device resolution, drawn in CSS pixels.
@@ -1152,6 +1199,7 @@ function deleteArea(key, i) {
 function syncFiltUI() {
   const s = state.filt;
   if (!s) return;
+  refit = false;
   const busy = el => el === document.activeElement;
   const setSel = (el, v) => { if (!busy(el) && el.value !== v) el.value = v; };
   const setAmt = (el, v) => { if (!busy(el) && Number(el.value) !== v) el.value = v; };
@@ -1188,7 +1236,10 @@ function syncFiltUI() {
     b.cadd.textContent = picking ? "Cancel" : "+ Add area";
     b.cv.classList.toggle("picking", !!picking);
     const areas = (ent && ent.areas) || [];
-    if (b.achips.length !== areas.length) renderAreas(b, areas);
+    if (b.achips.length !== areas.length) {
+      renderAreas(b, areas);
+      if (rowSize === "fit") refit = true;    // an area's chip takes a line
+    }
     areas.forEach((ar, i) => {
       const ch = b.achips[i];
       const aOwn = ar.use === "own";
@@ -1205,6 +1256,7 @@ function syncFiltUI() {
       ch.stat.classList.toggle("none", !!(kindOn(ar) && st && st.n && !st.changed));
     });
   }
+  if (refit && blocks.length && blocks[0].cv.style.height) layout();
 }
 
 // The Lab re-filtered the chart: new curves, same chart. Updated in place —
