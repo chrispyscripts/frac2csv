@@ -53,6 +53,15 @@ class UprightFit(unittest.TestCase):
         self.assertAlmostEqual(a + b * 351, 16.0, delta=0.5)
         self.assertAlmostEqual(a + b * 1016, 0.0, delta=0.5)
 
+    def test_one_wild_label_does_not_drag_the_fit(self):
+        # 00095 p119's clean-rate ladder, with "1678" and stray title digits
+        pts = [(20.0, 9, True), (16.0, 156, True), (12.0, 303, True), (2.0, 319, True),
+               (3.0, 330, True), (2.0, 371, True), (1678.0, 449, True), (8.0, 449, True),
+               (4.0, 596, True), (0.0, 743, True)]
+        a, b, _n = ar.fit_ticks_guarded(pts)
+        self.assertAlmostEqual(a + b * 9, 20.0, delta=0.3)
+        self.assertAlmostEqual(a + b * 743, 0.0, delta=0.3)
+
     def test_no_fit_runs_downward(self):
         pts = [(0.0, 100, True), (10.0, 200, True), (20.0, 300, True),
                (30.0, 400, True)]

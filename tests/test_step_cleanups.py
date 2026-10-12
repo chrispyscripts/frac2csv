@@ -80,6 +80,22 @@ class FringeBlips(unittest.TestCase):
         self.assertTrue(np.isfinite(out[80:84]).all())
 
 
+class SparseCurve(unittest.TestCase):
+    def test_a_curve_read_only_in_specks_is_not_dropped_as_blips(self):
+        # 00119 p183's chemical green: short runs, 5% of its chart, beside
+        # another pen's ink
+        H, W = 100, 400
+        sub = np.zeros((H, W), bool)
+        other = np.zeros((H, W), bool)
+        other[51:54, :] = True
+        py = np.full(W, np.nan)
+        for c0 in range(10, W, 40):
+            sub[50, c0:c0 + 3] = True
+            py[c0:c0 + 3] = 50.0
+        out = step1._drop_fringe_blips(py, sub, other)
+        self.assertTrue(np.array_equal(np.isfinite(out), np.isfinite(py)))
+
+
 class FloatingOrphans(unittest.TestCase):
     def setUp(self):
         self.H, self.W = 200, 200

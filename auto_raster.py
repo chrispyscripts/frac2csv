@@ -789,7 +789,17 @@ def fit_ticks_guarded(pts):
     def upright(fit):
         return fit if fit and fit[1] < 0 else None
     strict = [(v, y) for v, y, s in pts if s]
-    fit = upright(fit_ticks(strict, min_inliers=max(4, len(strict) // 2)))
+    # One wild value spoils the RANSAC tolerance, which scales with the
+    # spread of the values: 00095 p119's 0..20 clean-rate ladder came back
+    # with a "1678" among its labels, every reading fell within tolerance of
+    # every line, and the fit landed on 18..-2 — which the floor check then
+    # refused, losing the channel. A ladder spans nothing like twenty times
+    # its own median; such a value sits out the first fit, and the decimal
+    # repair below still gets it.
+    mags = [abs(v) for v, _ in strict if v]
+    med = float(np.median(mags)) if mags else 0.0
+    sane = [(v, y) for v, y in strict if not (med > 0 and abs(v) > 20 * med)]
+    fit = upright(fit_ticks(sane, min_inliers=max(4, len(sane) // 2)))
     if fit:
         return fit
     if len(strict) >= 4:

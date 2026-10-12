@@ -1073,14 +1073,27 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 # no Slurry Rate at all (Carmine, #829). Cut on the x gap
                 # between them and name each by its reach, as the untitled
                 # reading below does.
+                #
+                # The title sits just outside its OWN numbers, so the outer
+                # ladder is the one it names; only the inner one is named by
+                # its reach — and never the title's quantity again. 00095's
+                # chemical chart reads only "Clean Rate" (outer, 0..20), and
+                # its inner 0..4 L/m3 additive ladder, named "rate" by reach,
+                # won the rate slot: clean rate 1.9 where the page draws 10.
                 parts = [seg for seg in _right_columns(pts) if len(seg) >= 3]
                 if len(parts) >= 2:
-                    for seg in parts:
+                    for k, seg in enumerate(parts):
                         cal = ar.fit_ticks_guarded(seg)
                         if not cal:
                             continue
+                        if k == len(parts) - 1 and qty in ("rate", "conc"):
+                            cols.append((qty, seg))
+                            continue
                         top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
-                        cols.append(("conc" if top >= RATE_AXIS_MAX else "rate", seg))
+                        q = "conc" if top >= RATE_AXIS_MAX else "rate"
+                        if q == qty:
+                            q = "conc" if qty == "rate" else "rate"
+                        cols.append((q, seg))
                 else:
                     cols.append((qty, [(v, y, True) for v, x, y in pts]))
             lo = tx + 4
@@ -1531,10 +1544,16 @@ def _drop_fringe_blips(py, sub, other, alone=10, touch=3):
     for (i, j), c in zip(runs, cand):
         if not c:
             real[i:j + 1] = True
+    out = py.copy()
     for (i, j), c in zip(runs, cand):
         if c and not real[max(0, i - alone):min(n, j + 1 + alone)].any():
-            py[i:j + 1] = np.nan
-    return py
+            out[i:j + 1] = np.nan
+    # A curve that IS short runs — a chemical additive read in specks, 5% of
+    # its chart (00119 p183) — would be dropped whole. Blips are a few columns
+    # of a curve read elsewhere; past a third of its readings they are it.
+    if np.isfinite(out).sum() < 0.7 * fin.sum():
+        return py
+    return out
 
 
 def _drop_yellow_red_blend(masks, img, reach=2, box=None):
