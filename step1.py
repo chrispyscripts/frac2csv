@@ -82,6 +82,15 @@ def _glyph_ids(text):
     return odd > 0.4 * len(chars)
 
 
+def _outlined_charts(page):
+    """No text, and two or more chart-sized images: a chart page whose own
+    lettering is drawn as outlines (see _page_text)."""
+    try:
+        return len(_big_images(page)) >= 2
+    except Exception:
+        return False
+
+
 def _page_text(page):
     """Page text with the separators these filings actually use.
 
@@ -91,9 +100,11 @@ def _page_text(page):
     here, rather than in each caller.
 
     A text layer of glyph numbers (see _glyph_ids) is replaced by an OCR of
-    the page, cached per document by ocr_labels."""
+    the page, cached per document by ocr_labels — and so is no text layer at
+    all on a page carrying two chart images: 00349 (#811) draws every letter
+    of its Interval Summary pages as outlines."""
     text = page.get_text()
-    if _glyph_ids(text):
+    if _glyph_ids(text) or (not text.strip() and _outlined_charts(page)):
         try:
             import ocr_labels
             if ocr_labels.available():
@@ -126,7 +137,7 @@ def _detect_new(page):
     # OCR's mercy: 00745 p162 read "Interval 7" and not "Surface Chart" or
     # "LSD:". There, the interval title over two chart images is enough.
     if (len(big) >= 2 and re.search(r"Interval\s+\d+", t) is not None
-            and _glyph_ids(page.get_text())):
+            and (_glyph_ids(page.get_text()) or not page.get_text().strip())):
         return True
     # Pacific Canbriam 2020 (00322, 00337): the SAME renderer again — two
     # 989x764 chart images, the same colour key, the same stacked value axes,
@@ -1566,11 +1577,10 @@ def _drop_yellow_red_blend(masks, img, reach=2, box=None):
     and that orange was read as Btm Prop Conc: 00244 p96's orange drops to the
     floor at 11:48, and the export climbed back up the yellow's descent to
     470 kg/m3 and ran along the pair at ~300 until 12:11 (Carmine, #814).
-    An orange pixel whose neighbourhood (`reach` pixels each way) holds at
-    least as much yellow as orange is the yellow line's; the orange pen away
-    from yellow has none near it, and where it crosses the yellow line it
-    loses a pixel or two that the gap bridging covers. -> masks, those pixels
-    cleared from "orange" (in place)."""
+    An orange pixel with the yellow pen just above it and the red pen just
+    below (or the other way round) is that blend; the orange pen itself is
+    never caught between the two. -> masks, those pixels cleared from
+    "orange" (in place)."""
     if "orange" not in masks:
         return masks
     a = np.asarray(img).astype(int)
@@ -1614,15 +1624,11 @@ def _drop_yellow_red_blend(masks, img, reach=2, box=None):
             near_g |= pad[k + dy:k + dy + grn.shape[0], k + dx:k + dx + grn.shape[1]]
     yel = yel & ~near_g
 
-    def box(m):
-        # sum over a (2*reach+1)^2 window, by integral image
-        k = 2 * reach + 1
-        p = np.pad(m.astype(np.int32), reach)
-        c = p.cumsum(0).cumsum(1)
-        c = np.pad(c, ((1, 0), (1, 0)))
-        return c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]
-    ny, no = box(yel & ~org), box(org)
-    drop = org & (ny >= 3) & (ny >= no)
+    # Only orange BETWEEN the two pens goes. A rule that also dropped orange
+    # outweighed by yellow around it cut real Btm Prop Conc wherever it ran
+    # beside a yellow pen — 00227 p72 lost 13% of its curve, 00420 p135 a
+    # third — and the ghost it was written for is the sandwich alone.
+    drop = np.zeros_like(org)
     # ...and orange with yellow on one side of it and red on the other, the
     # two pressures settled side by side after the shutdown: a band of blend
     # three rows deep under a yellow line two rows thin outweighs it, so it
