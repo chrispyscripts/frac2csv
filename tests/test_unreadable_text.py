@@ -82,5 +82,32 @@ class IntervalFromSummary(unittest.TestCase):
         self.assertIsNone(self.run_with("Daily Ops\nnothing here\n"))
 
 
+class OcrdChartPage(unittest.TestCase):
+    """00347 p99 (#811): a 2017 page in an unreadable font, OCR'd. Its title
+    reads "Interval Summary" over "Treatment", the number lost, and no
+    "LSD:" line came through: the page was passed over as no chart."""
+
+    class P:
+        def get_text(self):
+            return GLYPHS
+
+    OCR = ("STEP Energy Services Interval Summary\nTreatment\n"
+           "2,188.86 m - 2,188.96 m\n60\n18\n600\n1200\n")
+
+    def detect(self, text, images=2):
+        with mock.patch.object(step1, "_big_images", return_value=[object()] * images), \
+                mock.patch.object(step1, "_page_text", return_value=text):
+            return step1._detect_new(self.P())
+
+    def test_the_summary_header_over_two_charts_is_a_chart_page(self):
+        self.assertTrue(self.detect(self.OCR))
+
+    def test_one_picture_is_not_enough(self):
+        self.assertFalse(self.detect(self.OCR, images=1))
+
+    def test_another_vendors_page_is_not(self):
+        self.assertFalse(self.detect("Interval Summary\nTreatment\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

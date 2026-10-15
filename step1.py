@@ -136,7 +136,13 @@ def _detect_new(page):
     # A page whose text is an OCR (see _glyph_ids) has the captions to the
     # OCR's mercy: 00745 p162 read "Interval 7" and not "Surface Chart" or
     # "LSD:". There, the interval title over two chart images is enough.
-    if (len(big) >= 2 and re.search(r"Interval\s+\d+", t) is not None
+    # 00347's 2017 pages title themselves "Interval Summary" over "Treatment
+    # N", and the OCR keeps the header but can lose the number: p99, p100 and
+    # p103 (stages 23, 24, 27) were passed over as no chart at all, while
+    # their neighbours got through only on an "LSD:" the OCR happened to read.
+    if (len(big) >= 2
+            and (re.search(r"Interval\s+\d+", t) is not None
+                 or ("STEP Energy Services" in t and "Interval Summary" in t))
             and (_glyph_ids(page.get_text()) or not page.get_text().strip())):
         return True
     # Pacific Canbriam 2020 (00322, 00337): the SAME renderer again — two
@@ -246,17 +252,40 @@ def composite(page):
     return np.vstack(arrs).astype(int)
 
 
-def _runs(col, minlen):
-    out, start = [], None
+def _runs(col, minlen, gap=0, trim=30):
+    """[(start, end)] of the True runs at least `minlen` long. A break of up
+    to `gap` pixels does not end a run; a piece shorter than `trim` at
+    either end of a bridged run is not part of it — the tick mark or label
+    stroke a frame rule's end sits a few pixels from (00184: bridging those
+    pushed every frame bottom 6-20 px down, onto its time labels)."""
+    pieces, start = [], None
     for y, v in enumerate(col):
         if v and start is None:
             start = y
         elif not v and start is not None:
-            if y - start >= minlen:
-                out.append((start, y))
+            pieces.append((start, y))
             start = None
-    if start is not None and len(col) - start >= minlen:
-        out.append((start, len(col)))
+    if start is not None:
+        pieces.append((start, len(col)))
+    if not gap:
+        return [(a, b) for a, b in pieces if b - a >= minlen]
+    out, group = [], []
+    for pc in pieces + [None]:
+        if pc is not None and group and pc[0] - group[-1][1] <= gap:
+            group.append(pc)
+            continue
+        if group:
+            # a short end piece a pixel or two off is the same stroke (00243
+            # p82's rule runs on 998-1025 after a 1 px break, to its floor)
+            while (len(group) > 1 and group[0][1] - group[0][0] < trim
+                   and group[1][0] - group[0][1] > 2):
+                group.pop(0)
+            while (len(group) > 1 and group[-1][1] - group[-1][0] < trim
+                   and group[-1][0] - group[-2][1] > 2):
+                group.pop()
+            if group[-1][1] - group[0][0] >= minlen:
+                out.append((group[0][0], group[-1][1]))
+        group = [pc] if pc is not None else []
     return out
 
 
@@ -360,8 +389,52 @@ def find_charts(img):
         if any(_covered(b, o) for o in out):
             continue
         out.append(b)
-    out.sort(key=lambda b: b[1])
+    # grown, two pieces of one broken frame (00269 p35) become the same box
+    grown = []
+    for b in sorted((_whole_rules(dark, b) for b in out),
+                    key=lambda b: b[1] - b[3]):
+        if not any(_covered(b, o) for o in grown):
+            grown.append(b)
+    out = sorted(grown, key=lambda b: b[1])
     return out
+
+
+def _whole_rules(dark, box, gap=8, agree=12):
+    """A box grown to the full length of its own side rules, where they are
+    printed broken.
+
+    A rule printed barely darker than the cut-off breaks into pieces a pixel
+    or a few apart, and no piece is long enough alone: 00269 p37's offset
+    chart kept only its bottom 238 px of a 606 px frame (302-421, 428-549,
+    550-669, 670-908), and every offset well above the lower third read
+    blank. Only the box's own edge columns are asked, both sides must run on
+    past the box and agree where they end, and a box only ever grows —
+    bridging every column instead pulled 00184's frames down onto their
+    time labels through a curve drawn beside the right-hand rule."""
+    x0, y0, x1, y1 = box
+    H, W = dark.shape
+
+    def side(cols):
+        best = None
+        for x in cols:
+            if not 0 <= x < W:
+                continue
+            for a, b in _runs(dark[:, x], (y1 - y0) // 2, gap=gap):
+                if a <= y1 and b >= y0 and (best is None or b - a > best[1] - best[0]):
+                    best = (a, b)
+        return best
+
+    left = side((x0, x0 + 1, x0 + 2))
+    right = side((x1 - 2, x1 - 1, x1))
+    if left is None or right is None:
+        return box
+    top = max(left[0], right[0])
+    bottom = min(left[1], right[1])
+    if abs(left[0] - right[0]) <= agree and top < y0 - agree:
+        y0 = top
+    if abs(left[1] - right[1]) <= agree and bottom > y1 + agree:
+        y1 = bottom
+    return (x0, y0, x1, y1)
 
 
 def _xspan_overlap(xs_a, xs_b):
@@ -504,6 +577,23 @@ NEW_SURFACE = {"red": ("Surface Pressure", "MPa", "pressure"),
 _OFFSET_WELL = re.compile(r"\b([A-Z0-9])\1?\s*W\s*[eo]\s*[l1I|]{2}\s+Casing\s+Pres",
                           re.IGNORECASE)        # "EE Well": a doubled letter
 _WELL_LETTER = {"0": "O", "1": "I", "8": "B", "5": "S", "2": "Z", "6": "G"}
+
+
+_FLEET = re.compile(r"Units\s+(?:Running|Substitut)|Fleet\s+(?:Fuel|Avg|Load)|Substitution",
+                    re.IGNORECASE)
+
+
+def _fleet_legend(img, box):
+    """Does the legend over this plot name a pump fleet's quantities? An OCR
+    of the band from just above the frame to the top of the plot, where the
+    2017 books print their legend."""
+    x0, y0, x1, y1 = box
+    band = img[max(0, y0 - 80):min(y1, y0 + 120), x0:x1]
+    try:
+        text = " ".join(w[0] for w in ar.ocr_words(band, psm=6, whitelist=""))
+    except Exception:
+        return False
+    return len(_FLEET.findall(text)) >= 2
 
 
 def _offset_title(title):
@@ -3097,13 +3187,18 @@ def _inner_plot_box(img, dark_sum=450):
                 break
         else:
             groups.append({"a": a, "b": b, "xs": [x]})
+    # The top rule is checked a shade lighter: where it falls across a pixel
+    # boundary it is anti-aliased over two rows at no darker than (154,154,
+    # 154), and 00935 p47 (stage 6) lost its plot box, and with it the stage,
+    # to a sum of 462.
+    rule = np.asarray(img).sum(axis=2) < dark_sum + 60
     best = None
     for g in groups:
         x0, x1 = min(g["xs"]), max(g["xs"])
         if x1 - x0 < W * 0.4:
             continue
         a, b = g["a"], g["b"]
-        ruled = lambda y: dark[max(0, y - 2):y + 3, x0:x1 + 1].any(axis=0).mean() >= 0.8
+        ruled = lambda y: rule[max(0, y - 2):y + 3, x0:x1 + 1].any(axis=0).mean() >= 0.8
         if not (ruled(a) and ruled(b)):
             continue
         area = (x1 - x0) * (b - a)
@@ -3138,6 +3233,15 @@ def _extract_flattened(page, img, sample_sec=1.0):
             text = "\n".join(t for _r, t in lines)
     except Exception:
         text = ""
+    # The title and interval sit in the band over the plot, and an OCR of
+    # that band alone reads them where the whole page's does not: 00935 p45,
+    # p49, p51 and p53 lost "Interval 5" .. "Interval 9" and their depths
+    # in the page's OCR, and every one reads cleanly here.
+    try:
+        band = img[max(0, box[1] - 330):box[1], box[0]:box[2]]
+        text = " ".join(w[0] for w in ar.ocr_words(band, psm=6, whitelist="")) + "\n" + text
+    except Exception:
+        pass
     meta = {"stage": None, "interval": "", "kind": "main", "uwi": "",
             "date": "", "clock": False}
     m = re.search(r"Interval\s+(\d+)(?:\.(\d+))?(?![\d,])", text)
@@ -3299,6 +3403,22 @@ def extract_page(page, sample_sec=1.0):
             fam in fams and (tag, fam) in SERIES_NAMES
             and not _same(SERIES_NAMES[(tag, fam)][0], nm)
             for fam, (nm, _u) in legend.items())
+        # The 2017 dual-fuel books (00184-00186) print a FLEET chart under the
+        # "Offset Analysis" bar: surface pressure in red, and pump units
+        # running, fleet fuel rate, load and diesel substitution. No legend
+        # name matches, so the colour table named its green — the fleet's
+        # substitution % — Prop Conc, filed under the stage beside its real
+        # one. Only the red, as its legend says, keeps a treatment name.
+        if not legend and tag == "t" and _fleet_legend(img, box):
+            for c in chans:
+                if c["key"].replace("series-", "").rstrip("2") == "red":
+                    c["label"], c["unit"] = "Surface Pressure", "MPa"
+            info.setdefault("notes", []).append(
+                "a fleet chart (pump units, fuel rate, substitution): its curves "
+                "other than the surface pressure are not treatment channels and "
+                "keep their colour names")
+            out.append((tag, samples, chans, info))
+            continue
         for c in chans:
             fam = c["key"].replace("series-", "").rstrip("2")
             if fam in legend and legend[fam][0]:

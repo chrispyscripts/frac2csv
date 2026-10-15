@@ -9,6 +9,7 @@ p92 (#826) exported F Well's casing pressure as "Prop Conc" and E Well's as
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -118,6 +119,27 @@ class WellLetters(unittest.TestCase):
         self.assertEqual(m.group(1), "E")
         m = step1._OFFSET_WELL.search("— 0 Well Casing Pressure (MPa)")
         self.assertEqual(step1._WELL_LETTER.get(m.group(1), m.group(1)), "O")
+
+
+class FleetChart(unittest.TestCase):
+    """00185 p47 (2017, dual fuel): under the "Offset Analysis" bar, a fleet
+    chart. Its green is the fleet's diesel substitution, and the colour table
+    named it Prop Conc, beside stage 11's real treatment chart."""
+
+    LEGEND = ("Surface Pressure (MPa) Slurry Rate (m?/min Amount of Units Running "
+              "Amount of Units Substituting Fleet Fuel Rate L/HR "
+              "Fleet Avg Substitution % (%) Fleet Avg Load % (%)")
+
+    def fleet(self, text):
+        with mock.patch.object(step1.ar, "ocr_words", return_value=[(w,) for w in text.split()]):
+            return step1._fleet_legend(np.zeros((400, 400, 3), np.uint8), (10, 100, 390, 390))
+
+    def test_a_fleet_legend_is_a_fleet_chart(self):
+        self.assertTrue(self.fleet(self.LEGEND))
+
+    def test_a_treatment_legend_is_not(self):
+        self.assertFalse(self.fleet("Surface Pressure (MPa) Slurry Rate (m3/min) "
+                                    "Prop Conc (kg/m3) Btm Prop Conc (kg/m3)"))
 
 
 if __name__ == "__main__":
