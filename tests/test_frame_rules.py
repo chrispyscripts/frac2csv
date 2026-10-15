@@ -53,6 +53,21 @@ class BrokenRule(unittest.TestCase):
         img[1362:2062, [158, 159, 1690, 1691]] = 82
         self.assertEqual(len(step1.find_charts(img)), 2)
 
+    def test_a_box_does_not_grow_over_the_chart_above_it(self):
+        # 00935's flattened page as the tiled reader sees it: a brown panel
+        # whose lower box could run up the panel's border over the plot
+        img = np.full((2550, 3300, 3), 255, np.uint8)
+        for y in range(262, 1983, 202):              # the border above: pieces
+            img[y:min(y + 200, 1983), [177, 178, 3140, 3141]] = (120, 60, 30)
+        img[1986:2399, [177, 178, 3140, 3141]] = (120, 60, 30)
+        img[1983:1986, 177:3142] = (120, 60, 30)
+        img[2396:2399, 177:3142] = (120, 60, 30)
+        img[573:1736, [382, 383, 2700, 2701]] = 60
+        img[573:576, 382:2702] = 60
+        img[1733:1736, 382:2702] = 60
+        boxes = step1.find_charts(img)
+        self.assertTrue(any(abs(b[0] - 382) < 6 and abs(b[1] - 573) < 6 for b in boxes), boxes)
+
     def test_a_whole_frame_is_not_moved(self):
         img = page({x: [(302, 908)] for x in (158, 159, 1690, 1691)})
         img[1000:1012, 1600] = 82                       # a tick below it

@@ -389,10 +389,24 @@ def find_charts(img):
         if any(_covered(b, o) for o in out):
             continue
         out.append(b)
-    # grown, two pieces of one broken frame (00269 p35) become the same box
+    # Grown, two pieces of one broken frame become the same box: 00269 p35's
+    # halves, as wide as each other, and 00053 p184's and 00182 p217's
+    # fragments, which share their chart's rows. A box may not grow over
+    # another chart, though — one that shares none of its rows and is not as
+    # wide: on 00935's flattened pages the panel's lower box ran up the
+    # panel's own border and swallowed the plot above it.
+    def other_chart(o, b):
+        apart = o[3] <= b[1] or o[1] >= b[3]
+        same_width = abs(o[0] - b[0]) <= W * 0.02 and abs(o[2] - b[2]) <= W * 0.02
+        return apart and not same_width
+
+    def grow(b):
+        g = _whole_rules(dark, b)
+        if g != b and any(o != b and _covered(o, g) and other_chart(o, b) for o in out):
+            return b
+        return g
     grown = []
-    for b in sorted((_whole_rules(dark, b) for b in out),
-                    key=lambda b: b[1] - b[3]):
+    for b in sorted((grow(b) for b in out), key=lambda b: b[1] - b[3]):
         if not any(_covered(b, o) for o in grown):
             grown.append(b)
     out = sorted(grown, key=lambda b: b[1])
