@@ -39,6 +39,29 @@
   <div class="ver"><a href="https://frac2csv-web.vercel.app/map.html">Western Canada well map</a></div>
 
   <div class="notes">
+    <h2>v1.11.49</h2>
+    <ul>
+      <li><b>STEP offset charts are read in full.</b> The neighbouring wells&rsquo;
+        pressures on the 2017 Shell offset charts are read against their own
+        axes and named from the chart&rsquo;s legend (&ldquo;A Well Offset
+        Pressure&rdquo;, &ldquo;F Well Casing Pressure&rdquo;), instead of being
+        dropped or exported under treatment names</li>
+      <li><b>Charts filed under the wrong stage go back to their own.</b> Where the
+        stage number misreads, a chart is put back by the interval it prints
+        (00243 stage 12, 00248 stages 1-3)</li>
+      <li><b>Rate read on a 0..5400 axis is fixed</b> (00248 stages 35 and 46),
+        and the coil fluid rate is named</li>
+      <li><b>00244, 01289:</b> spikes, ghost conc, long slants and a missed
+        pressure dip fixed; Prop Conc holds under Btm Prop Conc where the page
+        draws one over the other</li>
+      <li><b>Filings that read nothing now read:</b> 00745-00747, 00935, 00347,
+        and 00570&rsquo;s interval numbers</li>
+      <li><b>Stacked view fits the window.</b> A Height menu, with Fit window as
+        the default</li>
+      <li><b>Which templates this release touches:</b> STEP (raster), and the
+        Schlumberger PRC plot where the interval is unnumbered</li>
+    </ul>
+
     <h2>v1.11.48</h2>
     <ul>
       <li><b>Stacked view: filters apply while the Lab window is out of
