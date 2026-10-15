@@ -1695,16 +1695,19 @@ def _yellow_pen(img, masks, box):
 
 
 def _drop_on_yellow(py, yel, pen, near=2):
-    """Btm Prop Conc readings that sit ON the yellow pen's line.
+    """Btm Prop Conc readings that are the yellow pen's line, not the orange.
 
-    The yellow coil pressure's soft edge reads as orange, and where the
-    orange curve is not there — after 00244 p96's job, the yellow falling
-    away from the red — that edge was the only "orange" in the column: the
-    export climbed the yellow's descent to 470 kg/m3 (Carmine, #816). A
-    reading within `near` rows of yellow ink in its own column is dropped —
-    unless the orange PEN itself is there too, its own colour (`pen`) and not
-    the yellow's edge: 00420 p135's real Btm Prop Conc runs along its yellow
-    Well 3 pressure for five minutes at 550 kg/m3, drawn over it."""
+    The yellow coil pressure reads as orange along its soft edge, and in a
+    column where the orange curve is not that is the only "orange" there:
+    after 00244 p96's job the export climbed the yellow's descent to 470
+    kg/m3 (Carmine, #816), and 00227 p76 carried a Btm Prop Conc of 500 for
+    fifteen minutes before the job had pumped any sand — the yellow line at
+    50 MPa, read off the orange mask. A reading within `near` rows of yellow
+    ink in its own column is dropped, unless the orange pen's own colour
+    (`pen`) is there too: 00420 p135's real Btm Prop Conc rides its yellow
+    Well 3 pressure for five minutes at 550 kg/m3, drawn over it. A real
+    curve crossing the yellow line loses a few columns that the gap bridging
+    fills from either side."""
     py = np.array(py, float)
     for c in np.flatnonzero(np.isfinite(py)):
         r0 = int(round(py[c]))
