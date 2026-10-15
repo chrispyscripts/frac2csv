@@ -774,7 +774,7 @@ def plausible_floor_axis(v0, v1):
     return lo >= -0.05 * span
 
 
-def fit_ticks_guarded(pts):
+def fit_ticks_guarded(pts, tenths=False):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
     can't masquerade as another's.
@@ -800,6 +800,24 @@ def fit_ticks_guarded(pts):
     med = float(np.median(mags)) if mags else 0.0
     sane = [(v, y) for v, y in strict if not (med > 0 and abs(v) > 20 * med)]
     fit = upright(fit_ticks(sane, min_inliers=max(4, len(sane) // 2)))
+    # A ladder read twice can come back with one label both with its decimal
+    # point and without: 00182 p218's rate axis (0, 2.5, 5, 7.5, 10) read as
+    # 0, 2.5 AND 25 at one height, 5, 75 and 100 — and the slipped labels
+    # make a straight 0..100 ladder of their own that outvotes the true one,
+    # so the slurry rate went unread (no rate reaches 100). Losing a point is
+    # what OCR does; inventing one it does not. Where one height carries a
+    # value and ten times it, every label is also offered at a tenth, and the
+    # line that explains more of them is the axis. Only on request
+    # (tenths=True): STEP asks it of a rate axis the numbers would otherwise
+    # refuse, because a pair 20 / 2 is as often a dropped zero as a dropped
+    # point, and offered everywhere it read 00095's 0..20 clean rate as 0..2.
+    slipped = tenths and any(v2 and abs(v1 - 10 * v2) <= 1e-6 * abs(v1) and abs(y1 - y2) <= 3
+                  for v1, y1 in strict for v2, y2 in strict)
+    if slipped:
+        offered = list(sane) + [(v / 10, y) for v, y in sane if v]
+        tenth = upright(fit_ticks(offered, min_inliers=max(4, len(sane) // 2)))
+        if tenth and (not fit or tenth[2] > fit[2]):
+            return tenth
     if fit:
         return fit
     if len(strict) >= 4:

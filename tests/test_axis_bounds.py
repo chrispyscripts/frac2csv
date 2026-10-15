@@ -62,6 +62,25 @@ class UprightFit(unittest.TestCase):
         self.assertAlmostEqual(a + b * 9, 20.0, delta=0.3)
         self.assertAlmostEqual(a + b * 743, 0.0, delta=0.3)
 
+    def test_a_label_read_with_and_without_its_point_settles_the_ladder(self):
+        # 00182 p218's rate ladder, 0 / 2.5 / 5 / 7.5 / 10, read twice: the
+        # slipped labels make a straight 0..100 ladder of their own
+        pts = [(75, 327, True), (5, 446, True), (25, 564, True), (0, 683, True),
+               (75, 327, True), (5, 446, True), (2.5, 564, True), (0, 683, True),
+               (100, 208, True), (100, 208, True)]
+        a, b, _n = ar.fit_ticks_guarded(pts, tenths=True)
+        self.assertAlmostEqual(a + b * 208, 10.0, delta=0.1)
+        self.assertAlmostEqual(a + b * 683, 0.0, delta=0.1)
+        # only the STEP reader asks; the others keep the fit they had
+        a, b, _n = ar.fit_ticks_guarded(pts)
+        self.assertAlmostEqual(a + b * 208, 100.0, delta=1.0)
+
+    def test_a_clean_ladder_is_not_shrunk(self):
+        pts = [(100, 208, True), (75, 327, True), (50, 446, True), (25, 564, True),
+               (0, 683, True)]
+        a, b, _n = ar.fit_ticks_guarded(pts, tenths=True)
+        self.assertAlmostEqual(a + b * 208, 100.0, delta=0.5)
+
     def test_no_fit_runs_downward(self):
         pts = [(0.0, 100, True), (10.0, 200, True), (20.0, 300, True),
                (30.0, 400, True)]

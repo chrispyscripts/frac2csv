@@ -1304,9 +1304,19 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # Asymmetric on purpose: a chemical chart's Chem Conc axis legitimately
         # tops out at 5 or 10, so a small conc axis is NOT suspicious.
         if cal and qty == "rate":
-            top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
-            if top >= RATE_AXIS_MAX:
-                return
+            reach = lambda c: max(abs(c[0] + c[1] * y0), abs(c[0] + c[1] * y1))
+            if reach(cal) >= RATE_AXIS_MAX:
+                # Unless the ladder lost its decimal points: 00182 p218's
+                # 0 / 2.5 / 5 / 7.5 / 10 read as 0, 2.5 AND 25 at one height,
+                # 5, 75 and 100 — a straight 0..100 ladder of its own, and the
+                # slurry rate went unread. Offered at a tenth, those labels
+                # make the rate axis the title says this is. Only here: where
+                # no slip is in doubt, a pair 20 / 2 is as often a dropped 0
+                # (00095's 0..20 clean rate, 00420's conc).
+                alt = ar.fit_ticks_guarded(seg, tenths=True)
+                if not alt or reach(alt) >= RATE_AXIS_MAX:
+                    return
+                cal = alt
         if cal and (fits.get(qty) is None or cal[2] > fits[qty][2]):
             fits[qty] = cal
 
