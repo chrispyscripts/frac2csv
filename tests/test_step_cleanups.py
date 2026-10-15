@@ -182,6 +182,30 @@ class YellowPenFlank(unittest.TestCase):
         self.assertFalse(out["orange"][83].any())
 
 
+class OnTheYellowLine(unittest.TestCase):
+    def test_a_reading_on_the_yellow_edge_alone_goes(self):
+        # 00244 p96 after the job: only the yellow's soft edge reads orange
+        yel = np.zeros((100, 50), bool); yel[40:42, :] = True
+        pen = np.zeros((100, 50), bool)
+        py = np.full(50, 42.0)
+        out = step1._drop_on_yellow(py, yel, pen)
+        self.assertTrue(np.isnan(out).all())
+
+    def test_the_pen_drawn_along_the_yellow_line_stays(self):
+        # 00420 p135: Btm Prop Conc rides its yellow Well 3 pressure
+        yel = np.zeros((100, 50), bool); yel[40:42, :] = True
+        pen = np.zeros((100, 50), bool); pen[42:44, :] = True
+        py = np.full(50, 42.5)
+        out = step1._drop_on_yellow(py, yel, pen)
+        self.assertTrue(np.isfinite(out).all())
+
+    def test_readings_away_from_the_yellow_line_stay(self):
+        yel = np.zeros((100, 50), bool); yel[40:42, :] = True
+        pen = np.zeros((100, 50), bool)
+        py = np.full(50, 70.0)
+        self.assertTrue(np.isfinite(step1._drop_on_yellow(py, yel, pen)).all())
+
+
 class BracketedDip(unittest.TestCase):
     """01289 p202: 44 -> 27 MPa, 90 s flat, and back (#829)."""
 

@@ -1261,6 +1261,8 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # there is no coil pressure to blend into it (00119 p167)
     masks = (_drop_yellow_red_blend(dict(raw_masks), img, box=(x0, y0, x1, y1))
              if lqty == "pressure" else dict(raw_masks))
+    yel_pen = (_yellow_pen(img, raw_masks, (x0, y0, x1, y1))
+               if lqty == "pressure" else None)
     samples = np.arange(int(n / sample_sec)) * sample_sec
     channels = []
     seen = set()
@@ -1298,6 +1300,12 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             if f2 != fam:
                 other |= m2[y0:y1, x0:x1]
         py = _drop_fringe_blips(py, sub, other)
+        if base == "orange" and yel_pen is not None:
+            # the orange pen's own ink: clearly orange, or a tan pen's
+            # (00227: (224,197,151)) — not the yellow's soft edge (250,203,99)
+            cr = np.asarray(img)[y0:y1, x0:x1].astype(int)
+            pen = sub & (((cr[..., 0] - cr[..., 1]) >= 55) | (cr[..., 2] >= 140))
+            py = _drop_on_yellow(py, yel_pen, pen)
         py = _drop_floating_orphans(py, sub)
         seen.add(name)
         traced[base] = {"fam": fam, "name": name, "unit": unit, "cal": cal,
@@ -1624,10 +1632,11 @@ def _drop_yellow_red_blend(masks, img, reach=2, box=None):
             near_g |= pad[k + dy:k + dy + grn.shape[0], k + dx:k + dx + grn.shape[1]]
     yel = yel & ~near_g
 
-    # Only orange BETWEEN the two pens goes. A rule that also dropped orange
-    # outweighed by yellow around it cut real Btm Prop Conc wherever it ran
-    # beside a yellow pen — 00227 p72 lost 13% of its curve, 00420 p135 a
-    # third — and the ghost it was written for is the sandwich alone.
+    # Only orange BETWEEN the two pens goes here. A rule that also dropped
+    # orange outweighed by yellow around it cut real Btm Prop Conc wherever it
+    # ran beside a yellow pen — 00227 p72 lost 13% of its curve, 00420 p135 a
+    # third. What is left of the ghost is ON the yellow line, and is read off
+    # the trace instead (_drop_on_yellow).
     drop = np.zeros_like(org)
     # ...and orange with yellow on one side of it and red on the other, the
     # two pressures settled side by side after the shutdown: a band of blend
@@ -1659,6 +1668,50 @@ def _drop_yellow_red_blend(masks, img, reach=2, box=None):
     if drop.any():
         masks["orange"] = org & ~drop
     return masks
+
+
+def _yellow_pen(img, masks, box):
+    """The page's yellow PEN, strongly coloured and clear of green and orange,
+    as a plot-cropped mask — or None where the page draws no yellow pen (less
+    than a fifth of the plot's width carries it). See _drop_yellow_red_blend."""
+    a = np.asarray(img).astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    yel = (r > 200) & (g > 200) & (b < 120) & (np.abs(r - g) < 45)
+    near = np.zeros_like(yel)
+    for fam in ("orange", "green"):
+        if fam in masks:
+            near |= masks[fam]
+    k = 2
+    pad = np.pad(near, k)
+    grown = np.zeros_like(near)
+    for dy in range(-k, k + 1):
+        for dx in range(-k, k + 1):
+            grown |= pad[k + dy:k + dy + near.shape[0], k + dx:k + dx + near.shape[1]]
+    x0, y0, x1, y1 = box
+    pure = (yel & ~grown)[y0:y1, x0:x1]
+    if pure.size == 0 or float((pure.sum(axis=0) >= 2).mean()) < 0.2:
+        return None
+    return yel[y0:y1, x0:x1]
+
+
+def _drop_on_yellow(py, yel, pen, near=2):
+    """Btm Prop Conc readings that sit ON the yellow pen's line.
+
+    The yellow coil pressure's soft edge reads as orange, and where the
+    orange curve is not there — after 00244 p96's job, the yellow falling
+    away from the red — that edge was the only "orange" in the column: the
+    export climbed the yellow's descent to 470 kg/m3 (Carmine, #816). A
+    reading within `near` rows of yellow ink in its own column is dropped —
+    unless the orange PEN itself is there too, its own colour (`pen`) and not
+    the yellow's edge: 00420 p135's real Btm Prop Conc runs along its yellow
+    Well 3 pressure for five minutes at 550 kg/m3, drawn over it."""
+    py = np.array(py, float)
+    for c in np.flatnonzero(np.isfinite(py)):
+        r0 = int(round(py[c]))
+        a, b = max(0, r0 - near), r0 + near + 1
+        if yel[a:b, c].any() and not pen[a:b, c].any():
+            py[c] = np.nan
+    return py
 
 
 def _drop_floating_orphans(py, sub, max_len=8, gap=6, look=30):
