@@ -1396,6 +1396,14 @@ setDropMode("pdf");
 
 function enqueue(files) {
   const refused = [];
+  // A report's fix file — "<report>.fix.txt", the user's stage numbers, dates
+  // and times for what the report does not print (#813) — travels with the
+  // report dropped beside it. It is not a file list.
+  const fixes = {};
+  for (const f of files) {
+    const n = f.name.toLowerCase();
+    if (dropMode !== "csv" && n.endsWith(".fix.txt")) fixes[n.slice(0, -8)] = f;
+  }
   for (const f of files) {
     const n = f.name.toLowerCase();
     if (dropMode === "csv") {
@@ -1403,11 +1411,17 @@ function enqueue(files) {
       else refused.push(f.name);
       continue;
     }
+    if (n.endsWith(".fix.txt")) {
+      if (![...files].some(g => g.name.toLowerCase() === n.slice(0, -8) + ".pdf"))
+        refused.push(f.name + " (drop it together with its report)");
+      continue;
+    }
     if (n.endsWith(".txt")) { loadManifest(f); continue; }
     if (!n.endsWith(".pdf")) { refused.push(f.name); continue; }
     const q = makeFileEntry(f.name);
+    const fix = fixes[n.slice(0, -4)] || null;
     workStarted();
-    busy = busy.then(() => handleFile(f, q))
+    busy = busy.then(() => handleFile(f, q, undefined, fix))
                .catch(() => {})
                .finally(workFinished);
   }
@@ -1679,8 +1693,9 @@ async function splitPdf(bytes, q) {
   return chunks;
 }
 
-async function handleFile(f, q, saveDir) {
+async function handleFile(f, q, saveDir, fixFile) {
   try {
+    const fixText = fixFile ? await fixFile.text() : "";
     q._pdfFile = f;      // kept for the "Original chart" view (re-read lazily)
     const bytes = new Uint8Array(await f.arrayBuffer());
     let chunks = [{ bytes, start: 1 }];
@@ -1713,7 +1728,7 @@ async function handleFile(f, q, saveDir) {
       try {
         resp = await fetch("/api/extract", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: f.name, job,
+          body: JSON.stringify({ filename: f.name, job, fix: fixText,
                                  data: await b64(chunks[i].bytes) }),
         });
       } finally {

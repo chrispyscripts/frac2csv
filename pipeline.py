@@ -17,6 +17,7 @@ Result shapes (list of dicts):
   {"type": "table", "title": str, "well": str, "uwi": str, "formation": str,
    "columns": [...], "rows": [[...]], "source": str}
 """
+import os
 import re
 from datetime import datetime, timedelta
 
@@ -2344,6 +2345,160 @@ def _stage_from_depth(results, table, tol_m=1.5):
     return took
 
 
+# The user's own answers for a report that does not print them: one line per
+# stage, "stage, date, time, page" — see _apply_fix_file.
+_FIX_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%b %d %Y",
+                     "%b %d, %Y", "%d/%m/%Y")
+
+
+def fix_file_path(doc):
+    """The fix file beside this report, or None: "<report>.fix.txt" in the
+    report's own folder."""
+    return fix_file_for_path(getattr(doc, "name", "") or "")
+
+
+def fix_file_for_path(path):
+    """fix_file_path for a report given by its path (the desktop app's
+    result cache keys on it too, so editing the file re-reads the report)."""
+    if not path or not os.path.isfile(path):
+        return None
+    stem = os.path.splitext(path)[0]
+    for cand in (stem + ".fix.txt", stem + ".FIX.txt", path + ".fix.txt"):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def parse_fix_file(text):
+    """A fix file's text -> ([{stage, date, time, page}], [problems]).
+
+    One line per stage, the fields separated by commas (or tabs):
+
+        # stage, date, time, page
+        1, 2018-09-03, 00:14
+        2, 2018-09-03, 17:10, p154
+
+    stage  as the app names it: "1", "12", "1.2", "3A"
+    date   2018-09-03 (also 2018/09/03, 03-Sep-2018, Sep 3 2018)
+    time   24-hour, HH:MM or HH:MM:SS: the time at the chart's left edge
+    page   optional, "p154" or "154": the PDF page that charts this stage,
+           for a page that prints no stage number of its own
+
+    Blank lines and anything after "#" are ignored. A field left empty is
+    left as the app read it."""
+    rows, problems = [], []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in re.split(r"[,\t]", line)]
+        while len(parts) < 4:
+            parts.append("")
+        stage, date_s, time_s, page_s = parts[:4]
+        row = {"stage": stage, "date": "", "time": "", "page": None}
+        if not stage:
+            problems.append(f"line {n}: no stage")
+            continue
+        if date_s:
+            for fmt in _FIX_DATE_FORMATS:
+                try:
+                    row["date"] = datetime.strptime(date_s, fmt).date().isoformat()
+                    break
+                except ValueError:
+                    pass
+            else:
+                problems.append(f"line {n}: date \"{date_s}\" not understood")
+        if time_s:
+            m = re.fullmatch(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", time_s)
+            if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
+                row["time"] = f"{int(m.group(1)):02d}:{m.group(2)}:{m.group(3) or '00'}"
+            else:
+                problems.append(f"line {n}: time \"{time_s}\" not understood")
+        if page_s:
+            m = re.fullmatch(r"(?:p|page\s*)?(\d+)", page_s, re.I)
+            if m:
+                row["page"] = int(m.group(1))
+            else:
+                problems.append(f"line {n}: page \"{page_s}\" not understood")
+        rows.append(row)
+    return rows, problems
+
+
+def _apply_fix_file(doc, results, notes, final=False, fix_text=None):
+    """The user's stage numbers, dates and times, from the fix file beside
+    the report.
+
+    Some reports do not print what the export needs: 00570 (AER Duvernay,
+    #813) prints no date anywhere, and a few files print no stage number on
+    a page or two. Carmine: "allow in edit mode to read a text file that has
+    stage number year date one line per stage or even for these odd case
+    allow the text file to even say what page". That file is
+    "<report>.fix.txt" beside the PDF (format: parse_fix_file).
+
+    Applied twice: before the stage and clock passes, so they work from the
+    user's numbers, and once more at the very end, so that no pass that
+    trusts its own reading over an empty field can undo them."""
+    if fix_text:
+        # dropped in the Lab together with the report (its upload has no
+        # folder to look in)
+        path, text = "dropped with the report", fix_text
+    else:
+        path = fix_file_path(doc)
+        if not path:
+            return 0
+        try:
+            text = open(path, encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            notes.append(f"fix file {os.path.basename(path)} could not be read — {e}")
+            return 0
+    rows, problems = parse_fix_file(text)
+    series = [r for r in results if r.get("type") == "series"]
+    paged = stamped = 0
+    for row in rows:
+        if row["page"] is not None:
+            for r in series:
+                if r.get("page") == row["page"] and str(r["meta"].get("stage") or "") != row["stage"]:
+                    md = r["meta"]
+                    md["stage"] = row["stage"]
+                    title = str(md.get("title") or "")
+                    md["title"] = (re.sub(r"\b(Interval|Stage|Zone)\s+\S+", rf"\g<1> {row['stage']}", title, count=1)
+                                   if re.search(r"\b(Interval|Stage|Zone)\s", title) else f"Stage {row['stage']}")
+                    md.setdefault("warnings", []).append(
+                        f"stage {row['stage']}: from the fix file (page {row['page']})")
+                    paged += 1
+    for row in rows:
+        if not (row["date"] or row["time"]):
+            continue
+        for r in series:
+            md = r["meta"]
+            if str(md.get("stage") or "").strip() != row["stage"]:
+                continue
+            changed = False
+            if row["date"] and md.get("date") != row["date"]:
+                md["date"] = row["date"]
+                changed = True
+            if row["time"] and md.get("start_time") != row["time"]:
+                md["start_time"] = row["time"]
+                md["clock_chart"] = True        # a time, not "none read"
+                changed = True
+            if changed:
+                stamped += 1
+                if not final:
+                    md.setdefault("warnings", []).append(
+                        "date/time: from the fix file")
+    if not final:
+        name = os.path.basename(path)
+        bits = []
+        if paged:
+            bits.append(f"{paged} chart(s) given their stage by page")
+        if stamped:
+            bits.append(f"{stamped} chart(s) given their date or time")
+        notes.append(f"fix file {name}: {len(rows)} line(s) read"
+                     + (f"; {', '.join(bits)}" if bits else "; nothing in this report matched it")
+                     + (f". Not understood: {'; '.join(problems[:5])}" if problems else ""))
+    return paged + stamped
+
+
 def _offset_well_names(results, notes, near=40.0):
     """One name per offset well, agreed across the file.
 
@@ -3413,7 +3568,7 @@ def _daily_ops_fill(doc, results, notes):
 
 
 def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
-                     on_page=None):
+                     on_page=None, fix_text=None):
     """Run every template over `doc` (a fitz.Document). -> (results, notes).
 
     `filename` (when known) supplies a chunk-independent year hint for chart
@@ -4199,6 +4354,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         _calfrac_days(results, notes)
 
     _offset_well_names(results, notes)
+    _apply_fix_file(doc, results, notes, fix_text=fix_text)
     _step_stage_from_depth(doc, results, notes)
     _step_stage_depth_conflicts(results, notes, doc=doc)
     _step_stage_from_order(results, notes)
@@ -4654,4 +4810,5 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     _join_stage_depth(results)
     _join_stage_meta(results)
     _say_no_tables(doc, results, notes, npages)
+    _apply_fix_file(doc, results, notes, final=True, fix_text=fix_text)
     return results, notes

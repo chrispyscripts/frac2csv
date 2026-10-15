@@ -242,6 +242,12 @@ def code_stamp():
 def cache_key(path):
     st = os.stat(path)
     raw = f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}|{code_stamp()}"
+    # the user's fix file beside the report changes the result as much as
+    # the report does (pipeline._apply_fix_file)
+    fix = pipeline.fix_file_for_path(path)
+    if fix:
+        fs = os.stat(fix)
+        raw += f"|fix:{fs.st_size}|{int(fs.st_mtime)}"
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
 
 
@@ -556,10 +562,10 @@ def serialize(results, notes):
     return stages, tables, notes, summary
 
 
-def process_bytes(data, filename, job=""):
+def process_bytes(data, filename, job="", fix_text=None):
     doc = fitz.open(stream=data, filetype="pdf")
     results, notes = pipeline.extract_document(doc, filename=filename,
-        on_page=lambda d, t: _job_set(job, d, t))
+        on_page=lambda d, t: _job_set(job, d, t), fix_text=fix_text or None)
     doc.close()
     return serialize(results, notes)
 
@@ -825,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
                 with _READ_GATE:
                     stages, tables, notes, summary = process_bytes(
                         data, req.get("filename", "file.pdf"),
-                        str(req.get("job", "")))
+                        str(req.get("job", "")), fix_text=req.get("fix") or None)
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "summary": summary})
             if self.path == "/api/manifest":
