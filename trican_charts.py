@@ -94,8 +94,126 @@ def detect(page):
                for im in page.get_images(full=True))
 
 
-def page_meta(page):
-    text = page.get_text()
+def scanned_title(page, band=0.2, dpi=110):
+    """The title of a Trican page printed as ONE picture -> its OCR, or None.
+
+    00327 (AER Duvernay, #807) files its whole post-frac summary as scans: a
+    stage page per stage, "HVFR Stage 1: 4998.4 - 5013.8 m / PRESSURES,
+    RATES, AND CONCENTRATIONS" over two plots, and no text layer at all —
+    detect() reads the title from the text layer, found none on 105 pages,
+    and the file reported no extractable data. The scanned-page path below
+    reads these plots once it is handed the page; this is what hands it
+    over.
+
+    Only for a page with no text, a single image filling it, and a plot
+    frame on that image — so an unrecognised scan costs a frame search, and
+    only a page that looks like a chart pays for the OCR of its top band.
+    Cached per document."""
+    doc = getattr(page, "parent", None)
+    store = getattr(doc, "_trican_scan_titles", None) if doc is not None else None
+    if store is None and doc is not None:
+        store = {}
+        try:
+            doc._trican_scan_titles = store
+        except Exception:
+            store = None
+    if store is not None and page.number in store:
+        return store[page.number]
+    out = None
+    try:
+        if not page.get_text().strip():
+            ims = page.get_images(full=True)
+            if len(ims) == 1 and ims[0][2] >= 700 and ims[0][3] >= 700:
+                rects = page.get_image_rects(ims[0][0])
+                pr = page.rect
+                if rects and rects[0].width * rects[0].height >= 0.7 * pr.width * pr.height:
+                    arr = np.asarray(_pixmap(page.parent, ims[0])).astype(int)
+                    if scan_frames(arr):
+                        pix = page.get_pixmap(dpi=dpi, clip=fitz.Rect(
+                            0, 0, pr.width, pr.height * band))
+                        top = np.frombuffer(pix.samples, np.uint8).reshape(
+                            pix.height, pix.width, pix.n)[..., :3]
+                        out = ar.ocr_line(np.ascontiguousarray(top), psm=6) or None
+    except Exception:
+        out = None
+    if store is not None:
+        store[page.number] = out
+    return out
+
+
+def detect_scanned(page):
+    """A scanned Trican stage page (see scanned_title) -> its title's OCR,
+    which stands in for the text layer; or None. Only a STAGE page: the
+    whole-job CONTINUOUS pages are re-plots and stay out (see
+    pipeline._trican_continuous)."""
+    t = scanned_title(page)
+    if not t:
+        return None
+    up = t.upper()
+    if not re.search(r"PRESSURES,?\s+RATES", up) or "CONTINUOUS" in up:
+        return None
+    return t
+
+
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"])}
+# "Start Time: Nov 08, 04:52 PM" as the OCR gives it: "Nov 08, 0452 PM",
+# "Nov 09, 09 35 AM", "Nov 10,0903 AM", "Nov 12, 1134PM"
+_SCAN_START = re.compile(r"Start\s*Time:?\s*([A-Za-z]{3})\s*(\d{1,2})\s*,\s*"
+                         r"(\d{1,2})\s*:?\s*(\d{2})\s*([AP])\.?\s*M", re.I)
+# a section cover: "ARTIS HZ HUXLEY 100/03-29-035-24W4, STAGE 2-7, NOV 9, 2019"
+_SCAN_COVER = re.compile(r"STAGE\s+\d+(?:\s*-\s*\d+)?\s*,\s*([A-Za-z]{3})\s+"
+                         r"(\d{1,2})\s*,\s*(\d{4})", re.I)
+
+
+def _band_ocr(page, a, b, dpi=110):
+    pr = page.rect
+    pix = page.get_pixmap(dpi=dpi, clip=fitz.Rect(0, pr.height * a, pr.width, pr.height * b))
+    arr = np.frombuffer(pix.samples, np.uint8).reshape(pix.height, pix.width, pix.n)[..., :3]
+    return ar.ocr_line(np.ascontiguousarray(arr), psm=6) or ""
+
+
+def scanned_sheet_clock(doc, chart_page, look_back=12):
+    """A scanned stage page's STAGE INFORMATION sheet -> {"date", "start"},
+    or None. The sheet is the page after the chart, its As-Pumped Start Time
+    in the OCR of its top band; the sheet prints no year, and the section's
+    cover a few pages back does ("..., STAGE 2-7, NOV 9, 2019"). The same
+    shape as trican2.stage_clock, for _trican_clock. `chart_page` 1-based."""
+    if chart_page >= doc.page_count:
+        return None
+    sheet = doc[chart_page]                      # the next page, 0-based
+    if sheet.get_text().strip():
+        return None
+    top = _band_ocr(sheet, 0.0, 0.25)
+    if "INFORMATION" not in top.upper():
+        return None
+    m = _SCAN_START.search(top)
+    if not m:
+        return None
+    mon = _MONTHS.get(m.group(1).upper())
+    day, hh, mm = int(m.group(2)), int(m.group(3)), int(m.group(4))
+    if not mon or not (1 <= day <= 31 and 1 <= hh <= 12 and mm < 60):
+        return None
+    hh = hh % 12 + (12 if m.group(5).upper() == "P" else 0)
+    year = None
+    for p in range(chart_page - 2, max(-1, chart_page - 2 - look_back), -1):
+        pg = doc[p]
+        if pg.get_text().strip():
+            continue
+        c = _SCAN_COVER.search(_band_ocr(pg, 0.35, 0.75))
+        if c:
+            year = int(c.group(3))
+            # a stage pumped in the new year under a December cover
+            if _MONTHS.get(c.group(1).upper(), mon) > mon:
+                year += 1
+            break
+    return {"date": f"{year:04d}-{mon:02d}-{day:02d}" if year else "",
+            "start": f"{hh:02d}:{mm:02d}:00"}
+
+
+def page_meta(page, text=None):
+    if text is None:
+        text = page.get_text()
     meta = {"stage": None, "uwi": "", "wa": "", "top_m": None, "base_m": None,
             "continuous": bool(re.search(r"\bCONTINUOUS\b", text))}
     m = re.search(r"\bStage\s+(\d+)\s*:\s*([\d.]+)\s*-\s*([\d.]+)\s*m", text)
@@ -998,11 +1116,12 @@ def scan_frames(img):
     return frames
 
 
-def extract_page(page, sample_sec=1.0):
-    """-> (meta, samples, channels, info)"""
+def extract_page(page, sample_sec=1.0, text=None):
+    """-> (meta, samples, channels, info). `text` stands in for the page's
+    own text layer on a scanned page (see detect_scanned)."""
     im = _main_image(page)
     img = _pixmap(page.parent, im)
-    meta = page_meta(page)
+    meta = page_meta(page, text)
     arr = np.asarray(img).astype(int)
     box = _frame_bbox(arr)
     if box is not None:

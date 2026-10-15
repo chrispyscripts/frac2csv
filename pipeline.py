@@ -1053,6 +1053,20 @@ def _trican_clock(doc, results, notes):
                      f"keep no clock — {e}")
         return
     if not clocks:
+        # A book printed as pictures (00327, #807): the sheet after each
+        # scanned stage chart, read by OCR
+        for r in tri:
+            if not str(r.get("source") or "").endswith("(raster)"):
+                continue
+            m = re.match(r"\d+", str(r["meta"].get("stage")).strip())
+            if m and int(m.group(0)) not in clocks and r.get("page"):
+                try:
+                    got = tcharts.scanned_sheet_clock(doc, r["page"])
+                except Exception:
+                    got = None
+                if got:
+                    clocks[int(m.group(0))] = got
+    if not clocks:
         return
     dated = clocked = resolved = 0
     how = ""
@@ -1084,6 +1098,7 @@ def _trican_clock(doc, results, notes):
             # trican2.stage_clock) cannot say so itself.
             if entry["start"]:
                 md["sheet_start"] = entry["start"]
+                md["sheet_date"] = entry.get("date") or ""
             if entry["date"]:
                 md["date"] = _nearest_date(entry["date"], ts, cs)
                 dated += 1
@@ -1177,6 +1192,89 @@ def _nearest_date(date_str, table_s, chart_s):
         if best is None or gap < best[0] - 1:
             best = (gap, d.date().isoformat())
     return best[1]
+
+
+def _trican_order(results, notes, slack_min=10.0):
+    """A Trican stage placed out of order, put where its stage number says.
+
+    Each chart is clocked from its own axis and dated from its STAGE
+    INFORMATION sheet (_trican_clock), and the two can disagree. On 00327
+    (#807) both ways round: stage 5's chart prints 19:36-21:06 — stage 6's
+    window, to the minute — where its sheet says 14:25; and stage 19's sheet
+    OCRs as "12:00 AM", which dated a correct 17:19 chart to the day before
+    stage 18. Each came out overlapping another stage, and the hand-over pass
+    then cut stage 5 to five minutes.
+
+    Stages are pumped in order. A stage that starts before the one before it
+    ends, or ends after the next one starts, is tried elsewhere — its own
+    clock a day either side, then its sheet's time (and twelve hours either
+    side of it) — and moved to the first that fits between its neighbours.
+    One that fits nowhere is left as it was, and the overlap note stands."""
+    tri = []
+    for r in results:
+        if (r.get("type") != "series" or not str(r.get("source") or "").startswith("Trican")
+                or r["meta"].get("continuous")):
+            continue
+        m = re.fullmatch(r"\d+", str(r["meta"].get("stage") or "").strip())
+        if m and _abs_start(r) is not None:
+            tri.append((int(m.group(0)), r))
+    if len(tri) < 3:
+        return 0
+    tri.sort(key=lambda t: t[0])
+    slack = timedelta(minutes=slack_min)
+
+    def span(r, t0=None):
+        t0 = t0 or _abs_start(r)
+        return t0, t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+
+    def suspect(r):
+        # its own chart and its sheet disagree by more than half an hour
+        md = r["meta"]
+        if not (md.get("sheet_start") and md.get("start_time")):
+            return False
+        off = abs((_secs(md["start_time"]) - _secs(md["sheet_start"]) + 43200) % 86400 - 43200)
+        return off > 1800
+
+    moved = []
+    # the stages whose chart and sheet disagree are tried first: of two
+    # stages on top of each other, that is the one placed wrong (stage 18's
+    # chart and sheet agree; stage 19's are 6.7 h apart)
+    order = ([i for i, (_s, r) in enumerate(tri) if suspect(r)]
+             + [i for i, (_s, r) in enumerate(tri) if not suspect(r)])
+    for i in order:
+        st, r = tri[i]
+        prev_end = span(tri[i - 1][1])[1] if i else None
+        next_start = span(tri[i + 1][1])[0] if i + 1 < len(tri) else None
+        fits = lambda a, b: ((prev_end is None or a >= prev_end - slack)
+                             and (next_start is None or b <= next_start + slack))
+        t0, t1 = span(r)
+        if fits(t0, t1):
+            continue
+        md = r["meta"]
+        cands = [t0 - timedelta(days=1), t0 + timedelta(days=1)]
+        if md.get("sheet_start") and md.get("sheet_date"):
+            try:
+                ts = datetime.fromisoformat(md["sheet_date"]) + timedelta(seconds=_secs(md["sheet_start"]))
+                cands += [ts, ts + timedelta(hours=12), ts - timedelta(hours=12)]
+            except ValueError:
+                pass
+        for c in cands:
+            a, b = span(r, c)
+            if fits(a, b):
+                md["date"] = a.date().isoformat()
+                md["start_time"] = a.strftime("%H:%M:%S")
+                md.setdefault("warnings", []).append(
+                    f"placed at {a:%Y-%m-%d %H:%M}, between stages {tri[i - 1][0] if i else '-'} "
+                    f"and {tri[i + 1][0] if i + 1 < len(tri) else '-'}: its own clock "
+                    f"{t0:%Y-%m-%d %H:%M} put it out of order")
+                moved.append(f"stage {st} ({t0:%m-%d %H:%M} -> {a:%m-%d %H:%M})")
+                break
+    if moved:
+        notes.append(f"{len(moved)} Trican stage(s) moved back into stage order — the "
+                     f"chart's clock and its STAGE INFORMATION sheet disagreed, and the "
+                     f"reading taken first put the stage on top of another: "
+                     + ", ".join(moved[:8]))
+    return len(moved)
 
 
 def _abs_start(r):
@@ -3690,13 +3788,18 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 notes.append(f"p{pno + 1}: Halliburton plot failed — {e}")
             continue
 
-        if raster and tcharts.detect(page):
+        _tscan = None
+        if raster and not tcharts.detect(page):
+            # the same pages printed as pictures, titled by OCR (00327, #807)
+            _tscan = tcharts.detect_scanned(page)
+        if raster and (_tscan or tcharts.detect(page)):
             # Trican POST-FRAC SUMMARY charts. Same documents trican2 reads
             # for STAGE INFORMATION tables, which stay on the doc-level pass
             # below: the tables and the curves are different pages.
             try:
                 md, samples, chans, info = tcharts.extract_page(page,
-                                                                sample_sec)
+                                                                sample_sec,
+                                                                text=_tscan)
                 data = {c["label"]: c["values"] for c in chans}
                 units = {c["label"]: c["unit"] for c in chans}
                 frames = {c["label"]: c["axis_frame"] for c in chans
@@ -4101,6 +4204,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     _step_stage_from_order(results, notes)
     _step_clock(doc, results, notes)
     _trican_clock(doc, results, notes)
+    _trican_order(results, notes)
 
     # A well can chart the same zone twice: once on a job-length overview
     # ("Zone 1-12") and again on a chart of its own ("Zones 12-14"). Both split
