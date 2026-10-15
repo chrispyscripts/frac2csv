@@ -3436,8 +3436,12 @@ def extract_page(page, sample_sec=1.0):
                  if not legend and not is_chem and "treatment analysis" not in title
                  else "")
         if other:
+            # In the chemical chart's place, not even the red: a treatment
+            # channel there makes the fleet chart the stage's "treatment"
+            # sibling, and _drop_chemical_only then set the real chemical
+            # chart aside (00185: 19 of them).
             for c in chans:
-                if c["key"].replace("series-", "").rstrip("2") == "red":
+                if tag == "t" and c["key"].replace("series-", "").rstrip("2") == "red":
                     c["label"], c["unit"] = "Surface Pressure", "MPa"
             info.setdefault("notes", []).append(
                 ("a fleet chart (pump units, fuel rate, substitution)" if other == "fleet"
