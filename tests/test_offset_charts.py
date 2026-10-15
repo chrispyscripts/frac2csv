@@ -122,9 +122,9 @@ class WellLetters(unittest.TestCase):
 
 
 class FleetChart(unittest.TestCase):
-    """00185 p47 (2017, dual fuel): under the "Offset Analysis" bar, a fleet
-    chart. Its green is the fleet's diesel substitution, and the colour table
-    named it Prop Conc, beside stage 11's real treatment chart."""
+    """00185 (2017, dual fuel): fleet charts, and offset charts whose well
+    legend the offset reader does not parse. The colour tables named a
+    fleet's diesel substitution, and a well's casing pressure, Prop Conc."""
 
     LEGEND = ("Surface Pressure (MPa) Slurry Rate (m?/min Amount of Units Running "
               "Amount of Units Substituting Fleet Fuel Rate L/HR "
@@ -132,14 +132,20 @@ class FleetChart(unittest.TestCase):
 
     def fleet(self, text):
         with mock.patch.object(step1.ar, "ocr_words", return_value=[(w,) for w in text.split()]):
-            return step1._fleet_legend(np.zeros((400, 400, 3), np.uint8), (10, 100, 390, 390))
+            return step1._other_legend(np.zeros((400, 400, 3), np.uint8), (10, 100, 390, 390))
 
     def test_a_fleet_legend_is_a_fleet_chart(self):
-        self.assertTrue(self.fleet(self.LEGEND))
+        self.assertEqual(self.fleet(self.LEGEND), "fleet")
+
+    def test_a_well_legend_the_offset_reader_missed_is_a_wells_chart(self):
+        # 00185 p49's offset chart
+        self.assertEqual(self.fleet(
+            "Surface Pressure (MPa) K Well Casing Pressure (MPa) L Well Casing "
+            "Pressure (MPa) N Well Casing Pressure (MPa)"), "wells")
 
     def test_a_treatment_legend_is_not(self):
-        self.assertFalse(self.fleet("Surface Pressure (MPa) Slurry Rate (m3/min) "
-                                    "Prop Conc (kg/m3) Btm Prop Conc (kg/m3)"))
+        self.assertEqual(self.fleet("Surface Pressure (MPa) Slurry Rate (m3/min) "
+                                    "Prop Conc (kg/m3) Btm Prop Conc (kg/m3)"), "")
 
 
 if __name__ == "__main__":

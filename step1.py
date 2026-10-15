@@ -593,21 +593,28 @@ _OFFSET_WELL = re.compile(r"\b([A-Z0-9])\1?\s*W\s*[eo]\s*[l1I|]{2}\s+Casing\s+Pr
 _WELL_LETTER = {"0": "O", "1": "I", "8": "B", "5": "S", "2": "Z", "6": "G"}
 
 
-_FLEET = re.compile(r"Units\s+(?:Running|Substitut)|Fleet\s+(?:Fuel|Avg|Load)|Substitution",
-                    re.IGNORECASE)
+# The fleet's own entries. "Amount of Units Running" is not one: 00185's
+# treatment legend carries it too, and its chemical chart reprints that.
+_FLEET = re.compile(r"Fleet\s+(?:Fuel|Avg|Load)", re.IGNORECASE)
+_WELLS = re.compile(r"W\s*[eo]\s*[l1I|]{2}\s+Casing\s+Pres|Offset\s+Pres", re.IGNORECASE)
 
 
-def _fleet_legend(img, box):
-    """Does the legend over this plot name a pump fleet's quantities? An OCR
-    of the band from just above the frame to the top of the plot, where the
-    2017 books print their legend."""
+def _other_legend(img, box):
+    """Does the legend over this plot name a pump fleet's quantities, or
+    neighbouring wells' pressures? -> "fleet", "wells" or "". An OCR of the
+    band from just above the frame to the top of the plot, where the 2017
+    books print their legend."""
     x0, y0, x1, y1 = box
     band = img[max(0, y0 - 80):min(y1, y0 + 120), x0:x1]
     try:
         text = " ".join(w[0] for w in ar.ocr_words(band, psm=6, whitelist=""))
     except Exception:
-        return False
-    return len(_FLEET.findall(text)) >= 2
+        return ""
+    if len(_FLEET.findall(text)) >= 2:
+        return "fleet"
+    if len(_WELLS.findall(text)) >= 2:
+        return "wells"
+    return ""
 
 
 def _offset_title(title):
@@ -3417,20 +3424,26 @@ def extract_page(page, sample_sec=1.0):
             fam in fams and (tag, fam) in SERIES_NAMES
             and not _same(SERIES_NAMES[(tag, fam)][0], nm)
             for fam, (nm, _u) in legend.items())
-        # The 2017 dual-fuel books (00184-00186) print a FLEET chart under the
-        # "Offset Analysis" bar: surface pressure in red, and pump units
-        # running, fleet fuel rate, load and diesel substitution. No legend
-        # name matches, so the colour table named its green — the fleet's
-        # substitution % — Prop Conc, filed under the stage beside its real
-        # one. Only the red, as its legend says, keeps a treatment name.
-        if not legend and tag == "t" and _fleet_legend(img, box):
+        # The 2017 dual-fuel book 00185 prints a FLEET chart ("DGB
+        # Analysis": surface pressure in red, pump units running, fleet fuel
+        # rate, load and diesel substitution) and an offset chart whose well
+        # legend the offset reader does not parse. No legend name matches, so
+        # the colour tables named the fleet's substitution % — and a well's
+        # casing pressure — Prop Conc, and the fleet's curves after chemical
+        # additives, filed under the stage beside its real ones. Only the
+        # red, as both legends say, keeps a treatment name.
+        other = (_other_legend(img, box)
+                 if not legend and not is_chem and "treatment analysis" not in title
+                 else "")
+        if other:
             for c in chans:
                 if c["key"].replace("series-", "").rstrip("2") == "red":
                     c["label"], c["unit"] = "Surface Pressure", "MPa"
             info.setdefault("notes", []).append(
-                "a fleet chart (pump units, fuel rate, substitution): its curves "
-                "other than the surface pressure are not treatment channels and "
-                "keep their colour names")
+                ("a fleet chart (pump units, fuel rate, substitution)" if other == "fleet"
+                 else "an offset chart whose legend did not read")
+                + ": its curves other than the surface pressure are not "
+                  "treatment channels and keep their colour names")
             out.append((tag, samples, chans, info))
             continue
         for c in chans:
