@@ -2725,6 +2725,16 @@ def _step_stage_from_order(results, notes):
     for p in pages:
         sts = {str(r["meta"].get("stage") or "").strip() for r in by_page[p]}
         label[p] = sts.pop() if len(sts) == 1 else None
+    # One page per stage is the premise. The 2017 Shell books print two, a
+    # treatment chart and its offset chart under the same number, and there
+    # the offset page's number — read right — broke the order and was pushed
+    # on by one: 00185 p47 "Treatment 11" filed as 12, and seven more after
+    # it; 00242, 00252, 00270 and 00272 one each. Neighbouring pages sharing a
+    # number now and then is a misread; often, it is the book.
+    numbered = [p for p in pages if label[p]]
+    twins = sum(1 for a, b in zip(numbered, numbered[1:]) if b == a + 1 and label[a] == label[b])
+    if twins >= max(2, 0.1 * len(numbered)):
+        return 0
     # anchors: the longest run of numbered pages whose numbers rise with the page
     cand = [(i, num(label[p])) for i, p in enumerate(pages)
             if label[p] and num(label[p]) is not None]
@@ -2751,6 +2761,22 @@ def _step_stage_from_order(results, notes):
             want = str(s1 + (i - i1))
             if label[p] == want:
                 continue
+            # Place alone miscounts where a stage is printed twice and another
+            # not at all: 00119 repeats stage 10 on p144 and has no chart for
+            # 13, the two cancel, and p144-p146 were renumbered 11, 12, 13 —
+            # p145 reading 11 and printing stage 11's depth. So a number the
+            # header read stands on a page that prints its interval
+            # (_step_stage_from_spacing judges those), and an unread one is
+            # numbered by place only when its interval lies between the two
+            # anchors' own.
+            tops = [r["meta"].get("top_m") for r in by_page[p] if r["meta"].get("top_m") is not None]
+            if tops:
+                if label[p]:
+                    continue
+                ends = [r["meta"].get("top_m") for q in (pages[i1], pages[i2])
+                        for r in by_page[q] if r["meta"].get("top_m") is not None]
+                if len(ends) >= 2 and not min(ends) < tops[0] < max(ends):
+                    continue
             for r in by_page[p]:
                 md = r["meta"]
                 was = str(md.get("stage") or "").strip()
@@ -2765,6 +2791,122 @@ def _step_stage_from_order(results, notes):
         notes.append(f"{moved} STEP chart(s) numbered by their place in the book, between "
                      f"two numbered pages exactly that many stages apart — their own "
                      f"stage number did not read, or read out of order")
+    return moved
+
+
+def _step_stage_from_spacing(results, notes, tol=0.15, tol_m=1.5, reach=6):
+    """STEP charts still unnumbered, or numbered out of order, numbered by depth.
+
+    00347 (#811) prints its stages about 51 m apart, toe first, every chart
+    with its interval as text, and has no Daily Stage Summary that reads. Its
+    p93 and p94 read "1" and p95, p96 and p98 nothing, and the place rule
+    could not number them: p95 and p96 print the same interval, so the pages
+    between 17 and 21 do not add up. Their depths do. The anchors are the
+    whole-numbered stages whose depths move one way with the number; a chart
+    takes the number its depth falls on between the two anchors either side,
+    or beyond the last ones by their spacing (at most `reach` stages) — only
+    when that is within `tol` of a whole stage and the spacing there agrees
+    with the book's within 15%. -> charts numbered."""
+    from collections import defaultdict
+    step = [r for r in results if r.get("type") == "series"
+            and str(r.get("source") or "").startswith("STEP")
+            and r["meta"].get("top_m") is not None]
+    num = lambda st: int(st) if re.fullmatch(r"\d+", st) else None
+    tops = defaultdict(list)
+    for r in step:
+        n = num(str(r["meta"].get("stage") or "").strip())
+        if n is not None:
+            tops[n].append(r["meta"]["top_m"])
+    pts = sorted((n, ts[0]) for n, ts in tops.items()
+                 if all(abs(t - ts[0]) <= tol_m for t in ts))
+    if len(pts) < 4:
+        return 0
+    # One interval per stage is the premise. Two numbers printing one depth
+    # now and then is a misread number, and this pass is what puts it back;
+    # often, and the book prints its depths some other way.
+    by_depth = sorted(d for _n, d in pts)
+    shared = sum(1 for a, b in zip(by_depth, by_depth[1:]) if b - a <= tol_m)
+    if shared > max(2, 0.1 * len(pts)):
+        return 0
+    sign = 1 if sum((b[1] - a[1]) < 0 for a, b in zip(pts, pts[1:])) * 2 >= len(pts) - 1 else -1
+    # the longest run of anchors whose depth moves the book's way with the number
+    best, prev = [1] * len(pts), [-1] * len(pts)
+    for a in range(len(pts)):
+        for b in range(a):
+            if sign * (pts[b][1] - pts[a][1]) > tol_m and best[b] + 1 > best[a]:
+                best[a], prev[a] = best[b] + 1, b
+    k = max(range(len(pts)), key=lambda a: best[a])
+    chain = []
+    while k >= 0:
+        chain.append(pts[k])
+        k = prev[k]
+    chain.reverse()
+    if len(chain) < 4:
+        return 0
+    per = lambda a, b: sign * (a[1] - b[1]) / (b[0] - a[0])
+    spacing = sorted(per(a, b) for a, b in zip(chain, chain[1:]))
+    med = spacing[len(spacing) // 2]
+    if med <= 0:
+        return 0
+    steady = lambda s: abs(s - med) <= 0.15 * med
+    owned = dict(chain)
+
+    mid = lambda ss: sorted(ss)[len(ss) // 2]
+
+    def number(d):
+        lo = [c for c in chain if sign * (c[1] - d) > tol_m]       # before it
+        hi = [c for c in chain if sign * (d - c[1]) > tol_m]       # after it
+        if lo and hi:                         # between two anchors
+            s, base, first, last = per(lo[-1], hi[0]), lo[-1], lo[-1][0] + 1, hi[0][0] - 1
+        elif lo:                              # past the last
+            s = mid([per(x, y) for x, y in zip(chain[-4:], chain[-3:])])
+            base, first, last = lo[-1], lo[-1][0] + 1, lo[-1][0] + reach
+        elif hi:                              # before the first
+            s = mid([per(x, y) for x, y in zip(chain[:4], chain[1:4])])
+            base, first, last = hi[0], max(1, hi[0][0] - reach), hi[0][0] - 1
+        else:
+            return None
+        if not steady(s):
+            return None
+        n = base[0] + sign * (base[1] - d) / s
+        n_int = int(round(n))
+        if abs(n - n_int) > tol or not first <= n_int <= last:
+            return None
+        return n_int
+
+    moved = 0
+    for r in step:
+        md = r["meta"]
+        was = str(md.get("stage") or "").strip()
+        n = num(was)
+        if was and n is None:
+            continue                              # "1.1": a re-treatment, as printed
+        top = md["top_m"]
+        if n is not None and n in owned and abs(owned[n] - top) <= tol_m:
+            continue                              # an anchor, or agrees with one
+        want = number(top)
+        if want is None or str(want) == was:
+            continue
+        # A number that read is moved only when it is plainly not this
+        # interval's — a digit dropped ("13" as "1"), or junk ("138"). One
+        # stage either way is as likely the depth's misprint as the number's
+        # misread: 00349 p101 reads 24 and prints stage 25's interval.
+        if n is not None and abs(want - n) < 2:
+            continue
+        if want in owned and abs(owned[want] - top) > tol_m:
+            continue                              # that number prints another interval
+        md["stage"] = str(want)
+        title = str(md.get("title") or "")
+        md["title"] = re.sub(r"^Interval\s+\S+", f"Interval {want}", title) if title else f"Interval {want}"
+        md.setdefault("warnings", []).append(
+            f"numbered {want} by its interval, {top:g} m, at the book's spacing of "
+            f"{med:.1f} m a stage — " + (f"the header read {was}, out of order" if was
+                                         else "the header's number did not read"))
+        moved += 1
+    if moved:
+        notes.append(f"{moved} STEP chart(s) numbered by their interval's depth, at the "
+                     f"book's own spacing between its numbered stages ({med:.1f} m a "
+                     f"stage) — their own stage number did not read, or read out of order")
     return moved
 
 
@@ -4357,6 +4499,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     _apply_fix_file(doc, results, notes, fix_text=fix_text)
     _step_stage_from_depth(doc, results, notes)
     _step_stage_depth_conflicts(results, notes, doc=doc)
+    _step_stage_from_spacing(results, notes)
     _step_stage_from_order(results, notes)
     _step_clock(doc, results, notes)
     _trican_clock(doc, results, notes)

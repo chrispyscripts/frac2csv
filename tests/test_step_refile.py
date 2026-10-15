@@ -82,6 +82,51 @@ class StageFromOrder(unittest.TestCase):
         rs = self.pages([(35, "1.1"), (37, ""), (39, "2")])
         self.assertEqual(pipeline._step_stage_from_order(rs, []), 0)
 
+    def test_a_book_of_two_pages_a_stage_is_left_as_read(self):
+        # 00185: a treatment and an offset chart per stage, both numbered
+        # right; p47's "11" was pushed on to 12 as out of order
+        rs = self.pages([(44, "10"), (45, "10"), (46, "11"), (47, "11"),
+                         (48, "12"), (49, "12"), (50, "15"), (51, "15")])
+        self.assertEqual(pipeline._step_stage_from_order(rs, []), 0)
+        self.assertEqual(rs[3]["meta"]["stage"], "11")
+
+
+class StageFromSpacing(unittest.TestCase):
+    """00347 (#811): one stage per page, about 50.8 m apart, toe first."""
+
+    def book(self, stages):
+        return [chart(st, top, p) for p, st, top in stages]
+
+    def test_misread_and_unread_charts_take_the_number_their_depth_falls_on(self):
+        rs = self.book([(76, "1", 3309.18), (77, "2", 3255.82), (91, "16", 2545.10),
+                        (92, "17", 2494.03), (93, "1", 2443.08), (94, "1", 2392.44),
+                        (95, "", 2342.06), (96, "", 2342.06), (97, "21", 2290.86),
+                        (98, "", 2239.87), (101, "25", 2087.26), (104, "", 1934.34)])
+        notes = []
+        pipeline._step_stage_from_spacing(rs, notes)
+        self.assertEqual([r["meta"]["stage"] for r in rs],
+                         ["1", "2", "16", "17", "18", "19", "20", "20", "21", "22", "25", "28"])
+        self.assertEqual(rs[4]["meta"]["title"], "Interval 18 (surface)")
+        self.assertRegex(notes[0], r"50\.\d m a stage")
+
+    def test_a_depth_between_two_stages_is_left_alone(self):
+        rs = self.book([(1, "1", 3000.0), (2, "2", 2950.0), (3, "3", 2900.0),
+                        (4, "4", 2850.0), (5, "", 2825.0)])
+        self.assertEqual(pipeline._step_stage_from_spacing(rs, []), 0)
+
+    def test_a_retreatment_keeps_its_number(self):
+        rs = self.book([(1, "1", 3000.0), (2, "2", 2950.0), (3, "3", 2900.0),
+                        (4, "4", 2850.0), (5, "2.1", 2950.0)])
+        pipeline._step_stage_from_spacing(rs, [])
+        self.assertEqual(rs[4]["meta"]["stage"], "2.1")
+
+    def test_a_book_printing_one_depth_for_several_stages_is_left_alone(self):
+        # 00185 prints the same interval on 11 and 12, 13 and 14, ...
+        rs = self.book([(1, "9", 4254.04), (2, "10", 4197.01), (3, "11", 4140.24),
+                        (4, "12", 4140.24), (5, "13", 4083.61), (6, "14", 4083.61),
+                        (7, "15", 3914.51), (8, "16", 3914.51), (9, "", 4000.0)])
+        self.assertEqual(pipeline._step_stage_from_spacing(rs, []), 0)
+
 
 class LongGapOnTheFloor(unittest.TestCase):
     def chart(self, data):
