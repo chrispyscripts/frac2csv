@@ -70,5 +70,24 @@ class ZoneSeparator(unittest.TestCase):
         self.assertIsNone(self._stage("Zone\n/ 780-779-3782"))
 
 
+class PluralWithOneNumber(unittest.TestCase):
+    """00223's ball-drop sheets: "Zones 1 Flush", "Zones 2". Unread, they
+    took the chart before's zone and came out as 19 (2), 1 (2), 1 (3)."""
+
+    def _stage(self, text):
+        m = frac_core.ZONES_SINGLE.search(text)
+        return m.group(1) if m else None
+
+    def test_one_number_after_the_plural_is_the_zone(self):
+        self.assertEqual(self._stage("  Zones 1 Flush"), "1")
+        self.assertEqual(self._stage("  Zones 2\n"), "2")
+        self.assertEqual(self._stage("Zones 12"), "12")
+
+    def test_a_range_stays_the_splitters(self):
+        for t in ("Zones 1-3", "Zones 3 - 32", "Zones 12-14", "Zones 2–18",
+                  "   Zones 1 - \nMView"):              # 00261 p84, cut off
+            self.assertIsNone(self._stage(t), t)
+
+
 if __name__ == "__main__":
     unittest.main()

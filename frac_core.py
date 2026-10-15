@@ -433,6 +433,11 @@ def page_kind(page):
     return "raster"
 
 
+# "Zones 2" but not "Zones 1-3", nor "Zones 1 -" with the range cut off (00261
+# p84); the \b stops "Zones 12-14" backing off to "1"
+ZONES_SINGLE = re.compile(r"\bZones\s+(\d+)\b(?!\s*[-–])")
+
+
 def detect_text_meta(page, meta=None):
     """UWI/stage/date/title from page text (works even for raster pages
     that kept a text layer). Frame-independent."""
@@ -474,6 +479,11 @@ def detect_text_meta(page, meta=None):
     # It also does not reopen the phone-number hole the docstring above
     # guards — "Zone / 403-999-6540" separates with a slash, not a colon.
     m = re.search(r"(?:Zone|Stage)(?:\s*[#:]\s*|\s+)(\d+)", text)
+    # The plural with ONE number is a single zone too: 00223's ball-drop
+    # sheets caption "Zones 1 Flush" and "Zones 2". Unread, those pages took
+    # the chart before's zone, and three charts came out as 19 (2), 1 (2) and
+    # 1 (3). A range, "Zones 1-3", is still the multi-zone splitter's.
+    m = m or ZONES_SINGLE.search(text)
     if m:
         meta.stage = m.group(1)
     elif ocr_labels.garbled(page):
