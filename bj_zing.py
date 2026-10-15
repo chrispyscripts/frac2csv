@@ -34,6 +34,23 @@ _MONTHS = {m: i for i, m in enumerate(
      "Nov", "Dec"), 1)}
 
 
+def empty_chart(page):
+    """The stage's ZingChart page printed with no data -> the stage label as
+    printed, or None.
+
+    Its title and value axes are there, but no curve and no time labels:
+    00019 p124 is stage 41's treatment chart, blank in the filing itself,
+    between full charts for stages 40 and 42. detect() wants the time labels,
+    so the page fell through every reader without a word, and the stage came
+    out with its chemical chart alone (Carmine, #801: "no chart extracted").
+    """
+    t = page.get_text()
+    if "ZingChart" not in t or _DATE.search(t) or _CLOCK.search(t):
+        return None
+    m = _STAGE.search(t)
+    return m.group(1) if m else None
+
+
 def detect(page):
     t = page.get_text()
     return ("ZingChart" in t and _STAGE.search(t) is not None

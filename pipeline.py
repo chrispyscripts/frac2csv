@@ -3560,6 +3560,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
         # BJ's 2026 ZingChart render (#796, #797) before BJ-1: it prints no
         # BJ-1 title and no "Mon-DD HH:MM" clock, so bj1 never sees it
+        blank = bj_zing.empty_chart(page)
+        if blank is not None:
+            notes.append(f"p{pno + 1}: stage {blank}'s BJ chart is printed empty in "
+                         f"the filing — its axes and title, but no curve and no time "
+                         f"axis — so there is nothing on it to read")
+            continue
         zing = bj_zing.detect(page)
         if zing or bj1.detect(page):
             try:

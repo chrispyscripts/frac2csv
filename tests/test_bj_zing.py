@@ -81,3 +81,26 @@ class OneBadDate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyChart(unittest.TestCase):
+    """00019 p124 (#801): stage 41's chart printed with no data at all."""
+
+    class Page:
+        def __init__(self, text):
+            self.text = text
+
+        def get_text(self):
+            return self.text
+
+    def test_a_titled_page_with_no_time_axis_is_empty(self):
+        import bj_zing
+        p = self.Page("OVV HZ SUNRISE H3-19-78-16 | 41 | Stage 41 | API/UWI: 102/07-34-078-17-W6/00 "
+                      "| Ovintiv 03-19 Pad\nLocal Time\n0\n100\nPowered by ZingChart")
+        self.assertEqual(bj_zing.empty_chart(p), "41")
+
+    def test_a_page_with_its_clock_is_not(self):
+        import bj_zing
+        p = self.Page("OVV HZ SUNRISE H3-19-78-16 | 40 | Stage 40 | API/UWI: 102/07-34-078-17-W6/00 "
+                      "| Ovintiv 03-19 Pad\n28 Mar 26\n19:26:41\nPowered by ZingChart")
+        self.assertIsNone(bj_zing.empty_chart(p))
