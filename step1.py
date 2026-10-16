@@ -1075,11 +1075,16 @@ def _clock_axis(img, x0, x1, y1):
     def cut_at(gap):
         got = []
         for a, b in ar._col_groups(dark, gap=gap, min_w=30):
-            sub = big[:, max(0, a - 6):min(big.shape[1], b + 6)]
-            for text, _wx, _wy in ar.ocr_words(sub, psm=7, whitelist="0123456789:"):
+            left = max(0, a - 6)
+            sub = big[:, left:min(big.shape[1], b + 6)]
+            for text, wx, _wy in ar.ocr_words(sub, psm=7, whitelist="0123456789:"):
                 sec = label(text)
                 if sec is not None:
-                    got.append((sec, xa + (a + b) / 6.0))
+                    # the word's own centre, not the piece's: a piece that
+                    # takes in the legend's first word beside the axis put
+                    # 00935 p69's 17:05 ninety pixels right, and its chart
+                    # ran 73 minutes for the 69 its labels span
+                    got.append((sec, xa + (left + wx) / 3.0))
                     break
         return got
     # A blurred render opens the gaps either side of the colon past the cut:
@@ -1102,12 +1107,23 @@ def _clock_axis(img, x0, x1, y1):
         return got
 
     def fitted(got):
-        if len(got) < 3:
-            return None
-        got = _restore_hour_tens(got)
-        got.sort(key=lambda p: p[1])
-        f = tc._b_clock_fit(got, x0, x1, as_read_first=True)
-        return f if f is not None and f[1] > 0 else None
+        # The labels as read, and with their dropped tens put back, each
+        # fitted; the line that passes more of them wins, the labels as read
+        # on a tie. A tens put back can make a label plausible that was
+        # misread twice over: 00935 p65 read 15:55 as "5:50", and as 15:50
+        # it pulled a four-label fit to an 82-minute chart where the page
+        # prints 59.
+        cands = []
+        raw = [(sec - 0.5 if sec % 1 else sec, x) for sec, x in got]
+        for variant in (raw, _restore_hour_tens(got)):
+            if len(variant) < 3:
+                continue
+            variant = sorted(variant, key=lambda p: p[1])
+            f = tc._b_clock_fit(variant, x0, x1, as_read_first=True)
+            if f is not None and f[1] > 0:
+                on = sum(1 for sec, x in variant if abs(f[0] + f[1] * x - sec) <= 90)
+                cands.append((on, f))
+        return max(cands, key=lambda c: c[0])[1] if cands else None
     # the whole-strip read, for a strip the columns did not separate — or
     # separated into labels that fit nothing: 00935 p47 (stage 6) cut three
     # misread pieces, and its six good labels read whole were never asked
