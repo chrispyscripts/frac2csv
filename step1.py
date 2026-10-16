@@ -597,11 +597,14 @@ _WELL_LETTER = {"0": "O", "1": "I", "8": "B", "5": "S", "2": "Z", "6": "G"}
 # treatment legend carries it too, and its chemical chart reprints that.
 _FLEET = re.compile(r"Fleet\s+(?:Fuel|Avg|Load)", re.IGNORECASE)
 _WELLS = re.compile(r"W\s*[eo]\s*[l1I|]{2}\s+Casing\s+Pres|Offset\s+Pres", re.IGNORECASE)
+# a chemical legend: additive concentrations in L/m3, and the clean rate
+_CHEM_LEGEND = re.compile(r"\(\s*L\s*/\s*m|Clean\s+Rate", re.IGNORECASE)
 
 
 def _other_legend(img, box):
-    """Does the legend over this plot name a pump fleet's quantities, or
-    neighbouring wells' pressures? -> "fleet", "wells" or "". An OCR of the
+    """Does the legend over this plot name a pump fleet's quantities,
+    neighbouring wells' pressures, or chemical additives? -> "fleet",
+    "wells", "chemical" or "". An OCR of the
     band from just above the frame to the top of the plot, where the 2017
     books print their legend."""
     x0, y0, x1, y1 = box
@@ -614,6 +617,8 @@ def _other_legend(img, box):
         return "fleet"
     if len(_WELLS.findall(text)) >= 2:
         return "wells"
+    if len(_CHEM_LEGEND.findall(text)) >= 2:
+        return "chemical"
     return ""
 
 
@@ -3520,10 +3525,31 @@ def extract_page(page, sample_sec=1.0):
         # casing pressure — Prop Conc, and the fleet's curves after chemical
         # additives, filed under the stage beside its real ones. Only the
         # red, as both legends say, keeps a treatment name.
+        # A chart titled "DGB Analysis" has its legend band read whatever its
+        # legend matched: 00185 p39's matched one fleet curve as "Btm Prop
+        # Conc". The title alone does not say which it is — the same book
+        # reprints chemical charts under that bar (p33, p73) — the band does.
         other = (_other_legend(img, box)
-                 if not legend and not is_chem and "treatment analysis" not in title
+                 if re.search(r"\bdgb\b", title)
+                 or (not legend and not is_chem and "treatment analysis" not in title)
                  else "")
-        if other:
+        if other == "chemical":
+            # 00185 p33 and p45 print the stage's chemical chart under the
+            # "Offset Analysis" bar, in the treatment chart's place; its
+            # legend names additives in L/m3 and the clean rate. Read as the
+            # chemical chart it is, by the chemical colour table.
+            tag = "c"
+            for c in chans:
+                fam = c["key"].replace("series-", "").rstrip("2")
+                name, unit = SERIES_NAMES.get(("c", fam), (c["label"], c["unit"]))
+                c["label"], c["unit"] = name, unit
+            _name_chemical(tag, chans)
+            info.setdefault("notes", []).append(
+                "a chemical chart in the treatment chart's place: its legend "
+                "names additives, and its curves are named by the chemical table")
+            out.append((tag, samples, chans, info))
+            continue
+        if other in ("fleet", "wells"):
             # In the chemical chart's place, not even the red: a treatment
             # channel there makes the fleet chart the stage's "treatment"
             # sibling, and _drop_chemical_only then set the real chemical

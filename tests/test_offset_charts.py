@@ -143,6 +143,12 @@ class FleetChart(unittest.TestCase):
             "Surface Pressure (MPa) K Well Casing Pressure (MPa) L Well Casing "
             "Pressure (MPa) N Well Casing Pressure (MPa)"), "wells")
 
+    def test_a_chemical_legend_in_the_treatment_place_is_a_chemical_chart(self):
+        # 00185 p33: the stage's chemical chart under the "Offset Analysis" bar
+        self.assertEqual(self.fleet(
+            "COMBINED CLEAN RATE (m?/min) $SI-3 Conc. (L/m*) SFR-202 Con. (L/m*) "
+            "Aauear 742 Conc. (L/m*)"), "chemical")
+
     def test_a_treatment_legend_is_not(self):
         self.assertEqual(self.fleet("Surface Pressure (MPa) Slurry Rate (m3/min) "
                                     "Prop Conc (kg/m3) Btm Prop Conc (kg/m3)"), "")
