@@ -1659,7 +1659,17 @@ def _b_clock_fit(pts, x0, x1, start_hint=None, as_read_first=False):
         # rewriting them, and 12:50 only by dragging it to 18:50. Ranked on
         # raw inliers the true ladder wins 7 to 6 and the printed start is
         # never consulted. The hint decides only genuine ties.
-        score = (len(inl), len(keep), hint_term(a2, b2), pref, -b2 * (x1 - x0))
+        # For a caller that asked for the labels as read (STEP), a tighter
+        # line wins a tie before that preference does: 00053 (2026) p131
+        # reads 03:30 as "03:20", the as-read candidate's RANSAC kept it, and
+        # the chart ran 360 minutes where the clean six labels say 340. In
+        # 30 s steps, so a whole-ladder 3/9 swap (00935 p41), which fits
+        # exactly as tightly, still falls to the preference.
+        tight = 0.0
+        if as_read_first:
+            res = vals - (a2 + b2 * cols)
+            tight = -round(float(np.sqrt(np.mean(res * res))) / 30.0)
+        score = (len(inl), len(keep), hint_term(a2, b2), tight, pref, -b2 * (x1 - x0))
         if best is None or score > best[0]:
             best = (score, (float(a2), float(b2)))
     return None if best is None else best[1]

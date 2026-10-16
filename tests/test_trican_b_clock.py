@@ -215,6 +215,17 @@ class StepClock(unittest.TestCase):
         a, b = tc._b_clock_fit(pts, X0, X1)          # the Trican default
         self.assertAlmostEqual((a + b * 100) / 60, hm("09:04") / 60, delta=1.0)
 
+    def test_a_misread_label_does_not_win_the_tie_as_read(self):
+        # 00053 (2026) p131: 03:30 read as "03:20"; the as-read candidate
+        # kept it and ran 360 minutes where the clean labels say 340
+        labels = [("03:20", 382), ("04:00", 442), ("04:30", 503), ("05:00", 565),
+                  ("05:30", 626), ("06:00", 687), ("06:30", 752)]
+        pts = [(hm(t), x) for t, x in labels]
+        a, b = tc._b_clock_fit(pts, 360, 1000, as_read_first=True)
+        a2, b2 = tc._b_clock_fit(pts, 360, 1000)
+        self.assertAlmostEqual(b, b2, places=3)
+        self.assertAlmostEqual(b, 1800.0 / 61.5, delta=0.3)
+
     def test_a_dropped_tens_digit_is_put_back(self):
         # 00935 p63: "5:08", "15:12", "5:16", "5:20" for 15:08 .. 15:20
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
