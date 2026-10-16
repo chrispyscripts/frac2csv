@@ -1013,6 +1013,28 @@ def _right_columns(pts, gap=18):
     return out
 
 
+def _restore_hour_tens(got):
+    """[(seconds, x)] clock labels -> the same, a dropped leading 1 or 2 put
+    back on an hour. A label whose hour read as one digit carries +0.5 s
+    (see _clock_axis's label()), and is otherwise as read.
+
+    00935 p63 (Interval 14.1, #810) prints 15:08 .. 15:22 and read "5:08",
+    "15:12", "5:16", "5:20": a ten-hour step between neighbours, and a fit
+    through it gave a 37-hour stage. A one-digit hour within one of the last
+    digit of a two-digit hour read on the same strip takes its tens."""
+    twos = [int(sec // 3600) for sec, _x in got if sec % 1 == 0 and sec >= 36000]
+    out = []
+    for sec, x in got:
+        if sec % 1:
+            sec -= 0.5
+            h = int(sec // 3600)
+            near = [t for t in twos if abs(t % 10 - h) <= 1]
+            if near:
+                sec += (max(set(near), key=near.count) // 10) * 36000
+        out.append((sec, x))
+    return out
+
+
 def _clock_axis(img, x0, x1, y1):
     """The "HH:MM" labels under the frame -> (seconds at x=0, sec/px), or
     None. Seconds are of the day, so t0 is the chart's wall-clock start."""
@@ -1030,7 +1052,9 @@ def _clock_axis(img, x0, x1, y1):
     def label(text):
         m = re.fullmatch(r"(\d{1,2}):(\d{2})", text.strip())
         if m and int(m.group(1)) < 24 and int(m.group(2)) < 60:
-            return int(m.group(1)) * 3600 + int(m.group(2)) * 60
+            # the hour's digit count rides along: see _restore_hour_tens
+            return (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                    + (0.5 if len(m.group(1)) == 1 else 0.0))
         return None
 
     # Each label is read on its own. A three-hour stage prints its labels
@@ -1041,27 +1065,49 @@ def _clock_axis(img, x0, x1, y1):
     # stage. The ink separates cleanly at the gaps between labels (wider
     # than the gaps inside one), so the strip is cut there and each piece
     # read as a line, its position the piece's own centre.
-    pts = []
     dark = big.sum(axis=2) < 450
-    for a, b in ar._col_groups(dark, gap=20, min_w=30):
-        sub = big[:, max(0, a - 6):min(big.shape[1], b + 6)]
-        for text, _wx, _wy in ar.ocr_words(sub, psm=7, whitelist="0123456789:"):
-            sec = label(text)
-            if sec is not None:
-                pts.append((sec, xa + (a + b) / 6.0))
-                break
-    if len(pts) < 3:
-        # the whole-strip read, for a strip the columns did not separate
-        pts = []
+
+    def cut_at(gap):
+        got = []
+        for a, b in ar._col_groups(dark, gap=gap, min_w=30):
+            sub = big[:, max(0, a - 6):min(big.shape[1], b + 6)]
+            for text, _wx, _wy in ar.ocr_words(sub, psm=7, whitelist="0123456789:"):
+                sec = label(text)
+                if sec is not None:
+                    got.append((sec, xa + (a + b) / 6.0))
+                    break
+        return got
+    # A blurred render opens the gaps either side of the colon past the cut:
+    # 00935 p41 (#810) came apart as "03", "04", the whole-strip read below
+    # took 03:04 for 09:02, and stage 3 was clocked six hours late. Wider
+    # cuts are tried only where the first reads too little.
+    pts = cut_at(20)
+    for gap in (45, 75):
+        if len(pts) >= 3:
+            break
+        wider = cut_at(gap)
+        if len(wider) > len(pts):
+            pts = wider
+    def whole():
+        got = []
         for text, wx, _wy in ar.ocr_words(big, psm=6, whitelist="0123456789:"):
             sec = label(text)
             if sec is not None:
-                pts.append((sec, xa + wx / 3.0))
-    if len(pts) < 3:
-        return None
-    pts.sort(key=lambda p: p[1])
-    fit = tc._b_clock_fit(pts, x0, x1)
-    if fit is None or fit[1] <= 0:
+                got.append((sec, xa + wx / 3.0))
+        return got
+
+    def fitted(got):
+        if len(got) < 3:
+            return None
+        got = _restore_hour_tens(got)
+        got.sort(key=lambda p: p[1])
+        f = tc._b_clock_fit(got, x0, x1, as_read_first=True)
+        return f if f is not None and f[1] > 0 else None
+    # the whole-strip read, for a strip the columns did not separate — or
+    # separated into labels that fit nothing: 00935 p47 (stage 6) cut three
+    # misread pieces, and its six good labels read whole were never asked
+    fit = fitted(pts) or fitted(whole())
+    if fit is None:
         return None
     a, b = float(fit[0]), float(fit[1])
     if a + b * x0 < 0:
@@ -1315,6 +1361,14 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 # (00095's 0..20 clean rate, 00420's conc).
                 alt = ar.fit_ticks_guarded(seg, tenths=True)
                 if not alt or reach(alt) >= RATE_AXIS_MAX:
+                    # A ladder that reaches the hundreds is a concentration
+                    # axis whatever its title read: 00935 p47 (#810) read
+                    # both right-hand titles as "rate", the 0..1200 ladder was
+                    # refused, and stage 6 lost both concentrations. It fills
+                    # the concentration slot only if nothing else does.
+                    if reach(cal) >= RATE_AXIS_MAX and "conc" not in fits \
+                            and not any(q == "conc" for q, _s in cols):
+                        fits["conc"] = cal
                     return
                 cal = alt
         if cal and (fits.get(qty) is None or cal[2] > fits[qty][2]):
@@ -3223,19 +3277,43 @@ def _inner_plot_box(img, dark_sum=450):
     # 154), and 00935 p47 (stage 6) lost its plot box, and with it the stage,
     # to a sum of 462.
     rule = np.asarray(img).sum(axis=2) < dark_sum + 60
-    best = None
-    for g in groups:
-        x0, x1 = min(g["xs"]), max(g["xs"])
-        if x1 - x0 < W * 0.4:
-            continue
-        a, b = g["a"], g["b"]
-        ruled = lambda y: rule[max(0, y - 2):y + 3, x0:x1 + 1].any(axis=0).mean() >= 0.8
-        if not (ruled(a) and ruled(b)):
-            continue
-        area = (x1 - x0) * (b - a)
-        if best is None or area < best[0]:
-            best = (area, (x0, a, x1, b))
-    return best[1] if best else None
+
+    def smallest(groups):
+        best = None
+        for g in groups:
+            x0, x1 = min(g["xs"]), max(g["xs"])
+            if x1 - x0 < W * 0.4:
+                continue
+            a, b = g["a"], g["b"]
+            ruled = lambda y: rule[max(0, y - 2):y + 3, x0:x1 + 1].any(axis=0).mean() >= 0.8
+            if not (ruled(a) and ruled(b)):
+                continue
+            area = (x1 - x0) * (b - a)
+            if best is None or area < best[0]:
+                best = (area, (x0, a, x1, b))
+        return best[1] if best else None
+
+    box = smallest(groups)
+    if box is not None and box[2] - box[0] < W * 0.85:
+        return box
+    # Only the panel, or nothing: the plot's sides may not start level. 00935
+    # p63 (Interval 14.1, #810) prints a note box in the plot's top right
+    # corner that hides the top of its right-hand rule, which runs from 526
+    # where the left one runs from 469, so the two never paired. Sides that
+    # END level are paired here, from the higher top, inside the panel; the
+    # top and floor must still be ruled.
+    by_floor = []
+    for x, a, b in rules:
+        for g in by_floor:
+            if abs(g["b"] - b) <= 6:
+                g["xs"].append(x)
+                g["a"] = min(g["a"], a)
+                break
+        else:
+            by_floor.append({"a": a, "b": b, "xs": [x]})
+    inner = smallest([g for g in by_floor
+                      if box is None or (g["a"] > box[1] + 20 and g["b"] < box[3] - 20)])
+    return inner or box
 
 
 def _extract_flattened(page, img, sample_sec=1.0):

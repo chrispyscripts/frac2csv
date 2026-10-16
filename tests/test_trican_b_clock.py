@@ -201,5 +201,35 @@ class Stages00396(unittest.TestCase):
             self.assertAlmostEqual(info["duration_s"] / 3600, hours, delta=0.15, msg=pno)
 
 
+class StepClock(unittest.TestCase):
+    """STEP's 2024 charts share this fitter but not the Trican font's 3/9."""
+
+    def test_a_ladder_of_threes_read_right_stays_threes_when_asked(self):
+        # 00935 p41 (#810): 03:04 .. 03:32 printed and read right, clocked
+        # at 09:02 by the font's tie-break
+        labels = [("03:04", 100), ("03:06", 150), ("03:12", 300), ("03:16", 400),
+                  ("03:20", 500), ("03:24", 600), ("03:30", 750)]
+        pts = [(hm(t), x) for t, x in labels]
+        a, b = tc._b_clock_fit(pts, X0, X1, as_read_first=True)
+        self.assertAlmostEqual((a + b * 100) / 60, hm("03:04") / 60, delta=1.0)
+        a, b = tc._b_clock_fit(pts, X0, X1)          # the Trican default
+        self.assertAlmostEqual((a + b * 100) / 60, hm("09:04") / 60, delta=1.0)
+
+    def test_a_dropped_tens_digit_is_put_back(self):
+        # 00935 p63: "5:08", "15:12", "5:16", "5:20" for 15:08 .. 15:20
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import step1
+        got = [(hm("5:08") + 0.5, 100), (hm("15:12"), 300), (hm("5:16") + 0.5, 500),
+               (hm("5:20") + 0.5, 700)]
+        self.assertEqual([s for s, _x in step1._restore_hour_tens(got)],
+                         [hm("15:08"), hm("15:12"), hm("15:16"), hm("15:20")])
+
+    def test_one_digit_hours_alone_are_left_as_read(self):
+        import step1
+        got = [(hm("5:08") + 0.5, 100), (hm("5:12") + 0.5, 300)]
+        self.assertEqual([s for s, _x in step1._restore_hour_tens(got)],
+                         [hm("5:08"), hm("5:12")])
+
+
 if __name__ == "__main__":
     unittest.main()

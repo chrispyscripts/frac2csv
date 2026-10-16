@@ -1558,7 +1558,7 @@ def _swap_hours(seq, delta):
     return out
 
 
-def _b_clock_fit(pts, x0, x1, start_hint=None):
+def _b_clock_fit(pts, x0, x1, start_hint=None, as_read_first=False):
     """[(seconds, x)] as OCR'd -> (seconds at x=0, sec/px), misreads and all.
 
     Two things go wrong with a label ladder, and together they were killing
@@ -1620,9 +1620,12 @@ def _b_clock_fit(pts, x0, x1, start_hint=None):
     # has something to choose. Ranked below hint_term, so a page that prints
     # its start still overrules this, and below the inlier counts, so a true
     # ladder still wins on the evidence (01350's own first ladder does).
+    # A caller whose font has no 3/9 confusion asks for the labels as read to
+    # win the tie instead: STEP's 2024 charts (00935 p41, #810) print 03:04 ..
+    # 03:32, read every one right, and were clocked at 09:02.
     best = None
     cands = []
-    for pref, swapped in ((0, list(pts)),
+    for pref, swapped in ((2 if as_read_first else 0, list(pts)),
                           (1, _swap_hours(pts, 6 * 3600)),
                           (-1, _swap_hours(pts, -6 * 3600))):
         cands += [(pref, unwrap(swapped)), (pref, list(swapped))]
