@@ -968,6 +968,312 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
     return out
 
 
+# A neighbouring well's pen as the legend UNDER an offset chart names it:
+# "E Well Casing (MPa)", and on one well "B well lower pop valve (MPa)".
+_CASING_ENTRY = re.compile(r"^\W*([A-Z0-9])\s*[Ww]\s*[eo]\s*[l1I|]{2}\s+"
+                           r"(Casing|lower\s+pop\s+valve)\b", re.IGNORECASE)
+
+
+def _casing_legend(img, box, band=230):
+    """[{"rgb", "label"}] for the wells an offset chart's legend names UNDER
+    its plot, or [] (fewer than two wells: not an offset chart).
+
+    The Shell 2017 books 00196-00201 print, after each stage's treatment and
+    chemical pages, a page titled "Offset Analysis": one chart, one Pressure
+    axis, and in a column under the time axis a swatch per pen — SURFACE Main
+    in red, then "E Well Casing (MPa)", "C Well Casing", "B Well Casing", "A
+    Well Casing", "F Well Casing", "B well lower pop valve", "D Well Casing"
+    (00196 p19). Every pen is on the one pressure axis. Only the red was read
+    — through the treatment colour table — so seven wells went missing on
+    some fifty charts a file. Neither offset reader applied: the 00243 books
+    put their legend inside the plot and the wells on their own right-hand
+    axes (_offset_inplot_legend), the 00248 ones above it (_offset_legend).
+
+    The legend is not the same from stage to stage: 00201 p20 lists F Well in
+    magenta, p80 lists D Well in that dark orange and O Well in magenta. So
+    each page's own legend names its pens, and the file-wide vote by colour
+    (pipeline._offset_well_names) is not asked: at this type size the line
+    reads whole.
+
+    A swatch is a small solid square with a gap before its text (the header
+    "Pressure (MPa)" starts with a letter of about the same size and none);
+    the swatches stand in one column, three or more. The grey A Well swatch
+    has no colour at all, so ink of any colour is looked for, not hue.
+    """
+    from PIL import Image
+    x0, y0, x1, y1 = box
+    H, W = img.shape[:2]
+    top, bot = min(H, y1 + 20), min(H, y1 + band)
+    xa, xb = max(0, x0 - 50), min(W, x1)
+    reg = np.asarray(img)[top:bot, xa:xb].astype(int)
+    if reg.shape[0] < 20 or reg.shape[1] < 40:
+        return []
+    lo = reg.min(axis=2)
+    ink = lo < 215
+    found = ar._components(ink)
+    if not found:
+        return []
+    sw = []
+    for cp in found[0]:
+        w = cp["c1"] - cp["c0"] + 1
+        h = cp["y1"] - cp["y0"] + 1
+        if not (5 <= w <= 14 and 5 <= h <= 14 and abs(w - h) <= 3):
+            continue
+        if cp["n"] / float(w * h) < 0.7:
+            continue
+        right = ink[cp["y0"]:cp["y1"] + 1, cp["c1"] + 1:cp["c1"] + 30]
+        gap = np.flatnonzero(right.any(axis=0))
+        if not len(gap) or gap[0] < 3:
+            continue
+        # the colour of the swatch's middle: its edges are blended into the
+        # white around it (JPEG), and a mean over them turns red to pink
+        cy, cx = (cp["y0"] + cp["y1"]) // 2, (cp["c0"] + cp["c1"]) // 2
+        rgb = reg[cy - 1:cy + 2, cx - 1:cx + 2].reshape(-1, 3).mean(axis=0)
+        sw.append(dict(cp, rgb=rgb))
+    columns = []
+    for e in sorted(sw, key=lambda e: e["c0"]):
+        if columns and abs(e["c0"] - columns[-1][0]["c0"]) <= 3:
+            columns[-1].append(e)
+        else:
+            columns.append([e])
+    out = []
+    for col in columns:
+        if len(col) < 3:
+            continue
+        for e in sorted(col, key=lambda e: e["y0"]):
+            r0, r1 = max(0, e["y0"] - 4), e["y1"] + 5
+            line = ink[r0:r1, e["c1"] + 3:]
+            cs = np.flatnonzero(line.any(axis=0))
+            if not len(cs):
+                continue
+            # the entry's own words: up to the first gap wider than a space
+            cs = np.split(cs, np.flatnonzero(np.diff(cs) > 25) + 1)[0]
+            c0, c1 = e["c1"] + 3 + cs[0], e["c1"] + 3 + cs[-1] + 1
+            crop = lo[r0:r1, max(0, c0 - 3):c1 + 3].astype(float)
+            mn = crop.min()
+            if mn < 250:                    # grey type: stretch it to black
+                crop = np.clip((crop - mn) * 255.0 / (255.0 - mn), 0, 255)
+            crop = np.pad(crop, 6, constant_values=255)
+            pil = Image.fromarray(crop.astype(np.uint8))
+            pil = pil.resize((pil.width * 4, pil.height * 4), Image.LANCZOS)
+            m = _CASING_ENTRY.search(ar.ocr_line(np.array(pil), psm=7))
+            if not m:
+                continue
+            letter = m.group(1).upper()
+            letter = _WELL_LETTER.get(letter, letter)
+            what = ("Casing" if m.group(2).lower() == "casing"
+                    else "Lower Pop Valve")
+            out.append({"rgb": e["rgb"], "label": f"{letter} Well {what} Pressure"})
+    return out if len(out) >= 2 else []
+
+
+def _swatch_family(rgb):
+    """The hue family (auto_raster.hue_masks) a legend swatch's colour falls
+    in, or None — yellow and grey are in none. The rules are hue_masks' own,
+    applied to a patch of that one colour. A magenta, (242,33,189) on 00196
+    p19, passes the red rule as well (red well above green and blue); a red
+    swatch passes no other, so the other family is the one meant."""
+    patch = np.tile(np.asarray(rgb, float).reshape(1, 1, 3), (21, 21, 1))
+    fams = [f for f in ar.hue_masks(patch)]
+    if len(fams) > 1 and "red" in fams:
+        fams.remove("red")
+    return fams[0] if len(fams) == 1 else None
+
+
+def _casing_masks(img, box, legend, masks):
+    """Each legend entry's pen as a plot-cropped mask, keyed like `legend`.
+
+    A coloured pen is its hue family's ink — the swatch's own colour is too
+    narrow a test, because the JPEG pales a two-pixel pen: 00196 p19's orange
+    D Well is (245,189,40) in the swatch and (231,179,103) on the line. Where
+    two entries share a family each takes the ink nearer its swatch. Yellow
+    (B Well) falls in no family and is taken by the yellow pen's own rule
+    (_yellow_pen). Grey (A Well, (136,135,140)) is ink without colour of
+    middling darkness, clear of the black grid: the gridlines' blurred edges
+    are grey too, and they are within a pixel of black.
+    """
+    x0, y0, x1, y1 = box
+    plot = np.asarray(img)[y0:y1, x0:x1].astype(int)
+    r, g, b = plot[..., 0], plot[..., 1], plot[..., 2]
+    chroma = plot.max(axis=2) - plot.min(axis=2)
+    fam_of = [_swatch_family(e["rgb"]) for e in legend]
+    out = []
+    for i, e in enumerate(legend):
+        fam = fam_of[i]
+        rgb = np.asarray(e["rgb"], float)
+        if fam is not None:
+            m = masks.get(fam)
+            if m is None:
+                out.append(None)
+                continue
+            sub = m[y0:y1, x0:x1].copy()
+            rivals = [np.asarray(legend[j]["rgb"], float)
+                      for j in range(len(legend)) if j != i and fam_of[j] == fam]
+            if rivals:
+                d_own = ((plot - rgb) ** 2).sum(axis=2)
+                for rv in rivals:
+                    sub &= d_own <= ((plot - rv) ** 2).sum(axis=2)
+        elif float(rgb.max() - rgb.min()) < 25:
+            mean = plot.mean(axis=2)
+            sub = (chroma < 18) & (mean > 105) & (mean < 170)
+            sub &= ~_grow(plot.sum(axis=2) < 200, 1)
+            # nor beside a coloured pen: blue over orange blends to grey, and
+            # on 00197 p19 E Well's blue edge on O Well's orange, (122,131,
+            # 162), pulled A Well (at 0.4) up to 9.8 MPa in a third of the
+            # columns
+            hues = np.zeros_like(sub)
+            for m in masks.values():
+                hues |= m[y0:y1, x0:x1]
+            sub &= ~_grow(hues, 1)
+        elif rgb[0] > 200 and rgb[1] > 200 and rgb[2] < 120:
+            # ...and a bright one: on 00196 p41 green C Well runs over orange
+            # D Well at 9 MPa, and where the two blend the page is a dull
+            # yellow, (206,211,67), that was read as B Well — which is at 0.4,
+            # its line (240,226,101). Nor can it be "clear of green": there
+            # its blend with the cyan beside it, (201,241,118), is green.
+            sub = (r > 225) & (g > 200) & (b < 130) & (np.abs(r - g) < 45)
+        else:
+            out.append(None)
+            continue
+        out.append(sub)
+    return out
+
+
+def _grow(mask, k):
+    """`mask` dilated by k pixels (a square neighbourhood)."""
+    pad = np.pad(mask, k)
+    out = np.zeros_like(mask)
+    for dy in range(-k, k + 1):
+        for dx in range(-k, k + 1):
+            out |= pad[k + dy:k + dy + mask.shape[0], k + dx:k + dx + mask.shape[1]]
+    return out
+
+
+def _pen_channel(sub, cal, box, ta, tb, t_start, samples, ink, sample_sec,
+                 label, key, rgb):
+    """One pen's mask (plot-cropped) read against its axis -> channel, or
+    None where too little of it is on the page."""
+    x0, y0, x1, y1 = box
+    cov = float(sub.any(axis=0).mean())
+    if cov < 0.1:
+        return None
+    py = ar.curve_positions(sub, glyphs=True, edge_blank=True,
+                            bracketed=True) + y0
+    a, b, ntick = cal
+    _vt, _vb, _sn = ar.snap_axis(a + b * y0, a + b * y1)
+    if _sn and abs(y1 - y0) > 1:
+        b = (_vb - _vt) / float(y1 - y0)
+        a = _vt - b * y0
+    vals = a + b * py
+    if np.isfinite(vals).sum() < 50:
+        return None
+    t_cols = (ta + tb * (np.arange(sub.shape[1]) + x0)) - t_start
+    v = ct.resample(samples, t_cols, vals)
+    return {"key": key, "label": label, "unit": "MPa",
+            "color": "#%02x%02x%02x" % tuple(int(c) for c in rgb),
+            "values": v, "ticks": ntick, "coverage": cov,
+            "axis_frame": (float(a + b * y0), float(a + b * y1)),
+            "filled_cols": 0,
+            "ends": _held_ends(ink, v, a, b, y0, tb, sample_sec)}
+
+
+def _casing_channels(img, box, cal, masks, samples, ta, tb, t_start, ink,
+                     sample_sec):
+    """The neighbouring wells of an offset chart whose legend is printed
+    under the plot (see _casing_legend) -> [channel], each read against the
+    chart's one pressure axis."""
+    legend = _casing_legend(img, box)
+    if not legend or cal is None:
+        return []
+    out, used = [], set()
+    for e, sub in zip(legend, _casing_masks(img, box, legend, masks)):
+        if sub is None or e["label"] in used:
+            continue
+        ch = _pen_channel(sub, cal, box, ta, tb, t_start, samples, ink,
+                          sample_sec, e["label"],
+                          "series-casing-" + re.sub(r"\W+", "-", e["label"].lower()),
+                          e["rgb"])
+        if ch is not None:
+            used.add(e["label"])
+            out.append(ch)
+    return out
+
+
+# "Coil Pressure", "COIL #1 CIRCULATING PRESSURE"; 00243 p77's 8 px type
+# reads "Coe Pressure"
+_COIL = re.compile(r"\bco[a-z1|]{0,3}\b.*\b(pres|circ)", re.IGNORECASE)
+
+
+def _legend_names_coil(img, box):
+    """Does a yellow swatch in this chart's legend name the coil's pressure?
+
+    The coil-tubing stages of the Shell 2017 books draw a fifth pen, yellow,
+    on the pressure axis: "Coil Pressure (MPa)" in the key inside the plot
+    (00243 p77) or "COIL #1 CIRCULATING PRESSURE" in the one under it (00198
+    p75). No colour table names yellow, so it was never read. A yellow pen
+    is not always the coil — 00100 p173 draws a yellow "Well 3" — so the
+    legend has to say so. The swatch is looked for where these books print
+    their keys: the top third of the plot, and the band under it."""
+    from PIL import Image
+    x0, y0, x1, y1 = box
+    a = np.asarray(img).astype(int)
+    H, W = a.shape[:2]
+    for ra, rb in ((y0, y0 + int(0.35 * (y1 - y0))), (min(H, y1 + 20), min(H, y1 + 230))):
+        reg = a[ra:rb, max(0, x0 - 50):x1]
+        if reg.shape[0] < 8:
+            continue
+        r, g, b = reg[..., 0], reg[..., 1], reg[..., 2]
+        yel = (r > 170) & (g > 160) & (b < 140) & (np.abs(r - g) < 45)
+        lo = reg.min(axis=2)
+        found = ar._components(yel)
+        if not found:
+            continue
+        for cp in found[0]:
+            w = cp["c1"] - cp["c0"] + 1
+            h = cp["y1"] - cp["y0"] + 1
+            if not (4 <= w <= 16 and 4 <= h <= 16 and abs(w - h) <= 4):
+                continue
+            if cp["n"] / float(w * h) < 0.6:
+                continue
+            r0, r1 = max(0, cp["y0"] - 4), cp["y1"] + 5
+            ink = lo[r0:r1, cp["c1"] + 2:] < 200
+            cs = np.flatnonzero(ink.any(axis=0))
+            if len(cs) < 12 or cs[0] > 26:
+                continue
+            cs = np.split(cs, np.flatnonzero(np.diff(cs) > 25) + 1)[0]
+            piece = lo[r0:r1, cp["c1"] + 2 + cs[0]:cp["c1"] + 3 + cs[-1]].astype(float)
+            # the plot's gridlines run through an in-plot key's text
+            piece[:, (piece < 200).mean(axis=0) >= 0.7] = 255
+            mn = piece.min()
+            if mn < 250:
+                piece = np.clip((piece - mn) * 255.0 / (255.0 - mn), 0, 255)
+            piece = np.pad(piece, 6, constant_values=255)
+            pil = Image.fromarray(piece.astype(np.uint8))
+            pil = pil.resize((pil.width * 4, pil.height * 4), Image.LANCZOS)
+            if _COIL.search(ar.ocr_line(np.array(pil), psm=7)):
+                return True
+    return False
+
+
+def _bar_tag(tag, title, chans):
+    """A titled chart's tag, put right where the bar over it is the wrong one
+    -> (tag, note or None).
+
+    00241 prints stage 31's offset chart (p84) under "Chemical Analysis" and
+    its chemical chart (p85) under "Offset Analysis". Read as chemical, the
+    offset chart lost its Surface Pressure (_name_chemical drops it), and the
+    chemical chart's clean rate went out as the stage's Slurry Rate. A chart
+    that carries offset wells is the offset chart, filed with the surface
+    charts as every other one is; an "offset" chart with no pressure on it is
+    a chemical chart."""
+    if any(c.get("offset") for c in chans):
+        return "t", None
+    if tag == "t" and "offset" in (title or "") and not any(_is_pressure(c) for c in chans):
+        return "c", ("a chemical chart under the \"Offset Analysis\" bar: its "
+                     "axes are the chemical chart's, and it is read as one")
+    return tag, None
+
+
 def _name_chemical(tag, chans):
     """Stop the SURFACE colour table naming a CHEMICAL chart's curves.
 
@@ -1181,7 +1487,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     ry0, ry1 = max(0, y0 - 30), min(img.shape[0], y1 + 30)
     rows = img[ry0:ry1]
 
-    def strip_ticks(xa, xb, with_x=False):
+    def strip_ticks(xa, xb, with_x=False, clean=False):
         # Read each column with BOTH page-segmentation modes and pool what
         # they return. They fail differently on these narrow ladders, and
         # neither alone gets a right-hand axis whole: on 00199 p37 psm 6 reads
@@ -1202,6 +1508,14 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # find a line, and a misread that no line explains is still rejected.
         # Merged, the rate ladder fits on 0, 4, 12, 16 with the 42 thrown out,
         # and the concentration ladder on all five labels.
+        #
+        # clean=True reads the strip once more, padded with white and turned
+        # to black on white, for a column the plain reading could not fit (see
+        # reread below). A label set hard against the crop's edge loses its
+        # first stroke: 00198 p75 reads the "12" topping its rate axis as
+        # "42" and never sees the 6 or the 9, so the axis fitted nothing and
+        # Slurry Rate was dropped; padded, the 12 reads, and binarised the 9
+        # does. 00243 p43's brown 0..12 ladder reads 12, 9, 6, 3, 0 only so.
         from PIL import Image as _Im
         import re as _re
 
@@ -1209,9 +1523,16 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             strip = rows[:, max(0, a):b]
             if strip.size == 0:
                 return []
+            if clean:
+                strip = np.pad(strip, ((0, 0), (10, 10), (0, 0)),
+                               constant_values=255)
             pil = _Im.fromarray(strip.astype(np.uint8))
             pil = pil.resize((pil.width * 3, pil.height * 3), _Im.LANCZOS)
             arr = np.array(pil).astype(int)
+            if clean:
+                arr = np.repeat(np.where(arr.min(axis=2) < 160, 0, 255)[..., None],
+                                3, axis=2)
+            pad = 10 if clean else 0
             got = []
             for psm in (6, 11):
                 try:
@@ -1221,7 +1542,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 for text, cx, cy in words:
                     t = text.replace(",", "").strip("-.")
                     if _re.fullmatch(r"\d+(\.\d+)?", t):
-                        got.append((float(t), int(cx / 3) + max(0, a),
+                        got.append((float(t), int(cx / 3) - pad + max(0, a),
                                     int(cy / 3) + ry0))
             return [g for g in got if y0 - 25 <= g[2] <= y1 + 25]
         out = read(xa, xb)
@@ -1250,9 +1571,22 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     cols = []                       # [(quantity, ticks)], one entry per axis
     if rtitles:
         lo = x1 + 3
+        def fits_any(pts):
+            if ar.fit_ticks_guarded([(v, y, True) for v, x, y in pts]):
+                return True
+            return any(ar.fit_ticks_guarded(seg) for seg in _right_columns(pts)
+                       if len(seg) >= 3)
+
         for qty, tx in rtitles:
             if tx - 4 > lo:
                 pts = strip_ticks(lo, tx - 4, with_x=True)
+                if not fits_any(pts):
+                    # a column the plain reading cannot fit is read again,
+                    # cleaned (see strip_ticks), and the two pooled: 00198,
+                    # 00199 and 00201 lost Slurry Rate on eight charts so
+                    # and 00243 p43 on one. Only then: a column that fits
+                    # already keeps exactly the reading it had.
+                    pts = pts + strip_ticks(lo, tx - 4, with_x=True, clean=True)
                 # Two ladders under one title: the title of the inner axis did
                 # not read, so its numbers and the outer axis's came back as
                 # one column. 01289 p202 (2025) prints Rate 0..16 beside the
@@ -1397,6 +1731,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
 
     for qty, seg in cols:
         _use(qty, seg)
+    right_axes = bool(cols)
     # an offset chart's right-hand PRESSURE axes, inner first: the offset
     # wells', and on the 00243-00245 books the abandoned wells' beyond it
     # (see _offset_inplot_legend)
@@ -1421,8 +1756,30 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # single channel its left axis names. Both readings were right; the
         # colour-keyed one carried more of the chart.
         whole = ar.fit_ticks_guarded(strip_ticks(0, x0))
+
+        # ...unless the strip holds two axes and that is WHY the whole of it
+        # reads wrong. The coil-tubing stages print "TP Rate (L/min)" 0..1000
+        # outside "Pressure (MPa)" 0..80. Together the two ladders fit nothing
+        # (00243 p77; 00241 p74 and p94), and Surface Main was lost with only
+        # the right-hand curves kept; or they fit the TP Rate ladder and
+        # neither crop of the pressure column fits at all (00241 p84), and
+        # Surface Main went out on the 0..1000 axis at 642 MPa. A PRESSURE
+        # axis between its own title and the frame is the chart's own, and
+        # the titles have already said this is a surface chart, so no reader
+        # changes hands (the 00271 concern above is a chemical chart). Read
+        # the column plain and cleaned, and without what sits under the
+        # frame: the first time label, centred on the frame's corner, puts its
+        # "21" or "12" into this column 10 px below the axis's 0.
+        def own_column():
+            def own(seg):
+                return [p for p in seg if p[1] <= y1 + 5]
+            col = own(strip_ticks(ltx + 4, x0)) + own(lseg)
+            if ar.fit_ticks_guarded(col) is None:
+                col += own(strip_ticks(ltx + 4, x0, clean=True))
+            return ar.fit_ticks_guarded(col)
+        two_axes = lqty == "pressure" and len(lsegs) >= 2
         if whole is None:
-            lcal = None
+            lcal = own_column() if two_axes else None
         else:
             # Where to stop the innermost column is decided by the OCR, not by
             # a constant. Stopping 4px short of the frame is right on the big
@@ -1448,7 +1805,10 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 return (0 if agrees else 1, -cal[2])
 
             cands = [c for c in (lcal, alt) if c]
-            lcal = min(cands, key=_rank) if cands else whole
+            if cands:
+                lcal = min(cands, key=_rank)
+            else:
+                lcal = (own_column() if two_axes else None) or whole
     if lcal:
         fits[lqty] = lcal
 
@@ -1572,10 +1932,31 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                          "filled_cols": tr["filled"],
                          "ends": _held_ends(ends_ink, v, a, b, y0, tb, sample_sec)})
         seen.add(name)
+    if (lqty == "pressure" and yel_pen is not None and fits.get("pressure")
+            and channels and _legend_names_coil(img, box)):
+        # the coil's own pressure, on the chart's pressure axis: see
+        # _legend_names_coil
+        if ends_ink is None:
+            ends_ink = _ink(img, y0, y1, x0, x1)
+        coil = _pen_channel(_drop_legend_swatches(yel_pen, pdark),
+                            fits["pressure"], box, ta, tb, t_start, samples,
+                            ends_ink, sample_sec, "Coil Pressure",
+                            "series-yellow", (0, 0, 0))
+        if coil is not None:
+            coil["color"] = ar.HUE_HEX["yellow"]
+            channels.append(coil)
     if lqty == "pressure" and rpress and channels:
         if ends_ink is None:
             ends_ink = _ink(img, y0, y1, x0, x1)
         channels += _offset_channels(img, box, rpress, fits.get("pressure"),
+                                     samples, ta, tb, t_start, ends_ink,
+                                     sample_sec)
+    elif lqty == "pressure" and not right_axes and channels and fits.get("pressure"):
+        # no right-hand axis at all: 00196's offset chart, every well on the
+        # one pressure axis and named in a legend under the plot
+        if ends_ink is None:
+            ends_ink = _ink(img, y0, y1, x0, x1)
+        channels += _casing_channels(img, box, fits["pressure"], raw_masks,
                                      samples, ta, tb, t_start, ends_ink,
                                      sample_sec)
     if not channels:
@@ -3446,9 +3827,12 @@ def extract_page(page, sample_sec=1.0):
         titled = info is not None
         if not titled:
             try:
+                # a label's colour is counted beside the label, not in the
+                # plot it borders (00208 p24: see ar.ocr_tick_strip)
                 samples, chans, info = ar.extract(img, sample_sec=sample_sec,
                                                   plot=box, glyphs=True,
-                                                  edge_blank=True)
+                                                  edge_blank=True,
+                                                  ticks_in_strip=True)
             except ValueError:
                 continue
         info["geom"] = _page_geom(info, sx, sy)
@@ -3465,6 +3849,9 @@ def extract_page(page, sample_sec=1.0):
             # NEW_SURFACE names the TREATMENT chart's colours; on the chemical
             # twin the rate axis is the clean rate and the concentrations are
             # additives, not proppant. See _name_chemical.
+            tag, note = _bar_tag(tag, title, chans)
+            if note:
+                info.setdefault("notes", []).append(note)
             _name_chemical(tag, chans)
             out.append((tag, samples, chans, info))
             continue
@@ -3525,6 +3912,13 @@ def extract_page(page, sample_sec=1.0):
             # Slurry Rate" where the table says "Slurry Rate", and those are
             # one channel, not a contradiction
             if a.lower() == b.lower():
+                return True
+            # ...and 00208's chemical legend reads "CLEAN RATE" on stages
+            # 1-18 and "COMBINED CLEAN RATE" from 19 on, the same cyan pen.
+            # Taken for a contradiction, it left the other three curves of
+            # those charts "Series (red)", "(green)", "(magenta)".
+            strip = lambda s: re.sub(r"^combined\s+", "", s.strip().lower())
+            if strip(a) == strip(b):
                 return True
             ca, cb = aliases.canon(a), aliases.canon(b)
             return bool(ca) and ca == cb
