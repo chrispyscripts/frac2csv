@@ -186,3 +186,29 @@ class TitleLine(unittest.TestCase):
         self.assertFalse(cp.is_title_line(
             "Arc Hz Anten Surface Pressure (MPa)"))
         self.assertFalse(cp.is_title_line("Treatment Summary"))
+
+
+class ZoneRangeCaption(unittest.TestCase):
+    """00188 p96 captions its first multi-zone page "Zones1-6", with no space,
+    and needing one left zones 1-6 as one unnumbered chart."""
+
+    def setUp(self):
+        self._real = cp.ocr_labels.page_text
+
+    def tearDown(self):
+        cp.ocr_labels.page_text = self._real
+
+    def _range(self, text):
+        cp.ocr_labels.page_text = lambda page: text
+        return cp.zone_range(_Page())
+
+    def test_no_space_after_zones(self):
+        self.assertEqual(self._range("Tourmaline A-J078-A/094-B-16 Surface\n  Zones1-6\n"), (1, 6))
+
+    def test_the_spaced_forms_still_read(self):
+        self.assertEqual(self._range("Zones 7 - 28"), (7, 28))
+        self.assertEqual(self._range("Zone 1-12"), (1, 12))
+
+    def test_a_phone_number_glued_to_the_word_is_still_refused(self):
+        self.assertIsNone(self._range("Zone403-999-6540"))
+        self.assertIsNone(self._range("Zone780-814-4964"))

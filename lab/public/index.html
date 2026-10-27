@@ -1602,8 +1602,7 @@ $("mrun").addEventListener("click", async () => {
         // What the LIST holds, not what the reader returned: a CONTINUOUS
         // re-plot is read and then held back, and a row saying 29 over a
         // list of 28 reads as a stage having gone missing.
-        const nShown = liveStages(out.stages || [], base).length;
-        if (nShown) bits.push(`${nShown} stages`);
+        bits.push(...stageCountBits(liveStages(out.stages || [], base)));
         const nTab = (out.tables || []).length;
         if (nTab) bits.push(`${nTab} table${nTab > 1 ? "s" : ""}`);
         if (out.written && out.written.length)
@@ -1760,8 +1759,7 @@ async function handleFile(f, q, saveDir, fixFile) {
     // What the list holds, not what the reader returned — the manifest path
     // already counted it this way and the file path did not, so a dropped
     // file said "29 stages" over a list of 28.
-    const nShown = liveStages(stages, f.name).length;
-    if (nShown) bits.push(`${nShown} stage${nShown > 1 ? "s" : ""}`);
+    bits.push(...stageCountBits(liveStages(stages, f.name)));
     if (tables.length) bits.push(`${tables.reduce((s, t) => s + t.rows.length, 0)} table rows`);
     if (bits.length && saveDir) {
       q.set("saving exports…"); q.progress(0.93);
@@ -2067,6 +2065,21 @@ const round2 = v => Math.round(v * 100) / 100;
 let current = null;   // { entry, well, item }
 
 // group a well's charts into one selectable item per stage number
+// The count on a file's row: STAGES, as the list below it groups them, and
+// the charts behind them when that is a different number.
+//
+// It counted charts and called them stages. A STEP filing draws a surface
+// and a chemical plot of every stage, and some an offset plot as well, so
+// 00185 said "129 stages" over a list of 33 and 00184 "78" over 39 — read,
+// fairly, as most of the stages being missing or doubled.
+function stageCountBits(shown) {
+  if (!shown.length) return [];
+  const nStage = new Set(shown.map(st => st.meta.stage || "?")).size;
+  const bits = [`${nStage} stage${nStage > 1 ? "s" : ""}`];
+  if (shown.length !== nStage) bits.push(`${shown.length} charts`);
+  return bits;
+}
+
 function stageItems(stages, keepContinuous) {
   const order = [], groups = new Map();
   for (const st of stages) {
@@ -5159,7 +5172,21 @@ function overlapWorthFlagging(startMs, prevEndMs, durMs) {
 function stageTimeIssues(stages) {
   const out = [];
   let prev = null, prevEnd = NaN, prevKey = null;
-  for (let i = 0; i < stages.length; i++) {
+  // Walked in STAGE order — the order the list shows them in — not in the
+  // order the pages happen to come in. CalFrac 00187 prints zones 19-28 on
+  // p91 and zones 1-18 on p95, so in page order stage 1 followed stage 28
+  // and was flagged for starting 33 hours before it finished, on a well
+  // whose clock runs forward from stage 1 to 28 without a fault. By the
+  // first number in the label, like the list ("HRF 5A" -> 5); a chart with
+  // none stays beside the one before it; ties keep their page order, so a
+  // stage's several plots stay together.
+  let carry = -Infinity;
+  const order = stages.map((st, i) => {
+    const m = String((st && st.meta && st.meta.stage) || "").match(/\d+/);
+    if (m) carry = parseInt(m[0], 10);
+    return { i, k: carry };
+  }).sort((a, b) => (a.k - b.k) || (a.i - b.i)).map(x => x.i);
+  for (const i of order) {
     // A CONTINUOUS chart is the whole job re-plotted end to end. It opens
     // before the first stage and closes after the last one BY CONSTRUCTION,
     // so it will always look like a clock running backwards — and telling

@@ -142,5 +142,23 @@ console.log("\na stage with no clock read is not judged against its neighbours")
      "and a real overlap still flags");
 }
 
+console.log("\n00187 — the pages come out of stage order, the clock does not");
+{
+  // p91 carries zones 19-28 and p95 zones 1-18, in that order in the file
+  const pages = [st("19", "2017-08-13", "00:01:50", 50), st("20", "2017-08-13", "02:50:17", 50),
+                 st("28", "2017-08-13", "11:40:33", 60),
+                 st("1", "2017-08-12", "04:13:58", 60), st("2", "2017-08-12", "05:30:00", 60),
+                 st("18", "2017-08-12", "21:22:02", 70)];
+  is(flagged(pages), [], "stage 1 is not compared with stage 28");
+  // ...and a real wrong clock still shows, wherever its page sits
+  const bad = pages.slice();
+  bad[4] = st("2", "2017-08-12", "03:00:00", 60);
+  is(flagged(bad), ["2"], "a stage dated before the one before it still flags");
+  // a stage's several plots stay one stage in stage order (#589)
+  is(flagged([st("1", "2024-01-01", "08:00:00", 60), st("2", "2024-01-01", "09:10:00", 60),
+              st("2", "2024-01-01", "09:10:20", 60), st("3", "2024-01-01", "10:20:00", 60)]),
+     [], "paired plots of one stage are still not compared with each other");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

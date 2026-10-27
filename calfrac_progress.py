@@ -55,7 +55,13 @@ from calfrac_summary import _rows
 # required. What has to be excluded is an ordinal: "Zone 8- 1st Attempt" reads
 # as a range from 8 to 1. Single-zone captions ("Zone 8", "Zone 10") have no
 # second number and never match, which is what keeps their pages unsplit.
-ZONES_CAPTION = re.compile(r"\bZones?\s+(\d+)\s*-\s*(\d+)(?!\s*(?:st|nd|rd|th)\b)")
+#
+# The space after "Zones" is optional. 00188 p96 captions its first page
+# "Zones1-6", and requiring the space left zones 1-6 as one unnumbered chart
+# (and its Bottom Hole twin on p97 with it) while "Zones 7 - 28" on p101 split
+# fine. A range still needs its dash and its second number, and zone_range's
+# bounds are what turn away a phone number glued to the word.
+ZONES_CAPTION = re.compile(r"\bZones?\s*(\d+)\s*-\s*(\d+)(?!\s*(?:st|nd|rd|th)\b)")
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
 # "ZONE #:" heads the older Multiple-Zone sheet; the 2018-vintage grid heads
 # the same column with a bare "Zone".

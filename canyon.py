@@ -45,6 +45,20 @@ def _spans(page):
     return out
 
 
+def _header_value(spans, labels):
+    """The text printed to the right of a header label ("Interval:",
+    "Comment:") on the same line, or None. The nearest span wins, and only
+    within 80pt: the value column sits a few points right of the labels."""
+    for s in spans:
+        if s["t"].rstrip(":").strip().lower() not in labels:
+            continue
+        right = [v for v in spans if abs(v["cy"] - s["cy"]) < 3
+                 and 0 <= v["x0"] - s["x1"] < 80]
+        if right:
+            return min(right, key=lambda v: v["x0"])["t"]
+    return None
+
+
 def _fit(pairs):
     v = np.array([p[0] for p in pairs], float)
     c = np.array([p[1] for p in pairs], float)
@@ -286,6 +300,20 @@ def extract_page(page, sample_sec=1.0):
         # is "13 (2)" (#617); the same name here keeps the two apart.
         if re.search(r"#\s*" + m.group(1) + r"\b[^\n]{0,40}?\bcontinued\b", text, re.I):
             meta.stage = f"{m.group(1)} (2)"
+    else:
+        # No "#N" anywhere: the number is printed bare in the header field
+        # itself. 00232/00233 print "Interval: 1" and 00240 "Comment: 1",
+        # and 00211 p57 / 00213 p75 drop the "#" on one or two pages of a
+        # report that writes "#13" everywhere else — every chart of the
+        # first three came out unnumbered, and the last two lost stages 14
+        # and 20-21. Read by position, as the value on the label's own line,
+        # because the text stream lists the labels and the values apart.
+        # Only a bare number counts: a comment is free text, and "2 attempts"
+        # is not stage 2.
+        v = _header_value(spans, ("interval", "comment"))
+        mm = re.fullmatch(r"#?\s*(\d{1,3})", v or "")
+        if mm and 0 < int(mm.group(1)) <= 100:
+            meta.stage = mm.group(1)
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     if m:
         meta.date = m.group(0)
