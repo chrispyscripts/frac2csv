@@ -57,6 +57,14 @@ class CasingLegend(unittest.TestCase):
         self.assertLess(np.abs(np.asarray(got[0]["rgb"]) - BLUE).max(), 2)
         self.assertLess(np.abs(np.asarray(got[2]["rgb"]) - GREY).max(), 2)
 
+    def test_an_a_read_as_s(self):
+        # 00198 p21
+        got = self.read([RED, BLUE, CYAN],
+                        ["SURFACE Msin (MPa)", "E Well Cssing (MPs)",
+                         "B well lower pop vsive (MPs)"])
+        self.assertEqual([e["label"] for e in got],
+                         ["E Well Casing Pressure", "B Well Lower Pop Valve Pressure"])
+
     def test_an_o_read_as_a_zero_is_put_back(self):
         got = self.read([RED, BLUE, ORANGE],
                         ["SURFACE Main (MPa)", "E Well Casing (MPa)",

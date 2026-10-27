@@ -998,9 +998,10 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
 
 
 # A neighbouring well's pen as the legend UNDER an offset chart names it:
-# "E Well Casing (MPa)", and on one well "B well lower pop valve (MPa)".
+# "E Well Casing (MPa)", and on one well "B well lower pop valve (MPa)". The
+# OCR reads an a as s on 00198 p21: "E Well Cssing", "lower pop vsive".
 _CASING_ENTRY = re.compile(r"^\W*([A-Z0-9])\s*[Ww]\s*[eo]\s*[l1I|]{2}\s+"
-                           r"(Casing|lower\s+pop\s+valve)\b", re.IGNORECASE)
+                           r"(C\w{2,3}ing|lower\s+pop)\b", re.IGNORECASE)
 
 
 def _casing_legend(img, box, band=230):
@@ -1090,7 +1091,7 @@ def _casing_legend(img, box, band=230):
                 continue
             letter = m.group(1).upper()
             letter = _WELL_LETTER.get(letter, letter)
-            what = ("Casing" if m.group(2).lower() == "casing"
+            what = ("Casing" if m.group(2)[0] in "Cc"
                     else "Lower Pop Valve")
             out.append({"rgb": e["rgb"], "label": f"{letter} Well {what} Pressure"})
     return out if len(out) >= 2 else []
