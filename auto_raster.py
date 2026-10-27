@@ -362,6 +362,10 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
     if strip.size == 0:
         return out
     SCALE = 3
+    # (in_strip) the families that already have a ladder of their own in a
+    # strip read before this one
+    laddered = ({k for k, pts in out.items() if sum(1 for p in pts if p[2]) >= 3}
+                if in_strip else set())
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
@@ -376,6 +380,16 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
             x0, x1 = max(x0, xa), min(x1, xb)
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
+        if in_strip and bestk in laddered:
+            # A family whose ladder is on the other side of the plot has no
+            # second one here: 00247 p23's dark green Prop Conc labels are
+            # teal enough at their edges to count as cyan, whose 0..16 rate
+            # ladder is on the left, and Prop Conc was dropped as "axis ticks
+            # unreadable". The runner-up, if it is close, is the label's own.
+            rivals = [k for k, c in counts.items() if k != bestk and k not in laddered
+                      and c > 30 and c >= 0.4 * counts[bestk]]
+            if rivals:
+                bestk = max(rivals, key=counts.get)
         if counts[bestk] > 30:
             out[bestk].append((float(t), py, True))
             # ambiguous color (scan fringe): runner-up gets a borrowed vote

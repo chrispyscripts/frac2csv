@@ -413,6 +413,16 @@ def find_charts(img):
     return out
 
 
+def _blank_body(img):
+    """Is the page's upper chart area — where every STEP chart page draws its
+    first plot — white? 00270 p30's is: not one pixel of ink between 15% and
+    38% of the height and 15% and 85% of the width. Every page with a chart
+    carries its curves and gridlines there (3-11% ink on 00184, 00243, 00270)."""
+    H, W = img.shape[:2]
+    c = np.asarray(img)[int(0.15 * H):int(0.38 * H), int(0.15 * W):int(0.85 * W)]
+    return c.size > 0 and float((c.min(axis=2) < 200).mean()) < 0.002
+
+
 def _side_by_side(img, rows_needed=3):
     """How many plots a row of this page prints side by side, from their
     horizontal gridlines: rules a fifth to a third of the page wide, two or
@@ -781,11 +791,16 @@ def _offset_channels(img, box, rpress, main_cal, samples, ta, tb, t_start,
         for dx in range(-k, k + 1):
             near_strong |= pad[k + dy:k + dy + strong.shape[0],
                                k + dx:k + dx + strong.shape[1]]
+    if main_cal:
+        cals["main"] = main_cal
     out, used = [], set()
     for e in legend:
         cal = cals.get(e["group"])
-        if cal is None:
-            continue
+        if cal is None or (e["group"] == "main" and not e.get("well")):
+            continue                # the main group's own Surface Main is read already
+        # a well on the main axis is still an offset well, and keeps the name
+        # it has on the stages that plot it on the offset axis (00242)
+        grp = "offset" if e["group"] == "main" else e["group"]
         rgb = np.asarray(e["rgb"], float)
         chroma = float(rgb.max() - rgb.min())
         tol = min(60.0, max(22.0, 0.35 * chroma))
@@ -812,7 +827,7 @@ def _offset_channels(img, box, rpress, main_cal, samples, ta, tb, t_start,
         v = ct.resample(samples, t_cols, vals)
         name = e["name"] if re.fullmatch(r"[A-Z] Well", e["name"]) else (
             "Well " + "#%02x%02x%02x" % tuple(int(c) for c in rgb))
-        label = f"{name} {OFFSET_GROUP_LABEL[e['group']]}"
+        label = f"{name} {OFFSET_GROUP_LABEL[grp]}"
         if label in used:
             continue
         used.add(label)
@@ -825,7 +840,7 @@ def _offset_channels(img, box, rpress, main_cal, samples, ta, tb, t_start,
                     "ends": _held_ends(ink, v, a, b, y0, tb, sample_sec),
                     # for the file-wide vote on the well's letter
                     # (pipeline._offset_well_names)
-                    "offset": {"group": e["group"],
+                    "offset": {"group": grp,
                                "rgb": [float(c) for c in rgb],
                                # (glyph alone, line, glyph settled by its
                                # shape) — see the vote's weights
@@ -968,7 +983,11 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
             raw = read(e["y0"] - 4, e["y1"] + 5, e["c1"] + 2, right)
             name = ar._legend_name(raw)
             mw = re.search(r"(?:w|vv)\s*[eo]", raw, re.I)
-            if group != "main" and mw:
+            # From stage 26 on, 00242 lists A Well under "Pressure (Mpa)",
+            # beside Surface Main: plotted on the main axis, and never read
+            on_main = (group == "main" and mw is not None
+                       and not re.search(r"surf|main", raw, re.I))
+            if (group != "main" or on_main) and mw:
                 # "X Well (MPa)": the letter as the line read it, and as the
                 # glyph alone reads it. Each misses where the other does not
                 # — the line gives "&" and "5S" for A and B on 00243's 8 px
@@ -985,7 +1004,7 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
                 name = (ch + " Well") if ch else ""
             out.append({"rgb": e["rgb"], "name": name, "group": group,
                         "row": (e["y0"], e["y1"]), "col": (e["c0"], right),
-                        "votes": e.get("votes", ("", ""))})
+                        "votes": e.get("votes", ("", "")), "well": bool(on_main)})
     if not any(e["group"] != "main" for e in out):
         return []
     bx0 = min(e["col"][0] for e in out) - 10
@@ -1182,14 +1201,15 @@ def _grow(mask, k):
 
 
 def _pen_channel(sub, cal, box, ta, tb, t_start, samples, ink, sample_sec,
-                 label, key, rgb):
+                 label, key, rgb, glyphs=True):
     """One pen's mask (plot-cropped) read against its axis -> channel, or
-    None where too little of it is on the page."""
+    None where too little of it is on the page. glyphs: see
+    auto_raster.curve_positions."""
     x0, y0, x1, y1 = box
     cov = float(sub.any(axis=0).mean())
     if cov < 0.1:
         return None
-    py = ar.curve_positions(sub, glyphs=True, edge_blank=True,
+    py = ar.curve_positions(sub, glyphs=glyphs, edge_blank=True,
                             bracketed=True) + y0
     a, b, ntick = cal
     _vt, _vb, _sn = ar.snap_axis(a + b * y0, a + b * y1)
@@ -1263,7 +1283,8 @@ def _legend_names_coil(img, box):
         for cp in found[0]:
             w = cp["c1"] - cp["c0"] + 1
             h = cp["y1"] - cp["y0"] + 1
-            if not (4 <= w <= 16 and 4 <= h <= 16 and abs(w - h) <= 4):
+            # 3 px: 00242 p72 renders the page smaller, and its swatch is 5x3
+            if not (3 <= w <= 16 and 3 <= h <= 16 and abs(w - h) <= 4):
                 continue
             if cp["n"] / float(w * h) < 0.6:
                 continue
@@ -1280,10 +1301,12 @@ def _legend_names_coil(img, box):
             if mn < 250:
                 piece = np.clip((piece - mn) * 255.0 / (255.0 - mn), 0, 255)
             piece = np.pad(piece, 6, constant_values=255)
-            pil = Image.fromarray(piece.astype(np.uint8))
-            pil = pil.resize((pil.width * 4, pil.height * 4), Image.LANCZOS)
-            if _COIL.search(ar.ocr_line(np.array(pil), psm=7)):
-                return True
+            # 6x for the smaller render: 00242 p72's "Coil" reads "Sou" at 4x
+            for scale in (4, 6):
+                pil = Image.fromarray(piece.astype(np.uint8))
+                pil = pil.resize((pil.width * scale, pil.height * scale), Image.LANCZOS)
+                if _COIL.search(ar.ocr_line(np.array(pil), psm=7)):
+                    return True
     return False
 
 
@@ -1304,6 +1327,28 @@ def _bar_tag(tag, title, chans):
         return "c", ("a chemical chart under the \"Offset Analysis\" bar: its "
                      "axes are the chemical chart's, and it is read as one")
     return tag, None
+
+
+_UNIT_KIND = {"mpa": "pressure", "kpa": "pressure", "psi": "pressure",
+              "kg/m3": "conc", "l/m3": "conc", "m3/min": "rate"}
+
+
+def _legend_unit_for(name, unit):
+    """A legend entry's unit, or "" where it cannot be the unit of what the
+    entry names. The OCR matches units loosely, and 00247 p23's "Prop Conc
+    (kg/m3)" came back "kPa": a concentration exported in kPa, which also
+    makes it a pressure to every check downstream. The table's unit for that
+    name stands in where there is one."""
+    low = (name or "").lower()
+    kind = ("pressure" if "press" in low else "conc" if "conc" in low
+            else "rate" if "rate" in low else None)
+    got = _UNIT_KIND.get((unit or "").lower())
+    if kind is None or got is None or got == kind:
+        return unit
+    for (_tag, _fam), (nm, u) in SERIES_NAMES.items():
+        if nm == name:
+            return u
+    return ""
 
 
 def _name_chemical(tag, chans):
@@ -1652,6 +1697,27 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 else:
                     cols.append((qty, [(v, y, True) for v, x, y in pts]))
             lo = tx + 4
+        # An outermost axis whose own title did not read sits beyond the last
+        # title that did, and was never looked at: 00242 p72 (a coil-tubing
+        # stage at the smaller render) read "Concentration" and not "Rate
+        # (m3/min)" beyond it, and lost Slurry Rate. Numbers there that fit a
+        # line are an axis; named by reach, as the untitled reading does, and
+        # only for a quantity no titled column has.
+        beyond = rows[y0 - ry0:y1 - ry0, lo:W]
+        if beyond.size and (beyond.sum(axis=2) < 450).sum() >= 30:
+            have = {q for q, _s in cols}
+            pts = strip_ticks(lo, W, with_x=True)
+            if not fits_any(pts):
+                pts = pts + strip_ticks(lo, W, with_x=True, clean=True)
+            for seg in _right_columns(pts):
+                cal = ar.fit_ticks_guarded(seg) if len(seg) >= 3 else None
+                if not cal:
+                    continue
+                top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
+                q = "conc" if top >= RATE_AXIS_MAX else "rate"
+                if q not in have:
+                    cols.append((q, seg))
+                    have.add(q)
     else:
         # Titles unreadable: fall back to reading the whole strip and telling
         # the columns apart by how far each axis reaches. A rate axis tops out
@@ -1970,10 +2036,13 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # _legend_names_coil
         if ends_ink is None:
             ends_ink = _ink(img, y0, y1, x0, x1)
+        # glyphs=False: the coil's thick, ragged plateaus look like the
+        # logo's glyphs to that filter, and 00242 p72 lost its 58 MPa
+        # stretches (22:52-23:12) to it. No logo is drawn in yellow.
         coil = _pen_channel(_drop_legend_swatches(yel_pen, pdark),
                             fits["pressure"], box, ta, tb, t_start, samples,
                             ends_ink, sample_sec, "Coil Pressure",
-                            "series-yellow", (0, 0, 0))
+                            "series-yellow", (0, 0, 0), glyphs=False)
         if coil is not None:
             coil["color"] = ar.HUE_HEX["yellow"]
             channels.append(coil)
@@ -3826,7 +3895,8 @@ def extract_page(page, sample_sec=1.0):
     sy = img.shape[0] / pr.height if pr.height else 0
     out = []
     seen_titles = []
-    for i, box in enumerate(find_charts(img)):
+    boxes = find_charts(img)
+    for i, box in enumerate(boxes):
         # The chart says what it is. Position does not: 00184/00185 put a
         # second TREATMENT chart where the chemical one usually sits.
         try:
@@ -4010,7 +4080,7 @@ def extract_page(page, sample_sec=1.0):
             fam = c["key"].replace("series-", "").rstrip("2")
             if fam in legend and legend[fam][0]:
                 c["label"] = legend[fam][0]
-                c["unit"] = legend[fam][1] or c["unit"]
+                c["unit"] = _legend_unit_for(legend[fam][0], legend[fam][1]) or c["unit"]
                 continue
             if contradicted:
                 continue                      # keep the neutral "Series (x)"
@@ -4030,6 +4100,14 @@ def extract_page(page, sample_sec=1.0):
             "the page's width (a stage pumped in several attempts) — their axis "
             "and time labels are three or four pixels a character and do not "
             "read, so the page was not read")
+    elif (not out and not boxes and (meta.get("stage") is not None or meta.get("interval"))
+            and _blank_body(img)):
+        # 00270 p30-p31: Treatment 7's pages print the title, the interval
+        # and the info table round chart areas left blank. Nothing to read,
+        # but the stage is then missing from the file, so say where.
+        meta.setdefault("skipped", []).append(
+            "a stage's chart page with its chart areas printed blank — "
+            "nothing is drawn on it to read")
     # page_meta decides main-vs-casing by OCR'ing the header BAND, which on
     # these reports reads "STEP Energy Services Interval Summary ..." and
     # contains neither "Prop Conc" nor "Surface Pressure" — so every page fell

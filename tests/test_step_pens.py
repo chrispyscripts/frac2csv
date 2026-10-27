@@ -155,6 +155,50 @@ class BarTag(unittest.TestCase):
             [{"label": "Surface Pressure", "unit": "MPa"}]), ("t", None))
 
 
+class LegendUnit(unittest.TestCase):
+    def test_a_concentration_is_not_in_kpa(self):
+        # 00247 p23: "Prop Conc (kg/m3)" read as kPa
+        self.assertEqual(step1._legend_unit_for("Prop Conc", "kPa"), "kg/m3")
+        self.assertEqual(step1._legend_unit_for("Surf Total Proppant Conc", "MPa"), "")
+
+    def test_units_that_agree_stand(self):
+        self.assertEqual(step1._legend_unit_for("Surface Pressure", "MPa"), "MPa")
+        self.assertEqual(step1._legend_unit_for("Combined Slurry Rate", "m3/min"), "m3/min")
+        self.assertEqual(step1._legend_unit_for("Aqucar 742 Conc", "L/m3"), "L/m3")
+
+
+class LabelOnTheOtherSide(unittest.TestCase):
+    def test_a_laddered_family_gives_a_close_label_to_the_runner_up(self):
+        # 00247 p23: dark green labels on the right counted as cyan, whose
+        # ladder is on the left
+        img = np.full((300, 200, 3), 255, int)
+        masks = {"cyan": np.zeros((300, 200), bool), "green": np.zeros((300, 200), bool)}
+        masks["cyan"][95:105, 150:170] = True
+        masks["green"][97:104, 150:166] = True
+        out = {"cyan": [(16.0, 10, True), (8.0, 100, True), (0.0, 190, True)], "green": []}
+        words = [("1600", (160 - 140) * 3, 100 * 3)]
+        with mock.patch.object(step1.ar, "ocr_words", return_value=words):
+            got = step1.ar.ocr_tick_strip(img, masks, 140, 200, out=dict(
+                (k, list(v)) for k, v in out.items()), in_strip=True)
+        self.assertIn((1600.0, 100, True), got["green"])
+        with mock.patch.object(step1.ar, "ocr_words", return_value=words):
+            got = step1.ar.ocr_tick_strip(img, masks, 140, 200, out=dict(
+                (k, list(v)) for k, v in out.items()))
+        self.assertIn((1600.0, 100, True), got["cyan"])
+
+
+class BlankBody(unittest.TestCase):
+    def test_a_blank_chart_area(self):
+        # 00270 p30: title, interval and info table round a blank chart area
+        img = np.full((1000, 800, 3), 255, int)
+        img[50:60, 100:700] = (200, 90, 40)
+        img[900:950, 100:700] = 0
+        self.assertTrue(step1._blank_body(img))
+        img[300, 150:650] = 0                             # a gridline
+        img[200:340, 400] = (250, 0, 0)                   # a curve
+        self.assertFalse(step1._blank_body(img))
+
+
 class SideBySide(unittest.TestCase):
     def page(self, panels):
         img = np.full((600, 900, 3), 255, int)
