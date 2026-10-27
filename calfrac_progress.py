@@ -843,6 +843,25 @@ def split_page(samples, data, nzones, sample_sec=1.0, min_gap_s=300.0):
 _MIN_STABLE = 3
 
 
+def pump_onset(data, a, b, sample_sec=1.0, frac=0.25):
+    """Seconds into samples [a, b) before the pumps come on, or 0.
+
+    "On" is the same test _quiet_runs makes — slurry rate above a fraction of
+    the rate the page actually ran at — so a segment that opens on a long
+    shut-in (the first zone of a page opens with the chart) reports how long
+    it waited.
+    """
+    rate = data.get("Slurry Rate")
+    if rate is None or b <= a:
+        return 0
+    r = np.nan_to_num(np.asarray(rate, float), nan=0.0)
+    live = r[r > 0.3]
+    if live.size < 10:
+        return 0
+    on = np.flatnonzero(r[a:b] > frac * float(np.percentile(live, 60)))
+    return int(round(on[0] * sample_sec)) if on.size else 0
+
+
 def trim_last_zone(bounds, data):
     """`bounds` with the LAST zone ended at the page's last plotted sample.
 

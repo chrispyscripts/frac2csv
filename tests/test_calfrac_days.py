@@ -133,6 +133,33 @@ class ExportDateCeiling(unittest.TestCase):
                                       "2": ["2017-08-21"]})
 
 
+class PumpOnset(unittest.TestCase):
+    def test_00261_a_page_that_opens_hours_before_its_first_zone(self):
+        # "Zones 27-32" opens at 20:30 on the 17th; zone 27 is not pumped
+        # until 01:00. Zone 26, on the page before, starts at 23:46.
+        fl = dict(day_is="start", day_floor="2017-06-16",
+                  day_ceil="2017-06-18")
+        res = (_twins(26, "2017-06-17", "23:46:00", **fl)
+               + _twins(27, "2017-06-17", "20:30:27", pump_offset_s=16200,
+                        **fl)
+               + _twins(28, "2017-06-18", "01:03:07", **fl))
+        pipeline._calfrac_days(res, [])
+        self.assertEqual(_days(res), {"26": ["2017-06-17"],
+                                      "27": ["2017-06-17"],
+                                      "28": ["2017-06-18"]})
+
+    def test_the_onset_is_read_off_the_rate(self):
+        import numpy as np
+        import calfrac_progress as cp
+        rate = np.zeros(1000)
+        rate[100:400] = 6.0
+        rate[600:900] = 6.0
+        self.assertEqual(cp.pump_onset({"Slurry Rate": rate}, 0, 500), 100)
+        self.assertEqual(cp.pump_onset({"Slurry Rate": rate}, 500, 1000),
+                         100)
+        self.assertEqual(cp.pump_onset({}, 0, 500), 0)
+
+
 class ZoneRangePage(unittest.TestCase):
     def test_00258_a_whole_range_page_follows_the_zone_before_it(self):
         fl = dict(day_is="start", day_floor="2017-06-19")

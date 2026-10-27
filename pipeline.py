@@ -680,6 +680,9 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         # a 12-zone overview is coarser than the same zone on its own chart
         md["zone_span"] = nz
         md["duration_min"] = (b - a) * sample_sec / 60.0
+        # where in this segment the pumps come on — _calfrac_days orders
+        # zones by it, because a page's first zone opens with the chart
+        md["pump_offset_s"] = cprog.pump_onset(data, a, b, sample_sec)
         # seconds from midnight of zone_date: the fitted origin (0 when the
         # table gave nothing usable) plus this zone's place on the axis
         secs = int(round((anchor[0] * 60 if anchor else 0) + a * sample_sec))
@@ -1018,8 +1021,17 @@ def _calfrac_days(results, notes):
             if cur is not None and t - cur["t"] <= _CALFRAC_TWIN_S:
                 cur["recs"].append(r)
                 continue
-            cur = {"zone": zone, "t": t, "day": day, "secs": secs,
-                   "recs": [r]}
+            # Ordered by when the zone's PUMPING starts, not when its segment
+            # opens. The first zone of a page starts with the chart, which
+            # can open hours early: 00261's "Zones 27-32" opens at 20:30 while
+            # zone 26, on the page before, starts 23:46, and zone 27 is not
+            # pumped until about 01:00. By the window it looked a day out,
+            # and moving it a day put zones 27-32 on 06-18/19 for a chart
+            # exported on the 18th.
+            lead = int((r.get("meta") or {}).get("pump_offset_s") or 0)
+            carry, osecs = divmod(secs + lead, 86400)
+            cur = {"zone": zone, "t": t, "day": day + carry, "secs": osecs,
+                   "carry": carry, "recs": [r]}
             entries.append(cur)
     if len(entries) < 2:
         return
@@ -1027,12 +1039,15 @@ def _calfrac_days(results, notes):
                                 e["zone"], e["t"]))
     days = [e["day"] for e in entries]
     secs = [e["secs"] for e in entries]
+
     def bound(e, key, pick):
+        # a bound on the START day, carried to the day pumping began
         got = []
         for r in e["recs"]:
             try:
                 got.append(datetime.strptime(r["meta"][key],
-                                             "%Y-%m-%d").toordinal())
+                                             "%Y-%m-%d").toordinal()
+                           + e["carry"])
             except (KeyError, TypeError, ValueError):
                 pass
         return pick(got) if got else None
