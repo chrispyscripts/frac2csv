@@ -147,5 +147,22 @@ class BarTag(unittest.TestCase):
             [{"label": "Surface Pressure", "unit": "MPa"}]), ("t", None))
 
 
+class SideBySide(unittest.TestCase):
+    def page(self, panels):
+        img = np.full((600, 900, 3), 255, int)
+        w = 860 // panels
+        for k in range(panels):
+            for y in range(100, 500, 80):              # five gridlines
+                img[y, 20 + k * w + 10:20 + (k + 1) * w - 40] = 0
+        return img
+
+    def test_three_panels_in_a_row(self):
+        # 00241 p24: Treatment 1's three attempts, a third of the width each
+        self.assertGreaterEqual(step1._side_by_side(self.page(3)), 2)
+
+    def test_an_ordinary_chart_is_one(self):
+        self.assertEqual(step1._side_by_side(self.page(1)), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

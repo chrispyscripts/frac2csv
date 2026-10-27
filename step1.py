@@ -413,6 +413,35 @@ def find_charts(img):
     return out
 
 
+def _side_by_side(img, rows_needed=3):
+    """How many plots a row of this page prints side by side, from their
+    horizontal gridlines: rules a fifth to a third of the page wide, two or
+    more on one line, on three lines or more. 1 for an ordinary page.
+
+    00241 p24 prints Treatment 1 — pumped in three attempts — as three
+    surface charts in a row over three chemical charts, each squeezed to a
+    third of the width. find_charts wants a frame 30% of the page wide and
+    found none, so the page was skipped without a word and the file had no
+    stage 1. Their labels are three or four pixels a character wide: the
+    time labels read on two panels of the three and the value axes on none,
+    so the page is reported rather than read."""
+    H, W = img.shape[:2]
+    dark = np.asarray(img).sum(axis=2) < 450
+    lo, hi = int(W * 0.15), int(W * 0.36)
+    best = 1
+    hits = {}
+    for y in range(H):
+        segs = [(a, b) for a, b in _runs(dark[y], lo, gap=3, trim=0)
+                if b - a <= hi]
+        if len(segs) >= 2:
+            key = tuple(round(a / 20.0) for a, _b in segs)
+            hits[key] = hits.get(key, 0) + 1
+    for key, n in hits.items():
+        if n >= rows_needed:
+            best = max(best, len(key))
+    return best
+
+
 def _whole_rules(dark, box, gap=8, agree=12):
     """A box grown to the full length of its own side rules, where they are
     printed broken.
@@ -3992,6 +4021,12 @@ def extract_page(page, sample_sec=1.0):
         if flat is not None:
             return flat
     meta = page_meta(img)
+    if not out and _side_by_side(img) >= 2:
+        meta.setdefault("skipped", []).append(
+            "charts printed side by side, two or three to a row at a third of "
+            "the page's width (a stage pumped in several attempts) — their axis "
+            "and time labels are three or four pixels a character and do not "
+            "read, so the page was not read")
     # page_meta decides main-vs-casing by OCR'ing the header BAND, which on
     # these reports reads "STEP Energy Services Interval Summary ..." and
     # contains neither "Prop Conc" nor "Surface Pressure" — so every page fell
