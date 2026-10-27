@@ -6,6 +6,8 @@
 // invisible one stage at a time and obvious across a well — 00495 has 66
 // stages and exactly one, 3B, dated 2023-11-02 04:51, which is before stage 1
 // begins. This is the rule that finds them.
+// a zone that keeps daylight saving, so the DST case below means something
+process.env.TZ = "America/Edmonton";
 const fs = require("fs");
 const path = require("path");
 const SRC = path.join(__dirname, "..", "lab", "public", "index.html");
@@ -64,6 +66,16 @@ is(flagged([st("1", "", ""), st("2", "2024-05-27", "08:00:00")]),
    [], "a stage with no printed clock is skipped, not guessed at");
 is(flagged([st("1", "2024-05-26", "22:00:00")]), [], "one stage");
 is(flagged([]), [], "no stages");
+
+console.log("\na daylight-saving change is not a clock fault");
+// CalFrac 00227: zone 18 at 02:30 on 2017-03-12 (an hour Mountain time
+// skips) for 53.3 min, zone 19 at 03:23:30 — back to back on the job's own
+// clock. Read as local time they overlapped by 60 min.
+is(flagged([{ meta: { stage: "18", date: "2017-03-12", start_time: "02:30:12" },
+              n: 3198, sample_sec: 1 },
+            { meta: { stage: "19", date: "2017-03-12", start_time: "03:23:30" },
+              n: 2958, sample_sec: 1 }]),
+   [], "zones either side of the spring-forward hour");
 
 console.log("\noverlap IS a fault");
 is(flagged([st("1", "2024-05-26", "22:00:00", 60),
