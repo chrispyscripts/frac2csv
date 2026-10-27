@@ -503,7 +503,7 @@ def _series(meta, samples, data, source, page=None, units=None, labels=None,
 
 def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
                     _last_progress, zclocks=None, all_times=None,
-                    sheet_dates=None):
+                    sheet_dates=None, lend=None):
     """One CalFrac "Progress" page -> one (meta, samples, data, geom) per zone.
 
     The page plots several zones end to end and names none of them, so without
@@ -524,7 +524,11 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
 
     zr = cprog.zone_range(page)
     borrowed = None
-    if not zr:
+    if lend is not None:
+        # cuts handed BACK by the twin behind this page (see the caller)
+        zr = zr or lend["range"]
+        borrowed = lend
+    elif not zr:
         # The Bottom Hole page plots the same window as the Surface page it
         # sits directly behind, but prints no caption. Borrow that page's
         # zones — only from the page immediately before, and only when the
@@ -636,6 +640,14 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
                 {"cuts": [(a / len(samples), b / len(samples))
                           for a, b in bounds],
                  "zones": zones, "anchor": anchor})
+        elif borrowed is not None and len(samples):
+            # This page split where the captioned page in front of it could
+            # not: offer the cuts back. The two plot one window, so they are
+            # as good for that page as that page's would have been for this.
+            borrowed["lent"] = {"range": (lo, hi), "zones": zones,
+                                "anchor": anchor,
+                                "cuts": [(a / len(samples), b / len(samples))
+                                         for a, b in bounds]}
 
     geom = getattr(meta, "geom", None)
     # The sheet's own "Job Date:" first, because the chart's only date is the
@@ -4066,6 +4078,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # an uncaptioned Bottom Hole zone page left whole, waiting to see whether
     # its captioned Surface twin comes AFTER it (see where it is used)
     _bh_orphan = [None]
+    # a captioned zone page left whole, waiting to see whether the Bottom
+    # Hole twin behind it can be cut where it could not
+    _capt_whole = [None]
     # the Treatment Summary grid's per-zone start time and Job Date, read once
     # per document and only when a CalFrac chart actually needs it
     _zone_clocks = [None]
@@ -4732,6 +4747,39 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                      "samples": samples, "data": data,
                                      "recs": emitted, "variant": _variant,
                                      "exported": _exported, "scales": scales}
+                # The other way round: the captioned page could not be cut
+                # but the Bottom Hole page behind it could. 00275's "Zones
+                # 9-32" Surface sheet shows 24 concentration breaks for 23
+                # boundaries and stayed one 1200-minute chart, while its
+                # Bottom Hole twin split cleanly into zones 9-32 — which then
+                # had no Surface sheet to pair with and went out as "9 BH" ...
+                # "32 BH" beside the whole "9-32 Surface". The twin's cuts are
+                # handed back and the captioned page is cut on them.
+                capt = _capt_whole[0]
+                _capt_whole[0] = None
+                if capt and lp and capt["pno"] == pno - 1 and \
+                        lp["page"] == capt["pno"] and lp.get("lent"):
+                    redo = _split_progress(
+                        capt["page"], capt["meta"], capt["samples"],
+                        capt["data"], {}, sample_sec, notes, capt["pno"],
+                        [None], _zone_clocks[0], _zone_times[0],
+                        _sheet_dates[0], lend=lp["lent"])
+                    if len(redo) > 1:
+                        _old = {id(r) for r in capt["recs"]}
+                        at = next(i for i, r in enumerate(results)
+                                  if id(r) in _old)
+                        results[:] = [r for r in results if id(r) not in _old]
+                        results[at:at] = _emit(redo, capt["pno"],
+                                               capt["variant"], capt["exported"],
+                                               capt["scales"])
+                        notes.append(f"p{capt['pno'] + 1}: cut on the zones its "
+                                     f"Bottom Hole twin (p{pno + 1}) found — "
+                                     f"the two plot the same window")
+                elif len(parts) == 1 and parts[0][0].get("multi_zone"):
+                    _capt_whole[0] = {"pno": pno, "page": page, "meta": meta,
+                                      "samples": samples, "data": data,
+                                      "recs": emitted, "variant": _variant,
+                                      "exported": _exported, "scales": scales}
                 continue
             _mm = _md(meta)
             _mm["mv"] = _variant or ""          # same reason as above

@@ -98,6 +98,33 @@ class LastZone(unittest.TestCase):
                          bounds)
 
 
+class LentBackCuts(unittest.TestCase):
+    """00275: the captioned "Zones 9-32" Surface sheet would not split; its
+    Bottom Hole twin did, and lends the cuts back."""
+
+    def setUp(self):
+        self._zr = cp.zone_range
+        cp.zone_range = lambda page: (9, 11)
+
+    def tearDown(self):
+        cp.zone_range = self._zr
+
+    def test_the_captioned_page_is_cut_on_its_twins_cuts(self):
+        import frac_core as fc
+        import pipeline
+        n = 3000
+        samples = np.arange(n, dtype=float)
+        data = {"Tr Press": np.full(n, 50.0)}       # nothing to split on
+        lend = {"range": (9, 11), "zones": [9, 10, 11], "anchor": (600.0, 3),
+                "cuts": [(0.0, 0.3), (0.3, 0.7), (0.7, 1.0)]}
+        parts = pipeline._split_progress(
+            None, fc.PageMeta(), samples, data, {}, 1.0, [], 40, [None],
+            lend=lend)
+        self.assertEqual([p[0]["stage"] for p in parts], ["9", "10", "11"])
+        self.assertEqual([len(p[1]) for p in parts], [900, 1200, 900])
+        self.assertEqual(parts[1][0]["start_time"], "10:15:00")
+
+
 class JobDate(unittest.TestCase):
     def _v(self, text):
         d = cp._job_date_value(text)
