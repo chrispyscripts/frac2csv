@@ -3015,7 +3015,16 @@ def _step_clock(doc, results, notes):
             printed = _hms(entry["start"]) or 0
             want = _day_shift(day, ours or 0, printed)
             if not md.get("date"):
-                md["date"] = want       # nothing printed a day; this is it
+                # Nothing printed a day, so it is the one that puts this
+                # clock between the stages either side of it — not simply
+                # the nearest to the filed start. 00243's stage 30 is filed
+                # 09-01 00:26 to 23:32 ("got back into stage"), and its chart
+                # prints 21:00-23:15: the nearest day put it on 08-31, before
+                # stage 29 had begun, and the Lab said stage 30 started 160
+                # min before 29 finished. 0 of 1,442 clocked STEP charts open
+                # at or after the next stage's filed start.
+                md["date"] = _step_day_between(clocks, md.get("stage"),
+                                               ours or 0) or want
                 redated += 1
                 continue
             gap = abs((ours or 0) - printed)
@@ -3045,6 +3054,36 @@ def _step_clock(doc, results, notes):
         notes.append(f"stage(s) {', '.join(sorted(set(missing))[:8])} are not "
                      f"in the Daily Stage Summary, so their clock is left "
                      f"blank rather than defaulted to midnight.")
+
+
+def _step_day_between(clocks, stage, secs):
+    """The one day that puts `secs` (a time of day) at or after the previous
+    stage's filed start and before the next one's -> 'YYYY-MM-DD', or None
+    when no day, or more than one, does."""
+    def at(e):
+        if not e or not e.get("date") or _hms(e.get("start")) is None:
+            return None
+        return datetime.fromisoformat(e["date"]) + timedelta(seconds=_hms(e["start"]))
+    nums = {}
+    for k in clocks:
+        if re.fullmatch(r"\d+", str(k)):
+            nums[int(k)] = clocks[k]
+    m = re.fullmatch(r"\s*(\d+)\s*", str(stage or ""))
+    if not m or int(m.group(1)) not in nums:
+        return None
+    n = int(m.group(1))
+    lo = at(nums.get(max((k for k in nums if k < n), default=None)))
+    hi = at(nums.get(min((k for k in nums if k > n), default=None)))
+    own = at(nums[n])
+    if own is None or lo is None or hi is None:
+        return None
+    fits = []
+    for d in (-1, 0, 1):
+        t = datetime.combine(own.date() + timedelta(days=d), datetime.min.time()) \
+            + timedelta(seconds=secs)
+        if lo <= t < hi:
+            fits.append(t.date().isoformat())
+    return fits[0] if len(fits) == 1 else None
 
 
 def _window_tags(windows):
@@ -4272,6 +4311,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
                                 "warnings": list(info.get("notes") or [])}
+                        if info.get("clock_start"):
+                            # Sample 0 is on the chart's own wall clock, to
+                            # the second. Said, so the hand-over moves it by
+                            # the label's precision (a minute) and not by the
+                            # fifteen it allows a start filed to the minute:
+                            # 00197 p52's chemical chart reads 17:42:48 off
+                            # its axis and was moved to 17:32:12 to fit the
+                            # chart before it.
+                            meta["clock_chart"] = True
                         _set_depth(meta, *_parse_interval(md.get("interval")))
                         # STEP reported no `scales` at all, so every STEP
                         # chart arrived with an empty axis map — and the
