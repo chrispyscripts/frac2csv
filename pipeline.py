@@ -689,6 +689,14 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
             md["date"] = (datetime.strptime(zone_date, "%Y-%m-%d")
                           + timedelta(days=secs // (24 * 3600))
                           ).strftime("%Y-%m-%d")
+        # The page-level "not found" warnings are about the PAGE: a
+        # multi-zone plot names no single zone and prints no date line. This
+        # segment has both now — its zone from the caption, its day from the
+        # sheet — and repeating them on every zone (00192's stage 11 carried
+        # both) reads as if the zone's number and date were guesses.
+        md["warnings"] = [w for w in md["warnings"]
+                          if not (w == "stage/zone not found"
+                                  or (w == "date not found" and md["date"]))]
         if not anchor:
             md["warnings"] = md["warnings"] + [
                 f"zone {label}: no usable start time in the zone summary "
@@ -1182,6 +1190,8 @@ def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
             md["day_is"] = "start"
             if getattr(day, "ranged", False):
                 md["day_floor"] = str(day)
+            md["warnings"] = [w for w in md.get("warnings") or []
+                              if w != "date not found"]
         zone = _VARIANT_STAGE.sub(r"\1", str(md.get("stage")))
         if zone not in done:            # a zone's two sheets are one zone
             done.append(zone)
