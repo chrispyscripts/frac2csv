@@ -1159,8 +1159,10 @@ def _casing_masks(img, box, legend, masks):
             # D Well at 9 MPa, and where the two blend the page is a dull
             # yellow, (206,211,67), that was read as B Well — which is at 0.4,
             # its line (240,226,101). Nor can it be "clear of green": there
-            # its blend with the cyan beside it, (201,241,118), is green.
-            sub = (r > 225) & (g > 200) & (b < 130) & (np.abs(r - g) < 45)
+            # its blend with the cyan beside it, (201,241,118), is green. And
+            # red and green nearly equal: the top edge of 00197 p59's dark
+            # orange O Well, (238,205,92), is bright and yellowish too.
+            sub = (r > 225) & (g > 200) & (b < 130) & (np.abs(r - g) < 25)
         else:
             out.append(None)
             continue
