@@ -990,13 +990,14 @@ def _calfrac_days(results, notes):
     # zone 10 (23:31), and 00188 ran zones 7-35 on the day zones 1-5 began.
     # A zone charted twice at genuinely different times (a re-treat, a flush,
     # 00223's three zone-1 runs) stays two entries, in clock order.
-    groups = {}
+    groups, ranges = {}, []
     for r in results:
         if r.get("source") != "CalFrac chart":
             continue
         md = r.get("meta", {})
         if md.get("multi_zone"):
-            continue                    # a zone range, not a stage
+            ranges.append(r)            # a zone range, not a stage: below
+            continue
         st = str(md.get("stage") or "").strip()
         m = re.match(r"\d+", st)
         secs = _hms(md.get("start_time"))
@@ -1100,10 +1101,99 @@ def _calfrac_days(results, notes):
                                                    "%Y-%m-%d")
                                  + timedelta(days=shift)).strftime("%Y-%m-%d")
         moved.append(e["zone"])
+    moved += _calfrac_range_days(ranges, entries, want)
     if moved:
         notes.append(f"{len(moved)} stage(s) re-dated so the well's clock runs "
                      f"forwards (zones {', '.join(moved[:8])}"
                      f"{', …' if len(moved) > 8 else ''}) — {why}.")
+
+
+def _calfrac_range_days(ranges, entries, want):
+    """Date a page left whole as a zone RANGE after the zones around it.
+
+    A "Zones 3-32" page that would not split is one chart, not a stage, and
+    takes no part in the fit — it can be a job overview drawn over the very
+    zones charted one by one, and ordered among them it would force days
+    nobody printed. But once it is on the clock (its first zone's start,
+    _calfrac_sheet_clocks) it carries the sheet's first day, and 00258's
+    3-32 then sat on 06-19 at 02:22 — a day before zones 1-2, which ran from
+    06-19 23:05 into the 20th. So it moves on only as far as it must to start
+    after the zone before its range, and never past the day it was exported.
+    """
+    moved = []
+    for r in ranges:
+        md = r["meta"]
+        m = re.match(r"\s*(\d+)", str(md.get("stage") or ""))
+        secs = _hms(md.get("start_time"))
+        if not m or not md.get("date") or secs is None or \
+                (md.get("start_time") or "") == "00:00:00":
+            continue
+        lo = int(m.group(1))
+        before = [(want[i] * 86400 + e["secs"]) for i, e in enumerate(entries)
+                  if int(re.match(r"\d+", e["zone"]).group(0)) < lo]
+        if not before:
+            continue
+        try:
+            day = datetime.strptime(md["date"], "%Y-%m-%d").toordinal()
+            ceil = (datetime.strptime(md["day_ceil"], "%Y-%m-%d").toordinal()
+                    if md.get("day_ceil") else None)
+        except ValueError:
+            continue
+        shift = 0
+        while (day + shift) * 86400 + secs <= max(before) and \
+                shift < _CALFRAC_MAX_DAY_SHIFT:
+            shift += 1
+        if not shift or (day + shift) * 86400 + secs <= max(before) or \
+                (ceil is not None and day + shift > ceil):
+            continue
+        md["date"] = datetime.fromordinal(day + shift).strftime("%Y-%m-%d")
+        label = _VARIANT_STAGE.sub(r"\1", str(md.get("stage")))
+        if label not in moved:
+            moved.append(label)
+    return moved
+
+
+def _calfrac_cut_off_ranges(doc, results, notes):
+    """Number a page captioned "Zones N -" from the range that follows it.
+
+    00261 p84 captions its plot "Zones 1 -": the box cut the range's end off.
+    Read as nothing, the page and its Bottom Hole twin went out as two charts
+    with no zone at all, and zone 1 was missing from the well. A caption cut
+    off like that is not a number on its own — ZONES_SINGLE refuses it, and
+    rightly — but the next captioned page settles it: when that page's range
+    opens at N+1 ("Zones 2 - 20", p89), the page before it held zone N and
+    nothing else. Only then is it numbered; the Bottom Hole sheet behind it
+    takes the number in the fill-down like any other.
+    """
+    split_first = {}
+    for r in results:
+        md = r.get("meta") or {}
+        if r.get("source") == "CalFrac chart" and md.get("zone_span"):
+            m = re.match(r"\d+", str(md.get("stage") or ""))
+            if m:
+                pg = r.get("page")
+                split_first[pg] = min(split_first.get(pg, 10 ** 6),
+                                      int(m.group(0)))
+    done = []
+    for r in results:
+        md = r.get("meta") or {}
+        if r.get("source") != "CalFrac chart" or md.get("stage") or \
+                md.get("multi_zone") or md.get("zone_span") or not r.get("page"):
+            continue
+        n = cprog.cut_off_range(doc[r["page"] - 1])
+        if n is None:
+            continue
+        later = sorted(p for p in split_first if p > r["page"])
+        if not later or split_first[later[0]] != n + 1:
+            continue
+        md["stage"] = f"{n}{md.get('mv') or ''}"
+        md["warnings"] = [w for w in md.get("warnings") or []
+                          if w != "stage/zone not found"]
+        done.append((r["page"], n, later[0]))
+    for pg, n, nxt in done:
+        notes.append(f"p{pg}: captioned \"Zones {n} -\" with the range cut "
+                     f"off; read as zone {n} alone, because the next zone "
+                     f"page (p{nxt}) opens at zone {n + 1}")
 
 
 def _calfrac_reprints(results, notes):
@@ -1168,6 +1258,13 @@ def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
     if not zone_times:
         return
     done = []
+    # One sheet entry times ONE treatment. 00257 charts "Zone 5" (p100-101)
+    # and then "Zone 5 Well Flush" (p105-106) behind the same summary
+    # sheets; handing the flush the zone's start put it on top of the
+    # treatment it followed. The first chart of a zone after a sheet run —
+    # its Surface page and the Bottom Hole page beside it — takes the time;
+    # a later chart of that zone in the same run keeps a blank clock.
+    taken = {}
     for r in results:
         md = r.get("meta", {})
         if r.get("source") != "CalFrac chart" or \
@@ -1184,6 +1281,16 @@ def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
         if not got:
             continue
         start, day = got
+        if day and md.get("day_ceil") and str(day) > md["day_ceil"]:
+            # The sheet is dated after MView exported this chart, so it times
+            # a later job: 00277's "Zones 1-5" is a Dec 9 2016 attempt filed
+            # in front of the Jan 5 2017 sheets, and zone 1's Jan start would
+            # have put it a month out.
+            continue
+        run = max(p for p in zone_times if p < r["page"] - 1)
+        first = taken.setdefault((int(m.group(0)), run), r["page"])
+        if r["page"] - first not in (0, 1):
+            continue
         md["start_time"] = start
         if day and not md.get("date"):
             md["date"] = str(day)
@@ -4666,6 +4773,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                      f"tables that draw like charts (p"
                      f"{', p'.join(str(x) for x in _not_charts[:8])}"
                      f"{', …' if len(_not_charts) > 8 else ''})")
+
+    _calfrac_cut_off_ranges(doc, results, notes)
 
     last_stage, keep = None, []
     for r in results:

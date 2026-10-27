@@ -103,6 +103,44 @@ class ChemicalsSheet(_Stub):
         self.assertFalse(fc.is_chemicals(_Page()))
 
 
+class CutOffRange(_Stub):
+    """00261 p84 captions its plot "Zones 1 -" (the box cut the end off)."""
+
+    def _run(self, caption, next_first):
+        import pipeline
+        pages = {84: "Tourmaline Hz Sunset Surface\n   " + caption + "\n",
+                 89: "Tourmaline Hz Sunset Surface\nZones 2 - 20\n"}
+
+        class Doc(object):
+            def __getitem__(self, i):
+                return pages.get(i + 1, "")
+        cp.ocr_labels.page_text = lambda page: page
+        cut = {"source": "CalFrac chart", "page": 84,
+               "meta": {"stage": None, "mv": " Surface",
+                        "warnings": ["stage/zone not found"]}}
+        nxt = {"source": "CalFrac chart", "page": 89,
+               "meta": {"stage": f"{next_first} Surface", "zone_span": 19}}
+        notes = []
+        pipeline._calfrac_cut_off_ranges(Doc(), [cut, nxt], notes)
+        return cut, notes
+
+    def test_read_as_one_zone_when_the_next_range_opens_after_it(self):
+        cut, notes = self._run("Zones 1 -", 2)
+        self.assertEqual(cut["meta"]["stage"], "1 Surface")
+        self.assertEqual(cut["meta"]["warnings"], [])
+        self.assertIn("p89", notes[0])
+
+    def test_left_alone_when_the_next_range_does_not_follow_on(self):
+        cut, _ = self._run("Zones 1 -", 5)
+        self.assertIsNone(cut["meta"]["stage"])
+
+    def test_a_whole_range_is_not_cut_off(self):
+        self._set("Zones 1 - 4\n")
+        self.assertIsNone(cp.cut_off_range(_Page()))
+        self._set("   Zones 1 -\n")
+        self.assertEqual(cp.cut_off_range(_Page()), 1)
+
+
 class OutlinedSheet(unittest.TestCase):
     """The summary sheets of 00228/00234 are outlined glyphs too. OCR reads
     them; these are the rows it hands zone_times and sheet_job_date, with the

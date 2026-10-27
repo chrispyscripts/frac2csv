@@ -133,6 +133,27 @@ class ExportDateCeiling(unittest.TestCase):
                                       "2": ["2017-08-21"]})
 
 
+class ZoneRangePage(unittest.TestCase):
+    def test_00258_a_whole_range_page_follows_the_zone_before_it(self):
+        fl = dict(day_is="start", day_floor="2017-06-19")
+        res = (_twins(1, "2017-06-19", "23:05:00", day_ceil="2017-06-20", **fl)
+               + _twins(2, "2017-06-20", "00:44:54", day_ceil="2017-06-20",
+                        **fl))
+        whole = _zone("3-32 BH", "2017-06-19", "02:22:00", multi_zone=True,
+                      day_ceil="2017-06-21", **fl)
+        res.append(whole)
+        pipeline._calfrac_days(res, [])
+        self.assertEqual(whole["meta"]["date"], "2017-06-20")
+
+    def test_a_range_page_with_nothing_before_it_is_left_alone(self):
+        # 00218's first attempt, "1-3" on Feb 9
+        whole = _zone("1-3 BH", "2017-02-09", "03:40:00", multi_zone=True)
+        res = (_twins(1, "2017-02-28", "19:38:00")
+               + _twins(2, "2017-02-28", "20:23:00") + [whole])
+        pipeline._calfrac_days(res, [])
+        self.assertEqual(whole["meta"]["date"], "2017-02-09")
+
+
 class Reprints(unittest.TestCase):
     def _page(self, stage, mv, page, vals):
         import numpy as np
@@ -190,6 +211,30 @@ class SheetClocks(unittest.TestCase):
             self.assertEqual(r["meta"]["day_is"], "start")
         self.assertEqual(len(notes), 1)
         self.assertIn(": 19", notes[0])           # one zone, not two sheets
+
+    def test_a_later_chart_of_the_zone_keeps_its_blank(self):
+        # 00257: "Zone 5" on p100-101, "Zone 5 Well Flush" on p105-106,
+        # both behind the same sheets
+        times = {78: {5: {"start": "14:35"}}}
+        treat = _twins(5, "", "00:00:00")
+        treat[0]["page"], treat[1]["page"] = 100, 101
+        flush = _twins(5, "", "00:00:00")
+        flush[0]["page"], flush[1]["page"] = 105, 106
+        pipeline._calfrac_sheet_clocks(treat + flush, [], times,
+                                       {78: "2017-06-09"})
+        self.assertEqual([r["meta"]["start_time"] for r in treat],
+                         ["14:35:00", "14:35:00"])
+        self.assertEqual([r["meta"]["start_time"] for r in flush],
+                         ["00:00:00", "00:00:00"])
+
+    def test_a_sheet_dated_after_the_chart_was_exported_is_not_its_own(self):
+        # 00277: a Dec 9 2016 "Zones 1-5" attempt in front of Jan 2017 sheets
+        whole = _zone("1-5 BH", "", "00:00:00", page=47, multi_zone=True,
+                      day_ceil="2016-12-09")
+        pipeline._calfrac_sheet_clocks([whole], [], {44: {1: {"start": "1:00"}}},
+                                       {44: "2017-01-05"})
+        self.assertEqual(whole["meta"]["start_time"], "00:00:00")
+        self.assertEqual(whole["meta"]["date"], "")
 
     def test_split_zones_and_printed_clocks_are_left_alone(self):
         split = _zone("19 BH", "2017-03-05", "01:00:00", page=98,

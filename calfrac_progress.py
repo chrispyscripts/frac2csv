@@ -243,6 +243,23 @@ def zone_range(page):
     return None
 
 
+# "Zones 1 -": a range whose end the caption box cut off (00261 p84)
+_CUT_OFF_RANGE = re.compile(r"\bZones?\s*(\d+)\s*[-\u2013]\s*$", re.M)
+
+
+def cut_off_range(page):
+    """The first zone of a caption whose range end is missing, or None."""
+    try:
+        text = ocr_labels.page_text(page)
+    except Exception:
+        return None
+    m = _CUT_OFF_RANGE.search(text or "")
+    if not m or ZONES_CAPTION.search(text):
+        return None
+    zone = int(m.group(1))
+    return zone if 1 <= zone <= MAX_ZONE_NO else None
+
+
 _FOOTER_DATE = re.compile(r"^MView\b.*?-\s*(\d{1,2})/(\d{1,2})/(20\d\d)\s*$", re.M)
 # The same footer when OCR has eaten its first word. The leading "M" of MView
 # goes missing often enough to matter — page 74 of 00340 reads "View - Annular
