@@ -809,7 +809,16 @@ def _canyon_dates(doc, results, notes):
                 (m.group(1), int(m.group(2)) * 3600 + int(m.group(3)) * 60))
     if not printed:
         return
-    fixed, unmatched = 0, []
+    # Only a report whose chart pages all print ONE date is printing the
+    # job's start on every page. Most do not: 00202-00240 print the day each
+    # interval ran, and agree with their summaries chart for chart. Where a
+    # report's pages carry several days they are dating themselves, and the
+    # summary is the one to doubt — 00237's summary puts intervals 2-12 on
+    # 11-27, the same morning as 13-17, while their pages print 11-26; moving
+    # them there made stage 13 start ten hours before stage 12 finished.
+    per_day = len({r["meta"].get("date") for r in charts
+                   if r["meta"].get("date")}) > 1
+    fixed, unmatched, disagree = 0, [], []
     for r in charts:
         st = re.match(r"\d+", str(r["meta"]["stage"]))
         attempts = printed.get(st.group(0)) if st else None
@@ -837,8 +846,17 @@ def _canyon_dates(doc, results, notes):
                 day = (datetime.strptime(day, "%Y-%m-%d")
                        - timedelta(days=1)).strftime("%Y-%m-%d")
         if r["meta"].get("date") != day:
+            if per_day and r["meta"].get("date"):
+                disagree.append(str(r["meta"]["stage"]))
+                continue
             r["meta"]["date"] = day
             fixed += 1
+    if disagree:
+        notes.append(f"interval(s) {', '.join(disagree[:8])}"
+                     f"{' …' if len(disagree) > 8 else ''} keep the day their "
+                     f"chart page prints — the printed interval summary dates "
+                     f"them differently, and this report's pages date each "
+                     f"interval rather than repeating the job's start.")
     if fixed:
         notes.append(f"{fixed} Canyon chart(s) re-dated from the printed "
                      f"interval summary — the chart pages all carry the job's "
