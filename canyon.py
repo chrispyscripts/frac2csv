@@ -45,6 +45,16 @@ def _spans(page):
     return out
 
 
+def _header_date(text):
+    """The header's date as YYYY-MM-DD. 00253 prints its first three pages
+    "2016-12-1" and the rest "2016-12-01"; without a date the page's own clock
+    was dropped too."""
+    m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+    if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return None
+
+
 def _header_value(spans, labels):
     """The text printed to the right of a header label ("Interval:",
     "Comment:") on the same line, or None. The nearest span wins, and only
@@ -314,9 +324,7 @@ def extract_page(page, sample_sec=1.0):
         mm = re.fullmatch(r"#?\s*(\d{1,3})", v or "")
         if mm and 0 < int(mm.group(1)) <= 100:
             meta.stage = mm.group(1)
-    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
-    if m:
-        meta.date = m.group(0)
+    meta.date = _header_date(text)
     meta.title = f"Canyon interval {meta.stage or '?'}"
 
     # panels: title spans mark panel tops

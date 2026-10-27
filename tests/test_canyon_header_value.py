@@ -45,5 +45,20 @@ class HeaderValue(unittest.TestCase):
         self.assertIsNone(canyon._header_value(HEADER[:4], ("interval", "comment")))
 
 
+
+class HeaderDate(unittest.TestCase):
+    """00253 prints "2016-12-1" on its first three pages, "2016-12-01" after."""
+
+    def test_unpadded_day_reads(self):
+        self.assertEqual(canyon._header_date("Date:\n2016-12-1\n#1"), "2016-12-01")
+
+    def test_padded_date_unchanged(self):
+        self.assertEqual(canyon._header_date("2016-12-01\n#4"), "2016-12-01")
+
+    def test_not_a_date(self):
+        self.assertIsNone(canyon._header_date("40-015378 a-13-F/94-B-16"))
+        self.assertIsNone(canyon._header_date("2016-13-01"))
+
+
 if __name__ == "__main__":
     unittest.main()
