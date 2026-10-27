@@ -645,6 +645,14 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
                                     pno, lo)
     page_date = (sheet_date or getattr(meta, "date", "")
                  or cprog.job_date(page) or "")
+    # The last zone ends where the page's DATA does, not where its axis does.
+    # Every cut but the last is a pumping break; the last is the page's own
+    # length, and MView rounds its time axis up past the data — 00194's
+    # "Zones 3-19" plots to 1363 min on a 1400-min axis, 00188's "Zones 7-28"
+    # leaves its last zone 60% empty. Exported to the axis, that empty tail
+    # made the zone run long, read as a 26-49% filled chart, and overlapped
+    # the next page's first zone by the length of the blank.
+    bounds = cprog.trim_last_zone(bounds, data)
     out = []
     for j, (a, b) in enumerate(bounds):
         zone = zones[j] if j < len(zones) else zones[-1] + (j - len(zones) + 1)
@@ -658,13 +666,16 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         # Job Date for this zone, it is the authority.
         zentry = (calfrac_summary.zone_clock_for(zclocks, label)
                   if zclocks else None)
-        zone_date = (zentry or {}).get("date") or page_date
+        zone_date = str((zentry or {}).get("date") or page_date)
         md["date"] = zone_date
         if not (zentry or {}).get("date") and sheet_date:
             # which END of the job this date names, for _calfrac_days: the
             # summary sheet prints the day the job STARTED, the MView footer
             # the day the chart was exported, which is the day it ended
             md["day_is"] = "start"
+            if getattr(sheet_date, "ranged", False):
+                # a printed span's first day: nothing ran before it
+                md["day_floor"] = str(sheet_date)
         # how many zones the page this came from was covering — a zone read off
         # a 12-zone overview is coarser than the same zone on its own chart
         md["zone_span"] = nz
@@ -868,11 +879,20 @@ def _day_shift(day, ours_secs, printed_secs):
 _CALFRAC_MAX_DAY_SHIFT = 3
 
 
-def _calfrac_day_fit(days, secs):
+def _calfrac_day_fit(days, secs, floors=None, ceils=None):
     """Fewest whole-day moves that make (day, time) strictly increasing.
 
     -> corrected day ordinals, or None if no assignment within
     ±_CALFRAC_MAX_DAY_SHIFT works.
+
+    `floors` and `ceils`, where given, are the earliest and latest day each
+    entry may land on (None for no limit). A floor is the first day of a Job
+    Date the sheet printed as a range; a ceiling is the day the chart was
+    exported, which no zone on it can have started after.
+    Without it the fit on 00192 — zones 1-10 dated 08-20 and run 01:35-23:31,
+    zones 11-35 dated 08-20 and run 01:18 onwards — found it cheaper to move
+    the ten back to 08-19 than the twenty-five on to 08-21, a day before the
+    "08/20/2017 - 08/22/2017" the sheets give as the job's own first day.
 
     Zones are pumped in ascending order, so zone N+1's instant is after zone
     N's; that is the report's own statement, printed as the order of the
@@ -885,12 +905,21 @@ def _calfrac_day_fit(days, secs):
     costs fifteen — and BCER files exactly those twelve on 04-30.
     """
     n = len(days)
+    floors = floors or [None] * n
+    ceils = ceils or [None] * n
     shifts = range(-_CALFRAC_MAX_DAY_SHIFT, _CALFRAC_MAX_DAY_SHIFT + 1)
-    cost = [{s: abs(s) for s in shifts}]
+
+    def allowed(i, s):
+        return ((floors[i] is None or days[i] + s >= floors[i])
+                and (ceils[i] is None or days[i] + s <= ceils[i]))
+
+    cost = [{s: abs(s) for s in shifts if allowed(0, s)}]
     came = [{}]
     for i in range(1, n):
         row, back = {}, {}
         for s in shifts:
+            if not allowed(i, s):
+                continue
             here, best, arg = days[i] + s, None, None
             for t, c in cost[i - 1].items():
                 there = days[i - 1] + t
@@ -903,6 +932,8 @@ def _calfrac_day_fit(days, secs):
             return None                 # the printed dates cannot be reconciled
         cost.append(row)
         came.append(back)
+    if not cost[-1]:
+        return None
     s = min(cost[-1], key=lambda k: (cost[-1][k], abs(k)))
     out = [0] * n
     out[-1] = s
@@ -941,7 +972,17 @@ def _calfrac_days(results, notes):
     A well that prints no clock is not touched: there is no order to restore
     and the stages are honestly undated.
     """
-    stages, order = {}, []
+    # One entry per TREATMENT, not per sheet. MView prints every zone twice,
+    # as a "Surface" and a "Bottom Hole" chart, and the reader tags them
+    # "12 Surface" / "12 BH" so their channels do not merge — but they are
+    # one zone pumped at one instant. Keyed apart, each pair was two entries
+    # with the same start, which no "strictly increasing" order can hold, so
+    # on every twinned well the fit below failed outright and the well kept
+    # the dates its pages print: 00192 put zone 11 (01:18) on the same day as
+    # zone 10 (23:31), and 00188 ran zones 7-35 on the day zones 1-5 began.
+    # A zone charted twice at genuinely different times (a re-treat, a flush,
+    # 00223's three zone-1 runs) stays two entries, in clock order.
+    groups = {}
     for r in results:
         if r.get("source") != "CalFrac chart":
             continue
@@ -954,18 +995,48 @@ def _calfrac_days(results, notes):
         if not m or not md.get("date") or secs is None or \
                 (md.get("start_time") or "") == "00:00:00":
             continue                    # no clock, or no day, or not a zone
-        if st not in stages:
-            order.append(st)
-        stages.setdefault(st, []).append(r)
-    if len(order) < 2:
+        try:
+            day = datetime.strptime(md["date"], "%Y-%m-%d").toordinal()
+        except ValueError:
+            return
+        zone = _VARIANT_STAGE.sub(r"\1", st)
+        groups.setdefault(zone, []).append((day * 86400 + secs, day, secs, r))
+    entries = []
+    for zone, recs in groups.items():
+        recs.sort(key=lambda x: x[0])
+        cur = None
+        for t, day, secs, r in recs:
+            if cur is not None and t - cur["t"] <= _CALFRAC_TWIN_S:
+                cur["recs"].append(r)
+                continue
+            cur = {"zone": zone, "t": t, "day": day, "secs": secs,
+                   "recs": [r]}
+            entries.append(cur)
+    if len(entries) < 2:
         return
-    order.sort(key=lambda s: (int(re.match(r"\d+", s).group(0)), s))
-    try:
-        days = [datetime.strptime(stages[s][0]["meta"]["date"],
-                                  "%Y-%m-%d").toordinal() for s in order]
-    except ValueError:
-        return
-    secs = [_hms(stages[s][0]["meta"]["start_time"]) for s in order]
+    entries.sort(key=lambda e: (int(re.match(r"\d+", e["zone"]).group(0)),
+                                e["zone"], e["t"]))
+    days = [e["day"] for e in entries]
+    secs = [e["secs"] for e in entries]
+    def bound(e, key, pick):
+        got = []
+        for r in e["recs"]:
+            try:
+                got.append(datetime.strptime(r["meta"][key],
+                                             "%Y-%m-%d").toordinal())
+            except (KeyError, TypeError, ValueError):
+                pass
+        return pick(got) if got else None
+
+    floors = [bound(e, "day_floor", max) for e in entries]
+    # The chart's export date. 00224 shows why it matters: its Mar 9 sheet
+    # opens with zone 5 at 23:09 — the evening of the 8th — so the zones
+    # after midnight rolled to Mar 10 and zone 19 to Mar 11, on charts
+    # MView exported on the 9th and 10th. Nothing ran after it was exported.
+    ceils = [bound(e, "day_ceil", min) for e in entries]
+    if any(f is not None and c is not None and c < f
+           for f, c in zip(floors, ceils)):
+        ceils = [None] * len(entries)   # a footer that is not an export date
 
     # relative day of each stage, counted off the clock alone: a start time
     # earlier than the one before it is a midnight
@@ -975,26 +1046,33 @@ def _calfrac_days(results, notes):
             step += 1
         rel.append(step)
 
+    want = None
     if len(set(days)) == 1 and step > 0:
         # One date over a well that pumped through midnight says nothing about
         # which zone ran when — but it does say which END of the job it names.
         # A summary sheet's "Job Date:" is the day the job started, so the
         # zones count FORWARD from it; the MView footer is an export stamp,
         # made when the job was done, so they count BACK from it.
-        starts = all(stages[s][0]["meta"].get("day_is") == "start"
-                     for s in order)
+        starts = all(r["meta"].get("day_is") == "start"
+                     for e in entries for r in e["recs"])
         anchor = days[0] if starts else days[-1] - rel[-1]
         want = [anchor + r for r in rel]
+        if any(f is not None and w < f for w, f in zip(want, floors)) or \
+                any(c is not None and w > c for w, c in zip(want, ceils)):
+            want = None                 # past the job's start or its export
         why = (f"every page dates this well "
-               f"{stages[order[0]][0]['meta']['date']}, but its own start "
+               f"{entries[0]['recs'][0]['meta']['date']}, but its own start "
                f"times cross midnight {step} time{'s' if step > 1 else ''} — "
                + ("that is the summary's Job Date, the day the job began, so "
                   "the later zones run on from it"
                   if starts else
                   "an MView stamp is the export date, so it is the LAST day "
                   "pumped and the earlier zones count back from it"))
-    else:
-        want = _calfrac_day_fit(days, secs)
+    if want is None:
+        want = _calfrac_day_fit(days, secs, floors, ceils)
+        if want is None and any(c is not None for c in ceils):
+            # an export stamp the order cannot meet is not an export date
+            want = _calfrac_day_fit(days, secs, floors)
         if want is None:
             notes.append("the dates these charts print cannot be put in "
                          "pumping order by whole days, so every stage keeps "
@@ -1005,17 +1083,120 @@ def _calfrac_days(results, notes):
                "printed start times run backwards across the boundary")
 
     moved = []
-    for i, st in enumerate(order):
-        if want[i] == days[i]:
+    for i, e in enumerate(entries):
+        shift = want[i] - days[i]
+        if not shift:
             continue
-        day = datetime.fromordinal(want[i]).strftime("%Y-%m-%d")
-        for r in stages[st]:
-            r["meta"]["date"] = day
-        moved.append(st)
+        for r in e["recs"]:
+            r["meta"]["date"] = (datetime.strptime(r["meta"]["date"],
+                                                   "%Y-%m-%d")
+                                 + timedelta(days=shift)).strftime("%Y-%m-%d")
+        moved.append(e["zone"])
     if moved:
         notes.append(f"{len(moved)} stage(s) re-dated so the well's clock runs "
                      f"forwards (zones {', '.join(moved[:8])}"
                      f"{', …' if len(moved) > 8 else ''}) — {why}.")
+
+
+def _calfrac_reprints(results, notes):
+    """Read a CalFrac chart page once when the filing prints it twice.
+
+    00223 prints its "Zones 2" Surface and Bottom Hole sheets on p117-118 and
+    again, plot for plot, on p123-124 behind another summary sheet. Read as
+    two treatments they came out as zone 2 and a re-treat "2 (2)" — a zone
+    pumped twice that was pumped once. A reprint is the same sheet kind of
+    the same zone with the same samples on every channel; the later copy is
+    dropped and named.
+    """
+    import numpy as np
+    seen, dropped = {}, []
+    keep = []
+    for r in results:
+        if r.get("source") != "CalFrac chart" or r.get("type") != "series" \
+                or not r.get("data"):
+            keep.append(r)
+            continue
+        md = r.get("meta") or {}
+        try:
+            key = (str(md.get("stage") or ""), md.get("mv") or "",
+                   len(r["samples"]),
+                   tuple(sorted((k, round(float(np.nansum(
+                       np.asarray(v, float))), 3))
+                       for k, v in r["data"].items())))
+        except (TypeError, ValueError):
+            keep.append(r)
+            continue
+        first = seen.get(key)
+        if first is not None and first != r.get("page"):
+            dropped.append((r.get("page"), first))
+            continue
+        seen.setdefault(key, r.get("page"))
+        keep.append(r)
+    if dropped:
+        results[:] = keep
+        pairs = sorted({(a, b) for a, b in dropped})
+        notes.append(f"{len(pairs)} CalFrac chart page(s) reprint an earlier "
+                     f"page plot for plot and are read once: "
+                     + ", ".join(f"p{a} = p{b}" for a, b in pairs[:8])
+                     + (", …" if len(pairs) > 8 else ""))
+
+
+def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
+    """Clock a CalFrac chart of ONE zone from the Multiple-Zone sheet.
+
+    Every "Zone 19" chart in 00218, 00219, 00222 and 00224 — and all twenty of
+    00226's, which charts each zone on its own page — exported at 00:00:00
+    with no day. The charts print elapsed minutes only; the zone's start is
+    in the TIME INFO block of the sheet in front of them (cprog.sheet_clock),
+    and its day in that sheet's Job Date, which is what a Progress page split
+    into zones is already stamped from. Before this, those zones were the
+    only CalFrac charts in their wells with no time at all.
+
+    A page left whole as a zone RANGE ("Zones 1-3" that would not split) is
+    placed by its first zone's start, as the first zone of a split page is.
+    A zone the sheet run does not time keeps its blank: a wrong clock is
+    worse than none.
+    """
+    if not zone_times:
+        return
+    done = []
+    for r in results:
+        md = r.get("meta", {})
+        if r.get("source") != "CalFrac chart" or \
+                md.get("zone_span") is not None:
+            continue                    # a split zone is already on the clock
+        if (md.get("start_time") or "") not in ("", "00:00:00") or \
+                md.get("clock_chart"):
+            continue                    # the chart printed its own start
+        m = re.match(r"\d+", str(md.get("stage") or "").strip())
+        if not m or not r.get("page"):
+            continue
+        got = cprog.sheet_clock(zone_times, sheet_dates or {}, r["page"] - 1,
+                                int(m.group(0)))
+        if not got:
+            continue
+        start, day = got
+        md["start_time"] = start
+        if day and not md.get("date"):
+            md["date"] = str(day)
+            md["day_is"] = "start"
+            if getattr(day, "ranged", False):
+                md["day_floor"] = str(day)
+        zone = _VARIANT_STAGE.sub(r"\1", str(md.get("stage")))
+        if zone not in done:            # a zone's two sheets are one zone
+            done.append(zone)
+    if done:
+        notes.append(f"{len(done)} chart(s) of a single zone placed on the "
+                     f"clock from the Multiple Zone summary sheet before them "
+                     f"(the charts print elapsed minutes only): "
+                     f"{', '.join(done[:8])}{', …' if len(done) > 8 else ''}")
+
+
+# Two charts of one zone whose starts lie this close are the same treatment
+# printed twice (its Surface and Bottom Hole sheets), not a re-treat. The
+# twins share their cuts, so they agree to the second or so; a re-run of a
+# zone comes hours later.
+_CALFRAC_TWIN_S = 600
 
 
 def _hms(t):
@@ -3333,7 +3514,27 @@ def _pick_variant(results, notes):
         runs = groups.setdefault(base, [])
         # A Surface sheet opens a treatment. A Bottom Hole sheet joins the one
         # open, and opens its own only if it arrived first.
-        if kind == "Surface" or not runs or "BH" in runs[-1]:
+        #
+        # ...and a Surface sheet joins a Bottom Hole sheet that arrived first
+        # when the two are provably one window: the page directly before it,
+        # cut from the same multi-zone plot at the same instant (the Bottom
+        # Hole sheet borrowed this Surface sheet's cuts). 00221 files zones
+        # 15-24 as p96 Bottom Hole then p97 Surface, and every one of those
+        # zones came out twice, "15 BH" and "15 Surface", one on top of the
+        # other. Without that proof a reversed pair is still left alone.
+        lone_bh = None
+        if kind == "Surface" and runs and "BH" in runs[-1] and \
+                "Surface" not in runs[-1]:
+            lone_bh = runs[-1]["BH"]
+        md, bm = r.get("meta") or {}, (lone_bh or {}).get("meta") or {}
+        if lone_bh is not None and r.get("page") is not None and \
+                lone_bh.get("page") == r["page"] - 1 and \
+                md.get("zone_span") is not None and \
+                bm.get("zone_span") == md.get("zone_span") and \
+                (bm.get("date"), bm.get("start_time")) == \
+                (md.get("date"), md.get("start_time")):
+            pass
+        elif kind == "Surface" or not runs or "BH" in runs[-1]:
             runs.append({})
         runs[-1][kind] = r
 
@@ -3730,6 +3931,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # the last captioned Progress page, so its uncaptioned twin can borrow its
     # zones AND its cut positions
     _last_progress = [None]
+    # an uncaptioned Bottom Hole zone page left whole, waiting to see whether
+    # its captioned Surface twin comes AFTER it (see where it is used)
+    _bh_orphan = [None]
     # the Treatment Summary grid's per-zone start time and Job Date, read once
     # per document and only when a CalFrac chart actually needs it
     _zone_clocks = [None]
@@ -4301,8 +4505,18 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                 notes.append(f"p{pno + 1}: chemicals chart — additive "
                              f"concentrations, not treatment channels")
                 continue
+            # A Bottom Hole sheet plots the window of the captioned Surface
+            # sheet directly in front of it (the same premise _split_progress
+            # borrows that sheet's cuts on). Where OCR cannot read this page's
+            # own time ticks — 00234 p77, the Bottom Hole half of zones 1-10 —
+            # that window is the one to use, rather than losing the sheet.
+            _twin = _last_progress[0]
+            _lend = (_twin["n"] * sample_sec / 60.0
+                     if _twin and _twin["page"] == pno - 1 and _twin["n"]
+                     else None)
             try:
-                meta, samples, data = fc.extract_page(page, sample_sec=sample_sec)
+                meta, samples, data = fc.extract_page(page, sample_sec=sample_sec,
+                                                      duration_min=_lend)
             except Exception as e:
                 notes.append(f"p{pno + 1}: vector chart failed — {e}")
                 continue
@@ -4318,6 +4532,9 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             # — the collision that put Canyon's overview plot on top of a real
             # stage. Tag the key so they stay apart and say which is which.
             _variant = _mview_variant(page)
+            # The footer date is when MView EXPORTED the chart, so no zone on
+            # it can have started on a later day — _calfrac_days' ceiling.
+            _exported = cprog.job_date(page)
             if data and cprog.detect(page):
                 # a "Progress" page: several zones on one plot, no stage named
                 if _zone_times[0] is None:
@@ -4325,27 +4542,69 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                         cprog.sheets_for_document(doc)
                 if _zone_clocks[0] is None:
                     _zone_clocks[0] = calfrac_summary.zone_clock(doc)
-                for part in _split_progress(page, meta, samples, data,
-                                            cprog.times_before(_zone_times[0], pno),
-                                            sample_sec, notes, pno, _last_progress,
-                                            _zone_clocks[0], _zone_times[0],
-                                            _sheet_dates[0]):
-                    pmeta, psamples, pdata, pgeom = part
-                    # Recorded whether or not this page names a zone. MView's
-                    # Bottom Hole page prints no caption, so its stage is
-                    # blank here and the tag would be dropped on the floor —
-                    # and it is the one page that most needs it, because the
-                    # fill-down below is about to hand it its neighbour's
-                    # zone number.
-                    pmeta["mv"] = _variant or ""
-                    if _variant and pmeta.get("stage"):
-                        pmeta["stage"] = f"{pmeta['stage']}{_variant}"
-                    results.append(_series(pmeta, psamples, pdata,
-                                           "CalFrac chart", pno + 1,
-                                           geom=pgeom, scales=scales))
+                def _emit(parts, at_pno, variant, exported, scl):
+                    out = []
+                    for pmeta, psamples, pdata, pgeom in parts:
+                        # Recorded whether or not this page names a zone.
+                        # MView's Bottom Hole page prints no caption, so its
+                        # stage is blank here and the tag would be dropped on
+                        # the floor — and it is the one page that most needs
+                        # it, because the fill-down below is about to hand it
+                        # its neighbour's zone number.
+                        pmeta["mv"] = variant or ""
+                        if exported:
+                            pmeta["day_ceil"] = exported
+                        if variant and pmeta.get("stage"):
+                            pmeta["stage"] = f"{pmeta['stage']}{variant}"
+                        out.append(_series(pmeta, psamples, pdata,
+                                           "CalFrac chart", at_pno + 1,
+                                           geom=pgeom, scales=scl))
+                    return out
+
+                parts = _split_progress(page, meta, samples, data,
+                                        cprog.times_before(_zone_times[0], pno),
+                                        sample_sec, notes, pno, _last_progress,
+                                        _zone_clocks[0], _zone_times[0],
+                                        _sheet_dates[0])
+                emitted = _emit(parts, pno, _variant, _exported, scales)
+                results.extend(emitted)
+                # A Bottom Hole sheet printed BEFORE its captioned Surface twin.
+                # 00221 files zones 15-24 as p96 Bottom Hole, p97 Surface: the
+                # borrow in _split_progress only looks back, so p96 went out
+                # whole — a 500-minute chart the fill-down then called "14 BH",
+                # a second zone 14 — and zones 15-24 lost the Bottom Hole
+                # sheet that alone carries BH Prop Conc. Once the Surface
+                # sheet has been cut, the page before it borrows those cuts
+                # exactly as a page after it would.
+                orph = _bh_orphan[0]
+                _bh_orphan[0] = None
+                lp = _last_progress[0]
+                if orph and orph["pno"] == pno - 1 and lp and \
+                        lp["page"] == pno and lp["cuts"]:
+                    redo = _split_progress(
+                        orph["page"], orph["meta"], orph["samples"],
+                        orph["data"], {}, sample_sec, notes, orph["pno"],
+                        [dict(lp, page=orph["pno"] - 1)], _zone_clocks[0],
+                        _zone_times[0], _sheet_dates[0])
+                    if len(redo) > 1:
+                        _old = {id(r) for r in orph["recs"]}
+                        at = next(i for i, r in enumerate(results)
+                                  if id(r) in _old)
+                        results[:] = [r for r in results if id(r) not in _old]
+                        results[at:at] = _emit(redo, orph["pno"],
+                                               orph["variant"], orph["exported"],
+                                               orph["scales"])
+                elif len(parts) == 1 and not cprog.zone_range(page) and \
+                        not parts[0][0].get("multi_zone") and _variant == " BH":
+                    _bh_orphan[0] = {"pno": pno, "page": page, "meta": meta,
+                                     "samples": samples, "data": data,
+                                     "recs": emitted, "variant": _variant,
+                                     "exported": _exported, "scales": scales}
                 continue
             _mm = _md(meta)
             _mm["mv"] = _variant or ""          # same reason as above
+            if _exported:
+                _mm["day_ceil"] = _exported
             if _variant and _mm.get("stage"):
                 _mm["stage"] = f"{_mm['stage']}{_variant}"
             results.append(_series(_mm, samples, data,
@@ -4493,6 +4752,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                              f"grid, so their clock is left blank rather than "
                              f"defaulted to midnight.")
 
+        # The older Multiple-Zone sheets carry the same clock for a chart of
+        # ONE zone; the grid above is the 2018-vintage form of that table and
+        # reads nothing off them.
+        if _zone_times[0] is None:
+            _zone_times[0], _sheet_dates[0] = cprog.sheets_for_document(doc)
+        _calfrac_sheet_clocks(results, notes, _zone_times[0], _sheet_dates[0])
+        _calfrac_reprints(results, notes)
         _calfrac_days(results, notes)
 
     _offset_well_names(results, notes)

@@ -196,6 +196,20 @@ class Retreatment(unittest.TestCase):
         self.assertEqual(sorted(str(r["meta"]["stage"]) for r in res),
                          ["9 BH", "9 Surface"])
 
+    def test_a_reversed_pair_cut_from_one_window_is_one_zone(self):
+        # 00221 p96 (Bottom Hole) and p97 (Surface "Zones 15-24"): the BH
+        # sheet borrowed the Surface sheet's cuts, so each zone is the same
+        # window at the same instant on both — that is the proof the plain
+        # reversed pair above lacks.
+        res, _ = self._run(
+            ("15 BH", pipeline._CANON4), ("15 Surface", ("Tr Press",)))
+        for r in res:
+            r["meta"].update(zone_span=10, date="2017-02-10",
+                             start_time="17:16:29")
+        pipeline._pick_variant(res, [])
+        self.assertEqual([str(r["meta"]["stage"]) for r in res], ["15"])
+        self.assertEqual(len(res[0]["data"]), 4)
+
     def test_a_zone_treated_once_gets_no_suffix(self):
         res, notes = self._run(
             ("2 Surface", pipeline._CANON4), ("2 BH", ("Tr Press",)))
