@@ -1857,6 +1857,7 @@ HANDOVER_TOL = 0.05        # of the channel's own range over the stage
 HANDOVER_SEARCH_S = 900.0  # how far a start filed to the minute may sit from the window
 HANDOVER_SELF_S = 60.0     # and one the chart printed itself: the label's own precision
 HANDOVER_K = 900           # samples of B's head compared when searching for the lag
+HANDOVER_DUP_FRAC = 0.8    # of A re-plotted by B: a reprint of A, not a hand-over
 
 
 def _lag_scores(a, b, offs, K):
@@ -2025,7 +2026,7 @@ def _hand_over_tails(results, notes):
         if t0 is None or smp is None or len(smp) == 0:
             continue
         per.setdefault(str(r.get("source") or ""), []).append((t0, r))
-    trimmed, differ, moved, kept = [], [], [], []
+    trimmed, differ, moved, kept, reprinted = [], [], [], [], []
     for src, items in per.items():
         items.sort(key=lambda x: x[0])
         prev = None
@@ -2088,6 +2089,31 @@ def _hand_over_tails(results, notes):
                     f"charts disagree there — one clock is wrong, or the "
                     f"stages overlap for real; both kept as printed")
                 differ.append((a["meta"].get("stage") or "?", sb, ov))
+                continue
+            # A chart that re-plots nearly ALL of the one before it is that
+            # chart printed a second time, not its continuation. A hand-over
+            # re-plots a few minutes of A's tail: over the 785 cuts in
+            # 00184-00278 on v1.11.53, 782 hand over under 75% of A and 602
+            # under 10%. The three that hand over more are not tails. Canyon
+            # 00230 p70 is labelled interval 22 and is p68's interval 21
+            # re-plotted a minute later (axis 9:16-9:58 against 9:15-9:57,
+            # the same curves); interval 22's own chart is not in the PDF.
+            # Cut there, stage 21 kept 62 samples of its 42 min and its data
+            # went out under 22. So A is kept whole and B as printed, and B
+            # says what it is. Same-numbered pairs are left to the refusal
+            # below, which already keeps both.
+            sa = a["meta"].get("stage") or ""
+            shared = min(n_a - off, n_b)
+            if shared >= HANDOVER_DUP_FRAC * n_a and not (
+                    sa and sb and str(sa) == str(sb)):
+                b["meta"].setdefault("warnings", []).append(
+                    f"re-plots stage {sa or '?'}'s chart: {shared * sec / 60:.1f} "
+                    f"of its {n_a * sec / 60:.1f} min are the same values, "
+                    f"so the report printed that chart twice under two "
+                    f"numbers. Both kept as printed and nothing cut; this "
+                    f"stage's own chart is not in the file")
+                reprinted.append((sa or "?", sb, shared * sec))
+                centre = 0
                 continue
             if lag:
                 was = b["meta"].get("start_time")
@@ -2221,6 +2247,14 @@ def _hand_over_tails(results, notes):
                      f"in all, every minute of it re-plotted on the next "
                      f"chart with the same values, so nothing is lost and "
                      f"nothing is exported twice")
+    if reprinted:
+        notes.append(f"{len(reprinted)} chart(s) re-plot the whole chart before "
+                     f"them under the next stage number — the report printed "
+                     f"one chart twice — so nothing was cut and both are kept "
+                     f"as printed: "
+                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)"
+                                 for a, b, o in reprinted[:8])
+                     + (", …" if len(reprinted) > 8 else ""))
     if differ:
         notes.append(f"{len(differ)} pair(s) of charts overlap and disagree "
                      f"there, kept as printed: "

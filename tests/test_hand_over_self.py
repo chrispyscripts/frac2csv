@@ -69,9 +69,12 @@ class HandOverSelf(unittest.TestCase):
         self.assertIn("cannot re-plot itself", ws)
 
     def test_a_genuine_handover_still_happens(self):
-        # different stages: this is the behaviour #645 asked for, untouched
+        # different stages: this is the behaviour #645 asked for, untouched.
+        # B re-plots A's last ten minutes, a tail. (This used the 00028 shape,
+        # B covering 95% of A; under two numbers that is now a REPRINT and
+        # is kept whole — see test_hand_over_reprint, 00230.)
         a = series("7", "08:40:00", 12000, at=0)
-        b = series("8", "08:50:00", 11400, at=600)
+        b = series("8", "11:50:00", 11400, at=11400)
         pipeline._hand_over_tails([a, b], [])
         self.assertLess(trimmed_len(a), 12000,
                         "a real handover between two stages stopped working")
@@ -80,7 +83,7 @@ class HandOverSelf(unittest.TestCase):
         # two charts with no stage number are not evidence of anything, and
         # refusing them would suppress real handovers on files that print none
         a = series("", "08:40:00", 12000, at=0)
-        b = series("", "08:50:00", 11400, at=600)
+        b = series("", "11:50:00", 11400, at=11400)
         pipeline._hand_over_tails([a, b], [])
         self.assertLess(trimmed_len(a), 12000)
 
