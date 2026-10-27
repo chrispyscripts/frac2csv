@@ -160,6 +160,41 @@ class PumpOnset(unittest.TestCase):
         self.assertEqual(cp.pump_onset({}, 0, 500), 0)
 
 
+class PageHead(unittest.TestCase):
+    """00261's "Zones 27-32" opens by re-plotting zones 21-26."""
+
+    def _zone(self, stage, page, start, rate, first=False):
+        import numpy as np
+        r = _zone(stage, "2017-06-16", start, page=page, zone_span=6,
+                  page_first=first)
+        r["samples"] = np.arange(len(rate), dtype=float)
+        r["data"] = {"Slurry Rate": np.asarray(rate, float)}
+        return r
+
+    def test_the_replotted_head_is_cut_at_the_break_after_the_zone_before(self):
+        import numpy as np
+        # zone 26 on p95: 23:46 for 43 min -> ends 00:29
+        z26 = self._zone("26 BH", 95, "23:46:00", np.full(2580, 9.0))
+        # zone 27 on p100 opens 20:30: treatments, a break at 00:26, its own
+        rate = np.full(16380, 9.0)
+        for b in (2400, 4800, 7200, 9600, 12000, 14160):   # every 40 min
+            rate[b - 60:b + 60] = 0.0
+        z27 = self._zone("27 BH", 100, "20:30:00", rate, first=True)
+        notes = []
+        pipeline._calfrac_page_heads([z26, z27], notes)
+        self.assertEqual(z27["meta"]["start_time"], "00:26:00")
+        self.assertEqual(len(z27["samples"]), 16380 - 14160)
+        self.assertTrue(notes)
+
+    def test_one_long_treatment_is_never_cut(self):
+        import numpy as np
+        z26 = self._zone("26 BH", 95, "23:46:00", np.full(2580, 9.0))
+        z27 = self._zone("27 BH", 100, "23:40:00", np.full(5000, 9.0),
+                         first=True)
+        pipeline._calfrac_page_heads([z26, z27], [])
+        self.assertEqual(z27["meta"]["start_time"], "23:40:00")
+
+
 class ZoneRangePage(unittest.TestCase):
     def test_00258_a_whole_range_page_follows_the_zone_before_it(self):
         fl = dict(day_is="start", day_floor="2017-06-19")

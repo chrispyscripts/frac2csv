@@ -695,6 +695,8 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
         # where in this segment the pumps come on — _calfrac_days orders
         # zones by it, because a page's first zone opens with the chart
         md["pump_offset_s"] = cprog.pump_onset(data, a, b, sample_sec)
+        if j == 0 and len(bounds) > 1:
+            md["page_first"] = True     # see _calfrac_page_heads
         # seconds from midnight of zone_date: the fitted origin (0 when the
         # table gave nothing usable) plus this zone's place on the axis
         secs = int(round((anchor[0] * 60 if anchor else 0) + a * sample_sec))
@@ -1221,6 +1223,90 @@ def _calfrac_cut_off_ranges(doc, results, notes):
         notes.append(f"p{pg}: captioned \"Zones {n} -\" with the range cut "
                      f"off; read as zone {n} alone, because the next zone "
                      f"page (p{nxt}) opens at zone {n + 1}")
+
+
+def _calfrac_page_heads(results, notes, reach_s=1200.0):
+    """Start a page's first zone after the zones the page re-plots first.
+
+    The mirror of a last zone that runs on into the next page. 00261's
+    "Zones 27-32" plots TWELVE treatments: it opens at 20:30 with zones 21-26
+    again (they are charted on p94-95 as well) and only then 27-32. Cut on
+    the five boundaries the caption allows, zone 27 took all seven opening
+    treatments — 273 minutes — and, opening hours before zone 26 had, was
+    put a day late along with every zone after it.
+
+    Where a page's first zone N opens before zone N-1 (charted on another
+    page) has finished, and N-1 finishes inside N's window, the head is that
+    re-plot. It is cut at the pumping break nearest N-1's end — within
+    `reach_s`, and only at a real break, so a zone of one long treatment is
+    never cut — and the head is dropped: its minutes are N-1's, exported
+    there. Compared on the pages' own clocks, before _calfrac_days moves any
+    day, which is when the two pages still share a frame.
+    """
+    import numpy as np
+    spans = {}
+    for r in results:
+        md = r.get("meta") or {}
+        if r.get("source") != "CalFrac chart" or md.get("zone_span") is None:
+            continue
+        m = re.match(r"\d+", str(md.get("stage") or ""))
+        t0 = _abs_start(r)
+        if not m or t0 is None or r.get("samples") is None:
+            continue
+        t1 = t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+        spans.setdefault(int(m.group(0)), []).append((r.get("page"), t0, t1))
+    done = []
+    for r in results:
+        md = r.get("meta") or {}
+        if r.get("source") != "CalFrac chart" or not md.get("page_first"):
+            continue
+        m = re.match(r"\d+", str(md.get("stage") or ""))
+        t0 = _abs_start(r)
+        if not m or t0 is None:
+            continue
+        sec = _sample_sec(r)
+        n = len(r["samples"])
+        t1 = t0 + timedelta(seconds=n * sec)
+        prev = [b for pg, _a, b in spans.get(int(m.group(0)) - 1, [])
+                if pg != r.get("page")
+                and t0 < b - timedelta(minutes=10)
+                and b < t1 - timedelta(minutes=5)]
+        if not prev:
+            continue
+        want = (max(prev) - t0).total_seconds() / sec
+        rate = r["data"].get("Slurry Rate")
+        if rate is None:
+            continue
+        breaks = [(a + b) // 2 for a, b, _l in
+                  cprog._quiet_runs(rate, sec, 0.25) if _l >= 60.0]
+        near = [c for c in breaks if abs(c - want) * sec <= reach_s]
+        if not near:
+            continue
+        k = int(min(near, key=lambda c: abs(c - want)))
+        if k <= 0 or n - k < 300 / sec:
+            continue
+        r["samples"] = r["samples"][k:] - r["samples"][k]
+        r["data"] = {lbl: v[k:] for lbl, v in r["data"].items()}
+        new0 = t0 + timedelta(seconds=k * sec)
+        md["start_time"] = new0.strftime("%H:%M:%S")
+        md["date"] = new0.date().isoformat()
+        md["duration_min"] = len(r["samples"]) * sec / 60.0
+        md["pump_offset_s"] = cprog.pump_onset(r["data"], 0,
+                                               len(r["samples"]), sec)
+        if r.get("geom"):
+            r["geom"] = dict(r["geom"])
+            r["geom"]["ta"] = r["geom"].get("ta", 0.0) - k * sec
+        md.setdefault("warnings", []).append(
+            f"the first {k * sec / 60:.0f} min of this page re-plot zone "
+            f"{int(m.group(0)) - 1} and before, charted on their own page; "
+            f"this zone starts after them")
+        done.append((str(md.get("stage")), r.get("page"), k * sec / 60.0))
+    if done:
+        notes.append(f"{len(done)} chart(s) open by re-plotting the zones "
+                     f"before them, already charted on their own page; cut "
+                     f"to start at the zone's own treatment: "
+                     + ", ".join(f"{s} p{p} ({m:.0f} min)"
+                                 for s, p, m in done[:8]))
 
 
 def _calfrac_reprints(results, notes):
@@ -4941,6 +5027,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
             _zone_times[0], _sheet_dates[0] = cprog.sheets_for_document(doc)
         _calfrac_sheet_clocks(results, notes, _zone_times[0], _sheet_dates[0])
         _calfrac_reprints(results, notes)
+        _calfrac_page_heads(results, notes)
         _calfrac_days(results, notes)
 
     _offset_well_names(results, notes)
