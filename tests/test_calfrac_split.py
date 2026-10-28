@@ -76,7 +76,19 @@ class PauseEdges(unittest.TestCase):
         self.assertIsNone(cp._match_cuts(cands, [1, 2, 3, 4], printed, 600.0))
         got = cp._match_cuts(cands, [1, 2, 3, 4], printed, 600.0, spans)
         self.assertIsNotNone(got)
-        self.assertEqual(got[0], cands)
+        self.assertEqual(got[0][:2], cands[:2])
+        # and the long pause is cut at zone 4's printed start, not its middle
+        self.assertAlmostEqual(got[0][2], 428.0, delta=2.0)
+
+    def test_a_long_pause_is_cut_at_the_printed_start(self):
+        # 00227: two hours' wait before zone 4; its middle is an hour early
+        printed = {2: 67, 3: 142, 4: 318}
+        cands = [67.0, 142.0, 256.0]
+        spans = [(65.0, 69.0), (140.0, 144.0), (195.0, 318.0)]
+        got = cp._match_cuts(cands, [1, 2, 3, 4], printed, 600.0, spans)
+        self.assertIsNotNone(got)
+        self.assertEqual(got[0][:2], [67.0, 142.0])     # short: the middle
+        self.assertAlmostEqual(got[0][2], 318.0, delta=1.0)
 
     def test_the_distance_to_a_pause(self):
         self.assertEqual(cp._gap_dist((10.0, 20.0), 15.0), 0.0)

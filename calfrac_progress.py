@@ -1105,7 +1105,16 @@ def _match_cuts(cands, zones, printed, span_min, spans=None):
     out, i = [], 0
     while i < len(want):
         if want[i] is not None:
-            out.append(cands[pick[i]])
+            lo_s, hi_s = spans[pick[i]]
+            if hi_s - lo_s > _MATCH_TOL_MIN:
+                # A long pause holds the zone's printed start, and its middle
+                # can be an hour from it: 00227 waited 2 h before zone 4 and
+                # the middle put it at 06:26 against a printed 7:28. Cut at
+                # the printed start, kept inside the pause the pumps stopped
+                # for. A pause of minutes keeps its middle, as it always has.
+                out.append(min(max(want[i], lo_s), hi_s))
+            else:
+                out.append(cands[pick[i]])
             i += 1
             continue
         j = i
