@@ -800,13 +800,15 @@ def plausible_floor_axis(v0, v1):
 
 
 def _ladder_inliers(pts, fit):
-    """How many DIFFERENT labels [(value, y)] lie on `fit` — a label read
-    twice (two page modes) counts once."""
+    """How many DIFFERENT labels [(value, y)] lie on `fit`, each within 12 px
+    of its own height on the line — a label read twice (two page modes)
+    counts once. The tolerance is in pixels, not in the values' spread: one
+    slipped "3200" among 0..80 widened fit_ticks' own tolerance to 48 and
+    every label sat on every line (00186 p63)."""
     if not fit or not pts:
         return 0
     a, b, _n = fit
-    vals = [v for v, _y in pts]
-    tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+    tol = abs(b) * 12
     return len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
                 if abs(a + b * y - v) < tol})
 

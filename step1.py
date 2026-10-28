@@ -1671,10 +1671,10 @@ def _legend_unit_for(name, unit):
 
 # The chemical table's additives, as their legend lines OCR: "Aqucar 742"
 # reads "Agucar", "Qaucar" and "Aaucar" — 742 does not change; "SFR-202" reads
-# "$FR-202"; "SSI-3" reads "SSl-3".
+# "$FR-202"; "SSI-3" reads "SSl-3" and "§SI-3" (00186 p63).
 _ADDITIVE_SEEN = {"Aqucar 742 Conc": re.compile(r"\b742\b"),
                   "SFR-202 B Conc": re.compile(r"FR\W{0,2}202", re.IGNORECASE),
-                  "SSI-3 Conc": re.compile(r"S\W?S\W?[Il1|]\W{0,2}3\b", re.IGNORECASE)}
+                  "SSI-3 Conc": re.compile(r"S\W?[Il1|]\W{0,2}3\b", re.IGNORECASE)}
 
 
 def _band_text(img, box):
@@ -1704,7 +1704,12 @@ def _table_name_ok(tag, fam, name, legend, band):
         return True
     seen = _ADDITIVE_SEEN.get(name)
     if seen is not None:
-        return bool(seen.search(band() or ""))
+        text = band() or ""
+        if seen.search(text):
+            return True
+        # refused only where the band plainly is a legend of additives that
+        # does not print this one; a band the OCR could not read says nothing
+        return len(re.findall(r"\(\s*L\W{0,2}[mn]|Conc|@", text, re.IGNORECASE)) < 2
     if name in ("Combined Clean Rate", "Clean Rate"):
         return not any(f2 != fam and v[0] in ("Clean Rate", "Combined Clean Rate")
                        for f2, v in legend.items())

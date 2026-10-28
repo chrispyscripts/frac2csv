@@ -274,6 +274,12 @@ class LadderRepairs(unittest.TestCase):
         a, b, _n = step1._fit(pts)
         self.assertAlmostEqual(a + b * 306, 15.0, delta=0.3)
 
+    def test_one_slipped_label_does_not_widen_the_tolerance(self):
+        # 00186 p63: 80 / 64 / 48 / 3200 / 16 / 0 — the 0..80 line as read
+        pts = T([(80, 327), (64, 461), (48, 594), (3200, 728), (16, 862), (0, 994)])
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 327, 80.0, delta=0.5)
+
     def test_a_good_ladder_is_left_alone(self):
         for pairs in ([(75, 306), (60, 448), (45, 590), (30, 733), (15, 876)],
                       [(1000, 306), (750, 484), (500, 662), (250, 840), (0, 1017)],
@@ -292,6 +298,10 @@ class ChemicalTableNames(unittest.TestCase):
         band = lambda: "CLEAN RATE (m?/min) Agucar 742 Conc. SSI-3 Conc. $FR-202 Conc."
         for name in ("Aqucar 742 Conc", "SFR-202 B Conc", "SSI-3 Conc"):
             self.assertTrue(step1._table_name_ok("c", "red", name, {}, band))
+
+    def test_a_band_the_ocr_could_not_read_says_nothing(self):
+        band = lambda: "~~ —— eee ——"
+        self.assertTrue(step1._table_name_ok("c", "red", "Aqucar 742 Conc", {}, band))
 
     def test_a_second_clean_rate(self):
         legend = {"blue": ("Clean Rate", "m3/min")}
