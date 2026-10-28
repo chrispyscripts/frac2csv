@@ -130,8 +130,10 @@ class FilledLegend(unittest.TestCase):
         self.meta, self.samples, self.data, self.units = canyon.extract_page(page)
 
     def test_both_curves_are_named(self):
-        self.assertEqual(set(self.data), {"Mainline", "Bottom Hole"})
-        self.assertEqual(self.units["Bottom Hole"], "MPa")
+        # the legend prints "Bottom Hole"; it goes out as BHP, the name the
+        # other Canyon charts give the same pen (canyon.SAME_PEN)
+        self.assertEqual(set(self.data), {"Mainline", "BHP"})
+        self.assertEqual(self.units["BHP"], "MPa")
 
     def test_the_stage_starts_at_its_frame_not_at_the_axis(self):
         # 08:33 at the frame's left; the tick marks sat 90s earlier
@@ -140,7 +142,7 @@ class FilledLegend(unittest.TestCase):
         self.assertAlmostEqual(self.meta.duration_min, 130.0, delta=1.0)
 
     def test_black_series_reads_the_curve_not_the_axis(self):
-        v = np.asarray(self.data["Bottom Hole"], float)
+        v = np.asarray(self.data["BHP"], float)
         self.assertGreater(np.nanmin(v), 38.0)       # not 0: no bottom cap
         self.assertLess(np.nanmax(v), 70.0)          # not 80: no top cap or tick
         self.assertAlmostEqual(v[60 * 65], 54.0, delta=1.5)
@@ -156,7 +158,7 @@ class LegendSampleChoice(unittest.TestCase):
     def test_a_stroked_sample_still_reads(self):
         doc, page = _page(filled=False, legend_above=False)
         _m, _s, data, _u = canyon.extract_page(page)
-        self.assertEqual(set(data), {"Mainline", "Bottom Hole"})
+        self.assertEqual(set(data), {"Mainline", "BHP"})
 
     def test_white_and_large_fills_are_never_a_sample(self):
         doc = fitz.open()
@@ -178,14 +180,14 @@ class LegendSampleChoice(unittest.TestCase):
         m, _s, data, _u = canyon.extract_page(page)
         self.assertEqual(m.start_time[:5], "08:33")
         self.assertAlmostEqual(m.duration_min, 130.0, delta=1.5)
-        self.assertEqual(set(data), {"Mainline", "Bottom Hole"})
+        self.assertEqual(set(data), {"Mainline", "BHP"})
 
     def test_tick_marks_that_touch_the_frame_are_still_the_axis(self):
         # 00009 / 00371 (#780, #781): ticks 76.13-78.84 on a frame edge at
         # 78.84. They gave the black series a spike to the axis top at t=0.
         doc, page = _page(tick_x0=45.5)
         m, _s, data, _u = canyon.extract_page(page)
-        v = np.asarray(data["Bottom Hole"], float)
+        v = np.asarray(data["BHP"], float)
         self.assertGreater(np.nanmin(v), 38.0)
         self.assertLess(np.nanmax(v[:120]), 45.0)     # no spike at the start
         self.assertEqual(m.start_time[:5], "08:33")

@@ -16,6 +16,12 @@ from frac_core import PageMeta, _resample
 
 PANEL_UNITS = {"Pressure": "MPa", "Rate": "m³/min", "Concentration": "kg/m³"}
 
+# One pen, two printed names. 00253 labels bottom-hole pressure "BHP" on
+# stages 1-3 and 6 and "Bottom Hole" on 4-5, so its CSV carried two
+# half-empty columns for the one reading. No chart prints both; "BHP" is the
+# name on 529 of the 723 charts of 00184-00278 that carry either.
+SAME_PEN = {"Bottom Hole": "BHP"}
+
 
 class NotAStageChart(ValueError):
     """This page is a chart, and deliberately not exported as a stage.
@@ -406,7 +412,7 @@ def extract_page(page, sample_sec=1.0):
             if best is None:
                 best = _legend_sample(drawings, s, _filled_sample)
             if best:
-                name_color.setdefault(s["t"], best)
+                name_color.setdefault(SAME_PEN.get(s["t"], s["t"]), best)
 
         # curves: strokes within the panel plot box, keyed by legend color
         x_lo, x_hi = p.get("x_range", (0, page.rect.width))
