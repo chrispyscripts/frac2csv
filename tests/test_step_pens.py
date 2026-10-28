@@ -238,6 +238,21 @@ class StageTitled(unittest.TestCase):
         self.assertNotIn("date", m)
 
 
+class DistinctInliers(unittest.TestCase):
+    def test_two_labels_read_twice_are_two(self):
+        # 00272 p66: 15 / 12 read "45" / "42" by both page modes
+        seg = [(45.0, 306, True), (42.0, 448, True)] * 2 + [(9.0, 590, True)]
+        cal = step1.ar.fit_ticks_guarded(seg)
+        self.assertIsNotNone(cal)
+        self.assertLess(step1._distinct_inliers(seg, cal), 3)
+
+    def test_a_ladder(self):
+        seg = [(15.0, 306, True), (12.0, 448, True), (9.0, 590, True),
+               (6.0, 733, True), (3.0, 876, True)]
+        cal = step1.ar.fit_ticks_guarded(seg)
+        self.assertEqual(step1._distinct_inliers(seg, cal), 5)
+
+
 class SideBySide(unittest.TestCase):
     def page(self, panels):
         img = np.full((600, 900, 3), 255, int)

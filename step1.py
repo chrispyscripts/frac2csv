@@ -1072,6 +1072,17 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
             out.append({"rgb": e["rgb"], "name": name, "group": group,
                         "row": (e["y0"], e["y1"]), "col": (e["c0"], right),
                         "votes": e.get("votes", ("", "")), "well": bool(on_main)})
+    # The red Surface Main pen, where it crosses a gridline beside some dark
+    # ink in the top of the plot, passes for a swatch of its own: 00243 p20
+    # found three below the legend (rows 228-233), each a "column" of its own.
+    # Read as wells they were the surface pressure again on the offset and
+    # ABD axes ("Well #d62125 ABD Pressure" 2.55, i.e. 51 MPa on 0..4) — and
+    # they stretched the legend box that is cleared from every mask down over
+    # the plot. A red entry is a well only where its line names one.
+    out = [e for e in out
+           if e["group"] == "main" and not e.get("well")
+           or re.fullmatch(r"[A-Z] Well", e["name"] or "")
+           or _swatch_family(e["rgb"]) != "red"]
     if not any(e["group"] != "main" for e in out):
         return []
     bx0 = min(e["col"][0] for e in out) - 10
@@ -1452,16 +1463,29 @@ def _name_chemical(tag, chans):
             c["unit"] = ""
 
 
-def _right_columns(pts, gap=18):
+def _distinct_inliers(seg, cal):
+    """How many different labels [(value, y, strict)] lie on the fitted line
+    `cal` — fit_ticks counts a label read twice (two page modes) twice."""
+    a, b, _n = cal
+    vals = [v for v, _y, _s in seg]
+    if not vals:
+        return 0
+    tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+    return len({(round(v, 6), int(round(y / 8.0))) for v, y, _s in seg
+                if abs(a + b * y - v) < tol})
+
+
+def _right_columns(pts, gap=18, with_x=False):
     """Right-hand tick labels [(value, x, y)] -> one [(value, y, True)] list
-    per column, cut on x gaps. A rotated axis title is a column of its own
-    here, and drops out later because its OCR speckle admits no linear fit."""
+    per column, cut on x gaps — [(value, x, y)] with with_x. A rotated axis
+    title is a column of its own here, and drops out later because its OCR
+    speckle admits no linear fit."""
     out, cur, prev = [], [], None
     for v, px, py in sorted(pts, key=lambda p: p[1]):
         if prev is not None and px - prev > gap:
             out.append(cur)
             cur = []
-        cur.append((v, py, True))
+        cur.append((v, px, py) if with_x else (v, py, True))
         prev = px
     if cur:
         out.append(cur)
@@ -1747,10 +1771,17 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     if rtitles:
         lo = x1 + 3
         def fits_any(pts):
-            if ar.fit_ticks_guarded([(v, y, True) for v, x, y in pts]):
+            # a fit through fewer than three labels is no fit (see the
+            # untitled reading below)
+            whole = [(v, y, True) for v, x, y in pts]
+            cal = ar.fit_ticks_guarded(whole)
+            if cal and _distinct_inliers(whole, cal) >= 3:
                 return True
-            return any(ar.fit_ticks_guarded(seg) for seg in _right_columns(pts)
-                       if len(seg) >= 3)
+            for seg in _right_columns(pts):
+                cal = ar.fit_ticks_guarded(seg) if len(seg) >= 3 else None
+                if cal and _distinct_inliers(seg, cal) >= 3:
+                    return True
+            return False
 
         for qty, tx in rtitles:
             if tx - 4 > lo:
@@ -1836,8 +1867,20 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                     px, py = int(cx / 3) + x1 + 3, int(cy / 3) + ry0
                     if y0 - 25 <= py <= y1 + 25:
                         pts.append((float(t), px, py))
-        for seg in _right_columns(pts):
+        for grp in _right_columns(pts, with_x=True):
+            seg = [(v, y, True) for v, _x, y in grp]
             cal = ar.fit_ticks_guarded(seg)
+            if cal and _distinct_inliers(seg, cal) < 3:
+                # A fit through two labels, each read twice, is no ladder:
+                # 00272 p66's 15 / 12 read "45" / "42" by both page modes and
+                # fitted a 0..45 rate axis, Slurry Rate 37.6 for 7.5. The
+                # column read again cleaned (see strip_ticks) and pooled reads
+                # 12, 9, 6, 3; a line through three labels or more wins.
+                xs = [x for _v, x, _y in grp]
+                more = strip_ticks(min(xs) - 25, max(xs) + 25, clean=True)
+                cal2 = ar.fit_ticks_guarded(seg + more)
+                if cal2 and _distinct_inliers(seg + more, cal2) >= 3:
+                    cal, seg = cal2, seg + more
             if not cal:
                 continue
             top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
