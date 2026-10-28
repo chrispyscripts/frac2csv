@@ -1031,19 +1031,28 @@ def _offset_inplot_legend(img, box, top_frac=0.35):
         return ch
 
     out = []
+    seen_groups = []
     for k, col in enumerate(columns):
         right = columns[k + 1][0]["c0"] - 6 if k + 1 < len(columns) else min(W, col[0]["c0"] + 260)
         top = min(e["y0"] for e in col)
         head = read(top - 17, top - 1, col[0]["c0"] - 4, right).lower()
         group = ("abd" if "abd" in head or "aband" in head
                  else "offset" if "offset" in head else "main")
-        for e in col:
-            raw = read(e["y0"] - 4, e["y1"] + 5, e["c1"] + 2, right)
+        raws = [read(e["y0"] - 4, e["y1"] + 5, e["c1"] + 2, right) for e in col]
+        has_main = any(re.search(r"surf|main", r, re.I) for r in raws)
+        if group == "main" and not has_main and "main" in seen_groups:
+            # A column after the main one whose header did not read is not
+            # the main axis's: 00241 p55's "ABD Well Pressure" header reads
+            # as nothing, and its D and J Wells are the abandoned wells.
+            group = "abd" if "offset" in seen_groups else "offset"
+        seen_groups.append(group)
+        for e, raw in zip(col, raws):
             name = ar._legend_name(raw)
             mw = re.search(r"(?:w|vv)\s*[eo]", raw, re.I)
             # From stage 26 on, 00242 lists A Well under "Pressure (Mpa)",
-            # beside Surface Main: plotted on the main axis, and never read
-            on_main = (group == "main" and mw is not None
+            # beside Surface Main: plotted on the main axis, and never read.
+            # Only in the column that holds Surface Main.
+            on_main = (group == "main" and has_main and mw is not None
                        and not re.search(r"surf|main", raw, re.I))
             if (group != "main" or on_main) and mw:
                 # "X Well (MPa)": the letter as the line read it, and as the
