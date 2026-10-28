@@ -175,7 +175,8 @@ class LabelOnTheOtherSide(unittest.TestCase):
         masks = {"cyan": np.zeros((300, 200), bool), "green": np.zeros((300, 200), bool)}
         masks["cyan"][95:105, 150:170] = True
         masks["green"][97:104, 150:166] = True
-        out = {"cyan": [(16.0, 10, True), (8.0, 100, True), (0.0, 190, True)], "green": []}
+        out = {"cyan": [(16.0, 10, True), (12.0, 55, True), (8.0, 100, True),
+                        (4.0, 145, True), (0.0, 190, True)], "green": []}
         words = [("1600", (160 - 140) * 3, 100 * 3)]
         with mock.patch.object(step1.ar, "ocr_words", return_value=words):
             got = step1.ar.ocr_tick_strip(img, masks, 140, 200, out=dict(
