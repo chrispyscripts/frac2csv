@@ -344,8 +344,16 @@ def fit_ticks(pts, min_inliers=5):
     return (float(a), float(b), int(inl.sum()))
 
 
-def ocr_tick_strip(img, masks, xa, xb, out=None):
-    """OCR a vertical tick-label strip; assign numbers to series by color."""
+def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
+    """OCR a vertical tick-label strip; assign numbers to series by color.
+
+    in_strip=True counts a label's colour inside the strip only. The window
+    reaches 40 px either side of the label, and for a label printed just
+    right of the frame that is 40 px of PLOT: on 00208 p24 the green pen's
+    spikes at the chart's right edge outweighed the dark red of the Aqucar
+    ladder beside them, its 0.375 / 0.25 / 0.125 / 0.0 were handed to green,
+    and Aqucar 742 Conc was dropped as "axis ticks unreadable" (stages 3 and
+    4). Off by default: only the STEP reader has been measured with it."""
     from PIL import Image
     xa = max(0, xa)
     strip = img[:, xa:xb]
@@ -354,6 +362,10 @@ def ocr_tick_strip(img, masks, xa, xb, out=None):
     if strip.size == 0:
         return out
     SCALE = 3
+    # (in_strip) the families that already have a ladder of their own in a
+    # strip read before this one
+    laddered = ({k for k, pts in out.items() if sum(1 for p in pts if p[2]) >= 3}
+                if in_strip else set())
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
@@ -364,8 +376,21 @@ def ocr_tick_strip(img, masks, xa, xb, out=None):
         px, py = int(cx / SCALE) + xa, int(cy / SCALE)
         y0, y1 = max(0, py - 12), py + 13
         x0, x1 = max(0, px - 40), px + 41
+        if in_strip:
+            x0, x1 = max(x0, xa), min(x1, xb)
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
+        if (in_strip and bestk == "cyan" and bestk in laddered
+                and "green" not in laddered and counts.get("green", 0) > 30
+                and counts["green"] >= 0.4 * counts[bestk]):
+            # Cyan, whose ladder is on the other side of the plot, has no
+            # second one here: 00247 p23's DARK green Prop Conc labels are
+            # teal enough at their edges to count as cyan, whose 0..16 rate
+            # ladder is on the left, and Prop Conc was dropped as "axis ticks
+            # unreadable". Only that pair: brown labels, which count as red
+            # and orange both, belong to neither pen (00272's offset axis), and
+            # handed to orange they made a well "Btm Prop Conc".
+            bestk = "green"
         if counts[bestk] > 30:
             out[bestk].append((float(t), py, True))
             # ambiguous color (scan fringe): runner-up gets a borrowed vote
@@ -1640,7 +1665,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
 # ---------- main entry ----------
 
 def extract(img, sample_sec=1.0, plot=None, glyphs=False,
-            edge_blank=False):
+            edge_blank=False, ticks_in_strip=False):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -1663,8 +1688,10 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
         raise ValueError(f"implausible duration {n}s from time axis")
     samples = np.arange(int(n / sample_sec)) * sample_sec
 
-    ticks = ocr_tick_strip(img, masks, 0, x0)
-    ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks)
+    # ticks_in_strip: see ocr_tick_strip's in_strip
+    ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip)
+    ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks,
+                           in_strip=ticks_in_strip)
     # the end labels of a stack sit further out than the fit may look (see
     # printed_bounds): 00248 p24's green 0.0 is 26 px under the frame
     wide = {k: [(v, y, st) for v, y, st in pts if y0 - 45 <= y <= y1 + 45]
@@ -1677,6 +1704,14 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
         sub = mask[y0:y1, x0:x1]
         n_cols = sub.shape[1]
         cov = float(sub.any(axis=0).mean())
+        if cov < 0.01:
+            # The families come from the whole image, and a STEP page is two
+            # charts: the chemical chart's magenta and the logo's blue have
+            # no ink at all inside the surface chart's frame, yet every
+            # surface chart of 00184/00186/00208 said "series 'magenta' /
+            # 'blue': axis ticks unreadable — channel skipped" (179 lines on
+            # 00208). A colour this chart does not draw is not its channel.
+            continue
         if cal is None:
             notes.append(f"series '{key}': axis ticks unreadable — channel skipped")
             continue
