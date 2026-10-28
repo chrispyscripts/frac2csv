@@ -81,6 +81,7 @@ import hashlib
 import json
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -494,26 +495,64 @@ def pair_disagree(st):
 
 # ---- file-level detectors --------------------------------------------------
 
+def per_stage(group):
+    """How many charts one template prints for a stage: the usual count over
+    its numbered stages. STEP's treatment and offset-well plots are both "STEP
+    surface chart" and both carry the stage's number (00241, 00243: two a
+    stage), and so are CalFrac's Surface and Bottom Hole sheets."""
+    n = Counter(_stage_label(st).strip() for st in group)
+    n.pop("", None)
+    return Counter(n.values()).most_common(1)[0][0] if n else 1
+
+
+def kinds(group):
+    """One template's charts split into the kinds it prints a stage: the n-th
+    chart of each stage, by page, against the n-th of the others. A stage
+    that printed more or fewer joins each chart to the kind it shares most
+    channels with, so a chart that lost most of its pens still lands with
+    its own kind and is reported there."""
+    n = per_stage(group)
+    if n < 2:
+        return [group]
+    by = {}
+    for st in group:
+        by.setdefault(_stage_label(st).strip(), []).append(st)
+    out, odd = [[] for _ in range(n)], []
+    for label, sts in by.items():
+        if label and len(sts) == n:
+            for i, st in enumerate(sorted(sts, key=lambda s: s.get("page") or 0)):
+                out[i].append(st)
+        else:
+            odd += sts
+    keys = [Counter(c["key"] for st in kd for c in st.get("channels", [])) for kd in out]
+    for st in odd:
+        have = {c["key"] for c in st.get("channels", [])}
+        i = max(range(n), key=lambda i: sum(keys[i][k] for k in have) / max(1, len(out[i])))
+        out[i].append(st)
+    return out
+
+
 def presence(stages):
     """A channel every other stage of this template carries, absent here."""
     by_src = {}
     for st in stages:
         by_src.setdefault(st.get("source", "?"), []).append(st)
     out = []
-    for src, group in by_src.items():
-        if len(group) < 3:
-            continue
-        count = {}
-        for st in group:
-            for c in st.get("channels", []):
-                count[c["key"]] = count.get(c["key"], 0) + 1
-        expected = {k for k, n in count.items() if n / len(group) >= PRESENT_FRAC}
-        for st in group:
-            have = {c["key"] for c in st.get("channels", [])}
-            for k in sorted(expected - have):
-                out.append(_f("channel.absent", WARN, st, {"key": k},
-                              f"{k} is on {count[k]} of {len(group)} {src} stages and not this one",
-                              "the reader dropped the channel on this page — its note says why"))
+    for src, whole in by_src.items():
+        for group in kinds(whole):
+            if len(group) < 3:
+                continue
+            count = {}
+            for st in group:
+                for c in st.get("channels", []):
+                    count[c["key"]] = count.get(c["key"], 0) + 1
+            expected = {k for k, n in count.items() if n / len(group) >= PRESENT_FRAC}
+            for st in group:
+                have = {c["key"] for c in st.get("channels", [])}
+                for k in sorted(expected - have):
+                    out.append(_f("channel.absent", WARN, st, {"key": k},
+                                  f"{k} is on {count[k]} of {len(group)} {src} stages and not this one",
+                                  "the reader dropped the channel on this page — its note says why"))
     return out
 
 
@@ -641,8 +680,14 @@ def ladder(stages, notes, tables=None):
                       f"{overview} chart(s) with no stage label, over 3× a stage's length — "
                       "overview or whole-treatment plots",
                       "not on the ladder; check the CSV names them sensibly"))
+    # ...and a template that prints two charts for every stage (STEP's
+    # treatment and offset plots) doubles only past its own two
+    usual = {}
+    for st in stages:
+        usual.setdefault(st.get("source", ""), []).append(st)
+    usual = {src: per_stage(g) for src, g in usual.items()}
     for (src, l), pages in seen.items():
-        if len(pages) > 1 and l.strip():
+        if len(pages) > usual.get(src, 1) and l.strip():
             out.append(_f("stage.doubled", WARN, None, None,
                           f"stage {l!r} produced {len(pages)} times by {src}, pages {pages}",
                           "two sheets of one run merged, or one run read twice"))
