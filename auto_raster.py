@@ -380,16 +380,17 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
             x0, x1 = max(x0, xa), min(x1, xb)
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
-        if in_strip and bestk in laddered:
-            # A family whose ladder is on the other side of the plot has no
-            # second one here: 00247 p23's dark green Prop Conc labels are
+        if (in_strip and bestk == "cyan" and bestk in laddered
+                and "green" not in laddered and counts.get("green", 0) > 30
+                and counts["green"] >= 0.4 * counts[bestk]):
+            # Cyan, whose ladder is on the other side of the plot, has no
+            # second one here: 00247 p23's DARK green Prop Conc labels are
             # teal enough at their edges to count as cyan, whose 0..16 rate
             # ladder is on the left, and Prop Conc was dropped as "axis ticks
-            # unreadable". The runner-up, if it is close, is the label's own.
-            rivals = [k for k, c in counts.items() if k != bestk and k not in laddered
-                      and c > 30 and c >= 0.4 * counts[bestk]]
-            if rivals:
-                bestk = max(rivals, key=counts.get)
+            # unreadable". Only that pair: brown labels, which count as red
+            # and orange both, belong to neither pen (00272's offset axis), and
+            # handed to orange they made a well "Btm Prop Conc".
+            bestk = "green"
         if counts[bestk] > 30:
             out[bestk].append((float(t), py, True))
             # ambiguous color (scan fringe): runner-up gets a borrowed vote

@@ -400,8 +400,21 @@ def find_charts(img):
         same_width = abs(o[0] - b[0]) <= W * 0.02 and abs(o[2] - b[2]) <= W * 0.02
         return apart and not same_width
 
+    # A pen drawn down the frame's own edge hides the rule: 00272 p56's blue
+    # slurry rate runs along the left rule from 881 to the floor at 1012, the
+    # rule's dark run stopped there, and the box lost its bottom 130 px with
+    # the time labels under it ("time axis unreadable": stage 19 unread).
+    # Asked only where the dark rules alone do not grow the box, and only the
+    # BOTTOM may move; both sides must still agree where they end.
+    a = np.asarray(img)
+    pen = ((a.max(axis=2) - a.min(axis=2)) >= 60) & (a.sum(axis=2) < 600)
+
     def grow(b):
         g = _whole_rules(dark, b)
+        if g == b:
+            gp = _whole_rules(dark | pen, b)
+            if gp[3] > b[3]:
+                g = (b[0], b[1], b[2], gp[3])
         if g != b and any(o != b and _covered(o, g) and other_chart(o, b) for o in out):
             return b
         return g
@@ -548,6 +561,51 @@ def page_meta(img):
     elif "Prop Conc" not in text:
         # garbled OCR on the casing twin is common; main pages OCR cleanly
         meta["kind"] = "casing" if "Surface Pressure" not in text else "main"
+    return meta
+
+
+def _stage_titled_meta(img, box, meta):
+    """Stage, interval and date of a page titled "<well> - Stage N", into
+    `meta` (in place).
+
+    00278 (Polar Star, 2017) heads every chart page "200/d-016-K/094-H-05 -
+    Stage 1" over "3579.95 m - 3580.05 m", and prints the date in the info
+    box under the top chart, "Date 2/12/2017". The pages are images with no
+    text layer, and page_meta's read of the page's top band stops at the STEP
+    header: all 60 charts came out "Interval ?" with no date. The lines sit
+    just above the first chart's frame and are read from there. Only the
+    word "Stage" is taken — the Shell books say "Treatment N", and their
+    pages are numbered by the Daily Stage Summary when page_meta misses it.
+    The date is month first (2/12 of a February job, filed 2017MAR15) unless
+    the first number cannot be a month."""
+    x0, y0, x1, y1 = box
+    H, W = img.shape[:2]
+    band = np.asarray(img)[max(0, y0 - 190):max(0, y0 - 20),
+                           max(0, x0 - 150):min(W, x1 + 150)]
+    if band.shape[0] < 20:
+        return meta
+    try:
+        text = " ".join(w[0] for w in ar.ocr_words(band, psm=6, whitelist=""))
+    except Exception:
+        return meta
+    m = re.search(r"\bStage\s*(\d{1,3})\b", text)
+    if not m:
+        return meta
+    meta["stage"] = int(m.group(1))
+    m = re.search(r"([\d,]+\.\d+)\s*m\s*-\s*([\d,]+\.\d+)\s*m", text)
+    if m and not meta.get("interval"):
+        meta["interval"] = f"{m.group(1)}-{m.group(2)} m"
+    box_rows = np.asarray(img)[min(H, y1 + 40):min(H, y1 + 300), 0:x1]
+    try:
+        text = " ".join(w[0] for w in ar.ocr_words(box_rows, psm=6, whitelist=""))
+    except Exception:
+        text = ""
+    m = re.search(r"\bDate\b\W*(\d{1,2})/(\d{1,2})/(\d{4})", text)
+    if m:
+        a, b, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        mo, d = (b, a) if a > 12 else (a, b)
+        if 1 <= mo <= 12 and 1 <= d <= 31:
+            meta["date"] = "%04d-%02d-%02d" % (y, mo, d)
     return meta
 
 
@@ -1521,6 +1579,35 @@ def _clock_axis(img, x0, x1, y1):
     return a, b
 
 
+def _pale_titles(rows, xa, xb, ccw, only=None):
+    """The axis titles of a strip whose plain reading found no title at all,
+    read again with the ink stretched to black -> [(qty, x)].
+
+    00272-00274 print "Main Pressure (MPa)", "Offset Pressure (MPa)", "Rate
+    (m3/min)" and "Concentration (kg/m3)" in a pale, condensed brown that
+    reads as speckle beside the page's border rule; stretched, they read.
+    Without a left title the chart went to the colour-keyed reader, which read
+    the red alone (single-pen charts: 00272 11, 00273 16, 00274 23), and
+    without right titles 00273 p21's rate and concentration columns fitted
+    nothing. On the left only `only` is taken (pressure): a chemical chart's
+    "Clean Rate" or "Chem Conc" stays unread, so the chemical charts stay with
+    the colour-keyed reader that names their curves from the legend (see the
+    00271 note in _extract_new_chart). The right titles only delimit columns."""
+    lo = np.asarray(rows).min(axis=2).astype(float)
+    for a, b in ((90.0, 200.0), (60.0, 220.0)):
+        # the darkest channel stretched, not cut: a hard threshold before the
+        # 3x upscale leaves the condensed letters blocky and unread
+        g = np.repeat(np.clip((lo - a) * 255.0 / (b - a), 0, 255)[..., None], 3, axis=2)
+        try:
+            got = [t for t in ar.read_axis_titles(g, xa, xb, ccw=ccw)
+                   if only is None or t[0] == only]
+        except Exception:
+            got = []
+        if got:
+            return got
+    return []
+
+
 def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     """Chart with black tick labels on stacked value axes, each named by its
     own rotated title (Pressure / Rate / Concentration).
@@ -1645,6 +1732,8 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         rtitles = ar.read_axis_titles(rows, x1 + 3, W, ccw=True)
     except Exception:
         rtitles = []
+    if not rtitles:
+        rtitles = _pale_titles(rows, x1 + 3, W, ccw=True)
     cols = []                       # [(quantity, ticks)], one entry per axis
     if rtitles:
         lo = x1 + 3
@@ -1748,6 +1837,8 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         ltitles = ar.read_axis_titles(rows, 0, x0, ccw=False)
     except Exception:
         ltitles = []
+    if not ltitles:
+        ltitles = _pale_titles(rows, 0, x0, ccw=False, only="pressure")
     if require_titles and not ltitles:
         # The LEFT title specifically, because the quantity it names is what
         # decides whether the colour table applies at all (below). With no
@@ -4094,6 +4185,8 @@ def extract_page(page, sample_sec=1.0):
         if flat is not None:
             return flat
     meta = page_meta(img)
+    if meta.get("stage") is None and boxes:
+        _stage_titled_meta(img, boxes[0], meta)
     if not out and _side_by_side(img) >= 2:
         meta.setdefault("skipped", []).append(
             "charts printed side by side, two or three to a row at a third of "

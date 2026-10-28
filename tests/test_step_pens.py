@@ -199,6 +199,45 @@ class BlankBody(unittest.TestCase):
         self.assertFalse(step1._blank_body(img))
 
 
+class PaleTitles(unittest.TestCase):
+    def test_the_left_takes_pressure_only(self):
+        rows = np.full((50, 60, 3), 255, int)
+        got = [("rate", 10), ("pressure", 40)]
+        with mock.patch.object(step1.ar, "read_axis_titles", return_value=got):
+            self.assertEqual(step1._pale_titles(rows, 0, 60, ccw=False, only="pressure"),
+                             [("pressure", 40)])
+            self.assertEqual(step1._pale_titles(rows, 0, 60, ccw=True), got)
+
+    def test_a_chemical_title_is_not_taken_on_the_left(self):
+        rows = np.full((50, 60, 3), 255, int)
+        with mock.patch.object(step1.ar, "read_axis_titles", return_value=[("rate", 10)]):
+            self.assertEqual(step1._pale_titles(rows, 0, 60, ccw=False, only="pressure"), [])
+
+
+class StageTitled(unittest.TestCase):
+    def read(self, band, box_text):
+        img = np.full((900, 700, 3), 255, int)
+        words = [[(w, 0, 0) for w in band.split()], [(w, 0, 0) for w in box_text.split()]]
+        meta = {"stage": None, "interval": "", "kind": "main"}
+        with mock.patch.object(step1.ar, "ocr_words", side_effect=words):
+            return step1._stage_titled_meta(img, (100, 300, 600, 500), meta)
+
+    def test_00278(self):
+        m = self.read("200/d-016-K/094-H-05 - Stage 1 3579.95 m - 3580.05 m",
+                      "License 031988. Date 2/12/2017 Clean Flow Rate")
+        self.assertEqual((m["stage"], m["interval"], m["date"]),
+                         (1, "3579.95-3580.05 m", "2017-02-12"))
+
+    def test_a_day_first_date(self):
+        m = self.read("well - Stage 12", "Date 25/02/2017")
+        self.assertEqual(m["date"], "2017-02-25")
+
+    def test_a_treatment_title_is_left_alone(self):
+        m = self.read("Shell Canada Limited Treatment Analysis Treatment 31", "")
+        self.assertIsNone(m["stage"])
+        self.assertNotIn("date", m)
+
+
 class SideBySide(unittest.TestCase):
     def page(self, panels):
         img = np.full((600, 900, 3), 255, int)
