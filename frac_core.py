@@ -778,9 +778,56 @@ def detect_meta(page, frame, orient=None):
         meta.conc_max = max(top_vals)
         small = [v for v in top_vals if v < max(100.0, meta.conc_max / 10)]
         meta.rate_max = max(small) if small else 0.0
+    if orient == "y" and ocr_labels.garbled(page):
+        # On an OCR'd rotated sheet the rate column is the one the page pass
+        # misses (single red digits on their side), and the positional
+        # reading above then takes the first column it DID read as the rate:
+        # every Bottom Hole sheet of 00228 and 00234 scaled Rate @ Formation
+        # against the 0-1000 concentration axis, a hundred times too high,
+        # and the Surface sheets had no rate scale at all. Read the red rate
+        # ladder on its own (ocr_labels.red_tick_ladder); where it reads,
+        # it is the rate axis, and whatever columns the page pass found are
+        # concentrations.
+        rate = _red_rate_scale(page, frame)
+        if rate:
+            meta.rate_max = rate
+            meta.rate_ladder = True
+            conc = [v for v in (value or []) if v > 0 and v != rate]
+            if conc:
+                meta.conc_max = max(conc)
+            meta.warnings.append("rate axis read from its red tick labels")
     if meta.rate_max <= 0 or meta.conc_max <= 0:
         meta.warnings.append("rate/conc axis labels not fully detected")
     return meta
+
+
+def _red_rate_scale(page, frame):
+    """The rate axis full scale from its red tick labels above a rotated
+    plot, or None.
+
+    The labels sit a fixed distance from their ticks, so the top label is
+    not exactly at the frame's edge: the full scale is the ladder's straight
+    line read at the far edge (frame.x0, where these axes peak) and snapped
+    to the ladder's own step. That also recovers it when the top label
+    itself does not read.
+    """
+    clip = fitz.Rect(frame.x0 - 14, max(page.rect.y0, frame.y0 - 48),
+                     frame.x1 + 14, frame.y0 - 1)
+    kept = ocr_labels.axis_column_ok(ocr_labels.red_tick_ladder(page, clip))
+    if not kept or len(kept) < 4:
+        return None
+    xs = np.array([p for p, _v in kept], float)
+    vs = np.array([v for _p, v in kept], float)
+    b, a = np.polyfit(xs, vs, 1)
+    if b >= 0:
+        return None                       # these ladders fall left to right
+    step = float(np.median(np.abs(np.diff(np.sort(vs)))))
+    if step <= 0:
+        return None
+    top = round((a + b * frame.x0) / step) * step
+    if not (vs.max() - 0.5 * step <= top <= vs.max() + 1.5 * step):
+        return None
+    return float(top)
 
 
 def _match(color, table):
@@ -1003,6 +1050,10 @@ def extract_page(page, meta=None, sample_sec=1.0, duration_min=None):
     for color, arr in points.items():
         name, kind = series[color]
         fs = per_curve.get(name) or fullscale[kind]
+        if kind == "rate" and getattr(meta, "rate_ladder", False):
+            # read off the rate's own ladder; the column pairing cannot be
+            # trusted on a page whose rate column OCR did not see
+            fs = meta.rate_max
         if fs <= 0:
             meta.warnings.append(f"{name}: axis scale unknown, channel skipped")
             continue

@@ -103,6 +103,42 @@ class ChemicalsSheet(_Stub):
         self.assertFalse(fc.is_chemicals(_Page()))
 
 
+class RedRateLadder(unittest.TestCase):
+    """The rate axis full scale off its red tick labels (00228, 00234)."""
+
+    def setUp(self):
+        self._ladder = fc.ocr_labels.red_tick_ladder
+
+    def tearDown(self):
+        fc.ocr_labels.red_tick_ladder = self._ladder
+
+    def _scale(self, pts):
+        import fitz
+        fc.ocr_labels.red_tick_ladder = lambda page, clip: pts
+
+        class P(object):
+            rect = fitz.Rect(0, 0, 595, 842)
+        return fc._red_rate_scale(P(), fitz.Rect(94.4, 121.1, 547.8, 745.8))
+
+    def test_the_labels_sit_off_their_ticks_and_the_top_still_reads(self):
+        # 00234 p81, as read: centred 7.8 pt short of each tick
+        self.assertEqual(self._scale([(86.6, 10), (177.3, 8), (268.0, 6),
+                                      (358.6, 4), (449.3, 2), (540.0, 0)]),
+                         10.0)
+
+    def test_a_missing_top_label_is_recovered_from_the_line(self):
+        self.assertEqual(self._scale([(177.3, 8), (268.0, 6), (358.6, 4),
+                                      (449.3, 2), (540.0, 0)]), 10.0)
+
+    def test_a_bottom_hole_ladder_of_threes(self):
+        self.assertEqual(self._scale([(86.6, 15), (177.3, 12), (268.0, 9),
+                                      (358.6, 6), (449.3, 3), (540.0, 0)]),
+                         15.0)
+
+    def test_too_few_labels_is_no_scale(self):
+        self.assertIsNone(self._scale([(177.3, 8), (268.0, 6), (358.6, 4)]))
+
+
 class CutOffRange(_Stub):
     """00261 p84 captions its plot "Zones 1 -" (the box cut the end off)."""
 
