@@ -64,6 +64,40 @@ class OriginSlide(unittest.TestCase):
         self.assertAlmostEqual(t0, 531.0, delta=1.0)
 
 
+class PauseEdges(unittest.TestCase):
+    """A printed start is measured against the pause, not its middle."""
+
+    def test_00256_a_long_pause_still_matches(self):
+        # zones 1-4: zone 3 stops 12:02, zone 4 starts 13:10 after a 68-min
+        # pause whose middle (12:36) is 34 min from the printed start
+        printed = {2: 121, 3: 260, 4: 428}
+        cands = [120.0, 263.0, 394.0]
+        spans = [(118.0, 122.0), (261.0, 265.0), (360.0, 428.0)]
+        self.assertIsNone(cp._match_cuts(cands, [1, 2, 3, 4], printed, 600.0))
+        got = cp._match_cuts(cands, [1, 2, 3, 4], printed, 600.0, spans)
+        self.assertIsNotNone(got)
+        self.assertEqual(got[0], cands)
+
+    def test_the_distance_to_a_pause(self):
+        self.assertEqual(cp._gap_dist((10.0, 20.0), 15.0), 0.0)
+        self.assertEqual(cp._gap_dist((10.0, 20.0), 25.0), 5.0)
+        self.assertEqual(cp._gap_dist((10.0, 20.0), 4.0), 6.0)
+
+
+class TimesForRange(unittest.TestCase):
+    def test_00277_the_sheet_that_columns_this_page_wins(self):
+        # p42: the Dec 9 attempt, zones 1-5; p43: the Jan job from zone 5
+        times = {41: {1: {"start": "1:00"}, 5: {"start": "4:32"}},
+                 42: {5: {"start": "23:35"}, 6: {"start": "0:49"},
+                      7: {"start": "1:47"}}}
+        self.assertEqual(cp.times_for_range(times, 45, 1, 5)[5]["start"],
+                         "4:32")
+        self.assertEqual(cp.times_for_range(times, 49, 5, 23)[5]["start"],
+                         "23:35")
+        # page order still wins between equals, as times_before always did
+        self.assertEqual(cp.times_before(times, 45)[5]["start"], "23:35")
+
+
 class LastZone(unittest.TestCase):
     def test_ends_where_the_data_does(self):
         n = 1000

@@ -548,6 +548,10 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
     nz = hi - lo + 1
     span_min = len(samples) * sample_sec / 60.0
     zones = list(range(lo, hi + 1))
+    if all_times:
+        # the sheet run's times, read for THIS page's zones first (see
+        # cprog.times_for_range)
+        ztimes = cprog.times_for_range(all_times, pno, lo, hi)
     # Reuse the twin's cuts only if it HAS cuts. Requiring them — leaving this
     # page whole when the captioned one could not be split — cost 00070 19 of
     # its 24 stages: its captioned page finds no gaps and is left whole, while
@@ -586,6 +590,29 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
                              f"shows more breaks than there are zones, so the "
                              f"summary table's start times chose which "
                              f"{nz - 1} of them are zone boundaries")
+        if bounds is None:
+            # A caption names a RANGE, and a range can include numbers that
+            # were never pumped. 00258's "Zones 3 - 32" covers 30 numbers,
+            # but its summary sheets list zones 3, 4, 5 and 11-32 and no 6-10
+            # at all — 25 zones, and the chart shows 25 treatments, so no cut
+            # count made for 30 could ever match. Try the zones the sheets
+            # actually list, and only with the printed times choosing the
+            # cuts.
+            listed = [z for z in zones if z in ztimes]
+            if 2 <= len(listed) < len(zones):
+                picked = cprog.split_page_by_table(samples, data, listed,
+                                                   ztimes, sample_sec)
+                if picked is not None:
+                    bounds, chosen_t0 = picked
+                    gone = [z for z in zones if z not in listed]
+                    zones = listed
+                    notes.append(f"p{pno + 1}: zones {lo}-{hi} — no summary "
+                                 f"sheet lists zone(s) "
+                                 f"{', '.join(map(str, gone[:8]))}"
+                                 f"{', …' if len(gone) > 8 else ''}; split "
+                                 f"into the {len(listed)} it does list, with "
+                                 f"their printed start times choosing the "
+                                 f"cuts")
         if bounds is None:
             fallback = cprog.table_split(ztimes, lo, hi, len(samples),
                                          sample_sec, span_min)
