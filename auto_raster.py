@@ -426,17 +426,20 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
             x0, x1 = max(x0, xa), min(x1, xb)
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
-        if (in_strip and bestk == "cyan" and bestk in laddered
-                and "green" not in laddered and counts.get("green", 0) > 30
-                and counts["green"] >= 0.4 * counts[bestk]):
+        twin = {"cyan": "green", "red": "orange"}.get(bestk)
+        if (in_strip and twin and bestk in laddered
+                and twin not in laddered and counts.get(twin, 0) > 30
+                and counts[twin] >= 0.4 * counts[bestk]):
             # Cyan, whose ladder is on the other side of the plot, has no
             # second one here: 00247 p23's DARK green Prop Conc labels are
             # teal enough at their edges to count as cyan, whose 0..16 rate
             # ladder is on the left, and Prop Conc was dropped as "axis ticks
-            # unreadable". Only that pair: brown labels, which count as red
-            # and orange both, belong to neither pen (00272's offset axis), and
-            # handed to orange they made a well "Btm Prop Conc".
-            bestk = "green"
+            # unreadable". Red likewise: 00278's light orange Btm Prop Conc
+            # labels count as red, whose pressure ladder is on the left, on
+            # pages where the red family's own ink is orange-ish too and hue
+            # cannot tell them apart (p53, p55-p59). Only these pairs, and
+            # only beside a ladder in THIS chart's rows (see `rows`).
+            bestk = twin
         elif in_strip and bestk in laddered:
             # The same for any family laddered on the other side, decided by
             # the label's own hue against the pens': 00278's light orange Btm
