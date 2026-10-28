@@ -681,6 +681,39 @@ def _ocr_zone_header(cells):
                          for (x, t), z in zip(cells[1:], nums)]
 
 
+def times_for_range(all_times, page_index, lo, hi):
+    """times_before for a page captioned "Zones lo-hi".
+
+    A run of sheets can time one zone twice. 00277 files its Dec 9 2016
+    attempt (zones 1-5) on p42 and the Jan 2017 job on p43-45, one run, and
+    both time a zone 5 — 4:32 on the first, 23:35 on the second. Merged in
+    page order the later sheet wins, so the "Zones 1-5" page was handed the
+    January zone 5 and nothing on it could be placed. The sheet that columns
+    the most of THIS page's zones is read first, and fills each field
+    before the others can.
+    """
+    if not any(p < page_index for p in all_times):
+        return times_before(all_times, page_index)
+    prior = sorted(p for p in all_times if p < page_index)
+    run = [prior[-1]]
+    for p in reversed(prior[:-1]):
+        if p == run[-1] - 1:
+            run.append(p)
+        else:
+            break
+
+    def overlap(p):
+        return sum(1 for z in all_times[p] if lo <= z <= hi)
+
+    merged = {}
+    for p in sorted(run, key=lambda p: (-overlap(p), p)):
+        for zone, info in all_times[p].items():
+            got = merged.setdefault(zone, {})
+            for k, v in info.items():
+                got.setdefault(k, v)
+    return merged
+
+
 def sheet_clock(all_times, dates, page_index, zone):
     """-> (start 'HH:MM:SS', job date or None) for ONE zone's chart, or None.
 
@@ -954,14 +987,23 @@ def split_page_by_table(samples, data, zones, ztimes, sample_sec=1.0,
         for frac in _THRESHOLDS:
             runs = [r for r in _quiet_runs(signal, sample_sec, frac)
                     if r[2] >= min_gap_s]
-            if not (want < len(runs) <= want + _MAX_EXTRA):
-                continue                # exact counts are split_page's job
-            cuts = tuple(sorted((a + b) // 2 for a, b, _l in runs))
+            # An exact count is split_page's to take when it holds across
+            # the threshold ladder. One that holds at a single setting is
+            # not trusted there, but here every cut must also land on the
+            # start the sheet prints for it, which is the proof the ladder
+            # was standing in for: 00258's twenty-five zones show 24 pauses
+            # at two settings only, each within minutes of its printed start.
+            if not (want <= len(runs) <= want + _MAX_EXTRA):
+                continue
+            runs = sorted(runs, key=lambda r: r[0] + r[1])
+            cuts = tuple((a + b) // 2 for a, b, _l in runs)
             if cuts in seen:
                 continue
             seen.add(cuts)
             got = _match_cuts([c * sample_sec / 60.0 for c in cuts],
-                              zones, printed, span_min)
+                              zones, printed, span_min,
+                              [(a * sample_sec / 60.0, b * sample_sec / 60.0)
+                               for a, b, _l in runs])
             if got is None:
                 continue
             chosen, t0 = got
@@ -973,8 +1015,30 @@ def split_page_by_table(samples, data, zones, ztimes, sample_sec=1.0,
     return None
 
 
-def _match_cuts(cands, zones, printed, span_min):
-    """-> ([cut_minute per zone after the first], t0) or None."""
+def _gap_dist(span, t):
+    """Minutes from `t` to a pause (lo, hi): 0 inside it, else to its edge."""
+    lo, hi = span
+    if lo <= t <= hi:
+        return 0.0
+    return min(abs(t - lo), abs(t - hi))
+
+
+def _match_cuts(cands, zones, printed, span_min, spans=None):
+    """-> ([cut_minute per zone after the first], t0) or None.
+
+    `spans` are the pauses the candidates are the middles of, (start, end) in
+    minutes. A printed start is measured against the PAUSE — 0 anywhere in
+    it, else to its nearer edge — not against its middle. A zone's printed
+    start falls where the pumps came back on, which is the pause's END: on a
+    four-minute pause that is two minutes from the middle, but 00256 waited
+    68 minutes between zones 3 and 4 (12:02-13:10), the middle sat 25
+    minutes from the printed 13:10, past the tolerance, and the whole page
+    fell back to cutting on the printed times — which cannot place zone 10,
+    whose start the sheet leaves blank. Without `spans` each candidate is a
+    point and this is the old midpoint test exactly.
+    """
+    if spans is None:
+        spans = [(c, c) for c in cands]
     # Where on the clock does the page open? Every (printed zone, candidate)
     # pair implies an origin; the right one is agreed by many pairs at once,
     # the same test anchor_t0 makes.
@@ -1010,7 +1074,7 @@ def _match_cuts(cands, zones, printed, span_min):
         want = _targets(zones, printed, best, span_min)
         if want is None:
             return None
-        pick = _assign(cands, want)
+        pick = _assign(cands, want, spans)
         if pick is None:
             return None
         off = sorted(cands[pick[k]] - want[k]
@@ -1031,7 +1095,7 @@ def _match_cuts(cands, zones, printed, span_min):
         # 4's start. Every zone after it was labelled one early and zone 19
         # was handed zone 20's treatment plus the empty end of the axis.
         best = (best - mid) % DAY
-    if max(abs(cands[pick[k]] - want[k])
+    if max(_gap_dist(spans[pick[k]], want[k])
            for k in range(len(want)) if want[k] is not None) > _MATCH_TOL_MIN:
         return None
 
@@ -1041,7 +1105,16 @@ def _match_cuts(cands, zones, printed, span_min):
     out, i = [], 0
     while i < len(want):
         if want[i] is not None:
-            out.append(cands[pick[i]])
+            lo_s, hi_s = spans[pick[i]]
+            if hi_s - lo_s > _MATCH_TOL_MIN:
+                # A long pause holds the zone's printed start, and its middle
+                # can be an hour from it: 00227 waited 2 h before zone 4 and
+                # the middle put it at 06:26 against a printed 7:28. Cut at
+                # the printed start, kept inside the pause the pumps stopped
+                # for. A pause of minutes keeps its middle, as it always has.
+                out.append(min(max(want[i], lo_s), hi_s))
+            else:
+                out.append(cands[pick[i]])
             i += 1
             continue
         j = i
@@ -1093,7 +1166,7 @@ def _targets(zones, printed, t0, span_min):
     return out
 
 
-def _assign(cands, want):
+def _assign(cands, want, spans=None):
     """One candidate per zone, in order, closest to the printed times overall.
 
     -> [candidate INDEX per zone] or None. Matching zone by zone to the
@@ -1109,11 +1182,13 @@ def _assign(cands, want):
     nz, nc = len(want), len(cands)
     if nz > nc:
         return None
+    if spans is None:
+        spans = [(c, c) for c in cands]
     inf = float("inf")
     dp = [[inf] * nc for _ in range(nz)]
     back = [[-1] * nc for _ in range(nz)]
     for i in range(nc):
-        dp[0][i] = 0.0 if want[0] is None else abs(cands[i] - want[0])
+        dp[0][i] = 0.0 if want[0] is None else _gap_dist(spans[i], want[0])
     for k in range(1, nz):
         run_best, run_arg = inf, -1
         for i in range(1, nc):
@@ -1121,7 +1196,7 @@ def _assign(cands, want):
                 run_best, run_arg = dp[k - 1][i - 1], i - 1
             if run_best == inf:
                 continue
-            cost = 0.0 if want[k] is None else abs(cands[i] - want[k])
+            cost = 0.0 if want[k] is None else _gap_dist(spans[i], want[k])
             dp[k][i], back[k][i] = run_best + cost, run_arg
     end = min(range(nc), key=lambda i: dp[nz - 1][i])
     if dp[nz - 1][end] == inf:

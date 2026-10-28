@@ -5177,7 +5177,7 @@ function overlapWorthFlagging(startMs, prevEndMs, durMs) {
 // guessed at.
 function stageTimeIssues(stages) {
   const out = [];
-  let prev = null, prevEnd = NaN, prevKey = null;
+  const chains = {};
   // Walked in STAGE order — the order the list shows them in — not in the
   // order the pages happen to come in. CalFrac 00187 prints zones 19-28 on
   // p91 and zones 1-18 on p95, so in page order stage 1 followed stage 28
@@ -5222,17 +5222,26 @@ function stageTimeIssues(stages) {
     // One stage's several plots are one stage: take the latest end among them
     // and compare the NEXT stage against that.
     const key = String(stages[i].meta.stage || "");
-    if (key !== "" && key === prevKey) {
+    // A zone pumped again — the reader labels the later run "N (2)" — runs
+    // in its own sequence. CalFrac 00216 frac'd zones 1-3 on Feb 8 and
+    // zones 2-28 on Mar 6: in stage order the Feb "3" came straight after
+    // the Mar "2 (2)" and was flagged for starting 25 days before it ended,
+    // on a well whose two jobs each run forwards. Each run is compared with
+    // the stage before it IN ITS OWN run.
+    const rm = key.match(/\((\d+)\)\s*$/);
+    const run = rm ? parseInt(rm[1], 10) : 1;
+    const c = chains[run] || (chains[run] = { prev: null, key: null, end: NaN });
+    if (key !== "" && key === c.key) {
       const e = stageEndMs(stages[i]);
-      if (isFinite(e) && (!isFinite(prevEnd) || e > prevEnd)) prevEnd = e;
+      if (isFinite(e) && (!isFinite(c.end) || e > c.end)) c.end = e;
       continue;
     }
-    if (prev !== null && overlapWorthFlagging(
-            a, prevEnd, stageEndMs(stages[i]) - a))
-      out.push({ i, st: stages[i], prev, prevEnd });
-    prev = i;
-    prevKey = key;
-    prevEnd = stageEndMs(stages[i]);
+    if (c.prev !== null && overlapWorthFlagging(
+            a, c.end, stageEndMs(stages[i]) - a))
+      out.push({ i, st: stages[i], prev: c.prev, prevEnd: c.end });
+    c.prev = i;
+    c.key = key;
+    c.end = stageEndMs(stages[i]);
   }
   return out;
 }

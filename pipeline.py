@@ -548,6 +548,10 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
     nz = hi - lo + 1
     span_min = len(samples) * sample_sec / 60.0
     zones = list(range(lo, hi + 1))
+    if all_times:
+        # the sheet run's times, read for THIS page's zones first (see
+        # cprog.times_for_range)
+        ztimes = cprog.times_for_range(all_times, pno, lo, hi)
     # Reuse the twin's cuts only if it HAS cuts. Requiring them — leaving this
     # page whole when the captioned one could not be split — cost 00070 19 of
     # its 24 stages: its captioned page finds no gaps and is left whole, while
@@ -586,6 +590,29 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
                              f"shows more breaks than there are zones, so the "
                              f"summary table's start times chose which "
                              f"{nz - 1} of them are zone boundaries")
+        if bounds is None:
+            # A caption names a RANGE, and a range can include numbers that
+            # were never pumped. 00258's "Zones 3 - 32" covers 30 numbers,
+            # but its summary sheets list zones 3, 4, 5 and 11-32 and no 6-10
+            # at all — 25 zones, and the chart shows 25 treatments, so no cut
+            # count made for 30 could ever match. Try the zones the sheets
+            # actually list, and only with the printed times choosing the
+            # cuts.
+            listed = [z for z in zones if z in ztimes]
+            if 2 <= len(listed) < len(zones):
+                picked = cprog.split_page_by_table(samples, data, listed,
+                                                   ztimes, sample_sec)
+                if picked is not None:
+                    bounds, chosen_t0 = picked
+                    gone = [z for z in zones if z not in listed]
+                    zones = listed
+                    notes.append(f"p{pno + 1}: zones {lo}-{hi} — no summary "
+                                 f"sheet lists zone(s) "
+                                 f"{', '.join(map(str, gone[:8]))}"
+                                 f"{', …' if len(gone) > 8 else ''}; split "
+                                 f"into the {len(listed)} it does list, with "
+                                 f"their printed start times choosing the "
+                                 f"cuts")
         if bounds is None:
             fallback = cprog.table_split(ztimes, lo, hi, len(samples),
                                          sample_sec, span_min)
@@ -655,8 +682,15 @@ def _split_progress(page, meta, samples, data, ztimes, sample_sec, notes, pno,
     # ran — see cprog.sheet_job_date.
     sheet_date = cprog.job_date_for(all_times or {}, sheet_dates or {},
                                     pno, lo)
+    exported = cprog.job_date(page)
+    if sheet_date and exported and str(sheet_date) > exported:
+        # A sheet dated after MView exported this chart times a later job:
+        # 00277's Dec 9 2016 "Zones 1-5" sits in one run with the Jan 2017
+        # sheets, and its own sheet prints no Job Date, so the run's Jan 5
+        # was the date it took.
+        sheet_date = None
     page_date = (sheet_date or getattr(meta, "date", "")
-                 or cprog.job_date(page) or "")
+                 or exported or "")
     # The last zone ends where the page's DATA does, not where its axis does.
     # Every cut but the last is a pumping break; the last is the page's own
     # length, and MView rounds its time axis up past the data — 00194's
@@ -5618,17 +5652,35 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
     # first-writer-wins basis — silently picking whichever page came first in
     # the file. Prefer the narrower page: fewer zones on a plot means more
     # resolution per zone, and the wider one contributes nothing extra.
-    best = {}
+    #
+    # Only where the two are the same TREATMENT, though: on the clock they
+    # overlap (or one has no clock to say otherwise). 00277 charts a zone 5 on
+    # its Dec 9 2016 "Zones 1-5" attempt and another on the Jan 2017 "Zones
+    # 5-23" page; the narrower page won and January's zone 5 was dropped.
+    def _span(r):
+        t0 = _abs_start(r)
+        if t0 is None or r.get("samples") is None:
+            return None
+        return t0, t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+
+    by_stage = {}
     for r in results:
-        span = r.get("meta", {}).get("zone_span")
-        if span is None:
-            continue
-        st = r["meta"].get("stage")
-        best[st] = min(span, best.get(st, span))
-    if best:
-        results[:] = [r for r in results
-                      if r.get("meta", {}).get("zone_span") is None
-                      or r["meta"]["zone_span"] == best[r["meta"]["stage"]]]
+        if r.get("meta", {}).get("zone_span") is not None:
+            by_stage.setdefault(r["meta"].get("stage"), []).append(r)
+    drop = set()
+    for recs in by_stage.values():
+        for r in recs:
+            mine = _span(r)
+            for o in recs:
+                if o is r or o["meta"]["zone_span"] >= r["meta"]["zone_span"]:
+                    continue
+                theirs = _span(o)
+                if mine is None or theirs is None or \
+                        (theirs[0] < mine[1] and mine[0] < theirs[1]):
+                    drop.add(id(r))
+                    break
+    if drop:
+        results[:] = [r for r in results if id(r) not in drop]
 
     # a BJ stage charted twice under one title -> one block per printed
     # time axis, instead of the two fusing into a block that matches neither

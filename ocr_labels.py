@@ -924,6 +924,75 @@ def rotated_clock_strip(page, clip, dpi=_CLOCK_STRIP_DPI, turn=3):
 _AXIS_TOL_FRAC = 0.02
 
 
+# One axis's tick labels, picked out of a band of several by their COLOUR.
+#
+# The rotated MView Surface sheets of 00228 and 00234 print three value axes
+# above the plot, every tick a run of three labels: slurry rate in red, N2
+# rate in dark red, concentration in green. The page pass reads the N2 and
+# concentration labels, but the rate labels are single red digits turned on
+# their side ("8", "6", "4") and it reads none of them, so the rate axis
+# had no scale and Slurry Rate was dropped on every such sheet — or, on
+# 00234 p76, took a stray "9" for its full scale against a printed 10.
+#
+# Rendered at 400 dpi with only the red ink kept and the strip stood up,
+# each label is a lone upright number on white, and tesseract reads all six
+# ("10 8 6 4 2 0") on every sheet tried. Two page-segmentation modes must
+# agree on a label before it is used, and the column still has to pass
+# axis_column_ok.
+_LADDER_DPI = 400
+_LADDER_GAP_PX = 12           # rows apart that start a new label
+_LADDER_MIN_PX = 8            # a label is at least this tall, stood up
+
+
+def red_tick_ladder(page, clip, turn=3, dpi=_LADDER_DPI):
+    """[(page position along the clip's long axis, value)] for the pure-red
+    tick labels in `clip`, read stood up (`turn` as np.rot90). Positions are
+    page x for a strip laid along x."""
+    if not available():
+        return []
+    try:
+        pix = page.get_pixmap(dpi=dpi, clip=clip)
+    except Exception:
+        return []
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+        pix.height, pix.width, pix.n)[..., :3].astype(int)
+    r, g, b = img[..., 0], img[..., 1], img[..., 2]
+    ink = np.rot90((r > 190) & (g < 90) & (b < 90), turn)
+    rows = np.flatnonzero(ink.any(axis=1))
+    if not rows.size:
+        return []
+    bands, st, prev = [], rows[0], rows[0]
+    for y in rows[1:]:
+        if y - prev > _LADDER_GAP_PX:
+            bands.append((st, prev))
+            st = y
+        prev = y
+    bands.append((st, prev))
+    scale = dpi / 72.0
+    out = []
+    for a, z in bands:
+        if z - a < _LADDER_MIN_PX:
+            continue
+        cols = np.flatnonzero(ink[a:z + 1].any(axis=0))
+        crop = ink[a:z + 1, cols[0]:cols[-1] + 1]
+        im = np.full((crop.shape[0] + 60, crop.shape[1] + 60, 3), 255,
+                     np.uint8)
+        im[30:-30, 30:-30][crop] = 0
+        reads = set()
+        for psm in (7, 8):
+            t = "".join(w[0] for w in ar.ocr_words(im.astype(int), psm=psm,
+                                                     whitelist="0123456789"))
+            if t:
+                reads.add(t)
+        if len(reads) != 1:
+            continue
+        t = reads.pop()
+        if not _TICK_NUM.fullmatch(t):
+            continue
+        out.append((clip.x0 + (a + z) / 2.0 / scale, float(t)))
+    return out
+
+
 def axis_column_ok(pts):
     """Is this OCR'd tick column a real axis? -> the readings that are.
 
