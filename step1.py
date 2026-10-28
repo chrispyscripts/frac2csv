@@ -3576,7 +3576,11 @@ def _place_on_clock(img, info):
 # "Surface Chart" at y56 over the image at y92, "Chemical Chart" at y399 over
 # the image at y410, on every one of 00344's 32 chart pages.
 _CHART_CAPTIONS = (("Surface Chart", "t"), ("Surface Treatment Plot", "t"),
-                   ("Chemical Chart", "c"), ("Chemical Treatment Plot", "c"))
+                   ("Chemical Chart", "c"), ("Chemical Treatment Plot", "c"),
+                   # the Shell 2017 bar over each chart: 00269 p65 prints
+                   # stage 19 as TWO treatment charts, and the second was read
+                   # as the chemical one by its place on the page
+                   ("Treatment Analysis", "t"), ("Chemical Analysis", "c"))
 
 
 def _caption_tag(page, rect):
@@ -3674,6 +3678,19 @@ def _extract_new(page, sample_sec=1.0):
             pix = fitz.Pixmap(fitz.csRGB, pix)
         img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
             pix.height, pix.width, 3)
+        if im[1]:
+            # A soft mask: what the page shows white is black in the image
+            # itself. 00269 p65-p66 (stage 19's two charts) were read as
+            # one black frame the size of the image, "time axis unreadable",
+            # and the stage had no chart. Laid on white, as the page lays it.
+            try:
+                m = fitz.Pixmap(doc, im[1])
+                if (m.width, m.height) == (pix.width, pix.height) and m.n == 1:
+                    a = np.frombuffer(m.samples, dtype=np.uint8).reshape(
+                        m.height, m.width, 1).astype(float) / 255.0
+                    img = (img.astype(float) * a + 255.0 * (1.0 - a)).round().astype(np.uint8)
+            except Exception:
+                pass
         try:
             r = page.get_image_rects(im[0])[0]
         except Exception:
