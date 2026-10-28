@@ -253,6 +253,90 @@ class DistinctInliers(unittest.TestCase):
         self.assertEqual(step1._distinct_inliers(seg, cal), 5)
 
 
+def T(pairs):
+    return [(float(v), y, True) for v, y in pairs]
+
+
+class LadderRepairs(unittest.TestCase):
+    def test_a_lost_decimal_point(self):
+        # 00208 p22: 10.000 / 7.500 / 5.000 / 2.500 / 0.0 read 10.0, 7500 ...
+        pts = T([(10, 1395), (7500, 1568), (5000, 1742), (2500, 1916), (0, 2088)])
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 1395, 10.0, delta=0.2)
+        self.assertAlmostEqual(a + b * 2088, 0.0, delta=0.2)
+        # not asked for, the line as read stands
+        a, b, _n = step1.ar.fit_ticks_guarded(pts)
+        self.assertGreater(a + b * 1395, 5000)
+
+    def test_a_one_read_as_four(self):
+        # 00272 p66: 15 / 12 read 45 / 42
+        pts = T([(45, 306), (42, 448), (9, 590), (3, 876)]) * 2
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 306, 15.0, delta=0.3)
+
+    def test_a_good_ladder_is_left_alone(self):
+        for pairs in ([(75, 306), (60, 448), (45, 590), (30, 733), (15, 876)],
+                      [(1000, 306), (750, 484), (500, 662), (250, 840), (0, 1017)],
+                      [(40, 306), (30, 484), (20, 662), (10, 840), (0, 1017)]):
+            self.assertEqual(step1._fit(T(pairs)),
+                             step1.ar.fit_ticks_guarded(T(pairs)))
+
+
+class ChemicalTableNames(unittest.TestCase):
+    def test_00278s_additives_are_not_00183s(self):
+        band = lambda: "Clean Flow Rate (m3/min) SSl-1 @ 0.15 (L/m3) Econo @ 0.1 SCS-1 @ 0.8 SFR-106 0.8"
+        for name in ("Aqucar 742 Conc", "SFR-202 B Conc", "SSI-3 Conc"):
+            self.assertFalse(step1._table_name_ok("c", "red", name, {}, band))
+
+    def test_the_books_that_print_them(self):
+        band = lambda: "CLEAN RATE (m?/min) Agucar 742 Conc. SSI-3 Conc. $FR-202 Conc."
+        for name in ("Aqucar 742 Conc", "SFR-202 B Conc", "SSI-3 Conc"):
+            self.assertTrue(step1._table_name_ok("c", "red", name, {}, band))
+
+    def test_a_second_clean_rate(self):
+        legend = {"blue": ("Clean Rate", "m3/min")}
+        self.assertFalse(step1._table_name_ok("c", "cyan", "Combined Clean Rate",
+                                              legend, lambda: ""))
+        self.assertTrue(step1._table_name_ok("c", "cyan", "Combined Clean Rate",
+                                             {"cyan": ("Clean Rate", "m3/min")}, lambda: ""))
+
+    def test_the_surface_chart_is_not_asked(self):
+        self.assertTrue(step1._table_name_ok("t", "red", "Surface Pressure", {}, lambda: ""))
+
+
+class LegendEntries(unittest.TestCase):
+    def test_names(self):
+        cases = {"SFR-202 Conc. (L/m?)": ("SFR-202 Conc", "L/m3"),
+                 "CHEM 1 RATE 1 Cone. (Lim?)": ("CHEM 1 RATE 1 Conc", "L/m3"),
+                 "COMBINED CLEAN RATE (m/min)": ("Combined Clean Rate", "m3/min"),
+                 "Aquear 742 Conc. (L/m*)": ("Aqucar 742 Conc", "L/m3"),
+                 "CHEM 2 RATE 5 (Limin)": ("Chem 2 Rate 5", "L/min")}
+        for raw, want in cases.items():
+            self.assertEqual(step1._legend_entry_name(raw), want, raw)
+
+    def test_headers(self):
+        self.assertEqual(step1._header_qty("TP Rate (L/min)"), "tp")
+        self.assertEqual(step1._header_qty("Clean Rate (m*/min)"), "rate")
+        self.assertEqual(step1._header_qty("Chem Conc (L/m*)"), "conc")
+        self.assertEqual(step1._header_qty("Pressure (MPa)"), "pressure")
+
+
+class LeftRuleUnderAPen(unittest.TestCase):
+    def test_00241_p94(self):
+        # the left rule hidden over its top third by a pen drawn down it
+        img = np.full((1300, 1800, 3), 255, int)
+        img[300:1000, 1500] = 0                        # right rule
+        img[500:1000, 250] = 0                         # left rule, top hidden
+        img[300:1000, 250] = (240, 230, 40)
+        img[500:1000, 250] = 0
+        img[999, 250:1501] = 0                         # floor
+        img[300, 250:1501] = 0
+        img[360:660, 480] = 0                          # a curve's drop
+        boxes = step1.find_charts(img)
+        self.assertTrue(boxes)
+        self.assertEqual(boxes[0][0], 250)
+
+
 class SideBySide(unittest.TestCase):
     def page(self, panels):
         img = np.full((600, 900, 3), 255, int)

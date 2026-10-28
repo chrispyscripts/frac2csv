@@ -799,7 +799,76 @@ def plausible_floor_axis(v0, v1):
     return lo >= -0.05 * span
 
 
-def fit_ticks_guarded(pts, tenths=False):
+def _ladder_inliers(pts, fit):
+    """How many DIFFERENT labels [(value, y)] lie on `fit` — a label read
+    twice (two page modes) counts once."""
+    if not fit or not pts:
+        return 0
+    a, b, _n = fit
+    vals = [v for v, _y in pts]
+    tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+    return len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
+                if abs(a + b * y - v) < tol})
+
+
+def _repaired_ladder(strict, fit):
+    """A better line through the labels with two of OCR's misreadings undone,
+    or None. Asked only on request (fit_ticks_guarded(repairs=True)).
+
+      - a lost decimal point, three places or fewer. 00208 p22's clean-rate
+        ladder (10.000, 7.500, 5.000, 2.500, 0.0) read 10.0, 7500, 5000,
+        2500, 0: the four slipped labels made a straight 0..10000 ladder of
+        their own and the one intact "10.0" was thrown out — Clean Rate went
+        out at 1821 m3/min. The intact label is the evidence: it lands on that
+        line at exactly 10^k times its value, and the labels offered at
+        1/10^k make the ladder it belongs to.
+      - a "1" read as "4". 00272 p66's rate ladder (15, 12, 9, 6, 3) read 45,
+        42, 9, 3, and 45 / 42 fitted a 0..45 axis by themselves. Every label
+        that begins with 4 is offered with a 1 instead.
+
+    The repaired line is taken only where it carries more different labels
+    than the line as read, and three at least."""
+    if not strict:
+        return None
+    sets = []
+    if fit:
+        a, b, _n = fit
+        vals = [v for v, _y in strict]
+        tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+        for k in (1, 2, 3):
+            if any(v and abs(a + b * y - v * 10 ** k) < tol for v, y in strict):
+                # the slipped labels at their true size, the intact as read
+                sets.append([(v / 10 ** k if abs(v) >= 10 ** k else v, y)
+                             for v, y in strict])
+    ones = [(float("1" + ("%g" % v)[1:]), y) for v, y in strict
+            if v >= 10 and ("%g" % v)[0] == "4"]
+    if ones:
+        sets.append(list(strict) + ones)
+    best, best_n = None, max(2, _ladder_inliers(strict, fit))
+    for offered in sets:
+        alt = fit_ticks(offered, min_inliers=max(4, len(strict) // 2))
+        if not alt or alt[1] >= 0:
+            continue
+        got = _ladder_inliers(offered, alt)
+        if got > best_n:
+            best, best_n = alt, got
+    return best
+
+
+def fit_ticks_guarded(pts, tenths=False, repairs=False):
+    """fit_ticks_guarded as below; repairs=True also undoes two OCR
+    misreadings of a ladder where that explains more of it (see
+    _repaired_ladder)."""
+    fit = _fit_ticks_guarded(pts, tenths=tenths)
+    if repairs:
+        strict = [(v, y) for v, y, s in pts if s]
+        alt = _repaired_ladder(strict, fit)
+        if alt:
+            return alt
+    return fit
+
+
+def _fit_ticks_guarded(pts, tenths=False):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
     can't masquerade as another's.
@@ -1665,7 +1734,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
 # ---------- main entry ----------
 
 def extract(img, sample_sec=1.0, plot=None, glyphs=False,
-            edge_blank=False, ticks_in_strip=False):
+            edge_blank=False, ticks_in_strip=False, tick_repairs=False):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -1700,7 +1769,8 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
              for k, pts in ticks.items()}
     channels, notes = [], []
     for key, mask in masks.items():
-        cal = fit_ticks_guarded(ticks.get(key, []))
+        # tick_repairs: see _repaired_ladder
+        cal = fit_ticks_guarded(ticks.get(key, []), repairs=tick_repairs)
         sub = mask[y0:y1, x0:x1]
         n_cols = sub.shape[1]
         cov = float(sub.any(axis=0).mean())
