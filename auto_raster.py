@@ -344,7 +344,48 @@ def fit_ticks(pts, min_inliers=5):
     return (float(a), float(b), int(inl.sum()))
 
 
-def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
+def _hue(rgb):
+    import colorsys
+    r, g, b = (float(c) / 255.0 for c in rgb)
+    return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
+
+
+def _pen_hues(img, masks):
+    """Each family's pen colour as a hue (degrees): the median of its most
+    saturated pixels on the page."""
+    out = {}
+    a = np.asarray(img)
+    for k, m in masks.items():
+        px = a[m]
+        if len(px) < 50:
+            continue
+        sat = px.max(axis=1) - px.min(axis=1)
+        px = px[sat >= np.percentile(sat, 70)]
+        out[k] = _hue(np.median(px, axis=0))
+    return out
+
+
+def _nearest_pen_family(label_img, masks, pen_hue, exclude=(), margin=8.0):
+    """The family whose pen hue is nearest the label's own saturated ink, if
+    it beats every excluded family by `margin` degrees; else None."""
+    px = np.asarray(label_img).reshape(-1, 3).astype(float)
+    sat = px.max(axis=1) - px.min(axis=1)
+    px = px[sat >= 60]
+    if len(px) < 8 or not pen_hue:
+        return None
+    h = _hue(np.median(px, axis=0))
+    dist = {k: min(abs(h - v), 360.0 - abs(h - v)) for k, v in pen_hue.items()}
+    free = [k for k in dist if k not in exclude]
+    if not free:
+        return None
+    best = min(free, key=dist.get)
+    held = [dist[k] for k in exclude if k in dist]
+    if held and dist[best] + margin > min(held):
+        return None
+    return best
+
+
+def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
     """OCR a vertical tick-label strip; assign numbers to series by color.
 
     in_strip=True counts a label's colour inside the strip only. The window
@@ -364,8 +405,13 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
     SCALE = 3
     # (in_strip) the families that already have a ladder of their own in a
     # strip read before this one
-    laddered = ({k for k, pts in out.items() if sum(1 for p in pts if p[2]) >= 3}
+    # (rows: the chart's own rows — the strip runs the page's whole height,
+    # and the chart above's pressure ladder is no ladder of this one's)
+    ra, rb = rows if rows else (-1e9, 1e9)
+    laddered = ({k for k, pts in out.items()
+                 if sum(1 for p in pts if p[2] and ra <= p[1] <= rb) >= 3}
                 if in_strip else set())
+    pen_hue = _pen_hues(img, masks) if laddered else {}
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
@@ -391,7 +437,19 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
             # and orange both, belong to neither pen (00272's offset axis), and
             # handed to orange they made a well "Btm Prop Conc".
             bestk = "green"
-        if counts[bestk] > 30:
+        elif in_strip and bestk in laddered:
+            # The same for any family laddered on the other side, decided by
+            # the label's own hue against the pens': 00278's light orange Btm
+            # Prop Conc labels, (218,148,119), fall in the RED family, whose
+            # 0..100 pressure ladder is on the left, and Btm Prop Conc was
+            # dropped from every surface chart. The label goes to the family
+            # whose pen it is nearest in hue, if that is clearly not bestk's.
+            near = _nearest_pen_family(img[y0:y1, x0:x1], masks, pen_hue,
+                                       exclude=laddered)
+            if near and counts.get(near, 0) >= 10:
+                bestk = near
+        if counts[bestk] > 30 or (bestk != max(counts, key=counts.get)
+                                  and counts[bestk] >= 10):
             out[bestk].append((float(t), py, True))
             # ambiguous color (scan fringe): runner-up gets a borrowed vote
             for k, c in counts.items():
@@ -1760,9 +1818,10 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
     samples = np.arange(int(n / sample_sec)) * sample_sec
 
     # ticks_in_strip: see ocr_tick_strip's in_strip
-    ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip)
+    ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip,
+                           rows=(y0 - 25, y1 + 25))
     ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks,
-                           in_strip=ticks_in_strip)
+                           in_strip=ticks_in_strip, rows=(y0 - 25, y1 + 25))
     # the end labels of a stack sit further out than the fit may look (see
     # printed_bounds): 00248 p24's green 0.0 is 26 px under the frame
     wide = {k: [(v, y, st) for v, y, st in pts if y0 - 45 <= y <= y1 + 45]

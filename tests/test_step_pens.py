@@ -347,6 +347,22 @@ class LeftRuleUnderAPen(unittest.TestCase):
         self.assertEqual(boxes[0][0], 250)
 
 
+class LabelHue(unittest.TestCase):
+    def test_a_light_orange_label_goes_to_the_orange_pen(self):
+        # 00278 p52: (218,148,119) counts as red; red's ladder is on the left
+        hues = {"red": 0.0, "orange": 20.1, "green": 120.0}   # 00278 p52, measured
+        label = np.full((10, 20, 3), 255, float)
+        label[3:7, 2:18] = (218, 148, 119)
+        self.assertEqual(step1.ar._nearest_pen_family(label, {}, hues, exclude={"red"}),
+                         "orange")
+
+    def test_a_maroon_label_stays_red(self):
+        hues = {"red": 0.0, "orange": 30.0, "magenta": 300.0}
+        label = np.full((10, 20, 3), 255, float)
+        label[3:7, 2:18] = (128, 10, 10)
+        self.assertIsNone(step1.ar._nearest_pen_family(label, {}, hues, exclude={"red"}))
+
+
 class SideBySide(unittest.TestCase):
     def page(self, panels):
         img = np.full((600, 900, 3), 255, int)
