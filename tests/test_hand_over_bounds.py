@@ -247,6 +247,59 @@ class OnePageOneAxis(unittest.TestCase):
         self.assertEqual(opens(self.c2), "07:00:00")
 
 
+class WiderThanItsPage(unittest.TestCase):
+    """00208 p29 (stage 8) prints its surface plot on 619-687 min and its
+    chemical plot on 535-725 — three stages' chemistry under one title.
+    Both were put on the clock at stage 8's filed start, sample 0 to sample
+    0, and the chemical plot ran 131 min past stage 9's start."""
+
+    CHEM = "STEP chemical chart (raster)"
+
+    def setUp(self):
+        self.c7 = on_axis(chart(7, "00:34:00", 0, 88.2, source=self.CHEM,
+                                pens=("Slurry Rate",)), 534.3)
+        self.s8 = on_axis(chart(8, "01:27:00", 0, 67.4), 619.4)
+        self.c8 = on_axis(chart(8, "01:27:00", 0, 189.9, source=self.CHEM,
+                                pens=("Slurry Rate",)), 533.9)
+        self.c9 = on_axis(chart(9, "02:26:00", 0, 67.5, source=self.CHEM,
+                                pens=("Slurry Rate",)), 684.5)
+
+    def trim(self, *charts):
+        per = {}
+        for r in charts:
+            per.setdefault(r["source"], []).append((pipeline._abs_start(r), r))
+        placed = {id(r): t for items in per.values() for t, r in items}
+        notes = []
+        pipeline._trim_wide_plots(per, placed, notes)
+        return notes
+
+    def test_the_wide_plot_keeps_its_page_s_window(self):
+        notes = self.trim(self.c7, self.s8, self.c8, self.c9)
+        self.assertAlmostEqual(self.c8["axis_t0_s"] / 60, 619.4, places=1)
+        self.assertAlmostEqual(len(self.c8["samples"]) / 60, 67.4, delta=0.1)
+        self.assertEqual(opens(self.c8), "01:27:00")       # sample 0 = page's
+        self.assertTrue(any("p29" in n or "stage 8" in n for n in notes))
+
+    def test_only_where_the_neighbours_print_the_rest(self):
+        self.trim(self.s8, self.c8, self.c9)                # no stage 7
+        self.assertAlmostEqual(self.c8["axis_t0_s"] / 60, 533.9, places=1)
+        self.assertAlmostEqual(len(self.c8["samples"]) / 60, 152.9, delta=0.1)
+
+    def test_another_run_s_minutes_are_not_the_neighbours(self):
+        # 00248 p131: an axis restarts between job files, so stage 1's chart
+        # reads the same minutes as stage 55's
+        far = on_axis(chart(1, "00:34:00", 0, 88.2, source=self.CHEM,
+                            pens=("Slurry Rate",)), 534.3)
+        self.trim(far, self.s8, self.c8, self.c9)
+        self.assertAlmostEqual(self.c8["axis_t0_s"] / 60, 533.9, places=1)
+
+    def test_a_frame_a_few_minutes_wide_is_left(self):
+        c8 = on_axis(chart(8, "01:27:00", 0, 70.0, source=self.CHEM,
+                           pens=("Slurry Rate",)), 617.0)
+        self.trim(self.c7, self.s8, c8, self.c9)
+        self.assertEqual(len(c8["samples"]), 70 * 60)
+
+
 class TwoFamiliesOneSource(unittest.TestCase):
     """00185: Treatment and Offset Analysis both read as STEP surface charts,
     on one 104-min window per stage; stage 3 filed 74 min after stage 2."""

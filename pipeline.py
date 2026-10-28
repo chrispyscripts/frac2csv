@@ -2125,6 +2125,114 @@ def _axis_lag(a, b, ax, sec, keep):
     return (True, 1.0, 0.0, ax, max(0, min(n_a - ax, n_b)), 0)
 
 
+# How much wider than the stage's other plot a plot's printed window must
+# run, at either end, before the extra is another stage's: a frame drawn a
+# few minutes wide is not.
+WIDE_PLOT_S = 300.0
+
+
+def _trim_wide_plots(per, placed, notes):
+    """Cut a STEP plot back to its page's window where the page prints it on
+    a wider one, and the extra minutes are printed on the neighbouring
+    stages' own pages.
+
+    Both plots of a page are put on the clock at the stage's filed start,
+    sample 0 to sample 0 — right when they print one window. Not always:
+
+      00208 p29 (stage 8): surface 619-687 min, chemical 535-725 — three
+            stages' chemistry under one title. Placed at stage 8's start, the
+            chemical plot ran 190 min, 131 past stage 9's start, and was
+            "disagree, kept as printed": the Lab flagged stage 9.
+      00184 p46 (stage 26): surface 635-805, chemical 660-805 — the surface
+            plot opens on stage 25's last 25 min ("Zone 25" is marked on it).
+      00247 p114 (stage 46): Offset Analysis 858-1066, Treatment 959-1063.
+
+    Read correctly, each of these is a window the report chose to print;
+    what is wrong is putting both plots' sample 0 at one instant. The extra
+    minutes are trimmed only where another chart of the same kind, of
+    another stage, covers them on the same clock — those are its minutes,
+    exported there — so nothing printed only once is dropped. Only the
+    stages either side are looked at.
+    """
+    by_window, by_source = {}, {}
+    for src, items in per.items():
+        for _t0, r in items:
+            if r.get("axis_t0_s") is None or r["meta"].get("clock_chart"):
+                continue
+            st = str(r["meta"].get("stage") or "")
+            if st:
+                by_window.setdefault((st, placed[id(r)]), []).append(r)
+                by_source.setdefault(src, []).append(r)
+
+    def span(r):
+        return r["axis_t0_s"], r["axis_t0_s"] + len(r["samples"]) * _sample_sec(r)
+
+    def covered(r, lo, hi, step):
+        # by the stage before (step -1) or after (+1) — an axis restarts
+        # between job files, so a chart of another run can read the same
+        # minutes (00248 p131's 83-103 min are stage 1's on p23, a day off)
+        tol = 120.0
+        n = _stage_number(r)
+        if n is None:
+            return None
+        for o in by_source.get(str(r.get("source") or ""), ()):
+            if _stage_number(o) != n + step:
+                continue
+            a, b = span(o)
+            if a <= lo + tol and b >= hi - tol:
+                return o
+        return None
+
+    trimmed = []
+    for plots in by_window.values():
+        if len(plots) < 2:
+            continue
+        # the page's window: the narrowest plot on it
+        ref = min(plots, key=lambda r: span(r)[1] - span(r)[0])
+        r0, r1 = span(ref)
+        for r in plots:
+            if r is ref:
+                continue
+            a, b = span(r)
+            if a > r0 + 60.0 or b < r1 - 60.0:
+                continue                # not a wider window round the page's
+            sec = _sample_sec(r)
+            head = int(round((r0 - a) / sec)) if r0 - a > WIDE_PLOT_S else 0
+            tail = int(round((b - r1) / sec)) if b - r1 > WIDE_PLOT_S else 0
+            ob = covered(r, a, r0, -1) if head else None
+            oa = covered(r, r1, b, +1) if tail else None
+            head = head if ob is not None else 0
+            tail = tail if oa is not None else 0
+            if not head and not tail:
+                continue
+            n = len(r["samples"])
+            keep = slice(head, n - tail)
+            r["samples"] = r["samples"][keep] - r["samples"][head]
+            r["data"] = {l: v[keep] for l, v in r["data"].items()}
+            r["axis_t0_s"] += head * sec
+            md = r["meta"]
+            md["duration_min"] = len(r["samples"]) * sec / 60.0
+            said = []
+            if head:
+                said.append(f"its first {head * sec / 60:.1f} min (stage "
+                            f"{ob['meta'].get('stage')}'s, printed on p{ob.get('page')})")
+            if tail:
+                said.append(f"its last {tail * sec / 60:.1f} min (stage "
+                            f"{oa['meta'].get('stage')}'s, printed on p{oa.get('page')})")
+            md.setdefault("warnings", []).append(
+                f"printed on a wider window than this page's other plot "
+                f"(axis {a / 60:.0f}-{b / 60:.0f} min against "
+                f"{r0 / 60:.0f}-{r1 / 60:.0f}), so " + " and ".join(said)
+                + " are not exported here; the stage keeps the page's window")
+            trimmed.append(f"p{r.get('page')} stage {md.get('stage')}")
+    if trimmed:
+        notes.append(f"{len(trimmed)} STEP plot(s) printed on a wider window "
+                     f"than the other plot of their page, trimmed to the "
+                     f"page's window where the neighbouring stages' own pages "
+                     f"print the rest: " + ", ".join(trimmed[:8])
+                     + (", …" if len(trimmed) > 8 else ""))
+
+
 def _page_siblings(items):
     """{id(chart): [entries of the other charts on its page's time axis]}.
 
@@ -2330,6 +2438,7 @@ def _hand_over_tails(results, notes):
     # Where the reader put each chart, before any pair moves anything, and
     # the latest a chart of each stage may open (see _handover_bounds).
     placed = {id(r): t0 for items in per.values() for t0, r in items}
+    _trim_wide_plots(per, placed, notes)
     axis0 = {id(r): r.get("axis_t0_s") for items in per.values() for t0, r in items}
     opens_by = _next_stage_opens(per)
     trimmed, differ, moved, kept, reprinted = [], [], [], [], []
