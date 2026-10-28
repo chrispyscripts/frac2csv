@@ -408,9 +408,17 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
     # (rows: the chart's own rows — the strip runs the page's whole height,
     # and the chart above's pressure ladder is no ladder of this one's)
     ra, rb = rows if rows else (-1e9, 1e9)
-    laddered = ({k for k, pts in out.items()
-                 if sum(1 for p in pts if p[2] and ra <= p[1] <= rb) >= 3}
-                if in_strip else set())
+
+    def ladder(pts):
+        # a ladder, not three stray labels: on 00272 p32 the brown Clean Rate
+        # labels 10 / 4 / 4 counted red and made red "laddered", and the real
+        # red Aqucar labels went to orange
+        own = [p for p in pts if p[2] and ra <= p[1] <= rb]
+        if len(own) < 3:
+            return False
+        fit = _fit_ticks_guarded(own)
+        return bool(fit) and _ladder_inliers([(v, y) for v, y, _s in own], fit) >= 3
+    laddered = ({k for k, pts in out.items() if ladder(pts)} if in_strip else set())
     pen_hue = _pen_hues(img, masks) if laddered else {}
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
