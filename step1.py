@@ -422,7 +422,24 @@ def find_charts(img):
     for b in sorted((grow(b) for b in out), key=lambda b: b[1] - b[3]):
         if not any(_covered(b, o) for o in grown):
             grown.append(b)
-    out = sorted(grown, key=lambda b: b[1])
+
+    # A left rule broken at the TOP by a pen drawn down it pairs with nothing:
+    # 00241 p94's yellow coil pressure covers the rule from 305 to 498, the
+    # rule's run (498-1019) overlapped the right rule's too little to join
+    # it, and the box began at a 07:40 drop 225 px in — the chart lost its
+    # first twenty minutes. A dark run left of a box that ends where the box
+    # ends and stands over half its height is the box's own left rule; the
+    # nearest such run, only where no other box lies between.
+    def widen(b):
+        x0, y0, x1, y1 = b
+        cands = [x for x, ra, rb in runs
+                 if x0 - W * 0.35 < x < x0 - 20 and abs(rb - y1) <= 6
+                 and ra >= y0 - 6 and rb - ra >= 0.5 * (y1 - y0)]
+        cands = [x for x in cands
+                 if not any(o != b and o[0] < x0 and o[2] > x and
+                            min(o[3], y1) - max(o[1], y0) > 0 for o in grown)]
+        return (max(cands), y0, x1, y1) if cands else b
+    out = sorted((widen(b) for b in grown), key=lambda b: b[1])
     return out
 
 
@@ -719,6 +736,13 @@ def _other_legend(img, box):
     return ""
 
 
+def _fit(seg, tenths=False):
+    """A STEP tick ladder's fit, with a lost decimal point and a "1" read as
+    "4" undone where that explains more of it (auto_raster._repaired_ladder:
+    00208 p22's 0..10000 clean rate, 00272 p66's 0..45 slurry rate)."""
+    return ar.fit_ticks_guarded(seg, tenths=tenths, repairs=True)
+
+
 def _offset_title(title):
     """Could this chart title be an offset chart's? Loosely: the OCR spells
     it "otfset" (00248 p96), and on some pages reads no title at all — just
@@ -833,7 +857,7 @@ def _offset_channels(img, box, rpress, main_cal, samples, ta, tb, t_start,
     x0, y0, x1, y1 = box
     cals = {}
     for group, seg in zip(("offset", "abd"), rpress):
-        cal = ar.fit_ticks_guarded(seg) if seg else None
+        cal = _fit(seg) if seg else None
         if cal:
             cals[group] = cal
     plot = np.asarray(img)[y0:y1, x0:x1].astype(int)
@@ -1194,6 +1218,222 @@ def _casing_legend(img, box, band=230):
     return out if len(out) >= 2 else []
 
 
+def _legend_below(img, box, band=230):
+    """The legend printed under a chart, column by column ->
+    [{"header", "x", "entries": [{"rgb", "text"}]}], left to right, or [].
+
+    The one-chart-per-image books (00196-00201) print each chart's key under
+    its time axis: a bold header per value axis — "Chem Conc (L/m3)", "Clean
+    Rate (m3/min)", "TP Rate (L/min)" — and under it a swatch and a line per
+    pen. Swatches as _casing_legend finds them; here a column may hold one."""
+    from PIL import Image
+    x0, y0, x1, y1 = box
+    H, W = img.shape[:2]
+    top, bot = min(H, y1 + 20), min(H, y1 + band)
+    xa, xb = max(0, x0 - 50), min(W, x1)
+    reg = np.asarray(img)[top:bot, xa:xb].astype(int)
+    if reg.shape[0] < 20 or reg.shape[1] < 40:
+        return []
+    lo = reg.min(axis=2)
+    ink = lo < 215
+    found = ar._components(ink)
+    if not found:
+        return []
+    sw = []
+    for cp in found[0]:
+        w = cp["c1"] - cp["c0"] + 1
+        h = cp["y1"] - cp["y0"] + 1
+        if not (5 <= w <= 14 and 5 <= h <= 14 and abs(w - h) <= 3):
+            continue
+        if cp["n"] / float(w * h) < 0.7:
+            continue
+        right = ink[cp["y0"]:cp["y1"] + 1, cp["c1"] + 1:cp["c1"] + 30]
+        gap = np.flatnonzero(right.any(axis=0))
+        if not len(gap) or gap[0] < 3:
+            continue
+        # white to its left too, and solid inside: a bold letter in the
+        # middle of a line ("CIRCULATING", 00198 p75) is neither
+        if cp["c0"] >= 6 and ink[cp["y0"]:cp["y1"] + 1, cp["c0"] - 6:cp["c0"] - 1].any():
+            continue
+        cy, cx = (cp["y0"] + cp["y1"]) // 2, (cp["c0"] + cp["c1"]) // 2
+        core = reg[cy - 1:cy + 2, cx - 1:cx + 2].reshape(-1, 3)
+        if core.std(axis=0).max() > 30:
+            continue
+        sw.append(dict(cp, rgb=core.mean(axis=0)))
+    columns = []
+    for e in sorted(sw, key=lambda e: e["c0"]):
+        if columns and abs(e["c0"] - columns[-1][0]["c0"]) <= 3:
+            columns[-1].append(e)
+        else:
+            columns.append([e])
+    # a column must line up with the others' rows: a stray square elsewhere
+    # under the plot is not a legend
+    if len(columns) < 1 or sum(len(c) for c in columns) < 2:
+        return []
+
+    def read(r0, r1, c0, c1):
+        crop = lo[max(0, r0):r1, max(0, c0):max(0, c1)].astype(float)
+        if crop.size == 0:
+            return ""
+        mn = crop.min()
+        if mn < 250:
+            crop = np.clip((crop - mn) * 255.0 / (255.0 - mn), 0, 255)
+        crop = np.pad(crop, 6, constant_values=255)
+        pil = Image.fromarray(crop.astype(np.uint8))
+        pil = pil.resize((pil.width * 4, pil.height * 4), Image.LANCZOS)
+        return ar.ocr_line(np.array(pil), psm=7)
+
+    out = []
+    for k, col in enumerate(columns):
+        col.sort(key=lambda e: e["y0"])
+        right = (columns[k + 1][0]["c0"] - 6 if k + 1 < len(columns)
+                 else min(reg.shape[1], col[0]["c0"] + 330))
+        t0 = col[0]["y0"]
+        header = read(t0 - 17, t0 - 2, col[0]["c0"] - 3, right)
+        entries = []
+        for e in col:
+            r0, r1 = max(0, e["y0"] - 4), e["y1"] + 5
+            line = ink[r0:r1, e["c1"] + 3:right]
+            cs = np.flatnonzero(line.any(axis=0))
+            if not len(cs):
+                continue
+            cs = np.split(cs, np.flatnonzero(np.diff(cs) > 25) + 1)[0]
+            c0, c1 = e["c1"] + 3 + cs[0], e["c1"] + 3 + cs[-1] + 1
+            entries.append({"rgb": e["rgb"], "text": read(r0, r1, c0 - 3, c1 + 3)})
+        if entries:
+            out.append({"header": header, "x": col[0]["c0"], "entries": entries})
+    return out
+
+
+def _legend_entry_name(text):
+    """A legend line -> (name, unit): "SFR-202 Conc. (L/m3)" -> ("SFR-202
+    Conc", "L/m3"); "COMBINED CLEAN RATE (m3/min)" -> ("Combined Clean
+    Rate", "m3/min")."""
+    text = text or ""
+    m = re.search(r"[({]([^)}]*)[)}]?\s*$", text)
+    unit = ar._legend_unit(m.group(1)) if m else ""
+    if m and re.match(r"\s*L.{0,2}min", m.group(1), re.IGNORECASE):
+        unit = "L/min"              # a unit the legend reader does not know
+    name = text[:m.start()] if m else text
+    # keep the numbers: "CHEM 1 RATE 1" and "CHEM 1 RATE 2" are two pens
+    name = re.sub(r"[^A-Za-z0-9 .\-#@/+]", " ", name)
+    name = " ".join(("Conc" if w.rstrip(".").lower() == "cone" else w.rstrip("."))
+                    for w in name.split())
+    if name.isupper():
+        name = " ".join(w if re.search(r"\d", w) else w.capitalize()
+                        for w in name.split())
+    vocab = ar.match_legend_name(name)
+    return _known_pen(vocab or name), unit
+
+
+# Additive names as the legends spell them, for a line the OCR misspells
+# ("Aquear 742 Conc", 00197 p42): one pen, one name, from stage to stage
+_KNOWN_PENS = ["Aqucar 742 Conc", "SFR-202 Conc", "SFR-202 B Conc", "SSI-LDP2 Conc",
+               "SSI-3 Conc", "Combined Clean Rate", "TP Rate"]
+
+
+def _known_pen(name):
+    import difflib
+    best = difflib.get_close_matches(name, _KNOWN_PENS, n=1, cutoff=0.86)
+    return best[0] if best else name
+
+
+def _header_qty(header):
+    h = (header or "").lower()
+    if "tp" in h.split() or re.search(r"\btp\b", h):
+        return "tp"
+    if "rate" in h:
+        return "rate"
+    if "conc" in h:
+        return "conc"
+    if "press" in h:
+        return "pressure"
+    return None
+
+
+def _legend_below_channels(img, box, axes, lqty, masks, samples, ta, tb,
+                           t_start, ink, sample_sec):
+    """Channels for the pens a legend under the plot names, each read on the
+    axis its legend column belongs to -> [channel], or None where the legend
+    does not say enough.
+
+    00196-00201's chemical charts print four to twenty additive pens and the
+    clean rate on three axes (Chem Conc left, Chem Conc and Clean Rate
+    right), named only by the legend under the plot; the colour table read
+    the orange and the green alone, as "Chem Conc (orange)" / "(green)", and
+    the magenta, yellow and cyan were never read (00197 p42: SFR-202, SSI-LDP2
+    and the Combined Clean Rate). The legend's columns are the axes', in the
+    order the chart prints them: the left axes from the plot outwards, then
+    the right ones. Where the counts differ a column goes to the first axis
+    of its own quantity.
+
+    On a surface chart (lqty "pressure") only a "TP Rate" column is taken:
+    00198 p75's grey TP rate (L/min), on the 0..1200 axis the rate reader
+    refuses (it reaches past RATE_AXIS_MAX)."""
+    groups = _legend_below(img, box)
+    if not groups:
+        return None
+    if lqty == "pressure":
+        groups = [g for g in groups if _header_qty(g["header"]) == "tp"]
+        if not groups:
+            return None
+    nq = [_header_qty(g["header"]) for g in groups]
+    usable = [i for i, (_q, cal) in enumerate(axes) if cal]
+    pairs = []
+    if lqty != "pressure" and len(groups) == len(axes):
+        pairs = list(zip(groups, [cal for _q, cal in axes]))
+    else:
+        taken = set()
+        for g, q in zip(groups, nq):
+            want = ("rate" if q == "tp" else q)
+            cands = [i for i in usable if axes[i][0] == want and i not in taken]
+            if q == "tp":
+                # the axis no other quantity owns: a "rate" column reaching
+                # past any slurry or clean rate
+                cands = [i for i in cands
+                         if max(abs(axes[i][1][0] + axes[i][1][1] * box[1]),
+                                abs(axes[i][1][0] + axes[i][1][1] * box[3])) >= RATE_AXIS_MAX]
+            if not cands:
+                continue
+            taken.add(cands[0])
+            pairs.append((g, axes[cands[0]][1]))
+    if not pairs:
+        return None
+    entries = [e for g, _cal in pairs for e in g["entries"]]
+    pens = _casing_masks(img, box, entries, masks)
+    # two grey pens (00198's DRY ADD 1 and 2) or two yellow ones share one
+    # mask, and which ink is whose cannot be told: neither is read
+    kind = [_swatch_family(e["rgb"]) or ("grey" if float(np.ptp(e["rgb"])) < 25
+                                          else "yellow") for e in entries]
+    for i, k in enumerate(kind):
+        if k in ("grey", "yellow") and kind.count(k) > 1:
+            pens[i] = None
+    by_id = {id(e): m for e, m in zip(entries, pens)}
+    out, used = [], set()
+    for g, cal in pairs:
+        if cal is None:
+            continue
+        for e in g["entries"]:
+            sub = by_id.get(id(e))
+            if sub is None:
+                continue
+            name, unit = _legend_entry_name(e["text"])
+            if not name or len(name) < 3 or name in used:
+                continue
+            if lqty == "pressure":
+                # "(L/min)" is no unit the legend reader knows
+                name, unit = "TP Rate", "L/min"
+            ch = _pen_channel(sub, cal, box, ta, tb, t_start, samples, ink,
+                              sample_sec, name,
+                              "series-legend-" + re.sub(r"\W+", "-", name.lower()),
+                              e["rgb"])
+            if ch is not None:
+                ch["unit"] = unit
+                used.add(name)
+                out.append(ch)
+    return out or None
+
+
 def _swatch_family(rgb):
     """The hue family (auto_raster.hue_masks) a legend swatch's colour falls
     in, or None — yellow and grey are in none. The rules are hue_masks' own,
@@ -1427,6 +1667,53 @@ def _legend_unit_for(name, unit):
         if nm == name:
             return u
     return ""
+
+
+# The chemical table's additives, as their legend lines OCR: "Aqucar 742"
+# reads "Agucar", "Qaucar" and "Aaucar" — 742 does not change; "SFR-202" reads
+# "$FR-202"; "SSI-3" reads "SSl-3" and "§SI-3" (00186 p63).
+_ADDITIVE_SEEN = {"Aqucar 742 Conc": re.compile(r"\b742\b"),
+                  "SFR-202 B Conc": re.compile(r"FR\W{0,2}202", re.IGNORECASE),
+                  "SSI-3 Conc": re.compile(r"S\W?[Il1|]\W{0,2}3\b", re.IGNORECASE)}
+
+
+def _band_text(img, box):
+    """The OCR of the legend band over a colour-keyed chart, as _other_legend
+    reads it."""
+    x0, y0, x1, y1 = box
+    band = np.asarray(img)[max(0, y0 - 80):min(y1, y0 + 120), x0:x1]
+    try:
+        return " ".join(w[0] for w in ar.ocr_words(band, psm=6, whitelist=""))
+    except Exception:
+        return ""
+
+
+def _table_name_ok(tag, fam, name, legend, band):
+    """May SERIES_NAMES name this colour on this chart?
+
+    The chemical half of the table is 00183's book: its additives (Aqucar
+    742, SFR-202 B, SSI-3) and its cyan clean rate. 00278 (Polar Star) dosed
+    SSI-1, Econo, SCS-1, SFE-2 and SFR-106 and plots its Clean Flow Rate in
+    blue, yet its chemical curves went out as Aqucar 742, SFR-202 B and SSI-3
+    Conc, and two charts carried a "Combined Clean Rate" (the cyan, an
+    additive there) beside the legend's "Clean Rate". An additive's name is
+    taken only where the chart's own legend prints it (`band`: a callable
+    returning the legend band's OCR); the clean rate only where the legend
+    names no other colour so."""
+    if tag != "c":
+        return True
+    seen = _ADDITIVE_SEEN.get(name)
+    if seen is not None:
+        text = band() or ""
+        if seen.search(text):
+            return True
+        # refused only where the band plainly is a legend of additives that
+        # does not print this one; a band the OCR could not read says nothing
+        return len(re.findall(r"\(\s*L\W{0,2}[mn]|Conc|@", text, re.IGNORECASE)) < 2
+    if name in ("Combined Clean Rate", "Clean Rate"):
+        return not any(f2 != fam and v[0] in ("Clean Rate", "Combined Clean Rate")
+                       for f2, v in legend.items())
+    return True
 
 
 def _name_chemical(tag, chans):
@@ -1774,11 +2061,11 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             # a fit through fewer than three labels is no fit (see the
             # untitled reading below)
             whole = [(v, y, True) for v, x, y in pts]
-            cal = ar.fit_ticks_guarded(whole)
+            cal = _fit(whole)
             if cal and _distinct_inliers(whole, cal) >= 3:
                 return True
             for seg in _right_columns(pts):
-                cal = ar.fit_ticks_guarded(seg) if len(seg) >= 3 else None
+                cal = _fit(seg) if len(seg) >= 3 else None
                 if cal and _distinct_inliers(seg, cal) >= 3:
                     return True
             return False
@@ -1812,7 +2099,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 parts = [seg for seg in _right_columns(pts) if len(seg) >= 3]
                 if len(parts) >= 2:
                     for k, seg in enumerate(parts):
-                        cal = ar.fit_ticks_guarded(seg)
+                        cal = _fit(seg)
                         if not cal:
                             continue
                         if k == len(parts) - 1 and qty in ("rate", "conc"):
@@ -1839,7 +2126,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             if not fits_any(pts):
                 pts = pts + strip_ticks(lo, W, with_x=True, clean=True)
             for seg in _right_columns(pts):
-                cal = ar.fit_ticks_guarded(seg) if len(seg) >= 3 else None
+                cal = _fit(seg) if len(seg) >= 3 else None
                 if not cal:
                     continue
                 top = max(abs(cal[0] + cal[1] * y0), abs(cal[0] + cal[1] * y1))
@@ -1869,7 +2156,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                         pts.append((float(t), px, py))
         for grp in _right_columns(pts, with_x=True):
             seg = [(v, y, True) for v, _x, y in grp]
-            cal = ar.fit_ticks_guarded(seg)
+            cal = _fit(seg)
             if cal and _distinct_inliers(seg, cal) < 3:
                 # A fit through two labels, each read twice, is no ladder:
                 # 00272 p66's 15 / 12 read "45" / "42" by both page modes and
@@ -1878,7 +2165,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 # 12, 9, 6, 3; a line through three labels or more wins.
                 xs = [x for _v, x, _y in grp]
                 more = strip_ticks(min(xs) - 25, max(xs) + 25, clean=True)
-                cal2 = ar.fit_ticks_guarded(seg + more)
+                cal2 = _fit(seg + more)
                 if cal2 and _distinct_inliers(seg + more, cal2) >= 3:
                     cal, seg = cal2, seg + more
             if not cal:
@@ -1933,7 +2220,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # PRESSURE axes, and one fit over both columns' numbers is meaningless
         if only_if_free and qty in fits:
             return
-        cal = ar.fit_ticks_guarded(seg) if seg else None
+        cal = _fit(seg) if seg else None
         # A title says which quantity a column is; the numbers say whether it
         # can be. 00196 p90 prints THREE right-hand axes and read_axis_titles
         # calls two of them "rate", so the concentration ladder — 0, 300, 600,
@@ -1955,7 +2242,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 # make the rate axis the title says this is. Only here: where
                 # no slip is in doubt, a pair 20 / 2 is as often a dropped 0
                 # (00095's 0..20 clean rate, 00420's conc).
-                alt = ar.fit_ticks_guarded(seg, tenths=True)
+                alt = _fit(seg, tenths=True)
                 if not alt or reach(alt) >= RATE_AXIS_MAX:
                     # A ladder that reaches the hundreds is a concentration
                     # axis whatever its title read: 00935 p47 (#810) read
@@ -1973,6 +2260,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     for qty, seg in cols:
         _use(qty, seg)
     right_axes = bool(cols)
+    right_cols = list(cols)             # (qty, ticks), inner to outer
     # an offset chart's right-hand PRESSURE axes, inner first: the offset
     # wells', and on the 00243-00245 books the abandoned wells' beyond it
     # (see _offset_inplot_legend)
@@ -1986,7 +2274,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     # (0..80 main, 0..40 offset wells, 0..4 abandoned wells) and taking
     # whichever fitted best put Surface Pressure on the offset scale.
     lqty, lseg, ltx = lsegs[-1]
-    lcal = ar.fit_ticks_guarded(lseg) if lseg else None
+    lcal = _fit(lseg) if lseg else None
     if ltx is not None:
         # Delimiting exists to settle a strip that holds MORE THAN ONE axis.
         # Where the whole strip fits nothing at all there is nothing to settle,
@@ -1996,7 +2284,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         # this one, which on a non-pressure chart deliberately emits only the
         # single channel its left axis names. Both readings were right; the
         # colour-keyed one carried more of the chart.
-        whole = ar.fit_ticks_guarded(strip_ticks(0, x0))
+        whole = _fit(strip_ticks(0, x0))
 
         # ...unless the strip holds two axes and that is WHY the whole of it
         # reads wrong. The coil-tubing stages print "TP Rate (L/min)" 0..1000
@@ -2015,9 +2303,9 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             def own(seg):
                 return [p for p in seg if p[1] <= y1 + 5]
             col = own(strip_ticks(ltx + 4, x0)) + own(lseg)
-            if ar.fit_ticks_guarded(col) is None:
+            if _fit(col) is None:
                 col += own(strip_ticks(ltx + 4, x0, clean=True))
-            return ar.fit_ticks_guarded(col)
+            return _fit(col)
         two_axes = lqty == "pressure" and len(lsegs) >= 2
         if whole is None:
             lcal = own_column() if two_axes else None
@@ -2037,7 +2325,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
             # magnitude away from it while the intact crop lands on top of it.
             # So: prefer a crop whose span agrees with the whole strip's, then
             # the one with more ticks, then the tighter (historical) crop.
-            alt = ar.fit_ticks_guarded(strip_ticks(ltx + 4, x0))
+            alt = _fit(strip_ticks(ltx + 4, x0))
             wspan = abs(whole[1] * (y1 - y0))
 
             def _rank(cal):
@@ -2203,6 +2491,21 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         channels += _casing_channels(img, box, fits["pressure"], raw_masks,
                                      samples, ta, tb, t_start, ends_ink,
                                      sample_sec)
+    elif right_cols:
+        # the pens a legend under the plot names on axes the colour table
+        # does not read: a chemical chart's additives and clean rate, a coil
+        # stage's TP Rate (see _legend_below_channels)
+        axes = [(q, _fit(sg) if sg else None) for q, sg, _tx in reversed(lsegs)]
+        axes += [(q, _fit(sg) if sg else None) for q, sg in right_cols]
+        if ends_ink is None:
+            ends_ink = _ink(img, y0, y1, x0, x1)
+        extra = _legend_below_channels(img, box, axes, lqty, raw_masks, samples,
+                                       ta, tb, t_start, ends_ink, sample_sec)
+        if extra is not None:
+            if lqty != "pressure":
+                channels = extra            # the legend names every pen
+            else:
+                channels += extra
     if not channels:
         raise ValueError("step1: no channel calibrated")
     info = {"plot": box, "t0_seconds": float(t_start),
@@ -4094,7 +4397,8 @@ def extract_page(page, sample_sec=1.0):
                 samples, chans, info = ar.extract(img, sample_sec=sample_sec,
                                                   plot=box, glyphs=True,
                                                   edge_blank=True,
-                                                  ticks_in_strip=True)
+                                                  ticks_in_strip=True,
+                                                  tick_repairs=True)
             except ValueError:
                 continue
         info["geom"] = _page_geom(info, sx, sy)
@@ -4236,6 +4540,13 @@ def extract_page(page, sample_sec=1.0):
                   "treatment channels and keep their colour names")
             out.append((tag, samples, chans, info))
             continue
+        _band = []
+
+        def band():
+            # the legend band's OCR, read once for this chart if asked
+            if not _band:
+                _band.append(_band_text(img, box))
+            return _band[0]
         for c in chans:
             fam = c["key"].replace("series-", "").rstrip("2")
             if fam in legend and legend[fam][0]:
@@ -4245,6 +4556,8 @@ def extract_page(page, sample_sec=1.0):
             if contradicted:
                 continue                      # keep the neutral "Series (x)"
             name, unit = SERIES_NAMES.get((tag, fam), (c["label"], c["unit"]))
+            if name != c["label"] and not _table_name_ok(tag, fam, name, legend, band):
+                continue                      # keep the neutral "Series (x)"
             c["label"] = name
             c["unit"] = unit
         out.append((tag, samples, chans, info))

@@ -175,7 +175,8 @@ class LabelOnTheOtherSide(unittest.TestCase):
         masks = {"cyan": np.zeros((300, 200), bool), "green": np.zeros((300, 200), bool)}
         masks["cyan"][95:105, 150:170] = True
         masks["green"][97:104, 150:166] = True
-        out = {"cyan": [(16.0, 10, True), (8.0, 100, True), (0.0, 190, True)], "green": []}
+        out = {"cyan": [(16.0, 10, True), (12.0, 55, True), (8.0, 100, True),
+                        (4.0, 145, True), (0.0, 190, True)], "green": []}
         words = [("1600", (160 - 140) * 3, 100 * 3)]
         with mock.patch.object(step1.ar, "ocr_words", return_value=words):
             got = step1.ar.ocr_tick_strip(img, masks, 140, 200, out=dict(
@@ -251,6 +252,116 @@ class DistinctInliers(unittest.TestCase):
                (6.0, 733, True), (3.0, 876, True)]
         cal = step1.ar.fit_ticks_guarded(seg)
         self.assertEqual(step1._distinct_inliers(seg, cal), 5)
+
+
+def T(pairs):
+    return [(float(v), y, True) for v, y in pairs]
+
+
+class LadderRepairs(unittest.TestCase):
+    def test_a_lost_decimal_point(self):
+        # 00208 p22: 10.000 / 7.500 / 5.000 / 2.500 / 0.0 read 10.0, 7500 ...
+        pts = T([(10, 1395), (7500, 1568), (5000, 1742), (2500, 1916), (0, 2088)])
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 1395, 10.0, delta=0.2)
+        self.assertAlmostEqual(a + b * 2088, 0.0, delta=0.2)
+        # not asked for, the line as read stands
+        a, b, _n = step1.ar.fit_ticks_guarded(pts)
+        self.assertGreater(a + b * 1395, 5000)
+
+    def test_a_one_read_as_four(self):
+        # 00272 p66: 15 / 12 read 45 / 42
+        pts = T([(45, 306), (42, 448), (9, 590), (3, 876)]) * 2
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 306, 15.0, delta=0.3)
+
+    def test_one_slipped_label_does_not_widen_the_tolerance(self):
+        # 00186 p63: 80 / 64 / 48 / 3200 / 16 / 0 — the 0..80 line as read
+        pts = T([(80, 327), (64, 461), (48, 594), (3200, 728), (16, 862), (0, 994)])
+        a, b, _n = step1._fit(pts)
+        self.assertAlmostEqual(a + b * 327, 80.0, delta=0.5)
+
+    def test_a_good_ladder_is_left_alone(self):
+        for pairs in ([(75, 306), (60, 448), (45, 590), (30, 733), (15, 876)],
+                      [(1000, 306), (750, 484), (500, 662), (250, 840), (0, 1017)],
+                      [(40, 306), (30, 484), (20, 662), (10, 840), (0, 1017)]):
+            self.assertEqual(step1._fit(T(pairs)),
+                             step1.ar.fit_ticks_guarded(T(pairs)))
+
+
+class ChemicalTableNames(unittest.TestCase):
+    def test_00278s_additives_are_not_00183s(self):
+        band = lambda: "Clean Flow Rate (m3/min) SSl-1 @ 0.15 (L/m3) Econo @ 0.1 SCS-1 @ 0.8 SFR-106 0.8"
+        for name in ("Aqucar 742 Conc", "SFR-202 B Conc", "SSI-3 Conc"):
+            self.assertFalse(step1._table_name_ok("c", "red", name, {}, band))
+
+    def test_the_books_that_print_them(self):
+        band = lambda: "CLEAN RATE (m?/min) Agucar 742 Conc. SSI-3 Conc. $FR-202 Conc."
+        for name in ("Aqucar 742 Conc", "SFR-202 B Conc", "SSI-3 Conc"):
+            self.assertTrue(step1._table_name_ok("c", "red", name, {}, band))
+
+    def test_a_band_the_ocr_could_not_read_says_nothing(self):
+        band = lambda: "~~ —— eee ——"
+        self.assertTrue(step1._table_name_ok("c", "red", "Aqucar 742 Conc", {}, band))
+
+    def test_a_second_clean_rate(self):
+        legend = {"blue": ("Clean Rate", "m3/min")}
+        self.assertFalse(step1._table_name_ok("c", "cyan", "Combined Clean Rate",
+                                              legend, lambda: ""))
+        self.assertTrue(step1._table_name_ok("c", "cyan", "Combined Clean Rate",
+                                             {"cyan": ("Clean Rate", "m3/min")}, lambda: ""))
+
+    def test_the_surface_chart_is_not_asked(self):
+        self.assertTrue(step1._table_name_ok("t", "red", "Surface Pressure", {}, lambda: ""))
+
+
+class LegendEntries(unittest.TestCase):
+    def test_names(self):
+        cases = {"SFR-202 Conc. (L/m?)": ("SFR-202 Conc", "L/m3"),
+                 "CHEM 1 RATE 1 Cone. (Lim?)": ("CHEM 1 RATE 1 Conc", "L/m3"),
+                 "COMBINED CLEAN RATE (m/min)": ("Combined Clean Rate", "m3/min"),
+                 "Aquear 742 Conc. (L/m*)": ("Aqucar 742 Conc", "L/m3"),
+                 "CHEM 2 RATE 5 (Limin)": ("Chem 2 Rate 5", "L/min")}
+        for raw, want in cases.items():
+            self.assertEqual(step1._legend_entry_name(raw), want, raw)
+
+    def test_headers(self):
+        self.assertEqual(step1._header_qty("TP Rate (L/min)"), "tp")
+        self.assertEqual(step1._header_qty("Clean Rate (m*/min)"), "rate")
+        self.assertEqual(step1._header_qty("Chem Conc (L/m*)"), "conc")
+        self.assertEqual(step1._header_qty("Pressure (MPa)"), "pressure")
+
+
+class LeftRuleUnderAPen(unittest.TestCase):
+    def test_00241_p94(self):
+        # the left rule hidden over its top third by a pen drawn down it
+        img = np.full((1300, 1800, 3), 255, int)
+        img[300:1000, 1500] = 0                        # right rule
+        img[500:1000, 250] = 0                         # left rule, top hidden
+        img[300:1000, 250] = (240, 230, 40)
+        img[500:1000, 250] = 0
+        img[999, 250:1501] = 0                         # floor
+        img[300, 250:1501] = 0
+        img[360:660, 480] = 0                          # a curve's drop
+        boxes = step1.find_charts(img)
+        self.assertTrue(boxes)
+        self.assertEqual(boxes[0][0], 250)
+
+
+class LabelHue(unittest.TestCase):
+    def test_a_light_orange_label_goes_to_the_orange_pen(self):
+        # 00278 p52: (218,148,119) counts as red; red's ladder is on the left
+        hues = {"red": 0.0, "orange": 20.1, "green": 120.0}   # 00278 p52, measured
+        label = np.full((10, 20, 3), 255, float)
+        label[3:7, 2:18] = (218, 148, 119)
+        self.assertEqual(step1.ar._nearest_pen_family(label, {}, hues, exclude={"red"}),
+                         "orange")
+
+    def test_a_maroon_label_stays_red(self):
+        hues = {"red": 0.0, "orange": 30.0, "magenta": 300.0}
+        label = np.full((10, 20, 3), 255, float)
+        label[3:7, 2:18] = (128, 10, 10)
+        self.assertIsNone(step1.ar._nearest_pen_family(label, {}, hues, exclude={"red"}))
 
 
 class SideBySide(unittest.TestCase):

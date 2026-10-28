@@ -344,7 +344,48 @@ def fit_ticks(pts, min_inliers=5):
     return (float(a), float(b), int(inl.sum()))
 
 
-def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
+def _hue(rgb):
+    import colorsys
+    r, g, b = (float(c) / 255.0 for c in rgb)
+    return colorsys.rgb_to_hsv(r, g, b)[0] * 360.0
+
+
+def _pen_hues(img, masks):
+    """Each family's pen colour as a hue (degrees): the median of its most
+    saturated pixels on the page."""
+    out = {}
+    a = np.asarray(img)
+    for k, m in masks.items():
+        px = a[m]
+        if len(px) < 50:
+            continue
+        sat = px.max(axis=1) - px.min(axis=1)
+        px = px[sat >= np.percentile(sat, 70)]
+        out[k] = _hue(np.median(px, axis=0))
+    return out
+
+
+def _nearest_pen_family(label_img, masks, pen_hue, exclude=(), margin=8.0):
+    """The family whose pen hue is nearest the label's own saturated ink, if
+    it beats every excluded family by `margin` degrees; else None."""
+    px = np.asarray(label_img).reshape(-1, 3).astype(float)
+    sat = px.max(axis=1) - px.min(axis=1)
+    px = px[sat >= 60]
+    if len(px) < 8 or not pen_hue:
+        return None
+    h = _hue(np.median(px, axis=0))
+    dist = {k: min(abs(h - v), 360.0 - abs(h - v)) for k, v in pen_hue.items()}
+    free = [k for k in dist if k not in exclude]
+    if not free:
+        return None
+    best = min(free, key=dist.get)
+    held = [dist[k] for k in exclude if k in dist]
+    if held and dist[best] + margin > min(held):
+        return None
+    return best
+
+
+def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
     """OCR a vertical tick-label strip; assign numbers to series by color.
 
     in_strip=True counts a label's colour inside the strip only. The window
@@ -364,8 +405,21 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
     SCALE = 3
     # (in_strip) the families that already have a ladder of their own in a
     # strip read before this one
-    laddered = ({k for k, pts in out.items() if sum(1 for p in pts if p[2]) >= 3}
-                if in_strip else set())
+    # (rows: the chart's own rows — the strip runs the page's whole height,
+    # and the chart above's pressure ladder is no ladder of this one's)
+    ra, rb = rows if rows else (-1e9, 1e9)
+
+    def ladder(pts):
+        # a ladder, not three stray labels: on 00272 p32 the brown Clean Rate
+        # labels 10 / 4 / 4 counted red and made red "laddered", and the real
+        # red Aqucar labels went to orange
+        own = [p for p in pts if p[2] and ra <= p[1] <= rb]
+        if len(own) < 3:
+            return False
+        fit = _fit_ticks_guarded(own)
+        return bool(fit) and _ladder_inliers([(v, y) for v, y, _s in own], fit) >= 3
+    laddered = ({k for k, pts in out.items() if ladder(pts)} if in_strip else set())
+    pen_hue = _pen_hues(img, masks) if laddered else {}
     pil = Image.fromarray(strip.astype(np.uint8))
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
@@ -380,18 +434,33 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False):
             x0, x1 = max(x0, xa), min(x1, xb)
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
-        if (in_strip and bestk == "cyan" and bestk in laddered
-                and "green" not in laddered and counts.get("green", 0) > 30
-                and counts["green"] >= 0.4 * counts[bestk]):
+        twin = {"cyan": "green", "red": "orange"}.get(bestk)
+        if (in_strip and twin and bestk in laddered
+                and twin not in laddered and counts.get(twin, 0) > 30
+                and counts[twin] >= 0.4 * counts[bestk]):
             # Cyan, whose ladder is on the other side of the plot, has no
             # second one here: 00247 p23's DARK green Prop Conc labels are
             # teal enough at their edges to count as cyan, whose 0..16 rate
             # ladder is on the left, and Prop Conc was dropped as "axis ticks
-            # unreadable". Only that pair: brown labels, which count as red
-            # and orange both, belong to neither pen (00272's offset axis), and
-            # handed to orange they made a well "Btm Prop Conc".
-            bestk = "green"
-        if counts[bestk] > 30:
+            # unreadable". Red likewise: 00278's light orange Btm Prop Conc
+            # labels count as red, whose pressure ladder is on the left, on
+            # pages where the red family's own ink is orange-ish too and hue
+            # cannot tell them apart (p53, p55-p59). Only these pairs, and
+            # only beside a ladder in THIS chart's rows (see `rows`).
+            bestk = twin
+        elif in_strip and bestk in laddered:
+            # The same for any family laddered on the other side, decided by
+            # the label's own hue against the pens': 00278's light orange Btm
+            # Prop Conc labels, (218,148,119), fall in the RED family, whose
+            # 0..100 pressure ladder is on the left, and Btm Prop Conc was
+            # dropped from every surface chart. The label goes to the family
+            # whose pen it is nearest in hue, if that is clearly not bestk's.
+            near = _nearest_pen_family(img[y0:y1, x0:x1], masks, pen_hue,
+                                       exclude=laddered)
+            if near and counts.get(near, 0) >= 10:
+                bestk = near
+        if counts[bestk] > 30 or (bestk != max(counts, key=counts.get)
+                                  and counts[bestk] >= 10):
             out[bestk].append((float(t), py, True))
             # ambiguous color (scan fringe): runner-up gets a borrowed vote
             for k, c in counts.items():
@@ -799,7 +868,78 @@ def plausible_floor_axis(v0, v1):
     return lo >= -0.05 * span
 
 
-def fit_ticks_guarded(pts, tenths=False):
+def _ladder_inliers(pts, fit):
+    """How many DIFFERENT labels [(value, y)] lie on `fit`, each within 12 px
+    of its own height on the line — a label read twice (two page modes)
+    counts once. The tolerance is in pixels, not in the values' spread: one
+    slipped "3200" among 0..80 widened fit_ticks' own tolerance to 48 and
+    every label sat on every line (00186 p63)."""
+    if not fit or not pts:
+        return 0
+    a, b, _n = fit
+    tol = abs(b) * 12
+    return len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
+                if abs(a + b * y - v) < tol})
+
+
+def _repaired_ladder(strict, fit):
+    """A better line through the labels with two of OCR's misreadings undone,
+    or None. Asked only on request (fit_ticks_guarded(repairs=True)).
+
+      - a lost decimal point, three places or fewer. 00208 p22's clean-rate
+        ladder (10.000, 7.500, 5.000, 2.500, 0.0) read 10.0, 7500, 5000,
+        2500, 0: the four slipped labels made a straight 0..10000 ladder of
+        their own and the one intact "10.0" was thrown out — Clean Rate went
+        out at 1821 m3/min. The intact label is the evidence: it lands on that
+        line at exactly 10^k times its value, and the labels offered at
+        1/10^k make the ladder it belongs to.
+      - a "1" read as "4". 00272 p66's rate ladder (15, 12, 9, 6, 3) read 45,
+        42, 9, 3, and 45 / 42 fitted a 0..45 axis by themselves. Every label
+        that begins with 4 is offered with a 1 instead.
+
+    The repaired line is taken only where it carries more different labels
+    than the line as read, and three at least."""
+    if not strict:
+        return None
+    sets = []
+    if fit:
+        a, b, _n = fit
+        vals = [v for v, _y in strict]
+        tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+        for k in (1, 2, 3):
+            if any(v and abs(a + b * y - v * 10 ** k) < tol for v, y in strict):
+                # the slipped labels at their true size, the intact as read
+                sets.append([(v / 10 ** k if abs(v) >= 10 ** k else v, y)
+                             for v, y in strict])
+    ones = [(float("1" + ("%g" % v)[1:]), y) for v, y in strict
+            if v >= 10 and ("%g" % v)[0] == "4"]
+    if ones:
+        sets.append(list(strict) + ones)
+    best, best_n = None, max(2, _ladder_inliers(strict, fit))
+    for offered in sets:
+        alt = fit_ticks(offered, min_inliers=max(4, len(strict) // 2))
+        if not alt or alt[1] >= 0:
+            continue
+        got = _ladder_inliers(offered, alt)
+        if got > best_n:
+            best, best_n = alt, got
+    return best
+
+
+def fit_ticks_guarded(pts, tenths=False, repairs=False):
+    """fit_ticks_guarded as below; repairs=True also undoes two OCR
+    misreadings of a ladder where that explains more of it (see
+    _repaired_ladder)."""
+    fit = _fit_ticks_guarded(pts, tenths=tenths)
+    if repairs:
+        strict = [(v, y) for v, y, s in pts if s]
+        alt = _repaired_ladder(strict, fit)
+        if alt:
+            return alt
+    return fit
+
+
+def _fit_ticks_guarded(pts, tenths=False):
     """Fit on a family's own (strict) ticks; borrowed votes only rescue a
     fit when the family has real ticks of its own, so one series' axis
     can't masquerade as another's.
@@ -1665,7 +1805,7 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
 # ---------- main entry ----------
 
 def extract(img, sample_sec=1.0, plot=None, glyphs=False,
-            edge_blank=False, ticks_in_strip=False):
+            edge_blank=False, ticks_in_strip=False, tick_repairs=False):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
@@ -1689,9 +1829,10 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
     samples = np.arange(int(n / sample_sec)) * sample_sec
 
     # ticks_in_strip: see ocr_tick_strip's in_strip
-    ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip)
+    ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip,
+                           rows=(y0 - 25, y1 + 25))
     ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks,
-                           in_strip=ticks_in_strip)
+                           in_strip=ticks_in_strip, rows=(y0 - 25, y1 + 25))
     # the end labels of a stack sit further out than the fit may look (see
     # printed_bounds): 00248 p24's green 0.0 is 26 px under the frame
     wide = {k: [(v, y, st) for v, y, st in pts if y0 - 45 <= y <= y1 + 45]
@@ -1700,7 +1841,8 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
              for k, pts in ticks.items()}
     channels, notes = [], []
     for key, mask in masks.items():
-        cal = fit_ticks_guarded(ticks.get(key, []))
+        # tick_repairs: see _repaired_ladder
+        cal = fit_ticks_guarded(ticks.get(key, []), repairs=tick_repairs)
         sub = mask[y0:y1, x0:x1]
         n_cols = sub.shape[1]
         cov = float(sub.any(axis=0).mean())
