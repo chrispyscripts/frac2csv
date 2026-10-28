@@ -1375,8 +1375,10 @@ def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
     # and then "Zone 5 Well Flush" (p105-106) behind the same summary
     # sheets; handing the flush the zone's start put it on top of the
     # treatment it followed. The first chart of a zone after a sheet run —
-    # its Surface page and the Bottom Hole page beside it — takes the time;
-    # a later chart of that zone in the same run keeps a blank clock.
+    # its Surface sheet and its Bottom Hole sheet, one of each, wherever the
+    # Bottom Hole page falls (00260 files zone 10's two pages apart, p120
+    # and p122) — takes the time; a later chart of that zone in the same run
+    # keeps a blank clock.
     taken = {}
     for r in results:
         md = r.get("meta", {})
@@ -1401,9 +1403,13 @@ def _calfrac_sheet_clocks(results, notes, zone_times, sheet_dates):
             # have put it a month out.
             continue
         run = max(p for p in zone_times if p < r["page"] - 1)
-        first = taken.setdefault((int(m.group(0)), run), r["page"])
-        if r["page"] - first not in (0, 1):
+        kinds = taken.setdefault((int(m.group(0)), run), {})
+        mv = md.get("mv") or ""
+        if mv in kinds and not (mv == "" and r["page"] - kinds[mv] <= 1):
+            # a second sheet of a kind already timed — or, untagged, not
+            # the continuation page directly behind the one that was
             continue
+        kinds[mv] = r["page"]
         md["start_time"] = start
         if day and not md.get("date"):
             md["date"] = str(day)

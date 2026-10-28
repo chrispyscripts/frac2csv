@@ -33,8 +33,8 @@ def _zone(stage, date, start, page=1, **meta):
 
 
 def _twins(zone, date, start, **meta):
-    return [_zone(f"{zone} Surface", date, start, **meta),
-            _zone(f"{zone} BH", date, start, **meta)]
+    return [_zone(f"{zone} Surface", date, start, mv=" Surface", **meta),
+            _zone(f"{zone} BH", date, start, mv=" BH", **meta)]
 
 
 def _days(results):
@@ -297,6 +297,16 @@ class SheetClocks(unittest.TestCase):
                                        {44: "2017-01-05"})
         self.assertEqual(whole["meta"]["start_time"], "00:00:00")
         self.assertEqual(whole["meta"]["date"], "")
+
+    def test_a_bottom_hole_page_filed_further_on_still_pairs(self):
+        # 00260: zone 10 Surface on p120, its Bottom Hole sheet on p122
+        times = {72: {10: {"start": "12:25"}}}
+        surf = _zone("10 Surface", "", "00:00:00", page=120, mv=" Surface")
+        bh = _zone("10 BH", "", "00:00:00", page=122, mv=" BH")
+        pipeline._calfrac_sheet_clocks([surf, bh], [], times,
+                                       {72: "2017-06-08"})
+        self.assertEqual([surf["meta"]["start_time"], bh["meta"]["start_time"]],
+                         ["12:25:00", "12:25:00"])
 
     def test_split_zones_and_printed_clocks_are_left_alone(self):
         split = _zone("19 BH", "2017-03-05", "01:00:00", page=98,
