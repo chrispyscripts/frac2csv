@@ -2171,12 +2171,22 @@ def _handover_partner(chain, b, sibs=None):
     mine = (sibs or {}).get(id(b), ())
     for entry in reversed(chain):
         if not any(entry is m for m in mine):
-            return entry
-    return None
+            break
+    else:
+        return None
+    # ...and of that page's plots, the one drawn with B's pens. 00246's
+    # Offset Analysis plot carries a "Surface Pressure" too, but on its own
+    # axis, and it never lines up with the Treatment plot's (gap 20-60% of
+    # range at the axes' offset), so stage 3's Treatment plot paired with
+    # stage 2's Offset plot disagreed and neither was placed.
+    pens = set(b.get("data") or ())
+    cands = [entry] + [e for e in (sibs or {}).get(id(entry[1]), ())
+                       if any(e is c for c in chain)]
+    return max(cands, key=lambda e: len(pens & set(e[1].get("data") or ())))
 
 
 def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
-                      moved, trimmed):
+                      moved, trimmed, differ):
     """The plots of one STEP page share one time axis, across sources: where
     one was placed by its samples and another was not, the other follows.
 
@@ -2197,8 +2207,10 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
             r = entry[1]
             if axis0.get(id(r)) is None or not str(r["meta"].get("stage") or ""):
                 continue
-            pages.setdefault((r.get("page"), str(r["meta"]["stage"]),
-                              placed.get(id(r))), []).append(r)
+            # not by page number: 00185 prints a stage's Treatment and
+            # Offset Analysis pages on one window, two pages apart
+            pages.setdefault((str(r["meta"]["stage"]), placed.get(id(r))),
+                             []).append(r)
     def window(r):
         return _abs_start(r) - timedelta(seconds=r["axis_t0_s"] - axis0[id(r)])
 
@@ -2211,7 +2223,9 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
             win = window(lead)
             t_lead = _abs_start(lead)
             for r in plots:
-                if r is lead or by_samples.get(id(r)) or \
+                # a plot placed by weaker evidence than the leader follows
+                # it: samples (pens compared) beat the axes alone (0.5)
+                if r is lead or by_samples.get(id(r), 0) >= by_samples[id(lead)] or \
                         abs(axis0[id(r)] - axis0[id(lead)]) > 60.0:
                     continue
                 sec = _sample_sec(r)
@@ -2248,13 +2262,14 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
         end = _abs_start(cutter) + timedelta(
             seconds=len(cutter["samples"]) * _sample_sec(cutter))
         for r in plots:
-            if r is cutter or cut_by_samples.get(id(r)) or \
+            if r is cutter or cut_by_samples.get(id(r), 0) >= cut_by_samples[id(cutter)] or \
                     abs((window(r) - window(cutter)).total_seconds()) > 60.0:
                 continue
             sec = _sample_sec(r)
             md = r["meta"]
             o = int(round((end - _abs_start(r)).total_seconds() / sec))
-            if not 0 < o < len(r["samples"]):
+            if not 0 < o < len(r["samples"]) or \
+                    (len(r["samples"]) - o) * sec < HANDOVER_MIN_S:
                 continue
             to = cutter["handover"]["to"]
             if r.get("handover") is None:
@@ -2264,7 +2279,11 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
             r["samples"] = r["samples"][:o]
             r["data"] = {l: v[:o] for l, v in r["data"].items()}
             md["duration_min"] = o * sec / 60.0
-            md.setdefault("warnings", []).append(
+            # its own pairing said "kept as printed"; it no longer is
+            md["warnings"] = [w for w in md.get("warnings") or []
+                              if "the two charts disagree there" not in w]
+            differ[:] = [d for d in differ if d[3] != id(r)]
+            md["warnings"].append(
                 f"last {cut / 60:.1f} min not exported here: the chart runs on "
                 f"into stage {to}, cut with the other plot on this page (the "
                 f"same time axis), which hands over to it there")
@@ -2315,6 +2334,7 @@ def _hand_over_tails(results, notes):
     opens_by = _next_stage_opens(per)
     trimmed, differ, moved, kept, reprinted = [], [], [], [], []
     by_samples = {}                       # id(chart) -> pens its place was read off
+                                          #   (0.5: the printed axes alone)
     cut_by_samples = {}                   # id(chart) -> pens its cut was read off
                                           #   (0.5: the printed axes alone)
     for src, items in per.items():
@@ -2394,7 +2414,7 @@ def _hand_over_tails(results, notes):
                     f"overlaps stage {sb} by {ov / 60:.1f} min and the two "
                     f"charts disagree there — one clock is wrong, or the "
                     f"stages overlap for real; both kept as printed")
-                differ.append((a["meta"].get("stage") or "?", sb, ov))
+                differ.append((a["meta"].get("stage") or "?", sb, ov, id(a)))
                 continue
             # A chart that re-plots nearly ALL of the one before it is that
             # chart printed a second time, not its continuation. A hand-over
@@ -2471,6 +2491,7 @@ def _hand_over_tails(results, notes):
                                 f"window opened before its stage's filed start")
                             moved.append((em.get("stage") or "?", -back_s))
                             lag_of[id(e[1])] = (ta - placed[id(e[1])]).total_seconds()
+                            by_samples[id(e[1])] = compared or 0.5
                         end_a = ta + timedelta(seconds=n_a * sec)
                         ov = (end_a - tb).total_seconds()
                         tm = ta + timedelta(seconds=off * sec)
@@ -2520,8 +2541,8 @@ def _hand_over_tails(results, notes):
                     lag_of[id(sib[1])] = (tb - placed[id(sib[1])]).total_seconds()
                     pinned.add(id(sib[1]))
             lag_of[id(b)] = (tb - placed[id(b)]).total_seconds()
-            if compared and id(b) not in pinned:
-                by_samples[id(b)] = compared
+            if (compared or ax is not None) and id(b) not in pinned:
+                by_samples[id(b)] = compared or 0.5
             if off >= n_a:
                 continue                    # B opens after A ends: nothing to cut
             ov = (n_a - off) * sec          # what B re-plots, wherever B was put
@@ -2613,7 +2634,7 @@ def _hand_over_tails(results, notes):
                     f"{ov / 60:.1f} min and the handover was refused: a stage "
                     f"cannot re-plot itself, so these are two charts of the "
                     f"same stage; both kept as printed")
-                differ.append((sa, sb, ov))
+                differ.append((sa, sb, ov, id(a)))
                 continue
             a["samples"] = a["samples"][:off]
             a["data"] = {l: v[:off] for l, v in a["data"].items()}
@@ -2640,8 +2661,9 @@ def _hand_over_tails(results, notes):
                 if abs((sib[0] - ta).total_seconds()) > 60:
                     continue                # no longer on A's window
                 o = int(round((cut_at - sib[0]).total_seconds() / _sample_sec(r)))
-                if not 0 < o < len(r["samples"]):
-                    continue
+                if not 0 < o < len(r["samples"]) or \
+                        (len(r["samples"]) - o) * _sample_sec(r) < HANDOVER_MIN_S:
+                    continue                # clock rounding, not a tail
                 if r.get("handover") is None:
                     r["handover"] = {
                         "to": sb, "samples": r["samples"][o:],
@@ -2657,7 +2679,7 @@ def _hand_over_tails(results, notes):
                     f"over to it there")
                 trimmed.append((r["meta"].get("stage") or "?", cut))
     _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
-                      moved, trimmed)
+                      moved, trimmed, differ)
     if moved:
         big = max(abs(l) for _s, l in moved)
         notes.append(f"{len(moved)} chart start(s) moved by up to {big} s to line "
@@ -2696,7 +2718,7 @@ def _hand_over_tails(results, notes):
     if differ:
         notes.append(f"{len(differ)} pair(s) of charts overlap and disagree "
                      f"there, kept as printed: "
-                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)" for a, b, o in differ[:8])
+                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)" for a, b, o, _i in differ[:8])
                      + (", …" if len(differ) > 8 else ""))
 
 

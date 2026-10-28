@@ -234,6 +234,13 @@ class OnePageOneAxis(unittest.TestCase):
         self.assertEqual(len(self.c1["samples"]), 72 * 60)
         self.assertEqual(self.c1["handover"]["to"], "2")
 
+    def test_the_page_number_does_not_matter(self):
+        # 00185 prints a stage's Treatment and Offset pages two pages apart
+        # on one window
+        self.c2["page"] = 23
+        self.run_it()
+        self.assertEqual(opens(self.c2), "07:12:00")
+
     def test_a_different_axis_is_a_different_window(self):
         on_axis(self.c2, 172 + 5)
         self.run_it()
@@ -276,6 +283,18 @@ class TwoFamiliesOneSource(unittest.TestCase):
         pipeline._hand_over_tails([self.t2, self.o2, self.t3, self.o3], [])
         self.assertEqual(len(self.t2["samples"]), 74 * 60)
         self.assertEqual(len(self.o2["samples"]), 74 * 60)
+
+    def test_of_the_page_before_the_plot_with_its_own_pens(self):
+        # 00246: the Offset plot's "Surface Pressure" is drawn on its own
+        # axis and never lines up with the Treatment plot's, so stage 3's
+        # Treatment plot pairs with stage 2's Treatment plot, not the later
+        # Offset one
+        items = [[0, self.t2], [0, self.o2], [1, self.t3], [1, self.o3]]
+        sibs = pipeline._page_siblings(items)
+        self.assertIs(pipeline._handover_partner(items[:2], self.t3, sibs)[1],
+                      self.t2)
+        self.assertIs(pipeline._handover_partner(items[:2], self.o3, sibs)[1],
+                      self.o2)
 
     def test_one_plot_per_page_is_paired_as_it_always_was(self):
         e2, e3 = [0, self.t2], [1, self.t3]
