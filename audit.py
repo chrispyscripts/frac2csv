@@ -41,7 +41,15 @@ Kinds, and the client report each answers:
                        WH, and honest charts agree within a percent (#634)
     pair.coverage      one of the pair carries far less of the stage than
                        the other: it lost its trace where its twin kept it (#638)
-    stage.missing      numbers absent from the 1..N ladder         (#625)
+    stage.missing      numbers absent from the 1..N ladder         (#625), and
+                       stages the report's own stage table pumps that no
+                       chart carries, past the last chart included
+    stage.not-pumped   a ladder gap the stage table leaves blank too: not
+                       pumped, or filed with no data — info, not a miss
+    stage.single       one template's charts all carry ONE stage: the number
+                       was read once, not per page (00232, 00233, 00240)
+    stage.unknown      a stage-length chart with no stage number — "Stage ?"
+                       in the Lab (00278's 60 charts)
     stage.doubled      one label produced twice
     stage.failed       a chart page the reader gave up on, by reason
     clock.absent       no date, or the 00:00:00 default — a warning when the
@@ -52,13 +60,20 @@ Kinds, and the client report each answers:
                        axis is unread, or the charts plot elapsed minutes (#639)
     stage.unlabelled   charts with no stage label (overview plots) — info
     clock.backwards    starts before the stage before it
-    clock.overlap      starts before the stage before it finished (#589)
+    clock.overlap      starts before the stage before it finished (#589),
+                       with the likeliest cause where the numbers show one:
+                       a date a day off, or a chart away from the start the
+                       report's stage table prints for it
 
 Usage:
 
     python3 audit.py report.pdf                    # extract, then audit
     python3 audit.py report.pdf --save payload.json --json findings.json
     python3 audit.py payload.json --matrix         # re-audit a saved payload
+
+and a folder or a whole corpus, any provider, in one report:
+
+    python3 validation-tools/audit/sweep.py <out-dir> <pdf-or-folder>...
 
 or from code, audit_stages(stages, notes, tables) on the serialize() output.
 """
@@ -502,29 +517,129 @@ def presence(stages):
     return out
 
 
-def ladder(stages, notes):
+_TABLE_STAGE_COL = re.compile(r"^\s*(stage|interval|zone)\s*(#|no\.?|number|name)?\s*$", re.I)
+# what a pumped stage's row prints; not "volume": STEP's Hole Volume and
+# CalFrac's Volume to Frac Port are the well's geometry, filled in either way
+_PUMPED_COL = re.compile(r"date|start|end\s*time|duration|pump|slurry|clean|proppant|"
+                         r"rate|pressure|isip", re.I)
+
+
+def table_ladder(tables):
+    """The report's own per-stage table: (title, {stage: pumped}) or None.
+
+    pumped is True when the row prints anything a pumped stage has — a
+    time, a rate, a volume — False when it prints its number and depths
+    only (00185 leaves stages 1, 13, 14 … blank in its Daily Stage Summary:
+    nothing was pumped there, or nothing was filed), and None when the table
+    has no such column to tell by. The table with the most stages wins."""
+    best = None
+    for t in tables or []:
+        cols = [str(c) for c in t.get("columns") or []]
+        si = next((i for i, c in enumerate(cols) if _TABLE_STAGE_COL.match(c)), None)
+        if si is None:
+            continue
+        pumped = [i for i, c in enumerate(cols) if i != si and _PUMPED_COL.search(c)]
+        rows = {}
+        for row in t.get("rows") or []:
+            if len(row) <= si:
+                continue
+            k = stage_num(row[si])
+            if k >= 10 ** 9:
+                continue
+            if not pumped:
+                rows.setdefault(k, None)
+                continue
+            filled = any(j < len(row) and row[j] is not None and str(row[j]).strip()
+                         for j in pumped)
+            rows[k] = bool(rows.get(k)) or filled
+        if rows and (best is None or len(rows) > len(best[1])):
+            best = (t.get("title") or "the stage table", rows)
+    return best
+
+
+def _minutes(st):
+    return float(_meta(st, "duration_min") or 0.0) or \
+        (st.get("n") or 0) * float(st.get("sample_sec") or 1.0) / 60.0
+
+
+def ladder(stages, notes, tables=None):
     labels = [_stage_label(st) for st in stages]
     nums = sorted({stage_num(l) for l in labels if stage_num(l) < 10 ** 9})
     out = []
-    if nums:
-        lo, hi = 1, max(nums)
-        missing = [k for k in range(lo, hi + 1) if k not in set(nums)]
+    tab = table_ladder(tables)
+    title, rows = tab if tab else ("", {})
+    hi = max(nums) if nums else 0
+    if nums or any(rows.values()):
+        gaps_ = [k for k in range(1, hi + 1) if k not in set(nums)]
+        # a gap the report's own table leaves blank is the report's, not the
+        # reader's: there is no chart to find
+        blank = [k for k in gaps_ if rows.get(k) is False]
+        # ...and a stage the table pumps past the last chart is as missing as
+        # one inside the ladder — 00271's table runs to 38, its charts stop at 5
+        missing = [k for k in gaps_ if k not in blank] + \
+            sorted(k for k, p in rows.items() if p and k > hi)
+        top = max([hi] + [k for k, p in rows.items() if p])
         if missing:
+            listed = [k for k in missing if rows.get(k)]
             out.append(_f("stage.missing", WARN, None, None,
-                          f"{len(missing)} of {hi} absent from the ladder: "
+                          f"{len(missing)} of {top} absent from the ladder: "
                           + ", ".join(map(str, missing[:20]))
-                          + (" …" if len(missing) > 20 else ""),
-                          "a page the reader skipped or failed — see stage.failed",
+                          + (" …" if len(missing) > 20 else "")
+                          + (f" — {title!r} prints data for {len(listed)} of them"
+                             if listed else ""),
+                          "a page the reader skipped or failed — see stage.failed — or the "
+                          "report prints no chart for it (00271 charts 1-5 of 38)",
                           stages=missing))
+        if blank:
+            out.append(_f("stage.not-pumped", INFO, None, None,
+                          f"{', '.join(map(str, blank[:20]))} absent from the charts and blank in "
+                          f"{title!r} too",
+                          "not pumped, or filed with no data — nothing for the reader to find",
+                          stages=blank))
+    # One template whose charts all carry one stage: the number was read once
+    # and not per page. 00232, 00233 and 00240 (Canyon) print "Interval: 1" on
+    # the first page and the bare number after, and filed 16, 15 and 17
+    # stages as stage 1. A one-stage job draws one or two charts per template;
+    # three or more under one number is the tell.
+    per_src = {}
+    for st, l in zip(stages, labels):
+        per_src.setdefault(st.get("source", ""), []).append(l.strip())
+    for src, ls in per_src.items():
+        named = {l for l in ls if l}
+        if len(ls) >= 3 and len(named) == 1 and ls.count(next(iter(named))) >= 3:
+            out.append(_f("stage.single", WARN, None, None,
+                          f"all {len(ls)} {src} charts carry stage {next(iter(named))!r}",
+                          "the stage number was read once, not per page — look at "
+                          "where each page prints its own"))
     # STEP prints a surface chart AND a chemical chart for every stage; two
     # series with one label from two templates is the layout, not a double.
     seen = {}
     for st, l in zip(stages, labels):
         seen.setdefault((st.get("source", ""), l), []).append(st.get("page"))
-    unlabelled = sum(len(pg) for (src, l), pg in seen.items() if not l.strip())
-    if unlabelled:
+    # "Stage ?" in the Lab. An overview of the whole job carries no number by
+    # design and runs far longer than any one stage; a chart of a stage's
+    # length with no number is a number the reader did not take (00278: 60).
+    durs = sorted(_minutes(st) for st, l in zip(stages, labels) if l.strip())
+    typical = durs[len(durs) // 2] if durs else 0.0
+    unknown, overview = [], 0
+    for st, l in zip(stages, labels):
+        if l.strip():
+            continue
+        if typical and _minutes(st) > 3 * typical:
+            overview += 1
+        else:
+            unknown.append(st.get("page"))
+    if unknown:
+        out.append(_f("stage.unknown", WARN, None, None,
+                      f"{len(unknown)} chart(s) with no stage number (\"Stage ?\"), pages "
+                      + ", ".join(f"p{pg}" for pg in unknown[:15])
+                      + (" …" if len(unknown) > 15 else ""),
+                      "the page prints a stage the reader did not take — or a fix file names it",
+                      pages=unknown))
+    if overview:
         out.append(_f("stage.unlabelled", INFO, None, None,
-                      f"{unlabelled} chart(s) with no stage label — overview or whole-treatment plots",
+                      f"{overview} chart(s) with no stage label, over 3× a stage's length — "
+                      "overview or whole-treatment plots",
                       "not on the ladder; check the CSV names them sensibly"))
     for (src, l), pages in seen.items():
         if len(pages) > 1 and l.strip():
@@ -622,6 +737,36 @@ def table_clocks(tables):
     return out
 
 
+def _off_table(t, row):
+    """Minutes between a chart's start and its stage's printed start, by the
+    12-hour reading that fits — these tables can print no AM/PM (#588)."""
+    m = re.match(r"\s*(\d{1,2}):(\d{2})", str(row or ""))
+    if not m:
+        return None
+    d = (t.hour * 60 + t.minute) - (int(m.group(1)) % 24 * 60 + int(m.group(2)))
+    return min(min(x % 1440, 1440 - x % 1440) for x in (d, d - 720))
+
+
+def _overlap_cause(over, st, t, pst, pt, table):
+    """The likeliest cause of an overlap, from the numbers alone, or ""."""
+    k = round(over / 1440)
+    if k >= 1 and abs(over - 1440 * k) < 240:
+        return f"a date {k} day{'s' if k > 1 else ''} off"
+    rc, rp = table.get(stage_num(_stage_label(st))), table.get(stage_num(_stage_label(pst)))
+    dc, dp = _off_table(t, rc), _off_table(pt, rp)
+    if dc is None or dp is None:
+        return ""
+    if dc > 10 >= dp:
+        return f"this chart's clock: the stage table prints {rc}, {dc} min away"
+    if dp > 10 >= dc:
+        return (f"stage {_stage_label(pst)}'s chart: the stage table prints {rp}, "
+                f"{dp} min from where it starts")
+    if dc <= 10 and dp <= 10:
+        return ("the report's own times: both charts start where the stage table "
+                "prints them, and the earlier one runs past")
+    return ""
+
+
 def clocks(stages, tables=None):
     out = []
     by_src = {}
@@ -663,7 +808,7 @@ def _clocks_one_source(stages, table=None):
                               "no clock on this chart; the CSV will date it from the default"))
             continue
         if prev and stage_num(prev[2]) != stage_num(_stage_label(st)):
-            pt, pdur, plabel = prev
+            pt, pdur, plabel, pst = prev
             if t < pt:
                 out.append(_f("clock.backwards", WARN, st, None,
                               f"starts {t:%Y-%m-%d %H:%M:%S}, before stage {plabel} "
@@ -678,10 +823,13 @@ def _clocks_one_source(stages, table=None):
             elif t < pt + timedelta(minutes=pdur) - timedelta(
                     seconds=max(OVERLAP_FLOOR_S,
                                 OVERLAP_FRAC * 60.0 * float(_meta(st, "duration_min") or 0.0))):
+                over = (pt + timedelta(minutes=pdur) - t).total_seconds() / 60.0
+                cause = _overlap_cause(over, st, t, pst, pt, table)
                 out.append(_f("clock.overlap", WARN, st, None,
-                              f"starts {t:%H:%M:%S}, {(pt + timedelta(minutes=pdur) - t).seconds // 60} "
-                              f"min before stage {plabel} finished",
-                              "one of the two clocks is wrong, or the stages genuinely overlap"))
+                              f"starts {t:%H:%M:%S}, {over:.0f} min before stage {plabel} finished"
+                              + (f" — likely {cause}" if cause else ""),
+                              "one of the two clocks is wrong, or the stages genuinely overlap",
+                              cause=cause or ""))
             # Shorter than that is still drawn twice by FracView (#645: every
             # 00041 chart ran 4-10 min into the next). The pipeline now hands
             # a tail over to the next chart where the two agree, so what is
@@ -693,7 +841,7 @@ def _clocks_one_source(stages, table=None):
                               f"min before stage {plabel} finished",
                               "a short overlap the hand-over pass left: the two charts "
                               "disagree over those minutes, or one clock is minutes off"))
-        prev = (t, float(_meta(st, "duration_min") or 0.0), _stage_label(st))
+        prev = (t, float(_meta(st, "duration_min") or 0.0), _stage_label(st), st)
     # Every stage of a template without a clock is one finding about the
     # template, not N about the charts: either its charts plot elapsed
     # minutes (00020 — the daily report is the source, see HANDOFF) or the
@@ -765,7 +913,7 @@ def audit_stages(stages, notes=None, tables=None):
     for f in findings:
         if f["kind"] == "gap.missing" and f["severity"] == WARN and (f["stage"], f["channel"]) in warned:
             f["severity"] = INFO
-    lad, ladder_info = ladder(stages, notes)
+    lad, ladder_info = ladder(stages, notes, tables)
     findings += lad
     findings += clocks(stages, tables)
     by_kind = {}
@@ -843,16 +991,7 @@ def load_pdf(path, on_page=None):
     results, notes = pipeline.extract_document(
         doc, filename=os.path.basename(path), on_page=on_page)
     stages, tables, notes, summary = localapp.serialize(results, notes)
-    # What the page prints that the reader may not have taken. Only the
-    # clock for now: 00015 (#639) prints "Clock Time (hour:min)" 18:30-19:32
-    # over every chart and exported 00:00:00 for all of them. The payload
-    # alone cannot tell that blank from an elapsed-minute chart; the page can.
-    texts = {}
-    for st in stages:
-        pg = st.get("page")
-        if pg and pg not in texts and 1 <= pg <= npages:
-            texts[pg] = doc[pg - 1].get_text()
-        st["clock_printed"] = _clock_hint(texts.get(pg, ""))
+    clock_hints(stages, doc)
     doc.close()
     return {"file": os.path.basename(path), "npages": npages,
             "seconds": round(time.time() - t0, 1), "stages": stages,
@@ -861,6 +1000,19 @@ def load_pdf(path, on_page=None):
             # the chart is a finding only the rows can make
             "tables": tables,
             "notes": notes}
+
+
+def clock_hints(stages, doc):
+    """What the page prints that the reader may not have taken. Only the
+    clock for now: 00015 (#639) prints "Clock Time (hour:min)" 18:30-19:32
+    over every chart and exported 00:00:00 for all of them. The payload
+    alone cannot tell that blank from an elapsed-minute chart; the page can."""
+    texts = {}
+    for st in stages:
+        pg = st.get("page")
+        if pg and pg not in texts and 1 <= pg <= len(doc):
+            texts[pg] = doc[pg - 1].get_text()
+        st["clock_printed"] = _clock_hint(texts.get(pg, ""))
 
 
 _HHMM = re.compile(r"\b([01]?\d|2[0-3]):[0-5]\d\b")

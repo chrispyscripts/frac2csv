@@ -350,5 +350,68 @@ class Clocks(unittest.TestCase):
         self.assertEqual(of(res, "stage.unlabelled", "info")[0]["evidence"][:1], "2")
 
 
+
+class FromTheOctoberScan(unittest.TestCase):
+    """The 95-file scan of 00184-00278 (2026-10-27): the checks it needed."""
+
+    TABLE = {"title": "Daily Stage Summary", "columns": ["Stage", "Top", "Date", "Start Time", "Slurry"],
+             "rows": [["1", "3500", "2017-04-01", "08:00", "120"], ["2", "3450", None, None, None],
+                      ["3", "3400", "2017-04-01", "10:00", "118"], ["4", "3350", "2017-04-01", "11:00", "121"],
+                      ["5", "3300", "2017-04-01", "12:00", "119"]]}
+
+    def test_a_gap_the_table_leaves_blank_was_not_pumped(self):
+        # 00185: stages blank in the Daily Stage Summary have no chart, rightly
+        stages = [stage("1", 10), stage("3", 12)]
+        res = audit.audit_stages(stages, [], [self.TABLE])
+        self.assertEqual(of(res, "stage.not-pumped", "info")[0]["stages"], [2])
+        # ...while the table's 4 and 5, past the last chart, are missing (00271)
+        self.assertEqual(of(res, "stage.missing")[0]["stages"], [4, 5])
+        self.assertIn("Daily Stage Summary", of(res, "stage.missing")[0]["evidence"])
+
+    def test_without_a_table_the_ladder_is_as_before(self):
+        res = audit.audit_stages([stage("1", 10), stage("3", 12)], [])
+        self.assertEqual(of(res, "stage.missing")[0]["stages"], [2])
+        self.assertEqual(of(res, "stage.not-pumped", "info"), [])
+
+    def test_every_chart_one_stage_is_a_number_read_once(self):
+        # 00232: "Interval: 1" on the first page, the bare number after
+        stages = [stage("1", 10 + k, start=f"{8 + k:02d}:00:00") for k in range(5)]
+        f = of(audit.audit_stages(stages, []), "stage.single")
+        self.assertEqual(len(f), 1)
+        self.assertIn("all 5", f[0]["evidence"])
+        # a one-stage job draws a chart or two, not five
+        self.assertEqual(of(audit.audit_stages(stages[:2], []), "stage.single"), [])
+        # and a well with its stages numbered says nothing
+        ok = [stage(str(k), 10 + k, start=f"{8 + k:02d}:00:00") for k in range(1, 6)]
+        self.assertEqual(of(audit.audit_stages(ok, []), "stage.single"), [])
+
+    def test_stage_question_mark_is_a_warning_at_a_stages_length(self):
+        # 00278: 60 stage-length charts with no number; an overview stays info
+        stages = [stage("1", 10), stage("2", 11), stage("", 12), stage("", 13, dur=400)]
+        res = audit.audit_stages(stages, [])
+        self.assertEqual(of(res, "stage.unknown")[0]["pages"], [12])
+        self.assertEqual(len(of(res, "stage.unlabelled", "info")), 1)
+
+    def test_an_overlap_says_why_when_the_numbers_show_it(self):
+        # a date a day off: stage 2 dated the day before
+        stages = [stage("1", 10, date="2017-04-02", start="08:00:00", dur=60),
+                  stage("2", 11, date="2017-04-01", start="09:10:00", dur=60)]
+        f = of(audit.audit_stages(stages, []), "clock.backwards")
+        self.assertEqual(len(f), 1)
+        stages = [stage("1", 10, date="2017-04-02", start="08:00:00", dur=1500),
+                  stage("2", 11, date="2017-04-02", start="09:10:00", dur=60)]
+        f = of(audit.audit_stages(stages, []), "clock.overlap")
+        self.assertIn("a date 1 day off", f[0]["cause"])
+        # the table prints both starts and stage 1's chart sits 40 min early
+        table = {"columns": ["Stage", "Start Time"], "rows": [["1", "08:40"], ["2", "09:10"]]}
+        stages = [stage("1", 10, start="08:00:00", dur=100), stage("2", 11, start="09:10:00", dur=60)]
+        f = of(audit.audit_stages(stages, [], [table]), "clock.overlap")
+        self.assertIn("stage 1's chart", f[0]["cause"])
+        # both where the table puts them: the report's own times overlap
+        table = {"columns": ["Stage", "Start Time"], "rows": [["1", "08:00"], ["2", "09:10"]]}
+        f = of(audit.audit_stages(stages, [], [table]), "clock.overlap")
+        self.assertIn("the report's own times", f[0]["cause"])
+
+
 if __name__ == "__main__":
     unittest.main()
