@@ -77,6 +77,20 @@ is(flagged([{ meta: { stage: "18", date: "2017-03-12", start_time: "02:30:12" },
               n: 2958, sample_sec: 1 }]),
    [], "zones either side of the spring-forward hour");
 
+console.log("\na zone pumped again runs in its own sequence");
+// CalFrac 00216: zones 1-3 on Feb 8, zones 2-28 on Mar 6 (2 and 3 re-run)
+is(flagged([st("1", "2017-02-08", "21:30:00", 52),
+            st("2", "2017-02-08", "22:22:00", 28),
+            st("3", "2017-02-08", "22:50:00", 33),
+            st("2 (2)", "2017-03-06", "00:59:52", 74),
+            st("3 (2)", "2017-03-06", "02:13:33", 49),
+            st("4", "2017-03-06", "03:02:19", 44)]),
+   [], "the Feb attempt and the Mar job are not compared with each other");
+is(flagged([st("2", "2017-03-06", "00:00:00", 60),
+            st("2 (2)", "2017-03-06", "05:00:00", 60),
+            st("3 (2)", "2017-03-06", "04:30:00", 60)]),
+   ["3 (2)"], "a re-run that overlaps the re-run before it still flags");
+
 console.log("\noverlap IS a fault");
 is(flagged([st("1", "2024-05-26", "22:00:00", 60),
             st("2", "2024-05-26", "22:30:00", 60)]),
