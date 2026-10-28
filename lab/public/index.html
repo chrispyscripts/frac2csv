@@ -5101,7 +5101,13 @@ function stageStartMs(st) {
   const d = o ? o.date : (st.meta.date || "");
   const t = o ? o.time : (st.meta.start_time || "00:00:00");
   if (!d) return NaN;
-  const ms = new Date(`${d}T${t || "00:00:00"}`).getTime();
+  // Read as UTC: these are wall-clock times printed on the job, compared only
+  // with each other. Parsed as LOCAL time, a well that pumped through a
+  // daylight-saving change lost or gained an hour at the jump — CalFrac 00227
+  // runs zone 18 from 02:30 on 2017-03-12, an hour that does not exist in
+  // Mountain time, and zone 19 was flagged for starting 60 min before 18 had
+  // finished when the two are back to back.
+  const ms = new Date(`${d}T${t || "00:00:00"}Z`).getTime();
   return isFinite(ms) ? ms : NaN;
 }
 

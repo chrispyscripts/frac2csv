@@ -529,9 +529,18 @@ def is_chemicals(page):
         return True
     # the title line ends with the chart kind: "... Surface" / "... Bottom
     # Hole" / "... Chemicals"
-    for line in (l.strip() for l in text.splitlines()):
-        if line:
-            return bool(re.search(r"\bChemicals?\s*$", line, re.I))
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if lines and re.search(r"\bChemicals?\s*$", lines[0], re.I):
+        return True
+    # On a page that had to be OCR'd the title is wherever tesseract put it:
+    # 00234 p84 reads its additive legend first and its title — "Chinook
+    # 200/d-F083-F/094-H-03/00 Chemicals" — six lines down, so the page was
+    # read as a treatment chart and filed as a second "18 Surface". A title
+    # names its well in front of the kind; the bare "Chemicals" column
+    # heading of a summary grid does not, and is not taken.
+    if ocr_labels.garbled(page):
+        return any(re.search(r"\S.{5,}\bChemicals?\s*$", l, re.I)
+                   and re.search(r"[A-Za-z]", l[:-9]) for l in lines[1:])
     return False
 
 
@@ -916,14 +925,24 @@ def _resample(t_min, values, sample_min):
     return out
 
 
-def extract_page(page, meta=None, sample_sec=1.0):
-    """Extract all series from one page. Returns (meta, sample_sec_array, {col: values})."""
+def extract_page(page, meta=None, sample_sec=1.0, duration_min=None):
+    """Extract all series from one page. Returns (meta, sample_sec_array, {col: values}).
+
+    `duration_min` is a time axis to fall back on when this page's own
+    labels cannot be read — the caller's to vouch for (pipeline lends a
+    CalFrac Bottom Hole sheet the window of the Surface sheet it sits behind,
+    which plots the same minutes)."""
     frame = _detect_frame(page)
     if frame is None:
         raise ValueError("no plot frame found on page")
     orient = _orientation(page, frame)
     if meta is None:
         meta = detect_meta(page, frame, orient)
+    if meta.duration_min <= 0 and duration_min and duration_min > 0:
+        meta.duration_min = float(duration_min)
+        meta.warnings = [w for w in meta.warnings if "time axis" not in w]
+        meta.warnings.append("time axis unreadable — duration taken from the "
+                             "sheet before it, which plots the same window")
     if meta.duration_min <= 0:
         raise ValueError("stage duration unknown (no time axis labels); set it manually")
 

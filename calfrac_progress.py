@@ -68,7 +68,9 @@ _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
 _ZONE_HDR = re.compile(r"^ZONE\s*#|^Zone$", re.I)
 # a zone column label: "7", "24", or a re-treat attempt "9A"
 _ZONE_COL = re.compile(r"\d{1,2}[A-Za-z]?")
-_TIME_ROW = re.compile(r"^\s*(Start|Stop|End)\s*Time", re.I)
+# "Tim", not "Time": OCR of an outlined sheet clips the label now and then
+# (00234 p80 reads "Start Tim"), and the row is just as plainly the start row
+_TIME_ROW = re.compile(r"^\s*(Start|Stop|End)\s*Tim", re.I)
 
 
 # The chart kind is the last word(s) of an MView chart title, whatever the well
@@ -177,14 +179,37 @@ def detect(page):
         return False
     if ZONES_CAPTION.search(text):
         return True
-    head = next((l.strip() for l in text.splitlines() if l.strip()), "")
-    return bool(_CHART_KIND.search(head))
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    head = lines[0] if lines else ""
+    if _CHART_KIND.search(head):
+        return True
+    # A title further down, for the same reason is_chart_page looks for one:
+    # OCR reads a page with no text layer in its own order, and on 00228 and
+    # 00234 the Bottom Hole sheet's first line is the "1000" of a tick
+    # ladder. Missed here, that sheet never borrowed its Surface twin's cuts
+    # and went out WHOLE under the last zone's number — a 500-minute "21",
+    # which then won the Surface/BH pick over the real zone 21 because the
+    # Surface sheet had lost its rate axis to OCR.
+    return any(is_title_line(l) for l in lines[1:])
 
 
 # A well is not fraced in 600 zones, and there is no zone 780. The widest real
 # caption in the corpus is "Zones 5 - 24" and the highest number is 51.
 MAX_ZONES = 60
 MAX_ZONE_NO = 100
+
+
+# OCR's commonest misreading of a caption: the "1" of "Zone 1-9" read as a
+# bar or a letter. 00228 p73 OCRs its caption as the line "Zone | - 9" (the
+# word boxes put "|" exactly where the 1 is printed), which matched nothing,
+# so the page went out whole — a 640-minute chart with no zone number — and
+# zones 1-9 were missing from the well. Only a lone glyph standing exactly
+# where a range's first number belongs is read as a 1.
+_OCR_ONE = re.compile(r"\b(Zones?\s*)[|lI](\s*-\s*\d)")
+
+
+def _ocr_ones(text):
+    return _OCR_ONE.sub(r"\g<1>1\2", text or "")
 
 
 def zone_range(page):
@@ -205,7 +230,7 @@ def zone_range(page):
     above are what make it safe to widen: a misread that produced "Zones 1 -
     85" is refused for spanning more than MAX_ZONES.
     """
-    text = ocr_labels.page_text(page)
+    text = _ocr_ones(ocr_labels.page_text(page))
     for m in ZONES_CAPTION.finditer(text):
         lo, hi = int(m.group(1)), int(m.group(2))
         if lo < 1 or hi <= lo or hi - lo + 1 > MAX_ZONES or hi > MAX_ZONE_NO:
@@ -216,6 +241,23 @@ def zone_range(page):
             continue
         return lo, hi
     return None
+
+
+# "Zones 1 -": a range whose end the caption box cut off (00261 p84)
+_CUT_OFF_RANGE = re.compile(r"\bZones?\s*(\d+)\s*[-\u2013]\s*$", re.M)
+
+
+def cut_off_range(page):
+    """The first zone of a caption whose range end is missing, or None."""
+    try:
+        text = ocr_labels.page_text(page)
+    except Exception:
+        return None
+    m = _CUT_OFF_RANGE.search(text or "")
+    if not m or ZONES_CAPTION.search(text):
+        return None
+    zone = int(m.group(1))
+    return zone if 1 <= zone <= MAX_ZONE_NO else None
 
 
 _FOOTER_DATE = re.compile(r"^MView\b.*?-\s*(\d{1,2})/(\d{1,2})/(20\d\d)\s*$", re.M)
@@ -273,28 +315,52 @@ _MONTHS = {m: i + 1 for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun",
      "jul", "aug", "sep", "oct", "nov", "dec"])}
 # "Mar 8, 2015", "Aug. 02 - 03, 2017", "Oct 21 - 22, 2016" -> the FIRST day
-_WORD_DATE = re.compile(r"([A-Za-z]{3,9})\.?\s+(\d{1,2})\s*(?:-\s*\d{1,2}\s*)?,?"
+_WORD_DATE = re.compile(r"([A-Za-z]{3,9})\.?\s+(\d{1,2})\s*(-\s*\d{1,2}\s*)?,?"
                         r"\s*(\d{4})")
 # "8/23/2017 - 08/25/2017" -> the FIRST date
 _SLASH_DATE = re.compile(r"(\d{1,2})/(\d{1,2})/(20\d\d)")
+# what follows the first date of a RANGE: a dash and the next date's digits.
+# 00190 prints "08/17/2017 - 08/18-2018", whose second half is not a date at
+# all — it is still plainly a range, and only its FIRST day is ever used.
+_RANGE_TAIL = re.compile(r"^\s*[-–]\s*\d")
+
+
+class JobDate(str):
+    """A sheet's Job Date — its FIRST day, ISO — that knows if it was a range.
+
+    A plain string everywhere it goes (meta["date"], comparisons, JSON). The
+    one extra fact is `ranged`: the sheet printed "08/20/2017 - 08/22/2017" or
+    "Aug 18-19, 2017", a span with a stated first day. That first day is a
+    FLOOR — nothing on the sheet was pumped before the job began — which a
+    single date is not: 00218's Mar 1 sheet opens with zone 6 at 22:54, and
+    the sheet before it puts that start on Feb 28. pipeline._calfrac_days
+    needs the difference: on 00192 the cheapest way to make the clock run
+    forwards is to move zones 1-10 back to 08-19, before the job's own first
+    day, and only the floor rules that out.
+    """
+    ranged = False
 
 
 def _job_date_value(text):
     m = _WORD_DATE.search(text)
     if m and m.group(1)[:3].lower() in _MONTHS:
         mon = _MONTHS[m.group(1)[:3].lower()]
-        day, year = int(m.group(2)), int(m.group(3))
+        day, year = int(m.group(2)), int(m.group(4))
         if 1 <= day <= 31:
-            return f"{year:04d}-{mon:02d}-{day:02d}"
+            out = JobDate(f"{year:04d}-{mon:02d}-{day:02d}")
+            out.ranged = bool(m.group(3))
+            return out
     m = _SLASH_DATE.search(text)
     if m:
         mon, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if 1 <= mon <= 12 and 1 <= day <= 31:
-            return f"{year:04d}-{mon:02d}-{day:02d}"
+            out = JobDate(f"{year:04d}-{mon:02d}-{day:02d}")
+            out.ranged = bool(_RANGE_TAIL.match(text[m.end():]))
+            return out
     return None
 
 
-def sheet_job_date(page, text=None):
+def sheet_job_date(page, text=None, rows=None):
     """The day the zones on a Multiple-Zone sheet were pumped, or None.
 
     THE CHARTS DO NOT SAY WHAT DAY THEY PLOT. Their only date is the MView
@@ -316,16 +382,18 @@ def sheet_job_date(page, text=None):
     afterwards by its own clock.
     """
     try:
-        if text is None:
-            text = page.get_text()
-        head = next((l.strip() for l in text.splitlines() if l.strip()), "")
-        if not head.startswith("Multiple Zone Frac Treatment Summary"):
-            # The 2018-and-later grid prints a Job Date per zone COLUMN, which
-            # calfrac_summary.zone_clock already reads zone by zone. Reading a
-            # row label here would hand every zone on the sheet the first
-            # one's date.
-            return None
-        rows = _rows(page)
+        if rows is None:
+            if text is None:
+                text = page.get_text()
+            head = next((l.strip() for l in text.splitlines() if l.strip()),
+                        "")
+            if not head.startswith("Multiple Zone Frac Treatment Summary"):
+                # The 2018-and-later grid prints a Job Date per zone COLUMN,
+                # which calfrac_summary.zone_clock already reads zone by
+                # zone. Reading a row label here would hand every zone on the
+                # sheet the first one's date.
+                return None
+            rows = _rows(page)
     except Exception:
         return None
     for _y, cells in rows:
@@ -334,8 +402,12 @@ def sheet_job_date(page, text=None):
         if at is None:
             continue
         for x, t in cells:
-            if x <= at:
+            if x < at:
                 continue
+            if x == at:
+                # the value can share the label's cell when OCR runs them
+                # together: "Job Date: : Jan 28, 2017" (00228 p79)
+                t = _JOB_DATE_LABEL.sub("", t.strip(), count=1)
             got = _job_date_value(t)
             if got:
                 return got
@@ -423,7 +495,7 @@ def _is_multizone(page):
     return _is_zone_grid(page)
 
 
-def zone_times(page):
+def zone_times(page, rows=None):
     """Multiple-Zone summary page -> {zone_no: {'start': 'HH:MM', 'stop': ...}}.
 
     Read positionally. The text stream is linear and the blank cells in these
@@ -432,7 +504,8 @@ def zone_times(page):
     as a list.
     """
     try:
-        rows = _rows(page)
+        if rows is None:
+            rows = _rows(page)
     except Exception:
         return {}
     hdr = next(((y, cells) for y, cells in rows
@@ -492,15 +565,148 @@ def sheets_for_document(doc):
     times, dates = {}, {}
     for p in range(doc.page_count):
         page = doc[p]
+        rows = None
         if not _is_multizone(page):
-            continue
-        t = zone_times(page)
+            rows = ocr_sheet_rows(page)
+            if rows is None:
+                continue
+        t = zone_times(page, rows)
         if t:
             times[p] = t
-        d = sheet_job_date(page)
+        d = sheet_job_date(page, rows=rows)
         if d:
             dates[p] = d
     return times, dates
+
+
+# What an OUTLINED summary sheet looks like before anything is read off it:
+# next to no text layer, a page full of small filled paths (every glyph is
+# one), and at most a logo for an image. 00234's sheets carry 4,900-5,200
+# paths and one 215x42 logo; its well-profile pages carry 3,000-3,700 paths
+# but 36-43 images, and its chart pages a few hundred paths.
+_OUTLINE_SHEET_MIN_PATHS = 2500
+_OUTLINE_SHEET_MAX_TEXT = 120
+_OUTLINE_SHEET_MAX_IMAGES = 2
+# words closer than this (pt) are one cell: "ZONE #:", "Start Time:", "Feb 2,
+# 2017"; the zone columns sit 30+ pt apart
+_OCR_CELL_GAP = 4.0
+_SHEET_TITLE = re.compile(r"Multiple\s+Zone\s+Frac", re.I)
+
+
+def ocr_sheet_rows(page):
+    """[(y, [(x, text)])] for a Multiple-Zone sheet drawn in outlines, or None.
+
+    00228 and 00234 (Chinook, 094-H) print their whole summary — Job Date,
+    ZONE # header, Start and Stop Time — as filled glyph paths with no text
+    behind them, so zone_times and sheet_job_date found nothing, and every
+    one of their 48 zones went out at 00:00:00 with no date. OCR reads those
+    sheets cleanly at the chart resolution ("Job Date: Feb 2, 2017"; the
+    times all at 94-97% confidence), and grouped into the same rows of
+    (x, text) cells that _rows makes from a text layer, the same two readers
+    work on them unchanged.
+
+    Only a page that looks like one is read (the gate above), and only a page
+    whose OCR names itself a Multiple Zone sheet and has a Start/Stop Time
+    row is returned.
+    """
+    try:
+        if not ocr_labels.available():
+            return None
+        if len((page.get_text() or "").strip()) > _OUTLINE_SHEET_MAX_TEXT:
+            return None
+        if len(page.get_images()) > _OUTLINE_SHEET_MAX_IMAGES:
+            return None
+        if len(page.get_cdrawings()) < _OUTLINE_SHEET_MIN_PATHS:
+            return None
+        words = ocr_labels.words(page)
+    except Exception:
+        return None
+    runs = sorted((((w["rect"].y0 + w["rect"].y1) / 2, w["rect"].x0,
+                    w["rect"].x1, w["text"].strip()) for w in words
+                   if w["text"].strip()), key=lambda r: (r[0], r[1]))
+    rows = {}
+    for y, x0, x1, t in runs:
+        key = next((k for k in rows if abs(k - y) < 3), y)
+        rows.setdefault(key, []).append((x0, x1, t))
+    out = []
+    for y in sorted(rows):
+        cells = []
+        for x0, x1, t in sorted(rows[y]):
+            if cells and x0 - cells[-1][1] <= _OCR_CELL_GAP:
+                cells[-1] = (cells[-1][0], x1, cells[-1][2] + " " + t)
+            else:
+                cells.append((x0, x1, t))
+        # OCR's edge noise: a quote before "Start Time:" and a comma after
+        # "6:50" (00228 p84) each cost a row or a cell its match
+        out.append((y, [(x0, t.strip(_OCR_EDGE_JUNK))
+                        for x0, _x1, t in cells]))
+    text = "\n".join(" ".join(t for _x, t in c) for _y, c in out)
+    if not (_SHEET_TITLE.search(text) and _ANY_TIME_ROW.search(text)):
+        return None
+    return [(y, _ocr_zone_header(cells)) for y, cells in out]
+
+
+_OCR_EDGE_JUNK = " \u2018\u2019'\"`|,;."
+
+
+def _ocr_zone_header(cells):
+    """A ZONE # row with one misread column put back in sequence.
+
+    The columns of a sheet are consecutive zones, and OCR drops a digit now
+    and then: 00228 p78 reads "1 12 13 ... 20". A number that breaks the run
+    is replaced only where its neighbours fix it — two read in step on one
+    side, or one on each side two apart — and they all say the same; a run
+    of two that disagree ("1 12") is left as read.
+    """
+    if not cells or not _ZONE_HDR.match(cells[0][1].strip()):
+        return cells
+    nums = [int(t) if t.isdigit() else None for _x, t in cells[1:]]
+    n = len(nums)
+
+    def run(i, j):                      # nums[i], nums[j] read and in step
+        return (0 <= i < n and 0 <= j < n and nums[i] is not None
+                and nums[j] is not None and nums[j] == nums[i] + (j - i))
+
+    for i in range(n):
+        wants = set()
+        if run(i - 2, i - 1):           # two before it, in step
+            wants.add(nums[i - 1] + 1)
+        if run(i + 1, i + 2):           # two after it, in step
+            wants.add(nums[i + 1] - 1)
+        if run(i - 1, i + 1):           # one either side, two apart
+            wants.add(nums[i - 1] + 1)
+        if len(wants) == 1 and nums[i] not in wants:
+            nums[i] = wants.pop()
+    return [cells[0]] + [(x, str(z) if z is not None else t)
+                         for (x, t), z in zip(cells[1:], nums)]
+
+
+def sheet_clock(all_times, dates, page_index, zone):
+    """-> (start 'HH:MM:SS', job date or None) for ONE zone's chart, or None.
+
+    A chart of a single zone ("Zone 19", "Zones 1 Flush") is not a Progress
+    page, so _split_progress never stamps it, and it plots elapsed minutes
+    with no clock on it. Its zone's start is on the Multiple-Zone sheet that
+    precedes it — 00218's p97 prints zone 19 at 23:06 on Mar 4 for the "Zone
+    19" chart on p98 — and that is the same table a Progress page is timed
+    from. Read it the same way: the run of sheets directly before the chart,
+    never a sheet after it, and only a zone the run actually columns with a
+    Start Time. A zone the run does not name keeps no clock: 00226's second
+    "Zone 15" chart (p166) follows a sheet for zones 16-20, and borrowing
+    zone 15's time from three sheets back would date it to the first run.
+    """
+    if not any(p < page_index for p in all_times):
+        return None
+    times = times_before(all_times, page_index)
+    start = (times.get(zone) or {}).get("start")
+    m = _HHMM.match(start or "")
+    if not m:
+        return None
+    hh, mm = int(m.group(1)), int(m.group(2))
+    if hh > 23 or mm > 59:
+        return None
+    return (f"{hh:02d}:{mm:02d}:00",
+            job_date_for(all_times, dates, page_index, zone))
 
 
 def times_for_document(doc):
@@ -637,6 +843,53 @@ def split_page(samples, data, nzones, sample_sec=1.0, min_gap_s=300.0):
 _MIN_STABLE = 3
 
 
+def pump_onset(data, a, b, sample_sec=1.0, frac=0.25):
+    """Seconds into samples [a, b) before the pumps come on, or 0.
+
+    "On" is the same test _quiet_runs makes — slurry rate above a fraction of
+    the rate the page actually ran at — so a segment that opens on a long
+    shut-in (the first zone of a page opens with the chart) reports how long
+    it waited.
+    """
+    rate = data.get("Slurry Rate")
+    if rate is None or b <= a:
+        return 0
+    r = np.nan_to_num(np.asarray(rate, float), nan=0.0)
+    live = r[r > 0.3]
+    if live.size < 10:
+        return 0
+    on = np.flatnonzero(r[a:b] > frac * float(np.percentile(live, 60)))
+    return int(round(on[0] * sample_sec)) if on.size else 0
+
+
+def trim_last_zone(bounds, data):
+    """`bounds` with the LAST zone ended at the page's last plotted sample.
+
+    The cuts between zones are pumping breaks, but the last zone's end is
+    simply the page's length — the time axis — and MView draws its axis to a
+    round number past the data: 00194's "Zones 3-19" stops plotting at 1363
+    min of a 1400-min axis, 00188's "Zones 7-28" leaves the last 85 min of
+    its axis empty. Exported to the axis end, the last zone was the longest
+    on the page by the length of the blank, every channel came out 26-49%
+    filled, and the zone overlapped the next page's first zone.
+
+    Only the trailing stretch where NO channel plots is dropped; a channel
+    still recording after the pumps stop (shut-in pressure) keeps the zone
+    open.
+    """
+    if not bounds:
+        return bounds
+    last = 0
+    for v in data.values():
+        ok = np.flatnonzero(np.isfinite(np.asarray(v, float)))
+        if ok.size:
+            last = max(last, int(ok[-1]) + 1)
+    a, b = bounds[-1]
+    if a < last < b:
+        return list(bounds[:-1]) + [(a, last)]
+    return bounds
+
+
 def _bounds(cuts, n):
     out, prev = [], 0
     for c in cuts:
@@ -767,7 +1020,17 @@ def _match_cuts(cands, zones, printed, span_min):
         mid = off[len(off) // 2]
         if abs(mid) < 0.5:
             break
-        best = (best + mid) % DAY       # slide the origin onto the data
+        # Slide the origin onto the data. A target is (printed - t0), so
+        # boundaries sitting `mid` minutes LATER than their targets mean the
+        # page opened `mid` minutes EARLIER than guessed: t0 goes down by mid.
+        # This used to ADD it, which doubled the error every pass instead of
+        # removing it — 3.6, 7.1, 14.2 minutes on 00194's "Zones 3-19" (p98),
+        # until the third pass slipped zones 13-16 onto their neighbours'
+        # boundaries, failed the tolerance below, and the page fell through to
+        # a noisier threshold whose dip 25 min into zone 3 was taken as zone
+        # 4's start. Every zone after it was labelled one early and zone 19
+        # was handed zone 20's treatment plus the empty end of the axis.
+        best = (best - mid) % DAY
     if max(abs(cands[pick[k]] - want[k])
            for k in range(len(want)) if want[k] is not None) > _MATCH_TOL_MIN:
         return None
