@@ -2292,6 +2292,7 @@ HANDOVER_TOL = 0.05        # of the channel's own range over the stage
 HANDOVER_SEARCH_S = 900.0  # how far a start filed to the minute may sit from the window
 HANDOVER_SELF_S = 60.0     # and one the chart printed itself: the label's own precision
 HANDOVER_K = 900           # samples of B's head compared when searching for the lag
+HANDOVER_DUP_FRAC = 0.8    # of A re-plotted by B: a reprint of A, not a hand-over
 
 
 def _lag_scores(a, b, offs, K):
@@ -2423,6 +2424,307 @@ def _still_pumping_after(a, off, sec):
     return min(len(rate), stop + int(round(STAGE_END_TAIL_S / sec)))
 
 
+# How far the hand-over may move a chart that was placed from a filed start
+# (one that printed no clock of its own) — measured, not chosen.
+#
+# 1,489 STEP charts in 00196-00245 print their own wall clock beside a Daily
+# Stage Summary that files the same stage's start. Their windows open from
+# 35 min before the filed start to 21 min after it (2nd-98th percentile,
+# median 2.7 min before), within 30 min of it on 94% — and NOT ONE of 1,442
+# opens at or after the next stage's filed start. 00180's run of drifting
+# charts, the case the search follows the drift for, peaks at 1,179 s.
+#
+# Without a bound the drift-following compounded: on 00184 every pair settled
+# a few minutes later than the last, 40 charts moved by up to 4,697 s, and
+# stage 12's surface chart opened at 19:07:51 — after stage 13's filed 18:38
+# and 78 min away from its own chemical chart on the same page.
+HANDOVER_DRIFT_S = 1800.0
+
+
+def _stage_number(r):
+    m = re.match(r"\s*(\d+)", str(r["meta"].get("stage") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _next_stage_opens(per):
+    """{id(chart): the reader's start of the next-numbered stage} for every
+    chart whose stage number has a later one placed on the clock.
+
+    A chart of stage N re-plots stage N-1's tail and N's own treatment; it
+    never opens after stage N+1 has started (0 of 1,442 clocked STEP charts
+    do). The next stage's start is the median of where the reader put its
+    charts — one misprinted chart among them (00197 p52 prints stage 15's
+    window under stage 19) cannot drag the bound with it. A next stage that
+    starts BEFORE this chart was placed says the filed times themselves are
+    out of order, and then it bounds nothing.
+    """
+    starts = {}
+    for items in per.values():
+        for t0, r in items:
+            k = _stage_number(r)
+            if k is not None:
+                starts.setdefault(k, []).append(t0)
+    keys = sorted(starts)
+    nxt = {k: sorted(starts[j])[(len(starts[j]) - 1) // 2]
+           for k, j in zip(keys, keys[1:])}
+    out = {}
+    for items in per.values():
+        for t0, r in items:
+            k = _stage_number(r)
+            if k in nxt and nxt[k] > t0:
+                out[id(r)] = nxt[k]
+    return out
+
+
+def _handover_bounds(b, placed, opens_by):
+    """(earliest, latest) start the hand-over may give chart B: within
+    HANDOVER_DRIFT_S of where the reader placed it, and opening before the
+    next stage does. A chart that printed its own clock is bounded by its
+    search reach already (HANDOVER_SELF_S), so only the next stage applies."""
+    lo = placed - timedelta(seconds=HANDOVER_DRIFT_S)
+    hi = placed + timedelta(seconds=HANDOVER_DRIFT_S)
+    if b["meta"].get("clock_chart"):
+        lo, hi = datetime.min, datetime.max
+    if opens_by is not None:
+        hi = min(hi, opens_by - timedelta(seconds=1))
+    return lo, hi
+
+
+# How close to where the printed axes put B its samples must line up. The
+# axis origin is read off labels to a fraction of a minute, but the reader's
+# time scale runs a few percent off the printed one: over 00184's 26 pairs
+# that overlap enough to compare, the samples line up 78-352 s past the axes'
+# offset, 2.7-3.5% of it, and nowhere else within an hour (gap 0.3-1.8% of
+# range at the match).
+HANDOVER_AXIS_S = 60.0
+HANDOVER_AXIS_FRAC = 0.05
+HANDOVER_AXIS_MIN_S = 60.0   # less overlap than this is not compared: the axes decide
+# Two charts on one acquisition clock can disagree with their filed spacing by
+# no more than both windows' freedom (HANDOVER_DRIFT_S each way) and the few
+# minutes a pair's elapsed clock gains on the filed one. Further apart, the
+# clock restarted between them and happened to read higher: 00208 p60 reads
+# 34.6 and p61 69.4, 35 min apart, for stages filed 127 min apart (14:25 and
+# 16:32), and linked they put stage 40 at the bound, 30 min early, on a
+# match in the idle minutes between treatments.
+HANDOVER_AXIS_LINK_S = 2 * HANDOVER_DRIFT_S + 600.0
+
+
+def _axis_offset(a, b, sec, filed_gap=None):
+    """Where B's window opens in A's samples by their printed elapsed-minute
+    axes -> sample index, or None when they share no axis.
+
+    STEP's tiled 2017 books plot "Time (min)" on an acquisition clock that
+    runs through a whole day's stages (00184 p32 reads 280-362, p33 355-407)
+    and restarts between job files. Two charts on the same clock say exactly
+    where one opens against the other; the drift-following search only
+    guesses it, and on 00184 guessed past its reach on every pair whose
+    windows open far from their filed starts (stage 21's opens 36 min before
+    its treatment, 22's 4 min before). A restarted clock reads lower and
+    links nothing. B may open after A's window closes: that places B but
+    cuts nothing.
+    """
+    xa, xb = a.get("axis_t0_s"), b.get("axis_t0_s")
+    if xa is None or xb is None:
+        return None
+    d = (xb - xa) / sec
+    if d < 60.0 / sec:
+        return None
+    if filed_gap is not None and abs(d * sec - filed_gap) > HANDOVER_AXIS_LINK_S:
+        return None
+    return int(round(d))
+
+
+def _axis_lag(a, b, ax, sec, keep):
+    """The pair's best tuple where the axes put B -> (ok, frac, -gap, off,
+    k, compared), refined against the samples where the two overlap by
+    enough to compare. Where they barely overlap, or plot no pen in
+    common, the axes alone place B (compared 0); where the samples
+    contradict the axes the pair disagrees, as any other does."""
+    import numpy as np
+    n_a, n_b = len(a["samples"]), len(b["samples"])
+    r = int((HANDOVER_AXIS_S + HANDOVER_AXIS_FRAC * ax * sec) / sec)
+    K = min(n_b, n_a - (ax + r), HANDOVER_K)
+    lo = max(keep, ax - r)
+    if K >= int(HANDOVER_AXIS_MIN_S / sec) and ax + r >= lo:
+        offs = np.arange(lo, ax + r + 1)
+        c, g, gp = _lag_scores(a, b, offs, K)
+        if (c > 0).any():
+            ok = (c > 0) & (g * 3 >= c * 2)
+            if not ok.any():
+                return (False, 0.0, 0.0, ax, 0, int(c.max()))
+            frac = np.where(c > 0, g / np.maximum(c, 1), 0.0)
+            order = np.lexsort((-np.abs(offs - ax), -gp, frac))   # last key major
+            i = next(j for j in order[::-1] if ok[j])
+            return (True, frac[i], -gp[i], int(offs[i]),
+                    min(n_a - int(offs[i]), n_b), int(c[i]))
+    return (True, 1.0, 0.0, ax, max(0, min(n_a - ax, n_b)), 0)
+
+
+def _page_siblings(items):
+    """{id(chart): [entries of the other charts on its page's time axis]}.
+
+    A STEP page draws two plots on one window, and 00185 prints two pages
+    per stage (Treatment + Chemical, then Offset + DGB) on the SAME window —
+    four plots of one stage, two in each source. They are the same minutes
+    to the second: same stage, same start as placed, and the same printed
+    axis origin where they print one. They are not each other's hand-over
+    (a stage cannot re-plot itself) and they move and cut as one.
+    """
+    by_page = {}
+    for entry in items:
+        t0, r = entry
+        stage = str(r["meta"].get("stage") or "")
+        if stage:
+            by_page.setdefault((stage, t0), []).append(entry)
+    out = {}
+    for grp in by_page.values():
+        for e in grp:
+            # the axis origin is read per plot, to a fraction of a minute
+            # (00185 p62 418.3, p63 419.0): within a minute is one axis
+            xe = e[1].get("axis_t0_s")
+            same = [o for o in grp if o is not e and (
+                (xe is None and o[1].get("axis_t0_s") is None) or
+                (xe is not None and o[1].get("axis_t0_s") is not None and
+                 abs(o[1]["axis_t0_s"] - xe) <= 60.0))]
+            if same:
+                out[id(e[1])] = same
+    return out
+
+
+def _handover_partner(chain, b, sibs=None):
+    """The chart B continues: the latest one before it in its source that is
+    not another plot of B's own page -> [start, chart], or None.
+
+    Paired with the chart just before it, 00185's stage 3 Treatment chart
+    met stage 2's Offset chart, stage 2's Treatment chart met nothing, ran
+    30 min past stage 3's filed start, and the Lab flagged stage 3. The
+    plots of one page are one window (_page_siblings): B pairs with the last
+    chart before that window, and whatever A's page holds is cut with A.
+    Where a source has one plot per page — every other provider — that is
+    the chart just before, as it always was.
+    """
+    mine = (sibs or {}).get(id(b), ())
+    for entry in reversed(chain):
+        if not any(entry is m for m in mine):
+            break
+    else:
+        return None
+    # ...and of that page's plots, the one drawn with B's pens. 00246's
+    # Offset Analysis plot carries a "Surface Pressure" too, but on its own
+    # axis, and it never lines up with the Treatment plot's (gap 20-60% of
+    # range at the axes' offset), so stage 3's Treatment plot paired with
+    # stage 2's Offset plot disagreed and neither was placed.
+    pens = set(b.get("data") or ())
+    cands = [entry] + [e for e in (sibs or {}).get(id(entry[1]), ())
+                       if any(e is c for c in chain)]
+    return max(cands, key=lambda e: len(pens & set(e[1].get("data") or ())))
+
+
+def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
+                      moved, trimmed, differ):
+    """The plots of one STEP page share one time axis, across sources: where
+    one was placed by its samples and another was not, the other follows.
+
+    _hand_over_tails pairs charts within a source, so a page's surface and
+    chemical plots are placed by two chains. On 00186 the chemical chains
+    never line up (the additive pens are read too noisily to agree within 5%
+    at any lag: gap 10-25% of range at the axis offset) while the surface
+    plots on the same pages match to 0.3-1%; the surface chain moved and
+    cut, the chemical one was left as filed, and each stage's two plots sat
+    up to 43 min apart. A page is the stage, the page number, where the
+    reader put it, and the axis origin it prints (within a minute). The one
+    that follows takes the leader's window, gives up the same lead-in, and
+    is cut where the leader hands over.
+    """
+    pages = {}
+    for items in per.values():
+        for entry in items:
+            r = entry[1]
+            if axis0.get(id(r)) is None or not str(r["meta"].get("stage") or ""):
+                continue
+            # not by page number: 00185 prints a stage's Treatment and
+            # Offset Analysis pages on one window, two pages apart
+            pages.setdefault((str(r["meta"]["stage"]), placed.get(id(r))),
+                             []).append(r)
+    def window(r):
+        return _abs_start(r) - timedelta(seconds=r["axis_t0_s"] - axis0[id(r)])
+
+    for plots in pages.values():
+        if len(plots) < 2:
+            continue
+        # where the page's window opens: from the plot its samples placed
+        lead = max(plots, key=lambda r: by_samples.get(id(r), 0))
+        if by_samples.get(id(lead)):
+            win = window(lead)
+            t_lead = _abs_start(lead)
+            for r in plots:
+                # a plot placed by weaker evidence than the leader follows
+                # it: samples (pens compared) beat the axes alone (0.5)
+                if r is lead or by_samples.get(id(r), 0) >= by_samples[id(lead)] or \
+                        abs(axis0[id(r)] - axis0[id(lead)]) > 60.0:
+                    continue
+                sec = _sample_sec(r)
+                md = r["meta"]
+                had = r["axis_t0_s"] - axis0[id(r)]      # lead-in already given up
+                head = int(round(((t_lead - win).total_seconds() - had) / sec))
+                if 0 < head < len(r["samples"]):
+                    r["samples"] = r["samples"][head:] - r["samples"][head]
+                    r["data"] = {l: v[head:] for l, v in r["data"].items()}
+                    r["axis_t0_s"] += head * sec
+                    had += head * sec
+                    md["duration_min"] = len(r["samples"]) * sec / 60.0
+                    md.setdefault("warnings", []).append(
+                        f"the first {head * sec / 60:.1f} min of this chart are "
+                        f"not exported: they re-plot the end of the stage "
+                        f"before, which the other plot on this page gives up "
+                        f"to it as well")
+                t_new = win + timedelta(seconds=had)
+                shift = int(round((t_new - _abs_start(r)).total_seconds()))
+                if shift:
+                    was = md.get("start_time")
+                    md["start_time"] = t_new.strftime("%H:%M:%S")
+                    md["date"] = t_new.date().isoformat()
+                    md.setdefault("warnings", []).append(
+                        f"start moved {shift:+d} s ({was[:8]} → {t_new:%H:%M:%S}) "
+                        f"with the other plot on this page, which plots the "
+                        f"same time axis and whose samples place it")
+                    moved.append((md.get("stage") or "?", shift))
+        # ...and where it hands over: from the plot its samples (or, failing
+        # those, the printed axes) cut
+        cutter = max(plots, key=lambda r: cut_by_samples.get(id(r), 0))
+        if not cut_by_samples.get(id(cutter)) or cutter.get("handover") is None:
+            continue
+        end = _abs_start(cutter) + timedelta(
+            seconds=len(cutter["samples"]) * _sample_sec(cutter))
+        for r in plots:
+            if r is cutter or cut_by_samples.get(id(r), 0) >= cut_by_samples[id(cutter)] or \
+                    abs((window(r) - window(cutter)).total_seconds()) > 60.0:
+                continue
+            sec = _sample_sec(r)
+            md = r["meta"]
+            o = int(round((end - _abs_start(r)).total_seconds() / sec))
+            if not 0 < o < len(r["samples"]) or \
+                    (len(r["samples"]) - o) * sec < HANDOVER_MIN_S:
+                continue
+            to = cutter["handover"]["to"]
+            if r.get("handover") is None:
+                r["handover"] = {"to": to, "samples": r["samples"][o:],
+                                 "data": {l: v[o:] for l, v in r["data"].items()}}
+            cut = (len(r["samples"]) - o) * sec
+            r["samples"] = r["samples"][:o]
+            r["data"] = {l: v[:o] for l, v in r["data"].items()}
+            md["duration_min"] = o * sec / 60.0
+            # its own pairing said "kept as printed"; it no longer is
+            md["warnings"] = [w for w in md.get("warnings") or []
+                              if "the two charts disagree there" not in w]
+            differ[:] = [d for d in differ if d[3] != id(r)]
+            md["warnings"].append(
+                f"last {cut / 60:.1f} min not exported here: the chart runs on "
+                f"into stage {to}, cut with the other plot on this page (the "
+                f"same time axis), which hands over to it there")
+            trimmed.append((md.get("stage") or "?", cut))
+
+
 def _hand_over_tails(results, notes):
     """Where one chart runs on into the next and the next re-plots those
     minutes, cut the first at the second's start.
@@ -2460,34 +2762,61 @@ def _hand_over_tails(results, notes):
         if t0 is None or smp is None or len(smp) == 0:
             continue
         per.setdefault(str(r.get("source") or ""), []).append((t0, r))
-    trimmed, differ, moved, kept = [], [], [], []
+    # Where the reader put each chart, before any pair moves anything, and
+    # the latest a chart of each stage may open (see _handover_bounds).
+    placed = {id(r): t0 for items in per.values() for t0, r in items}
+    axis0 = {id(r): r.get("axis_t0_s") for items in per.values() for t0, r in items}
+    opens_by = _next_stage_opens(per)
+    trimmed, differ, moved, kept, reprinted = [], [], [], [], []
+    by_samples = {}                       # id(chart) -> pens its place was read off
+                                          #   (0.5: the printed axes alone)
+    cut_by_samples = {}                   # id(chart) -> pens its cut was read off
+                                          #   (0.5: the printed axes alone)
     for src, items in per.items():
         items.sort(key=lambda x: x[0])
-        prev = None
-        centre = 0                        # the last lag found: the drift is smooth
-        for tb, b in items:
+        items = [[t0, r] for t0, r in items]   # [start as placed now, chart]
+        sibs = _page_siblings(items)
+        chain = []                        # the entries seen so far, in order
+        lag_of = {}                       # id(chart) -> how far it now sits
+        pinned = set()                    # ids moved with their page's plot
+        for here in items:                #   from where the reader put it
+            tb, b = here
+            prev = _handover_partner(chain, b, sibs)
+            chain.append(here)
             if prev is None:
-                prev = (tb, b)
                 continue
             ta, a = prev
-            prev = (tb, b)
+            # the lag A settled on: the drift is smooth, so B's is near it —
+            # unless the two print elapsed axes that do not run on (a new job
+            # file restarts the acquisition clock), when B starts a run of
+            # its own and A's drift says nothing about it
+            centre = lag_of.get(id(a), 0)
+            if a.get("axis_t0_s") is not None and b.get("axis_t0_s") is not None:
+                centre = 0
             sec = _sample_sec(a)
             n_a, n_b = len(a["samples"]), len(b["samples"])
             end_a = ta + timedelta(seconds=n_a * sec)
             ov = (end_a - tb).total_seconds()
-            if ov < HANDOVER_MIN_S:
+            keep = int(60.0 / sec)                       # a minute of A must remain
+            # Where B's window opens in A's samples by the two charts' own
+            # printed elapsed-minute axes (STEP), when they print one.
+            ax = _axis_offset(a, b, sec, (placed[id(b)] - placed[id(a)]).total_seconds())
+            if ov < HANDOVER_MIN_S and ax is None:
                 continue
 
             sb = b["meta"].get("stage") or "?"
             off0 = int(round((tb - ta).total_seconds() / sec))
-            keep = int(60.0 / sec)                       # a minute of A must remain
             lag, best = 0, None
             k0 = min(n_a - off0, n_b)
-            if off0 >= keep and k0 >= 10:
+            if ax is not None:
+                best = _axis_lag(a, b, ax, sec, keep)
+                if not best[0] and ov < HANDOVER_MIN_S:
+                    continue                # disagree, but nothing overlaps
+            elif off0 >= keep and k0 >= 10:
                 c, g, gp = _lag_scores(a, b, [off0], k0)
                 if c[0]:
                     best = (g[0] * 3 >= c[0] * 2, g[0] / c[0], -gp[0], off0, k0, c[0])
-            if best is None or not best[0]:
+            if ax is None and (best is None or not best[0]):
                 # Searched around the lag the previous pair settled on, not
                 # around zero: on 00180 the windows sit 2-4 min further from
                 # each filed start than the one before (the charts' own clock
@@ -2510,36 +2839,152 @@ def _hand_over_tails(results, notes):
                         frac = np.where(c > 0, g / np.maximum(c, 1), 0.0)
                         order = np.lexsort((-np.abs(offs - off0), -gp, frac))   # last key major
                         i = next(j for j in order[::-1] if ok[j])
-                        lag = int((offs[i] - off0) * sec)
                         best = (True, frac[i], -gp[i], int(offs[i]), min(n_a - int(offs[i]), n_b), int(c[i]))
             if best is None:
-                centre = 0
                 continue
             ok_, _frac, _gap, off, k, compared = best
-            centre = lag if ok_ else 0
+            lag = int((off - off0) * sec)
             if not ok_:
                 a["meta"].setdefault("warnings", []).append(
                     f"overlaps stage {sb} by {ov / 60:.1f} min and the two "
                     f"charts disagree there — one clock is wrong, or the "
                     f"stages overlap for real; both kept as printed")
-                differ.append((a["meta"].get("stage") or "?", sb, ov))
+                differ.append((a["meta"].get("stage") or "?", sb, ov, id(a)))
                 continue
+            # A chart that re-plots nearly ALL of the one before it is that
+            # chart printed a second time, not its continuation. A hand-over
+            # re-plots a few minutes of A's tail: over the 785 cuts in
+            # 00184-00278 on v1.11.53, 782 hand over under 75% of A and 602
+            # under 10%. The three that hand over more are not tails. Canyon
+            # 00230 p70 is labelled interval 22 and is p68's interval 21
+            # re-plotted a minute later (axis 9:16-9:58 against 9:15-9:57,
+            # the same curves); interval 22's own chart is not in the PDF.
+            # Cut there, stage 21 kept 62 samples of its 42 min and its data
+            # went out under 22. So A is kept whole and B as printed, and B
+            # says what it is. Same-numbered pairs are left to the refusal
+            # below, which already keeps both.
+            sa = a["meta"].get("stage") or ""
+            shared = min(n_a - off, n_b)
+            if shared >= HANDOVER_DUP_FRAC * n_a and not (
+                    sa and sb and str(sa) == str(sb)):
+                b["meta"].setdefault("warnings", []).append(
+                    f"re-plots stage {sa or '?'}'s chart: {shared * sec / 60:.1f} "
+                    f"of its {n_a * sec / 60:.1f} min are the same values, "
+                    f"so the report printed that chart twice under two "
+                    f"numbers. Both kept as printed and nothing cut; this "
+                    f"stage's own chart is not in the file")
+                reprinted.append((sa or "?", sb, shared * sec))
+                continue
+            # Never further than the bounds say B can sit: within
+            # HANDOVER_DRIFT_S of its filed start, and open before the next
+            # stage's. Where A says B's window opens later than that, B is
+            # put AT the bound, and A is still cut only where B's window
+            # opens — at what B re-plots, never at A's own minutes. On 00184
+            # the elapsed axes run ~12% ahead of the filed clock (stages 1-9
+            # cover 565 axis minutes against 506 filed; 19-32, 855 against
+            # 759), so a run following its own clock leaves the filed one by
+            # a few minutes a stage. Cutting A at the bound instead would
+            # throw away its treatment: stage 12's chemical chart would lose
+            # 18.6 min of its pumping, which no other chart plots.
+            short = 0
+            if id(b) in pinned:
+                lag = 0         # placed with its page already; only A is cut
+            elif not b["meta"].get("clock_chart"):
+                lo_t, hi_t = _handover_bounds(b, placed[id(b)], opens_by.get(id(b)))
+                tm = ta + timedelta(seconds=off * sec)
+                if tm > hi_t and id(a) not in lag_of and not a["meta"].get("clock_chart"):
+                    # A heads its run — nothing before it placed it — so its
+                    # filed start is as much a guess as B's. A window can
+                    # open well before its stage (00184 p30, stage 10: a
+                    # 269-min chart for a stage filed at 149, and stage 11's
+                    # window 211 min into it): A takes the earlier share,
+                    # within its own bound and not back over the chart before.
+                    room = (ta - (placed[id(a)] - timedelta(seconds=HANDOVER_DRIFT_S))).total_seconds()
+                    z = _handover_partner(
+                        chain[:next(i for i, e in enumerate(chain) if e is prev)],
+                        a, sibs)
+                    if z is not None:
+                        z_end = z[0] + timedelta(
+                            seconds=len(z[1]["samples"]) * _sample_sec(z[1]))
+                        room = min(room, (ta - z_end).total_seconds())
+                    back_s = int(min(room, (tm - hi_t).total_seconds()))
+                    if back_s > 0:
+                        was_ta = ta
+                        ta = ta - timedelta(seconds=back_s)
+                        for e in [prev] + [x for x in sibs.get(id(a), ())
+                                           if x[0] == was_ta]:
+                            e[0] = ta
+                            em = e[1]["meta"]
+                            was_a = em.get("start_time")
+                            em["start_time"] = ta.strftime("%H:%M:%S")
+                            em["date"] = ta.date().isoformat()
+                            em.setdefault("warnings", []).append(
+                                f"start moved {-back_s:+d} s ({was_a[:8]} → "
+                                f"{ta:%H:%M:%S}): stage {sb}'s chart opens "
+                                f"{off * sec / 60:.1f} min into this one, more "
+                                f"than the two filed starts allow, so this "
+                                f"window opened before its stage's filed start")
+                            moved.append((em.get("stage") or "?", -back_s))
+                            lag_of[id(e[1])] = (ta - placed[id(e[1])]).total_seconds()
+                            by_samples[id(e[1])] = compared or 0.5
+                        end_a = ta + timedelta(seconds=n_a * sec)
+                        ov = (end_a - tb).total_seconds()
+                        tm = ta + timedelta(seconds=off * sec)
+                tc = min(max(tm, lo_t), hi_t)
+                if tc != tm:
+                    short = int(round((tm - tc).total_seconds() / sec))
+                lag = int(round((tc - tb).total_seconds()))
+            sa_ = a["meta"].get("stage") or "?"
             if lag:
                 was = b["meta"].get("start_time")
                 tb = tb + timedelta(seconds=lag)
                 b["meta"]["start_time"] = tb.strftime("%H:%M:%S")
                 b["meta"]["date"] = tb.date().isoformat()
+                why = (f"to line up with stage {sa_}'s chart, which re-plots "
+                       f"the same minutes; the filed start is to the minute "
+                       f"and this is where the window opens" if compared else
+                       f"to where its printed time axis puts it against "
+                       f"stage {sa_}'s, which runs on the same clock")
+                if short:
+                    why += (f" — as far as it may go: by stage {sa_}'s chart "
+                            f"the window opens {abs(short) * sec / 60:.1f} min "
+                            f"{'later' if short > 0 else 'earlier'} still, but "
+                            f"no chart is moved more than "
+                            f"{HANDOVER_DRIFT_S / 60:.0f} min off its filed "
+                            f"start or past the next stage's (the charts' "
+                            f"elapsed clock runs apart from the filed one)")
                 b["meta"].setdefault("warnings", []).append(
-                    f"start moved {lag:+d} s ({was[:8]} → {tb:%H:%M:%S}) to line "
-                    f"up with stage {a['meta'].get('stage') or '?'}'s chart, "
-                    f"which re-plots the same minutes; the filed start is to "
-                    f"the minute and this is where the window opens")
+                    f"start moved {lag:+d} s ({was[:8]} → {tb:%H:%M:%S}) {why}")
                 moved.append((sb, lag))
-                prev = (tb, b)
+                here[0] = tb
                 ov = (end_a - tb).total_seconds()
+                # the other plots of B's page share its time axis: they move
+                # with it (each is still paired, and cut, on its own turn)
+                for sib in sibs.get(id(b), ()):
+                    if any(sib is e for e in chain) or \
+                            sib[0] != tb - timedelta(seconds=lag):
+                        continue
+                    sib[0] = tb
+                    sm = sib[1]["meta"]
+                    sw = sm.get("start_time")
+                    sm["start_time"] = tb.strftime("%H:%M:%S")
+                    sm["date"] = tb.date().isoformat()
+                    sm.setdefault("warnings", []).append(
+                        f"start moved {lag:+d} s ({sw[:8]} → {tb:%H:%M:%S}) "
+                        f"with the stage's other chart on this page, which "
+                        f"plots the same time axis")
+                    lag_of[id(sib[1])] = (tb - placed[id(sib[1])]).total_seconds()
+                    pinned.add(id(sib[1]))
+            lag_of[id(b)] = (tb - placed[id(b)]).total_seconds()
+            if (compared or ax is not None) and id(b) not in pinned:
+                by_samples[id(b)] = compared or 0.5
+            if off >= n_a:
+                continue                    # B opens after A ends: nothing to cut
+            ov = (n_a - off) * sec          # what B re-plots, wherever B was put
             # The cut may land while A is still pumping — chart B opening
             # before stage B starts, not chart A running on. Carry it to
             # where A actually stops (see _still_pumping_after).
+            off_before = off
             moved_to = _still_pumping_after(a, off, sec)
             if moved_to > off:
                 kept.append((a["meta"].get("stage") or "?",
@@ -2564,13 +3009,16 @@ def _hand_over_tails(results, notes):
                 # lead-in, so B drops that lead-in and starts where A stops.
                 # The filed start is to the minute; A's own samples say to
                 # the second where its treatment actually ended.
-                a_end = ta + timedelta(seconds=off * sec)
+                # (B's samples that re-plot the minutes A keeps: by content,
+                # which is where A says B's window is, not where B was put)
                 sec_b = _sample_sec(b)
-                drop = int(round((a_end - tb).total_seconds() / sec_b))
+                drop = int(round((moved_to - off_before) * sec / sec_b))
                 drop = max(0, min(drop, len(b["samples"]) - 1))
                 if drop > 0:
                     b["samples"] = b["samples"][drop:] - b["samples"][drop]
                     b["data"] = {l: v[drop:] for l, v in b["data"].items()}
+                    if b.get("axis_t0_s") is not None:
+                        b["axis_t0_s"] += drop * sec_b    # its axis starts later too
                     tb = tb + timedelta(seconds=drop * sec_b)
                     b["meta"]["start_time"] = tb.strftime("%H:%M:%S")
                     b["meta"]["date"] = tb.date().isoformat()
@@ -2581,7 +3029,7 @@ def _hand_over_tails(results, notes):
                         f"{a['meta'].get('stage') or '?'} — its tail-in, flush "
                         f"and shutdown — so they are exported there and this "
                         f"stage starts where that one stops")
-                    prev = (tb, b)
+                    here[0] = tb
             # Keep what is being handed over, beside the stage rather than in
             # it. The export still cuts here — those minutes belong to the next
             # chart and must not be written twice — but the CHART was ending
@@ -2621,7 +3069,7 @@ def _hand_over_tails(results, notes):
                     f"{ov / 60:.1f} min and the handover was refused: a stage "
                     f"cannot re-plot itself, so these are two charts of the "
                     f"same stage; both kept as printed")
-                differ.append((sa, sb, ov))
+                differ.append((sa, sb, ov, id(a)))
                 continue
             a["samples"] = a["samples"][:off]
             a["data"] = {l: v[:off] for l, v in a["data"].items()}
@@ -2632,6 +3080,41 @@ def _hand_over_tails(results, notes):
                 f"minutes (same values), so the export hands over where "
                 f"the next chart begins")
             trimmed.append((a["meta"].get("stage") or "?", ov))
+            if compared or ax is not None:
+                # by its samples, or by the printed axes where too little
+                # overlaps to compare: either way it is evidence of where
+                # the page hands over, which a guess at lag zero is not
+                cut_by_samples[id(a)] = compared or 0.5
+            # ...and so are the other plots of A's page, on the same axis,
+            # where they run as far: 00185 pairs each Treatment page with an
+            # Offset Analysis page on one window, read as one source, and
+            # the reader names their pens differently from page to page, so
+            # no pairing by pens reaches all of them.
+            cut_at = ta + timedelta(seconds=off * sec)
+            for sib in sibs.get(id(a), ()):
+                r = sib[1]
+                if abs((sib[0] - ta).total_seconds()) > 60:
+                    continue                # no longer on A's window
+                o = int(round((cut_at - sib[0]).total_seconds() / _sample_sec(r)))
+                if not 0 < o < len(r["samples"]) or \
+                        (len(r["samples"]) - o) * _sample_sec(r) < HANDOVER_MIN_S:
+                    continue                # clock rounding, not a tail
+                if r.get("handover") is None:
+                    r["handover"] = {
+                        "to": sb, "samples": r["samples"][o:],
+                        "data": {l: v[o:] for l, v in r["data"].items()}}
+                cut = (len(r["samples"]) - o) * _sample_sec(r)
+                r["samples"] = r["samples"][:o]
+                r["data"] = {l: v[:o] for l, v in r["data"].items()}
+                r["meta"]["duration_min"] = o * _sample_sec(r) / 60.0
+                r["meta"].setdefault("warnings", []).append(
+                    f"last {cut / 60:.1f} min not exported here: the chart "
+                    f"runs on into stage {sb}, cut with the stage's other "
+                    f"chart on this page (the same time axis), which hands "
+                    f"over to it there")
+                trimmed.append((r["meta"].get("stage") or "?", cut))
+    _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
+                      moved, trimmed, differ)
     if moved:
         big = max(abs(l) for _s, l in moved)
         notes.append(f"{len(moved)} chart start(s) moved by up to {big} s to line "
@@ -2641,7 +3124,10 @@ def _hand_over_tails(results, notes):
                      + (". A move that large is a run of charts whose own clock "
                         "and the filed starts drift apart by a few percent; the "
                         "charts' own spacing is kept, anchored on the first "
-                        "chart of the run at its filed start" if big > 600 else ""))
+                        "chart of the run at its filed start, and no chart is "
+                        f"moved more than {HANDOVER_DRIFT_S / 60:.0f} min off "
+                        "its own filed start or past the next stage's"
+                        if big > 600 else ""))
     if kept:
         notes.append(
             f"{len(kept)} stage(s) kept their own ending: the next chart opens "
@@ -2656,10 +3142,18 @@ def _hand_over_tails(results, notes):
                      f"in all, every minute of it re-plotted on the next "
                      f"chart with the same values, so nothing is lost and "
                      f"nothing is exported twice")
+    if reprinted:
+        notes.append(f"{len(reprinted)} chart(s) re-plot the whole chart before "
+                     f"them under the next stage number — the report printed "
+                     f"one chart twice — so nothing was cut and both are kept "
+                     f"as printed: "
+                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)"
+                                 for a, b, o in reprinted[:8])
+                     + (", …" if len(reprinted) > 8 else ""))
     if differ:
         notes.append(f"{len(differ)} pair(s) of charts overlap and disagree "
                      f"there, kept as printed: "
-                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)" for a, b, o in differ[:8])
+                     + ", ".join(f"{a}→{b} ({o / 60:.1f} min)" for a, b, o, _i in differ[:8])
                      + (", …" if len(differ) > 8 else ""))
 
 
@@ -3416,7 +3910,16 @@ def _step_clock(doc, results, notes):
             printed = _hms(entry["start"]) or 0
             want = _day_shift(day, ours or 0, printed)
             if not md.get("date"):
-                md["date"] = want       # nothing printed a day; this is it
+                # Nothing printed a day, so it is the one that puts this
+                # clock between the stages either side of it — not simply
+                # the nearest to the filed start. 00243's stage 30 is filed
+                # 09-01 00:26 to 23:32 ("got back into stage"), and its chart
+                # prints 21:00-23:15: the nearest day put it on 08-31, before
+                # stage 29 had begun, and the Lab said stage 30 started 160
+                # min before 29 finished. 0 of 1,442 clocked STEP charts open
+                # at or after the next stage's filed start.
+                md["date"] = _step_day_between(clocks, md.get("stage"),
+                                               ours or 0) or want
                 redated += 1
                 continue
             gap = abs((ours or 0) - printed)
@@ -3446,6 +3949,36 @@ def _step_clock(doc, results, notes):
         notes.append(f"stage(s) {', '.join(sorted(set(missing))[:8])} are not "
                      f"in the Daily Stage Summary, so their clock is left "
                      f"blank rather than defaulted to midnight.")
+
+
+def _step_day_between(clocks, stage, secs):
+    """The one day that puts `secs` (a time of day) at or after the previous
+    stage's filed start and before the next one's -> 'YYYY-MM-DD', or None
+    when no day, or more than one, does."""
+    def at(e):
+        if not e or not e.get("date") or _hms(e.get("start")) is None:
+            return None
+        return datetime.fromisoformat(e["date"]) + timedelta(seconds=_hms(e["start"]))
+    nums = {}
+    for k in clocks:
+        if re.fullmatch(r"\d+", str(k)):
+            nums[int(k)] = clocks[k]
+    m = re.fullmatch(r"\s*(\d+)\s*", str(stage or ""))
+    if not m or int(m.group(1)) not in nums:
+        return None
+    n = int(m.group(1))
+    lo = at(nums.get(max((k for k in nums if k < n), default=None)))
+    hi = at(nums.get(min((k for k in nums if k > n), default=None)))
+    own = at(nums[n])
+    if own is None or lo is None or hi is None:
+        return None
+    fits = []
+    for d in (-1, 0, 1):
+        t = datetime.combine(own.date() + timedelta(days=d), datetime.min.time()) \
+            + timedelta(seconds=secs)
+        if lo <= t < hi:
+            fits.append(t.date().isoformat())
+    return fits[0] if len(fits) == 1 else None
 
 
 def _window_tags(windows):
@@ -4699,6 +5232,15 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 or "00:00:00",
                                 "duration_min": len(samples) / 60.0,
                                 "warnings": list(info.get("notes") or [])}
+                        if info.get("clock_start"):
+                            # Sample 0 is on the chart's own wall clock, to
+                            # the second. Said, so the hand-over moves it by
+                            # the label's precision (a minute) and not by the
+                            # fifteen it allows a start filed to the minute:
+                            # 00197 p52's chemical chart reads 17:42:48 off
+                            # its axis and was moved to 17:32:12 to fit the
+                            # chart before it.
+                            meta["clock_chart"] = True
                         _set_depth(meta, *_parse_interval(md.get("interval")))
                         # STEP reported no `scales` at all, so every STEP
                         # chart arrived with an empty axis map — and the
@@ -4715,6 +5257,12 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                             geom=info.get("geom"), scales=frames,
                             frames=frames,
                             deduced=deduced))
+                        if not info.get("clock_start") and \
+                                info.get("t0_seconds") is not None:
+                            # where sample 0 sits on the printed "Time (min)"
+                            # axis: _hand_over_tails places the charts of one
+                            # acquisition clock against each other by it
+                            results[-1]["axis_t0_s"] = float(info["t0_seconds"])
                         # how far each curve's first and last height stays
                         # inked on the page: _bridge_step_gaps reads it, and
                         # drops it once read
