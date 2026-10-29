@@ -2763,7 +2763,7 @@ def _handover_partner(chain, b, sibs=None):
 
 
 def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
-                      moved, trimmed, differ):
+                      moved, trimmed, differ, pumped=()):
     """The plots of one STEP page share one time axis, across sources: where
     one was placed by its samples and another was not, the other follows.
 
@@ -2777,7 +2777,22 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
     reader put it, and the axis origin it prints (within a minute). The one
     that follows takes the leader's window, gives up the same lead-in, and
     is cut where the leader hands over.
+
+    The evidence is weighed by kind before it is counted: a surface plot
+    its own samples placed leads the page whatever number of pens a chemical
+    plot compared. Once 00184's chemical plots read their five pens they
+    outnumbered the surface plots' four; stage 9's chemical chain settled on
+    a lag 21 min from the surface chain's, led the page, and moved stage 9's
+    surface plot back over stage 8 — four timing flags the file never had.
+    And a plot whose own cut was carried to where its pumping stops
+    (`pumped`, see _still_pumping_after) is cut by no other: 00184 p24's
+    surface chain kept 9.7 min of stage 4's pumping that a chemical plot's
+    cut would have exported under neither stage.
     """
+    def weight(r, table):
+        n = table.get(id(r), 0)
+        return (n >= 1 and "chemical" not in str(r.get("source") or ""), n)
+
     pages = {}
     for items in per.values():
         for entry in items:
@@ -2795,14 +2810,14 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
         if len(plots) < 2:
             continue
         # where the page's window opens: from the plot its samples placed
-        lead = max(plots, key=lambda r: by_samples.get(id(r), 0))
+        lead = max(plots, key=lambda r: weight(r, by_samples))
         if by_samples.get(id(lead)):
             win = window(lead)
             t_lead = _abs_start(lead)
             for r in plots:
                 # a plot placed by weaker evidence than the leader follows
                 # it: samples (pens compared) beat the axes alone (0.5)
-                if r is lead or by_samples.get(id(r), 0) >= by_samples[id(lead)] or \
+                if r is lead or weight(r, by_samples) >= weight(lead, by_samples) or \
                         abs(axis0[id(r)] - axis0[id(lead)]) > 60.0:
                     continue
                 sec = _sample_sec(r)
@@ -2833,13 +2848,14 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
                     moved.append((md.get("stage") or "?", shift))
         # ...and where it hands over: from the plot its samples (or, failing
         # those, the printed axes) cut
-        cutter = max(plots, key=lambda r: cut_by_samples.get(id(r), 0))
+        cutter = max(plots, key=lambda r: weight(r, cut_by_samples))
         if not cut_by_samples.get(id(cutter)) or cutter.get("handover") is None:
             continue
         end = _abs_start(cutter) + timedelta(
             seconds=len(cutter["samples"]) * _sample_sec(cutter))
         for r in plots:
-            if r is cutter or cut_by_samples.get(id(r), 0) >= cut_by_samples[id(cutter)] or \
+            if r is cutter or weight(r, cut_by_samples) >= weight(cutter, cut_by_samples) or \
+                    id(r) in pumped or \
                     abs((window(r) - window(cutter)).total_seconds()) > 60.0:
                 continue
             sec = _sample_sec(r)
@@ -2915,6 +2931,8 @@ def _hand_over_tails(results, notes):
                                           #   (0.5: the printed axes alone)
     cut_by_samples = {}                   # id(chart) -> pens its cut was read off
                                           #   (0.5: the printed axes alone)
+    pumped = set()                        # ids whose cut was carried to where
+                                          #   their own pumping stops
     for src, items in per.items():
         items.sort(key=lambda x: x[0])
         items = [[t0, r] for t0, r in items]   # [start as placed now, chart]
@@ -3214,6 +3232,8 @@ def _hand_over_tails(results, notes):
                     f"same stage; both kept as printed")
                 differ.append((sa, sb, ov, id(a)))
                 continue
+            if off > off_before:
+                pumped.add(id(a))
             a["samples"] = a["samples"][:off]
             a["data"] = {l: v[:off] for l, v in a["data"].items()}
             a["meta"]["duration_min"] = off * sec / 60.0
@@ -3257,7 +3277,7 @@ def _hand_over_tails(results, notes):
                     f"over to it there")
                 trimmed.append((r["meta"].get("stage") or "?", cut))
     _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
-                      moved, trimmed, differ)
+                      moved, trimmed, differ, pumped=pumped)
     if moved:
         big = max(abs(l) for _s, l in moved)
         notes.append(f"{len(moved)} chart start(s) moved by up to {big} s to line "
@@ -3655,6 +3675,95 @@ def _offset_well_names(results, notes, near=40.0):
                      f"file's offset charts read most often for that colour — "
                      f"the legend's one-letter well names are too small to read "
                      f"reliably on every page")
+
+
+def _step_chem_names_borrowed(results, notes, near=60.0, tol=0.03):
+    """A STEP chemical chart printed under the TREATMENT chart's legend takes
+    its pens' names from the nearest chemical chart whose own legend read.
+
+    00247 p25 (stage 2) and 00184 p21 (stage 1) print "Surface Pressure",
+    "Prop Conc" and "Btm Prop Conc" over a chart of additives. step1 refuses
+    that legend (step1._read_by_legend), and the additives went out as
+    "Series (red)", "(green)" and "(magenta)". The book prints the chart
+    again a stage on under its own legend, and a pen of the same colour on
+    the same axis is the same pen there: each takes that pen's name where
+    the colours are within `near` and both ends of the axes within `tol`
+    of the span. Only the nearest chart that read lends, and only its pens
+    one colour matches."""
+    import numpy as np
+    chem = []
+    for r in results:
+        pens = r.pop("chem_pens", None)
+        legend = r.pop("chem_legend", None)
+        if pens is not None:
+            chem.append((r, pens, legend))
+    # One spelling per pen: a name read on a chart or two that is all but
+    # the name the file reads on five or more, in that pen's colour, is that
+    # name misread — 00278 p59 reads Econo as "Econe", once in 30. The colour
+    # is what keeps two additives apart whose names differ by a digit
+    # (SSI-1 and SSI-3).
+    import difflib
+    from collections import Counter
+    seen = Counter(label for _r, pens, legend in chem if legend == "read" for label in pens)
+    common = [l for l, k in seen.items() if k >= 5 and not l.startswith("Series (")]
+    spelt = 0
+    for r, pens, legend in chem:
+        if legend != "read":
+            continue
+        for label in [l for l in pens if seen[l] <= 2 and not l.startswith("Series (")]:
+            like = [c for c in common if c not in pens
+                    and difflib.SequenceMatcher(None, label, c).ratio() >= 0.85
+                    and any(np.linalg.norm(np.subtract(pens[label], p2[c], dtype=float)) <= near
+                            for _r2, p2, lg2 in chem if lg2 == "read" and c in p2)]
+            if len(like) != 1:
+                continue
+            new = like[0]
+            for key in ("data", "units", "scales", "frames", "deduced",
+                        "labels", "held_ends"):
+                d = r.get(key)
+                if isinstance(d, dict) and label in d:
+                    d[new] = d.pop(label)
+            pens[new] = pens.pop(label)
+            spelt += 1
+    if spelt:
+        notes.append(f"{spelt} chemical pen name(s) read once or twice in a "
+                     f"spelling the rest of the file does not use, in the same "
+                     f"pen's colour, renamed to the file's spelling")
+    lenders = [(r, pens) for r, pens, legend in chem if legend == "read"]
+    renamed = 0
+    for r, pens, legend in chem:
+        if legend != "treatment" or not lenders:
+            continue
+        lr, lpens = min(lenders, key=lambda t: abs((t[0].get("page") or 0)
+                                                   - (r.get("page") or 0)))
+        taken = set(r.get("data") or {})
+        for label, rgb in pens.items():
+            if not label.startswith("Series ("):
+                continue
+            fr = (r.get("frames") or {}).get(label)
+            near_pens = [lab for lab, lrgb in lpens.items()
+                         if np.linalg.norm(np.subtract(rgb, lrgb, dtype=float)) <= near]
+            if len(near_pens) != 1 or not fr:
+                continue
+            new = near_pens[0]
+            lfr = (lr.get("frames") or {}).get(new)
+            span = abs(fr[0] - fr[1])
+            if (new in taken or not lfr or span <= 0
+                    or abs(fr[0] - lfr[0]) > tol * span or abs(fr[1] - lfr[1]) > tol * span):
+                continue
+            for key in ("data", "units", "scales", "frames", "deduced",
+                        "labels", "held_ends"):
+                d = r.get(key)
+                if isinstance(d, dict) and label in d:
+                    d[new] = d.pop(label)
+            if isinstance(r.get("units"), dict):
+                r["units"][new] = (lr.get("units") or {}).get(new, r["units"].get(new, ""))
+            taken.add(new)
+            renamed += 1
+    if renamed:
+        notes.append(f"{renamed} chemical pen(s) named from the next chemical "
+                     f"chart's legend — their own chart prints the treatment "
+                     f"chart's legend in its place")
 
 
 def _step_stage_from_depth(doc, results, notes):
@@ -5448,6 +5557,11 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 if c.get("offset")}
                         if offs:
                             results[-1]["offset_wells"] = offs
+                        # a chemical chart's pens and whose legend named
+                        # them, for _step_chem_names_borrowed
+                        if info.get("pens") is not None:
+                            results[-1]["chem_pens"] = info["pens"]
+                            results[-1]["chem_legend"] = info.get("chem_legend")
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue
@@ -5776,6 +5890,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         _calfrac_days(results, notes)
 
     _offset_well_names(results, notes)
+    _step_chem_names_borrowed(results, notes)
     _apply_fix_file(doc, results, notes, fix_text=fix_text)
     _step_stage_from_depth(doc, results, notes)
     _step_stage_depth_conflicts(results, notes, doc=doc)

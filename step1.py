@@ -1518,6 +1518,290 @@ def _grow(mask, k):
     return out
 
 
+def _ticks_in_pen_colours(img, box):
+    """Does the left axis print its ladders in the pens' own inks, warm and
+    cool both, rather than in one?
+
+    That is the colour-keyed style (00183, 00184, 00278): each ladder is
+    matched to its pen by colour, and ar.extract reads them all. The other
+    style on this layout (00241, 00269-00274) prints one brown ladder under
+    a rotated title, and require_titles tells the two apart by that title.
+    A title can be a misreading, though. 00184's chemical charts print
+    three ladders in one column — cyan 0..10, magenta and orange 0..2 — and
+    no title at all; the rotated OCR of those digits read "erate", and
+    "erate" is one letter from "rate". The titled reader then fitted the
+    whole column as one rate axis, 0..2100, and the 36 charts exported the
+    clean rate alone at 380..1600 m3/min, without their four additives. A
+    ladder printed in two kinds of colour is a fact of the page, and no
+    title is printed in two."""
+    x0, y0, x1, y1 = box
+    s = np.asarray(img)[y0:y1, max(0, x0 - 110):max(0, x0 - 6)].astype(float)
+    if s.size == 0:
+        return False
+    mx, mn = s.max(axis=2), s.min(axis=2)
+    ink = (mx - mn) >= 60
+    n = int(ink.sum())
+    if n < 80:
+        return False
+    r, g, b = s[..., 0][ink], s[..., 1][ink], s[..., 2][ink]
+    d = (mx - mn)[ink]
+    hue = np.where(mx[ink] == r, (60.0 * (g - b) / d) % 360.0,
+                   np.where(mx[ink] == g, 60.0 * (b - r) / d + 120.0,
+                            60.0 * (r - g) / d + 240.0))
+    warm = int(((hue < 60) | (hue >= 330)).sum())
+    return min(warm, n - warm) >= 0.15 * n
+
+
+def _legend_above(img, box):
+    """The legend printed over a colour-keyed chart, entry by entry ->
+    [{"rgb", "text"}] in reading order (column by column), or [].
+
+    These books print each entry as a short rule in the pen's colour with
+    its name after it in the same ink, in two columns: "SSI-3 Conc.
+    (L/m3)", "Chem Rate 6 Conc. (L/m3)", "Econo @ 0.1 (L/m3)" ...
+    ar.read_legend reads that band as well, but names only what LEGEND_VOCAB
+    knows — the treatment names and the clean rate — so an additive went
+    out by SERIES_NAMES' guess, which is 00183's book, or as "Series (x)".
+    00247 p107 prints SSI-LDP2 in the dark red the table calls Aqucar 742,
+    and Aqucar 742 in green; 00278 doses five additives the table has never
+    heard of. An entry is found by its rule — a run of one colour forty
+    pixels long and a pixel or two thick, white over and under it — and
+    read in its own ink alone: a pixel nearer its colour than white and than
+    every other entry's. `rgb` is that ink at its most saturated."""
+    from PIL import Image
+    x0, y0, x1, y1 = box
+    band = int(min(130, max(35, (y1 - y0) * 0.10)))
+    top = max(0, y0 - band)
+    reg = np.asarray(img)[top:max(top, y0 - 2), x0:x1].astype(int)
+    if reg.shape[0] < 12:
+        return []
+    col = (reg.max(axis=2) - reg.min(axis=2)) >= 50
+    rules = []
+    for y in range(1, reg.shape[0] - 1):
+        xs = np.flatnonzero(col[y])
+        if not len(xs):
+            continue
+        for seg in np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1):
+            a, b = int(seg[0]), int(seg[-1])
+            # a rule, not the border across the band (00247's title bar)
+            if not (40 <= b - a + 1 <= 0.25 * (x1 - x0)):
+                continue
+            for r in rules:
+                if abs(r["a"] - a) <= 4 and abs(r["b"] - b) <= 4 and y - r["y1"] <= 2:
+                    r["y1"] = y
+                    break
+            else:
+                rules.append({"y0": y, "y1": y, "a": a, "b": b})
+    lone = []
+    for r in rules:
+        # ...nor a row through a line of text, which has ink over and under
+        m0, m1 = r["a"] + (r["b"] - r["a"]) // 5, r["b"] - (r["b"] - r["a"]) // 5
+        above = col[max(0, r["y0"] - 2), m0:m1].mean()
+        below = col[min(reg.shape[0] - 1, r["y1"] + 2), m0:m1].mean()
+        if r["y1"] - r["y0"] <= 3 and above < 0.2 and below < 0.2:
+            lone.append(r)
+    if len(lone) < 2:
+        return []
+    starts = []
+    for a in sorted(r["a"] for r in lone):
+        if not starts or a - starts[-1] > 8:
+            starts.append(a)
+    found = []
+    for r in sorted(lone, key=lambda r: (r["a"], r["y0"])):
+        yc = (r["y0"] + r["y1"]) // 2
+        nxt = [s for s in starts if s > r["b"]]
+        xa, xb = r["b"] + 4, (nxt[0] - 8 if nxt else reg.shape[1])
+        c0 = max(0, yc - 9)
+        crop = reg[c0:yc + 10, xa:xb]
+        if crop.shape[1] < 20:
+            continue
+        mid = crop[max(0, yc - 3) - c0:yc + 4 - c0]
+        ch = mid.max(axis=2) - mid.min(axis=2)
+        if ch.max() < 50:
+            continue
+        found.append({"rgb": np.median(mid[ch >= 0.7 * ch.max()], axis=0),
+                      "crop": crop})
+    def ocr(arr, scale):
+        pil = Image.fromarray(np.pad(arr.astype(np.uint8), 8, constant_values=255))
+        pil = pil.resize((pil.width * scale, pil.height * scale), Image.LANCZOS)
+        try:
+            return ar.ocr_line(np.array(pil), psm=7)
+        except Exception:
+            return ""
+
+    def junk(text):
+        # what no pen's name is spelt with, before its unit
+        return len(re.findall(r"[^A-Za-z0-9 .\-#@/+]", re.sub(r"[({].*$", "", text)))
+
+    out = []
+    for i, e in enumerate(found):
+        c = e["crop"].astype(float)
+        d_own = ((c - e["rgb"]) ** 2).sum(axis=2)
+        own = d_own < ((c - 255.0) ** 2).sum(axis=2)
+        theirs = np.zeros(own.shape, bool)
+        for j, o in enumerate(found):
+            if j != i:
+                d_o = ((c - o["rgb"]) ** 2).sum(axis=2)
+                own &= d_own < d_o
+                theirs |= (d_o < d_own) & (d_o < ((c - 255.0) ** 2).sum(axis=2))
+        xs = np.flatnonzero(own.any(axis=0))
+        if not len(xs):
+            continue
+        xs = slice(*(lambda s: (s[0], s[-1] + 1))(
+            np.split(xs, np.flatnonzero(np.diff(xs) > 30) + 1)[0]))
+        # Read twice: the line in grey with the other entries' inks taken
+        # out, and its own ink alone. The grey keeps the glyphs' soft edges
+        # and reads 00184 p37's dark red "SSI-3 Conc." whole, where the ink
+        # alone read "$S$1|-3"; the ink alone is what separates a line from
+        # one crowding it in a colour close to white. The reading with less
+        # junk in its name stands.
+        lo = c.min(axis=2)
+        lo[theirs] = 255.0
+        lo = lo[:, xs]
+        mn = lo.min()
+        if mn < 250:
+            lo = np.clip((lo - mn) * 255.0 / (255.0 - mn), 0, 255)
+        texts = [ocr(lo, 4), ocr(np.where(own[:, xs], 0, 255), 5)]
+        out.append({"rgb": e["rgb"], "text": min(texts, key=junk)})
+    return out
+
+
+def _chem_legend_name(text):
+    """A chemical legend line -> (name, unit), or None where it does not
+    read as one. "Econo @ 0.1 (L/m3)" -> ("Econo Conc", "L/m3"): the dose
+    after the @ is the design loading, which a book changes from stage to
+    stage, and a name that carried it would split one pen into a column per
+    dose; an additive is a concentration, as the others are named. A line
+    whose unit did not read is taken only where its name is one LEGEND_VOCAB
+    knows ("Combined Clean Rate")."""
+    text = (text or "").strip()
+    # speckle after the unit's bracket: 00247 p97's "SSI-LDP2 Conc. (L/m?) ©"
+    text = re.sub(r"([)}\]])[^)}\]A-Za-z0-9]*$", r"\1", text)
+    # "(" read as "i", "/" as "i" or "é": 00278 p52's "Econo @ 0.1 iLim*}",
+    # p53's "Econo @ 0.1 iLém’3"
+    if not re.search(r"[({]", text):
+        text = re.sub(r"\s[iIl|\[]?\s*L\S{0,2}?[mn]\S{0,3}$", " (L/m3)", text)
+    name, unit = _legend_entry_name(text)
+    name = re.sub(r"\s*@\s*[\d.,]*$", "", name or "").strip()
+    if len(re.findall(r"[A-Za-z]", name)) < 3:
+        return None
+    if not unit:
+        if not ar.match_legend_name(name):
+            return None
+        unit = "m3/min" if "rate" in name.lower() else ""
+    if unit == "L/m3" and "conc" not in name.lower():
+        name += " Conc"
+    return name, unit
+
+
+def _legend_masks(img, box, rgbs):
+    """Each legend colour's ink across the page -> ({"p0": mask, ...},
+    [pen rgb]) in legend order, or None where two pens are too alike to
+    tell apart.
+
+    The hue families (auto_raster.hue_masks) are broad on purpose, and a
+    book that draws its pens in colours between them loses pens to them.
+    00278 p60 draws Econo in maroon (128,0,64), SCS-1 in violet (142,0,255)
+    and SSI-1 in magenta: maroon passes both the red and the magenta rule,
+    violet the magenta and the blue, and the "magenta" traced was three
+    pens at once, read on a red ladder 0..10. A pixel is a pen's here when
+    it is coloured (not the grid's grey, the frame's black) and nearer that
+    pen than white and than every other pen — the rule that reads the
+    legend line itself. The colours start as the legend's text and move
+    once onto the plot's own ink, the text being drawn thin and paled at
+    its edges: Econo reads (161,45,95) in the legend."""
+    x0, y0, x1, y1 = box
+    a = np.asarray(img)
+    chroma = a.max(axis=2).astype(int) - a.min(axis=2)
+    idx = np.nonzero(chroma >= 40)
+    if not len(idx[0]):
+        return None
+    px = a[idx].astype(np.float32)
+    inplot = (idx[0] >= y0) & (idx[0] < y1) & (idx[1] >= x0) & (idx[1] < x1)
+    cen = np.asarray(rgbs, np.float32)
+    for it in range(2):
+        d = np.stack([((px - c) ** 2).sum(axis=1) for c in cen])
+        near = d.argmin(axis=0)
+        mine = d.min(axis=0) < ((px - 255.0) ** 2).sum(axis=1)
+        if it == 1:
+            break
+        for k in range(len(cen)):
+            sel = inplot & mine & (near == k)
+            if int(sel.sum()) >= 50:
+                cen[k] = np.median(px[sel], axis=0)
+    if any(np.linalg.norm(cen[i] - cen[j]) < 40
+           for i in range(len(cen)) for j in range(i + 1, len(cen))):
+        return None
+    masks = {}
+    for k in range(len(cen)):
+        m = np.zeros(a.shape[:2], bool)
+        sel = mine & (near == k)
+        m[idx[0][sel], idx[1][sel]] = True
+        masks[f"p{k}"] = m
+    return masks, [tuple(int(v) for v in c) for c in cen]
+
+
+def _read_by_legend(img, box, sample_sec):
+    """A colour-keyed chemical chart read pen by pen from its own legend ->
+    ("read", (samples, channels, info)); ("treatment", None) where the
+    legend over it is the treatment chart's; (None, None) where the legend
+    does not settle it.
+
+    The legend is taken whole or not at all: two entries or more, every one
+    read, a chemical legend's units only (L/m3 and the clean rate's m3/min)
+    — an offset chart's wells or a fleet chart's fuel are not this. A
+    treatment name among them means the book printed the treatment chart's
+    legend over this one (00247 p25, 00184 p21: "Surface Pressure", "Prop
+    Conc" over a chart of additives); pipeline._step_chem_names_borrowed then
+    names its pens from the nearest chart whose legend did read. Each pen is
+    traced in its own colour (_legend_masks) and calibrated by the ladder
+    printed in that colour, as ar.extract does for the hue families."""
+    entries = _legend_above(img, box)
+    named = [_chem_legend_name(e["text"]) for e in entries]
+    if any(nu and nu[0] in ar.TREATMENT_ONLY for nu in named):
+        return "treatment", None
+    if len(named) < 2 or any(nu is None for nu in named):
+        return None, None
+    units = {u for _n, u in named}
+    if "L/m3" not in units or not units <= {"L/m3", "m3/min"} \
+            or len({n for n, _u in named}) < len(named):
+        return None, None
+    got = _legend_masks(img, box, [e["rgb"] for e in entries])
+    if got is None:
+        return None, None
+    masks, pens = got
+    try:
+        samples, chans, info = ar.extract(img, sample_sec=sample_sec, plot=box,
+                                          glyphs=True, edge_blank=True,
+                                          ticks_in_strip=True, tick_repairs=True,
+                                          masks=masks,
+                                          palette={f"p{k}": rgb for k, rgb in enumerate(pens)})
+    except ValueError:
+        return None, None
+    for c in chans:
+        k = int(c["key"].rsplit("-p", 1)[1])
+        name, unit = named[k]
+        c["key"] = "series-legend-" + re.sub(r"\W+", "-", name.lower())
+        c["label"], c["unit"] = name, _legend_unit_for(name, unit) or unit
+        c["color"] = "#%02x%02x%02x" % pens[k]
+        c["pen_rgb"] = pens[k]
+    info["notes"] = [re.sub(r"series 'p(\d+)'",
+                            lambda m: f"{named[int(m.group(1))][0]}", n)
+                     for n in info.get("notes") or ()]
+    return "read", (samples, chans, info)
+
+
+def _pen_rgb(img, mask, box):
+    """A traced pen's colour: the median of its most saturated ink in the
+    plot, or None."""
+    x0, y0, x1, y1 = box
+    px = np.asarray(img)[y0:y1, x0:x1][mask[y0:y1, x0:x1]]
+    if len(px) < 50:
+        return None
+    sat = px.max(axis=1).astype(int) - px.min(axis=1)
+    return tuple(int(v) for v in np.median(px[sat >= np.percentile(sat, 70)], axis=0))
+
+
 def _pen_channel(sub, cal, box, ta, tb, t_start, samples, ink, sample_sec,
                  label, key, rgb, glyphs=True):
     """One pen's mask (plot-cropped) read against its axis -> channel, or
@@ -1945,6 +2229,8 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         box = _frame_bbox(img)
     if box is None:
         raise ValueError("step1: no frame")
+    if require_titles and _ticks_in_pen_colours(img, box):
+        raise ValueError("step1: tick labels in the pens' own colours")
     x0, y0, x1, y1 = box
     # The 2019 tiled books label the axis with a wall clock — 13:40, 13:50
     # … — and nothing else. Read that first, the way layout B's is read
@@ -4358,6 +4644,7 @@ def extract_page(page, sample_sec=1.0):
     sy = img.shape[0] / pr.height if pr.height else 0
     out = []
     seen_titles = []
+    _masks = []
     boxes = find_charts(img)
     for i, box in enumerate(boxes):
         # The chart says what it is. Position does not: 00184/00185 put a
@@ -4390,6 +4677,19 @@ def extract_page(page, sample_sec=1.0):
         except Exception:
             info = None
         titled = info is not None
+        chem_legend = None
+        if not titled and tag == "c":
+            # A chemical chart whose own legend names every pen is read pen
+            # by pen in the legend's colours (see _read_by_legend)
+            chem_legend, got = _read_by_legend(img, box, sample_sec)
+            if got:
+                samples, chans, info = got
+                info["chem_legend"] = chem_legend
+                info["pens"] = {c["label"]: c.pop("pen_rgb") for c in chans}
+                info["geom"] = _page_geom(info, sx, sy)
+                _place_on_clock(img, info)
+                out.append((tag, samples, chans, info))
+                continue
         if not titled:
             try:
                 # a label's colour is counted beside the label, not in the
@@ -4560,6 +4860,18 @@ def extract_page(page, sample_sec=1.0):
                 continue                      # keep the neutral "Series (x)"
             c["label"] = name
             c["unit"] = unit
+        if tag == "c":
+            # each pen's colour, for a chart a stage away to lend its legend's
+            # names by (pipeline._step_chem_names_borrowed)
+            if not _masks:
+                _masks.append(ar.hue_masks(np.asarray(img).astype(int)))
+            info["chem_legend"] = chem_legend
+            info["pens"] = {}
+            for c in chans:
+                m = _masks[0].get(c["key"].replace("series-", ""))
+                rgb = _pen_rgb(img, m, box) if m is not None else None
+                if rgb:
+                    info["pens"][c["label"]] = rgb
         out.append((tag, samples, chans, info))
 
     if not out and not flat_first and not page.get_text().strip():
