@@ -64,5 +64,42 @@ class ClockedButUndated(unittest.TestCase):
             self.CLOCKS, "30", 600), "2017-09-01")
 
 
+class PageTwin(unittest.TestCase):
+    """00242 p70: stage 25's surface plot opens 22:34 (filed 08-24 22:33),
+    its chemical plot 21:37 because it covers stage 24 too. 21:37 is before
+    stage 24's filed 21:40, so the day between the neighbours is 08-25, and
+    the Lab flagged stage 26 for starting 51 min before 25 finished."""
+
+    CLOCKS = {"24": {"date": "2017-08-24", "start": "21:40:00"},
+              "25": {"date": "2017-08-24", "start": "22:33:00"},
+              "26": {"date": "2017-08-25", "start": "22:10:00"}}
+
+    def run_clock(self, charts):
+        was = pipeline.step_summary.stage_clock
+        pipeline.step_summary.stage_clock = lambda doc: self.CLOCKS
+        try:
+            pipeline._step_clock(None, charts, [])
+        finally:
+            pipeline.step_summary.stage_clock = was
+        return [c["meta"]["date"] for c in charts]
+
+    def test_the_wide_plot_takes_the_day_of_the_plot_beside_it(self):
+        self.assertEqual(pipeline._step_day_between(self.CLOCKS, "25", 21 * 3600 + 37 * 60),
+                         "2017-08-25")       # what it took alone
+        # either order: the chemical plot handled first still follows the surface one
+        self.assertEqual(self.run_clock([chart(25, "21:37:30", 120), chart(25, "22:34:38", 62)]),
+                         ["2017-08-24", "2017-08-24"])
+        self.assertEqual(self.run_clock([chart(25, "22:34:38", 62), chart(25, "21:37:30", 120)]),
+                         ["2017-08-24", "2017-08-24"])
+
+    def test_across_midnight_the_twin_keeps_its_own_side(self):
+        clocks = {"4": {"date": "2017-04-24", "start": "22:25:00"},
+                  "5": {"date": "2017-04-24", "start": "23:58:00"},
+                  "6": {"date": "2017-04-25", "start": "01:45:00"}}
+        self.CLOCKS = clocks
+        self.assertEqual(self.run_clock([chart(5, "23:47:42", 83), chart(5, "00:02:35", 69)]),
+                         ["2017-04-24", "2017-04-25"])
+
+
 if __name__ == "__main__":
     unittest.main()

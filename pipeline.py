@@ -4061,8 +4061,15 @@ def _step_clock(doc, results, notes):
                 # stage 29 had begun, and the Lab said stage 30 started 160
                 # min before 29 finished. 0 of 1,442 clocked STEP charts open
                 # at or after the next stage's filed start.
-                md["date"] = _step_day_between(clocks, md.get("stage"),
-                                               ours or 0) or want
+                # A chart beside it on the page for the same stage that has a
+                # day goes first: 00242 p70 prints stage 25's surface plot from
+                # 22:34 on 08-24 and its chemical plot from 21:37, an hour
+                # earlier because that plot covers stage 24 too. 21:37 is
+                # before stage 24's filed start, so the day between the
+                # neighbours was 08-25, and the Lab flagged stage 26.
+                md["date"] = (_step_twin_day(step, r, clocks, printed)
+                              or _step_day_between(clocks, md.get("stage"), ours or 0)
+                              or want)
                 redated += 1
                 continue
             gap = abs((ours or 0) - printed)
@@ -4092,6 +4099,29 @@ def _step_clock(doc, results, notes):
         notes.append(f"stage(s) {', '.join(sorted(set(missing))[:8])} are not "
                      f"in the Daily Stage Summary, so their clock is left "
                      f"blank rather than defaulted to midnight.")
+
+
+def _step_twin_day(step, r, clocks, filed):
+    """r's day from the clocked chart printed on its page for its stage that
+    opens nearest the stage's filed time of day (`filed`, seconds), when that
+    chart is not r -> 'YYYY-MM-DD', or None. The anchor's day is its own, or
+    the day between its neighbours; the others follow it across midnight. A
+    plot that also covers the stage before opens far from the filed start and
+    is never the anchor."""
+    md = r["meta"]
+    twins = [o for o in step
+             if o.get("page") == r.get("page") and o["meta"].get("stage") == md.get("stage")
+             and (o["meta"].get("start_time") or "") not in ("", "00:00:00")]
+
+    def off(o):
+        g = abs((_hms(o["meta"]["start_time"]) or 0) - filed)
+        return min(g, 86400 - g)
+    anchor = min(twins, key=off) if twins else None
+    if anchor is None or anchor is r or off(anchor) == off(r):
+        return None
+    at = _hms(anchor["meta"]["start_time"]) or 0
+    day = anchor["meta"].get("date") or _step_day_between(clocks, md.get("stage"), at)
+    return _day_shift(day, _hms(md.get("start_time")) or 0, at) if day else None
 
 
 def _step_day_between(clocks, stage, secs):
