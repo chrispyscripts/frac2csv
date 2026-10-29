@@ -736,6 +736,28 @@ def _other_legend(img, box):
     return ""
 
 
+# The top of the highest axis a neighbouring well's casing pressure is drawn
+# on. The STEP offset charts of 00184-00278 top it between 4 and 80 MPa
+# (1,717 curves at 70, 1,694 at 30); a proppant axis tops at 800-1,600.
+WELL_AXIS_MAX = {"mpa": 200.0, "kpa": 200000.0, "psi": 30000.0}
+
+
+def _wells_axes(chans, offset):
+    """Can every curve an offset legend names a pressure sit on the axis it
+    was read off? -> False where one reaches past any pressure axis (see
+    WELL_AXIS_MAX)."""
+    for c in chans:
+        fam = c["key"].replace("series-", "").rstrip("2")
+        name, unit = offset.get(fam, ("", ""))
+        top = WELL_AXIS_MAX.get((unit or "").lower())
+        fr = c.get("axis_frame")
+        if top is None or not fr or "Well" not in name:
+            continue
+        if max(abs(fr[0]), abs(fr[1])) > top:
+            return False
+    return True
+
+
 def _fit(seg, tenths=False):
     """A STEP tick ladder's fit, with a lost decimal point and a "1" read as
     "4" undone where that explains more of it (auto_raster._repaired_ladder:
@@ -4055,6 +4077,13 @@ def _extract_new(page, sample_sec=1.0):
             meta.setdefault("skipped", []).append(
                 f"{'surface' if tag == 't' else 'chemical'} chart — {e}")
             continue
+        # 00269 p66 prints stage 19's offset chart under the "Offset
+        # Analysis" bar, below its chemical chart. No caption names that bar,
+        # so the second image was "c" by its place: _name_chemical dropped its
+        # Surface Main and the stage carried two chemical charts. A chart
+        # that carries offset wells is the offset chart, filed with the
+        # surface charts as on the tiled pages.
+        tag, _note = _bar_tag(tag, "", chans)
         _name_chemical(tag, chans)
         try:
             if r is not None and r.width > 1 and r.height > 1:
@@ -4429,6 +4458,25 @@ def extract_page(page, sample_sec=1.0):
         offset = {}
         if _offset_title(title):
             offset = _offset_legend(img, box)
+        if offset and not _wells_axes(chans, offset):
+            # 00247 p107 and p109 print stage 43's and 44's TREATMENT charts
+            # under the offset chart's legend — "A Well", "0 Well", "C Well"
+            # and "E Well Casing Pressure" over the Treatment 42 chart's own
+            # colours and axes: the prop concs on 0..1600, the slurry rate on
+            # 0..16, the coil's fluid rate on 0..1.6. Read as wells, the Prop
+            # Conc went out as a casing pressure of 501 MPa. A curve the
+            # legend calls a well's pressure on an axis no pressure is drawn
+            # on says the legend is not this chart's; the chart is read as the
+            # treatment chart its axes are. A colour the table does not name
+            # (the coil's magenta) takes the name the file's other treatment
+            # charts print for it on the same axis (pipeline's
+            # _step_borrowed_names).
+            info.setdefault("notes", []).append(
+                "a treatment chart printed under an offset chart's legend (its "
+                "wells' \"pressures\" sit on the proppant and rate axes): its "
+                "curves are named by the treatment chart's colours")
+            info["borrow_names"] = True
+            offset = {}
         if offset:
             kept = []
             for c in chans:
