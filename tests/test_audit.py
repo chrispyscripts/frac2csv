@@ -413,5 +413,53 @@ class FromTheOctoberScan(unittest.TestCase):
         self.assertIn("the report's own times", f[0]["cause"])
 
 
+def offset(label, page, wells=("A", "B", "C"), **kw):
+    """STEP's offset-well plot: same source tag and stage as the treatment
+    plot beside it, treating pressure plus one pen per offset well"""
+    st = stage(label, page, **kw)
+    press = st["channels"][0]["values"]
+    st["channels"] = [st["channels"][0]] + [chan(f"{w} Well Offset Pressure", press, 80)
+                                            for w in wells]
+    return st
+
+
+class TwoChartsAStage(unittest.TestCase):
+    """00241 / 00243: a treatment plot and an offset-well plot for every
+    stage, both "STEP surface chart". Compared as one template, every offset
+    pen was absent from every treatment chart and every stage was doubled."""
+
+    def well(self):
+        out = []
+        for k in range(1, 6):
+            out += [stage(str(k), 2 * k + 10, start=f"{7 + k:02d}:00:00"),
+                    offset(str(k), 2 * k + 11, start=f"{7 + k:02d}:00:00")]
+        return out
+
+    def test_the_two_plots_are_two_kinds(self):
+        res = audit.audit_stages(self.well(), [])
+        self.assertEqual(of(res, "channel.absent"), [])
+        self.assertEqual(of(res, "stage.doubled"), [])
+
+    def test_a_pen_lost_on_one_plot_is_still_found(self):
+        sts = self.well()
+        sts[4] = stage("3", 16, start="10:00:00", drop=("Slurry Rate",))
+        sts[7] = offset("4", 19, wells=("A", "B"), start="11:00:00")
+        f = of(audit.audit_stages(sts, []), "channel.absent")
+        self.assertEqual(sorted((x["stage"], x["channel"]) for x in f),
+                         [("3", "Slurry Rate"), ("4", "C Well Offset Pressure")])
+
+    def test_a_stage_with_one_plot_joins_its_own_kind(self):
+        sts = self.well()
+        del sts[4]                            # stage 3 printed its offset plot only
+        res = audit.audit_stages(sts, [])
+        self.assertEqual(of(res, "channel.absent"), [])
+
+    def test_a_third_chart_of_a_stage_is_still_doubled(self):
+        sts = self.well() + [stage("2", 40, start="09:00:00")]
+        f = of(audit.audit_stages(sts, []), "stage.doubled")
+        self.assertEqual(len(f), 1)
+        self.assertIn("'2'", f[0]["evidence"])
+
+
 if __name__ == "__main__":
     unittest.main()
