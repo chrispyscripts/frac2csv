@@ -832,8 +832,16 @@ def _clocks_one_source(stages, table=None):
     order = sorted(stages, key=lambda st: (stage_num(_stage_label(st)), st.get("page") or 0))
     prev = None
     absent, in_table = [], []
+    # Several charts of one template at exactly 00:00:00 are the default, not
+    # midnight: 00278's 60 STEP charts print no clock and carry their day and
+    # 00:00:00, and "overlapped" each other 54 times where the Lab, which
+    # reads 00:00:00 as no clock, flags none. One chart at midnight is a
+    # midnight (00015's stage 4, above).
+    zero = [st for st in stages if str(_meta(st, "start_time") or "") == "00:00:00"
+            and not _meta(st, "clock_chart")]
+    default = {id(st) for st in zero} if len(zero) > 1 else set()
     for st in order:
-        t = _start(st)
+        t = None if id(st) in default else _start(st)
         if t is None:
             absent.append(st)
             printed = st.get("clock_printed")

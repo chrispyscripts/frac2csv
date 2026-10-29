@@ -454,6 +454,18 @@ class TwoChartsAStage(unittest.TestCase):
         res = audit.audit_stages(sts, [])
         self.assertEqual(of(res, "channel.absent"), [])
 
+    def test_charts_that_all_say_midnight_have_no_clock(self):
+        # 00278: dated, 00:00:00, no clock printed — 54 "overlaps" before
+        sts = [stage(str(k), 10 + k, date="2017-02-12", start="00:00:00", dur=70)
+               for k in range(1, 6)]
+        res = audit.audit_stages(sts, [])
+        self.assertEqual(of(res, "clock.overlap"), [])
+        self.assertEqual(of(res, "clock.backwards"), [])
+        # one chart at midnight among clocked ones is a midnight, and compared
+        sts = [stage("1", 10, start="23:00:00", dur=90), stage("2", 11, date="2025-04-13",
+                                                                start="00:00:00", dur=50)]
+        self.assertEqual(len(of(audit.audit_stages(sts, []), "clock.overlap")), 1)
+
     def test_a_third_chart_of_a_stage_is_still_doubled(self):
         sts = self.well() + [stage("2", 40, start="09:00:00")]
         f = of(audit.audit_stages(sts, []), "stage.doubled")
