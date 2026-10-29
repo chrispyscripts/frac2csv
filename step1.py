@@ -4678,9 +4678,12 @@ def extract_page(page, sample_sec=1.0):
             info = None
         titled = info is not None
         chem_legend = None
-        if not titled and tag == "c":
-            # A chemical chart whose own legend names every pen is read pen
-            # by pen in the legend's colours (see _read_by_legend)
+        # A chemical chart whose own legend names every pen is read pen by
+        # pen in the legend's colours (see _read_by_legend) — not a chart
+        # the title names as another analysis: 00185 prints a chemical
+        # legend over its "DGB Analysis" fleet charts (p33, p35, p39), and
+        # read by it their surface pressure went out as the clean rate
+        if not titled and tag == "c" and not re.search(r"\bdgb\b|offset", title):
             chem_legend, got = _read_by_legend(img, box, sample_sec)
             if got:
                 samples, chans, info = got
