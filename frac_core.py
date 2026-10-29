@@ -221,6 +221,16 @@ def _orientation(page, frame):
             return "y"
         if cy < frame.y0 or cy > frame.y1:
             return "x"
+    # An outlined page whose OCR lost the axis title — 00234 p77 reads it
+    # "Time nim" — still says which way it is turned: the plot is drawn
+    # sideways inside an upright page (/Rotate 0), and every label turns with
+    # it, so the strings it drew run along y. The page /Rotate below says
+    # "x" there, and read along x the sheet's curves are nonsense.
+    if _outlined(page):
+        runs = [abs(s["dir"][1]) > abs(s["dir"][0])
+                for s in ocr_labels.outline_spans(page) if s["n"] >= 6]
+        if runs:
+            return "y" if 2 * sum(runs) > len(runs) else "x"
     return "y" if page.rotation in (90, 270) else "x"
 
 
@@ -293,6 +303,31 @@ def _text_spans(page):
     return out
 
 
+def _outlined(page):
+    """True for a page that draws its labels as glyph outlines: no text layer
+    at all. A Type3 page (00339, 00340) is garbled too, but its labels are
+    still text, which the whole-page OCR reads and outline_spans does not."""
+    try:
+        return not (page.get_text() or "").strip()
+    except Exception:
+        return False
+
+
+def _outlined_spans(page):
+    """[(bbox, text)] for the page's outlined strings, or [] — see detect_legend.
+
+    Only an outlined page is asked, and only its strings carrying a letter
+    are kept, exactly as _text_spans keeps them."""
+    if not _outlined(page):
+        return []
+    out = []
+    for s in ocr_labels.outline_spans(page):
+        t = (s["text"] or "").strip()
+        if t and any(c.isalpha() for c in t):
+            out.append((tuple(s["rect"]), t))
+    return out
+
+
 def _label_for_key(rect, horizontal, spans):
     """The legend text this key belongs to, or None.
 
@@ -345,9 +380,25 @@ def detect_legend(page):
     if not keys:
         return None, None
     spans = _text_spans(page)
+    # A page that draws its labels as glyph outlines (00228 and 00234, the
+    # Chinook MView sheets) has no spans, and the whole-page OCR stands in for
+    # them with LINE boxes, which are wrong for this test twice over. The line
+    # takes in the swatch drawn at its head ("—Treating Pressure (MPa)"), so
+    # its far end overruns the key and no label ever abutted one: every such
+    # sheet fell back to the colour table, which has no teal and no black. And
+    # where the read goes worse, one line swallows the next: 00228 p74 and
+    # 00234 p77 OCR'd the title across both legend columns, the title
+    # "covered" the blue and black keys and abutted them, and the Bottom Hole
+    # sheet of zones 1-9 (1-10) failed outright — "no treatment channel in
+    # the page legend (Chinook 200/d-E083-F/094-H-03/00 Bottom Hole)".
+    # ocr_labels.outline_spans reads each label as the string the page drew,
+    # with its ink box, so on an outlined page it is asked first; the OCR
+    # lines stay for a key it leaves unlabelled, and for every other page.
+    drawn = _outlined_spans(page)
     named = []
     for rgb, rect, horizontal in keys:
-        text = _label_for_key(rect, horizontal, spans)
+        text = ((_label_for_key(rect, horizontal, drawn) if drawn else None)
+                or _label_for_key(rect, horizontal, spans))
         if text is None:
             continue
         col = aliases.canon(_clean_label(text))
@@ -556,6 +607,16 @@ _BAND_PAD = 30.0
 def _numeric_spans(page):
     """[(bbox, value)] for every span that is a bare number."""
     if ocr_labels.garbled(page):
+        # An outlined page's numbers as the strings it drew, as its legend is
+        # read (detect_legend). The whole-page pass is at the mercy of
+        # tesseract's layout of the sheet: 00228 p81 reads 14 tick labels,
+        # and p74, the same template a day earlier, reads none at all — so
+        # the zones 1-9 Bottom Hole sheet had no pressure, concentration or
+        # time axis (00234 p77 the same, for zones 1-10).
+        if _outlined(page):
+            got = ocr_labels.outline_numeric_spans(page)
+            if got:
+                return got
         return ocr_labels.numeric_spans(page)
     out = []
     for block in page.get_text("dict")["blocks"]:

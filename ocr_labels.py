@@ -660,6 +660,33 @@ def outline_spans(page, accept=None):
     return out
 
 
+def outline_numeric_spans(page):
+    """numeric_spans' answer read off the page's outlined strings instead.
+
+    [(bbox, value)] for every string that is a bare number, held to the same
+    NUMBER_CONF. The box is the string's ink box grown to a line box across
+    the direction it runs, by the same _LINE_BOX_PAD the page pass adds, so
+    a tick run's labels abut as they do there: 00228 p74 prints "15" in red
+    and "500" in teal 3.2pt apart at one tick, and as bare ink the two were
+    two columns.
+    """
+    out = []
+    for s in outline_spans(page):
+        t = (s["text"] or "").strip().replace(",", "")
+        if s["conf"] < NUMBER_CONF or not _NUMBER.fullmatch(t):
+            continue
+        r = fitz.Rect(s["rect"])
+        ux, uy = s["dir"]
+        if abs(ux) >= abs(uy):
+            pad = _LINE_BOX_PAD * r.height
+            r.y0, r.y1 = r.y0 - pad, r.y1 + pad
+        else:
+            pad = _LINE_BOX_PAD * r.width
+            r.x0, r.x1 = r.x0 - pad, r.x1 + pad
+        out.append((tuple(r), float(t)))
+    return out
+
+
 def text_spans(page):
     """[(bbox, text)] for every OCR'd line carrying a letter.
 
