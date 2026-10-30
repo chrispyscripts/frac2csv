@@ -107,6 +107,19 @@ class ReadByLegend(unittest.TestCase):
             self.assertEqual(step1._read_by_legend(blank(), (10, 10, 390, 290), 1.0),
                              (None, None))
 
+    def test_a_ladder_no_legend_pen_owns_refuses_the_legend(self):
+        # 00269 p78: the light green SFR-202a's dashed entry did not read
+        ents = self.entries("COMBINED CLEAN RATE (m3/min)", "SSI-LDP2 Conc. (L/m3)")
+        img = blank()
+        img[100:103, 60:110] = (0, 255, 255)       # each pen's ladder inked
+        img[150:153, 60:110] = (255, 0, 255)
+        fake = (np.arange(10.0), [{"key": "series-p0", "values": np.zeros(10)}],
+                {"unowned_ticks": 6, "notes": []})
+        with mock.patch.object(step1, "_legend_above", return_value=ents), \
+                mock.patch.object(ar, "extract", return_value=fake):
+            self.assertEqual(step1._read_by_legend(img, (150, 20, 390, 280), 1.0),
+                             (None, None))
+
 
 class PensByLegendColour(unittest.TestCase):
     """00278 p60: SSI-1 magenta, SCS-1 violet (142,0,255), Econo maroon
@@ -176,6 +189,13 @@ class TickLabels(unittest.TestCase):
                (0.0, 1033, True), (0.0, 1041, True), (0.0, 1060, True)]
         a, b, _n = ar.fit_ticks_guarded(pts, repairs=True)
         self.assertAlmostEqual(a + b * 395, 30.0, delta=0.6)
+
+    def test_a_ladder_that_fits_is_not_rounded(self):
+        # 00273 p45: 15..3 exact, 0 unread, a stray "55" under the frame
+        pts = [(3.0, 876, True), (6.0, 732, True), (9.0, 590, True), (12.0, 448, True),
+               (15.0, 306, True), (42.0, 448, True), (45.0, 306, True), (55.0, 1029, True)]
+        a, b, _n = ar.fit_ticks_guarded(pts, repairs=True)
+        self.assertAlmostEqual(a + b * 1018, 0.0, delta=0.1)
 
     def test_an_exact_ladder_keeps_its_own_fit(self):
         pts = [(v, 100 + 50 * k, True) for k, v in enumerate((10, 8, 6, 4, 2, 0))]

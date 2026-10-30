@@ -1581,10 +1581,11 @@ def _legend_above(img, box):
         xs = np.flatnonzero(col[y])
         if not len(xs):
             continue
-        for seg in np.split(xs, np.flatnonzero(np.diff(xs) > 1) + 1):
+        # dashed too: 00269 p78 draws three of its four rules in dashes
+        for seg in np.split(xs, np.flatnonzero(np.diff(xs) > 8) + 1):
             a, b = int(seg[0]), int(seg[-1])
             # a rule, not the border across the band (00247's title bar)
-            if not (40 <= b - a + 1 <= 0.25 * (x1 - x0)):
+            if not (40 <= b - a + 1 <= 0.25 * (x1 - x0)) or len(seg) < 0.5 * (b - a + 1):
                 continue
             for r in rules:
                 if abs(r["a"] - a) <= 4 and abs(r["b"] - b) <= 4 and y - r["y1"] <= 2:
@@ -1770,6 +1771,17 @@ def _read_by_legend(img, box, sample_sec):
     if got is None:
         return None, None
     masks, pens = got
+    # ...and only where the ladders are printed in the pens' inks, two of
+    # them at least: 00269 prints one brown ladder a side under a rotated
+    # title, every label went to the pen nearest brown, and p78's clean
+    # rate went out on the 0..2 additive ladder
+    x0, y0, x1, y1 = box
+    W = np.asarray(img).shape[1]
+    inked = sum(1 for m in masks.values()
+                if int(m[y0:y1, max(0, x0 - 110):max(0, x0 - 6)].sum())
+                + int(m[y0:y1, min(W, x1 + 6):min(W, x1 + 110)].sum()) >= 40)
+    if inked < 2:
+        return None, None
     try:
         samples, chans, info = ar.extract(img, sample_sec=sample_sec, plot=box,
                                           glyphs=True, edge_blank=True,
@@ -1777,6 +1789,11 @@ def _read_by_legend(img, box, sample_sec):
                                           masks=masks,
                                           palette={f"p{k}": rgb for k, rgb in enumerate(pens)})
     except ValueError:
+        return None, None
+    if info.get("unowned_ticks", 0) >= 3:
+        # a ladder printed in a colour the legend did not give: a pen whose
+        # entry did not read (00269 p78's light green SFR-202a, its rule
+        # dashed), its labels handed to whichever pen came nearest
         return None, None
     for c in chans:
         k = int(c["key"].rsplit("-p", 1)[1])

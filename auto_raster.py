@@ -477,8 +477,9 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None,
         if palette:
             k = _label_pen(img[max(0, py - 5):py + 6,
                                max(x0, px - 20):min(x1, px + 21)], palette)
-            if k is not None:
-                out[k].append((float(t), py, True))
+            # a label no pen owns is kept aside, under "?": a ladder of
+            # them is a pen the palette lacks (step1._read_by_legend)
+            out.setdefault(k if k is not None else "?", []).append((float(t), py, True))
             continue
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
@@ -990,7 +991,13 @@ def _repaired_ladder(strict, fit):
     # counted to the same half digit. Not on the lost-point sets: every label
     # at a tenth is as straight a ladder as the labels as read, and 00247
     # p70's 0..30 offset ladder (three wells, stacked) went out as 0..3.
+    # Only for a ladder no line holds four labels of: 00273 p45's 15, 12, 9,
+    # 6, 3 fit exactly, and a stray "55" offered as 0.55 under them made an
+    # end-to-end line that rounding to a whole number let through — Slurry
+    # Rate on 15..1.
     held = best or fit
+    if held and _ladder_inliers(strict, held) >= 4:
+        return best
     floor = max(best_n, _rounded_count(held, strict) if held else 0)
     alt, got = _rounded_ladder(list(strict) + shrunk + fours)
     if alt and got > floor:
@@ -1963,6 +1970,7 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
             for k, pts in ticks.items()}
     ticks = {k: [(v, y, st) for v, y, st in pts if y0 - 25 <= y <= y1 + 25]
              for k, pts in ticks.items()}
+    unowned = len(ticks.pop("?", ()))
     channels, notes = [], []
     for key, mask in masks.items():
         # tick_repairs: see _repaired_ladder
@@ -2022,4 +2030,6 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
         raise ValueError("no channel could be calibrated; " + "; ".join(notes[:3]))
     info = {"plot": (x0, y0, x1, y1), "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": notes}
+    if palette:
+        info["unowned_ticks"] = unowned
     return samples, channels, info
