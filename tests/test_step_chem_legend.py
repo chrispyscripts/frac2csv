@@ -72,6 +72,7 @@ class LegendLines(unittest.TestCase):
             "Econo @ 0.1 iLim*}": ("Econo Conc", "L/m3"),
             "SFE-2 @ 1.0 {L/m*)": ("SFE-2 Conc", "L/m3"),
             "Clean Flow Rate (m/min)": ("Clean Rate", "m3/min"),
+            "AQUCAR 742 Conc. (L/m3)": ("Aqucar 742 Conc", "L/m3"),
         }
         for text, want in cases.items():
             self.assertEqual(step1._chem_legend_name(text), want, text)

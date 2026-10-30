@@ -1692,6 +1692,9 @@ def _chem_legend_name(text):
         unit = "m3/min" if "rate" in name.lower() else ""
     if unit == "L/m3" and "conc" not in name.lower():
         name += " Conc"
+    # one spelling for a pen whatever case the legend prints it in: 00274 p83
+    # and 00269 p78 print "AQUCAR 742 Conc."
+    name = next((k for k in _KNOWN_PENS if k.lower() == name.lower()), name)
     return name, unit
 
 
