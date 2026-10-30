@@ -385,8 +385,50 @@ def _nearest_pen_family(label_img, masks, pen_hue, exclude=(), margin=8.0):
     return best
 
 
-def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
+def _label_pen(label_img, palette):
+    """The pen (`palette`: {key: rgb}) a tick label is printed in -> key, or
+    None: the median of the label's inkiest third, nearest pen, and within
+    half the way from that pen to white. The text is rendered with colour
+    fringes — a dark green (0,128,64) label on 00278 p52 carries (32,176,208)
+    and (240,224,176) at its glyph edges — so counting a pen's pixels around
+    it handed green's labels to the blue and the orange pens."""
+    px = np.asarray(label_img).reshape(-1, 3).astype(float)
+    ink = ((px - 255.0) ** 2).sum(axis=1)
+    chroma = px.max(axis=1) - px.min(axis=1)
+    sel = chroma >= 40
+    if int(sel.sum()) < 8:
+        return None
+    px, ink = px[sel], ink[sel]
+    core = np.median(px[ink >= np.percentile(ink, 67)], axis=0)
+    best = min(palette, key=lambda k: float(((core - palette[k]) ** 2).sum()))
+    rgb = np.asarray(palette[best], float)
+    if float(((core - rgb) ** 2).sum()) > 0.25 * float(((rgb - 255.0) ** 2).sum()):
+        return None
+    return best
+
+
+def _tick_value(text):
+    """One OCR'd tick label -> its value as a string, or None.
+
+    A ladder never prints a leading zero; a lost decimal point does. 00278
+    p60's maroon 1.0 .. 0.0 read "10", "08", "06", "04", "0.2", "0.0" and
+    fitted 0..10, Econo at 3.1 L/m3 where the page draws 0.31. Put back,
+    five labels fit 0..1 and the "10" is an outlier _repaired_ladder mends."""
+    t = text.replace(",", "").strip("-.")
+    if not re.fullmatch(r"\d+(\.\d+)?", t):
+        return None
+    if re.fullmatch(r"0\d+", t):
+        t = t[0] + "." + t[1:]
+    return t
+
+
+def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None,
+                   palette=None):
     """OCR a vertical tick-label strip; assign numbers to series by color.
+
+    palette ({key: rgb}, the pens of `masks`): a label goes to the pen its
+    own core is printed in (_label_pen) rather than to the mask with the
+    most pixels round it.
 
     in_strip=True counts a label's colour inside the strip only. The window
     reaches 40 px either side of the label, and for a label printed just
@@ -424,14 +466,21 @@ def ocr_tick_strip(img, masks, xa, xb, out=None, in_strip=False, rows=None):
     pil = pil.resize((pil.width * SCALE, pil.height * SCALE), Image.LANCZOS)
     words = ocr_words(np.array(pil).astype(int), psm=6, whitelist="0123456789.-")
     for text, cx, cy in words:
-        t = text.replace(",", "").strip("-.")
-        if not re.fullmatch(r"\d+(\.\d+)?", t):
+        t = _tick_value(text)
+        if t is None:
             continue
         px, py = int(cx / SCALE) + xa, int(cy / SCALE)
         y0, y1 = max(0, py - 12), py + 13
         x0, x1 = max(0, px - 40), px + 41
         if in_strip:
             x0, x1 = max(x0, xa), min(x1, xb)
+        if palette:
+            k = _label_pen(img[max(0, py - 5):py + 6,
+                               max(x0, px - 20):min(x1, px + 21)], palette)
+            # a label no pen owns is kept aside, under "?": a ladder of
+            # them is a pen the palette lacks (step1._read_by_legend)
+            out.setdefault(k if k is not None else "?", []).append((float(t), py, True))
+            continue
         counts = {k: int(m[y0:y1, x0:x1].sum()) for k, m in masks.items()}
         bestk = max(counts, key=counts.get)
         twin = {"cyan": "green", "red": "orange"}.get(bestk)
@@ -897,6 +946,13 @@ def _repaired_ladder(strict, fit):
         42, 9, 3, and 45 / 42 fitted a 0..45 axis by themselves. Every label
         that begins with 4 is offered with a 1 instead.
 
+      - a ladder printed to fewer places than its steps. 00278 p70's
+        1.00 / 0.75 / 0.50 / 0.25 / 0.00 prints as 1.0, 0.8, 0.5, 0.3, 0.0,
+        two labels sit 34 px off any line through the others, and no fit
+        held four: SSI-1 was dropped as "axis ticks unreadable". Its end
+        labels are exact, and every label between lies on the line through
+        them to within half its own last printed digit.
+
     The repaired line is taken only where it carries more different labels
     than the line as read, and three at least."""
     if not strict:
@@ -923,7 +979,74 @@ def _repaired_ladder(strict, fit):
         got = _ladder_inliers(offered, alt)
         if got > best_n:
             best, best_n = alt, got
+    # ...offered to the end-to-end line with the end labels' own slips
+    # undone too: p70's maroon top label read "10" and its violet one "4.0"
+    mags = [abs(v) for v, _y in strict if v]
+    med = float(np.median(mags)) if mags else 0.0
+    shrunk = [(v / 10 ** k, y) for v, y in strict for k in (1, 2, 3)
+              if med and abs(v) > 3 * med and abs(v) / 10 ** k <= 3 * med]
+    fours = [(float("1" + ("%g" % v)[1:]), y) for v, y in strict
+             if ("%g" % v)[0] == "4"]
+    # ...and it must explain more of the labels than the line in hand does,
+    # counted to the same half digit. Not on the lost-point sets: every label
+    # at a tenth is as straight a ladder as the labels as read, and 00247
+    # p70's 0..30 offset ladder (three wells, stacked) went out as 0..3.
+    # Only for a ladder no line holds four labels of: 00273 p45's 15, 12, 9,
+    # 6, 3 fit exactly, and a stray "55" offered as 0.55 under them made an
+    # end-to-end line that rounding to a whole number let through — Slurry
+    # Rate on 15..1.
+    held = best or fit
+    if held and _ladder_inliers(strict, held) >= 4:
+        return best
+    floor = max(best_n, _rounded_count(held, strict) if held else 0)
+    alt, got = _rounded_ladder(list(strict) + shrunk + fours)
+    if alt and got > floor:
+        best = alt
     return best
+
+
+def _rounded_count(fit, pts):
+    """How many different labels [(value, y)] lie on `fit` to within half
+    their own last printed digit — at most 6% of the span they cover — and
+    6 px."""
+    a, b = fit[0], fit[1]
+    ys = [y for _v, y in pts]
+    span = abs(b) * (max(ys) - min(ys)) if ys else 0.0
+
+    def half(v):
+        s = "%g" % v
+        return min(0.5 * 10.0 ** -(len(s.split(".")[1]) if "." in s else 0),
+                   0.06 * span)
+    return len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
+                if abs(a + b * y - v) <= half(v) + abs(b) * 6})
+
+
+def _rounded_ladder(pts):
+    """The line through a ladder's two end labels, and how many different
+    labels lie on it to within half their own last printed digit -> (fit,
+    count), or (None, 0). The ends are the labels at the top and the bottom
+    of the column, whichever reading of each explains the most; see
+    _repaired_ladder."""
+    if len(pts) < 4:
+        return None, 0
+    top = min(y for _v, y in pts)
+    bot = max(y for _v, y in pts)
+    if bot - top < 60:
+        return None, 0
+
+    best, best_n = None, 0
+    for hv, hy in [p for p in pts if p[1] <= top + 3]:
+        for lv, ly in [p for p in pts if p[1] >= bot - 3]:
+            if hv <= lv:
+                continue
+            b = (lv - hv) / float(ly - hy)
+            a = hv - b * hy
+            got = _rounded_count((a, b), pts)
+            if got > best_n:
+                best, best_n = (float(a), float(b), got), got
+    if best_n < 4:
+        return None, 0
+    return best, best_n
 
 
 def fit_ticks_guarded(pts, tenths=False, repairs=False):
@@ -1805,16 +1928,23 @@ def curve_positions(sub, gap=2, win=None, iters=3, spike_tol=SPIKE_TOL,
 # ---------- main entry ----------
 
 def extract(img, sample_sec=1.0, plot=None, glyphs=False,
-            edge_blank=False, ticks_in_strip=False, tick_repairs=False):
+            edge_blank=False, ticks_in_strip=False, tick_repairs=False,
+            masks=None, palette=None):
     """Auto-calibrated extraction from a chart image (HxWx3 uint8/int array).
 
     Returns (samples, channels, info):
       channels = [{key,label,unit,color,values,ticks,coverage}], values np.array
       info = {plot, t0_seconds, duration_s, notes[]}
     Raises ValueError with a reason when the page can't be auto-calibrated.
+
+    `masks` ({key: whole-image bool mask}) replaces the hue families when the
+    caller knows the chart's pens better — step1 builds them from a legend's
+    own colours (step1._legend_masks) — and `palette` ({key: rgb}) then says
+    each one's colour, for its tick labels to be matched by (_label_pen).
     """
     img = np.asarray(img).astype(int)
-    masks = hue_masks(img)
+    if masks is None:
+        masks = hue_masks(img)
     if not masks:
         raise ValueError("no saturated series colors found")
     x0, y0, x1, y1 = plot if plot is not None else find_plot_area(img, masks)
@@ -1830,15 +1960,17 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
 
     # ticks_in_strip: see ocr_tick_strip's in_strip
     ticks = ocr_tick_strip(img, masks, 0, x0, in_strip=ticks_in_strip,
-                           rows=(y0 - 25, y1 + 25))
+                           rows=(y0 - 25, y1 + 25), palette=palette)
     ticks = ocr_tick_strip(img, masks, x1 + 3, min(img.shape[1], x1 + 160), out=ticks,
-                           in_strip=ticks_in_strip, rows=(y0 - 25, y1 + 25))
+                           in_strip=ticks_in_strip, rows=(y0 - 25, y1 + 25),
+                           palette=palette)
     # the end labels of a stack sit further out than the fit may look (see
     # printed_bounds): 00248 p24's green 0.0 is 26 px under the frame
     wide = {k: [(v, y, st) for v, y, st in pts if y0 - 45 <= y <= y1 + 45]
             for k, pts in ticks.items()}
     ticks = {k: [(v, y, st) for v, y, st in pts if y0 - 25 <= y <= y1 + 25]
              for k, pts in ticks.items()}
+    unowned = len(ticks.pop("?", ()))
     channels, notes = [], []
     for key, mask in masks.items():
         # tick_repairs: see _repaired_ladder
@@ -1898,4 +2030,6 @@ def extract(img, sample_sec=1.0, plot=None, glyphs=False,
         raise ValueError("no channel could be calibrated; " + "; ".join(notes[:3]))
     info = {"plot": (x0, y0, x1, y1), "t0_seconds": float(t_start),
             "duration_s": int(n), "notes": notes}
+    if palette:
+        info["unowned_ticks"] = unowned
     return samples, channels, info
