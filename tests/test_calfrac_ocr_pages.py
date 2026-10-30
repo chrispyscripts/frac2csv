@@ -222,5 +222,178 @@ class OutlinedSheet(unittest.TestCase):
         self.assertEqual(cp._ocr_zone_header(cells), cells)
 
 
+class _Outlined(object):
+    """A page with no text layer at all, as 00228/00234's sheets are."""
+    number = 73
+    rotation = 0
+
+    def __init__(self, text=""):
+        self._text = text
+
+    def get_text(self, *a):
+        return self._text
+
+
+def _string(rect, text, rgb=(0.0, 0.0, 0.0), conf=96.0, d=(0.0, -1.0), n=None):
+    import fitz
+    return {"text": text, "rect": fitz.Rect(rect), "dir": d,
+            "n": n or len(text), "color": rgb, "conf": conf}
+
+
+BLUE, BLACK, RED = (0.0, 0.0, 1.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0)
+TEAL, PURPLE = (0.0, 0.5, 0.5), (0.5, 0.0, 0.5)
+
+# 00228 p74, the Bottom Hole sheet of zones 1-9: its legend keys...
+P74_KEYS = [(BLUE, (48.48, 715.08, 48.48, 742.32)),
+            (BLACK, (65.40, 715.08, 65.40, 742.32)),
+            (RED, (48.48, 300.00, 48.48, 327.24)),
+            (TEAL, (65.40, 300.00, 65.40, 327.24)),
+            (PURPLE, (82.20, 300.00, 82.20, 327.24))]
+# ...its labels as outline_spans reads them (ink boxes, page space)...
+P74_DRAWN = [_string((43.2, 561.8, 57.0, 714.4), "Treating Pressure (MPa)", BLUE),
+             _string((60.0, 538.1, 73.8, 714.5), "Bottom Hole Pressure (MPa)"),
+             _string((43.2, 128.9, 57.0, 299.4), "Rate @ Formation (m3/min)", RED, 82),
+             _string((60.0, 92.2, 73.9, 299.4), "Master Conc @ Wellhead (kg/m3)",
+                     TEAL, 59),
+             _string((76.9, 87.0, 90.8, 299.4), "Master Conc @ Formation (kg/m3)",
+                     PURPLE, 25)]
+# ...and the lines the whole-page OCR made of it: the title swallowed both
+# legend columns, and its box covers the blue and black keys and abuts them
+P74_OCR = [((-5.3, 149.8, 67.6, 712.4),
+            "Chinook 200/d-E083-F/094-H-03/00 Bottom Hole"),
+           ((40.8, 611.6, 76.9, 742.0), "Bot tom Hole Pre"),
+           ((33.9, 194.4, 77.8, 326.9), "Rate @F ormatio")]
+
+
+class OutlinedLegend(unittest.TestCase):
+    """00228 p74 and 00234 p77 failed "no treatment channel in the page
+    legend (Chinook … Bottom Hole)": their keys were labelled with the OCR'd
+    title. The labels are read as the strings the page drew."""
+
+    def setUp(self):
+        import fitz
+        self._saved = (fc._legend_keys, fc.ocr_labels.garbled,
+                       fc.ocr_labels.text_spans, fc.ocr_labels.outline_spans)
+        fc._legend_keys = lambda page: [(rgb, fitz.Rect(r), False)
+                                        for rgb, r in P74_KEYS]
+        fc.ocr_labels.garbled = lambda page: True
+        fc.ocr_labels.text_spans = lambda page: P74_OCR
+        fc.ocr_labels.outline_spans = lambda page, accept=None: P74_DRAWN
+
+    def tearDown(self):
+        (fc._legend_keys, fc.ocr_labels.garbled,
+         fc.ocr_labels.text_spans, fc.ocr_labels.outline_spans) = self._saved
+
+    def test_every_key_takes_the_label_drawn_beside_it(self):
+        mapping, blocks = fc.detect_legend(_Outlined())
+        self.assertEqual({rgb: col for rgb, (col, _k) in mapping.items()},
+                         {BLUE: "Tr Press", RED: "Slurry Rate",
+                          TEAL: "WH Prop Conc", PURPLE: "BH Prop Conc"})
+        # the black Bottom Hole Pressure is known, and deliberately left out
+        self.assertIn((BLACK, "Bottom Hole Pressure (MPa)", None),
+                      [e for b in blocks for e in b])
+
+    def test_the_ocr_lines_alone_name_no_channel(self):
+        # what the sheet read as before: the title on both pressure keys
+        fc.ocr_labels.outline_spans = lambda page, accept=None: []
+        mapping, blocks = fc.detect_legend(_Outlined())
+        self.assertEqual(mapping, {})
+        self.assertEqual({t for b in blocks for _r, t, _c in b},
+                         {"Chinook 200/d-E083-F/094-H-03/00 Bottom Hole"})
+
+    def test_a_type3_page_is_not_asked(self):
+        # garbled, but its labels are text (00339): the OCR lines stand
+        def refuse(page, accept=None):
+            raise AssertionError("outline_spans asked of a page with text")
+        fc.ocr_labels.outline_spans = refuse
+        fc.detect_legend(_Outlined(text="\x01\x02\x03 \x04\x05"))
+
+
+class OutlinedNumbers(unittest.TestCase):
+    """The tick labels of an outlined sheet, read off its drawn strings."""
+
+    # 00228 p74's first tick: "15" red and "500" teal, and the pressure "100"
+    P74 = [_string((88.3, 95.9, 94.6, 104.2), "15", RED, 97),
+           _string((97.8, 91.2, 104.2, 104.8), "500", TEAL, 97),
+           _string((88.3, 750.2, 94.6, 763.1), "100", BLACK, 97),
+           _string((395.5, 49.4, 406.4, 63.1), "3", BLACK, 54, n=1),
+           _string((43.2, 561.8, 57.0, 714.4), "Treating Pressure (MPa)", BLUE)]
+
+    def setUp(self):
+        self._saved = (fc.ocr_labels.outline_spans, fc.ocr_labels.garbled,
+                       fc.ocr_labels.numeric_spans)
+        fc.ocr_labels.outline_spans = lambda page, accept=None: self.P74
+        fc.ocr_labels.garbled = lambda page: True
+        fc.ocr_labels.numeric_spans = lambda page: [((0, 0, 1, 1), 7.0)]
+
+    def tearDown(self):
+        (fc.ocr_labels.outline_spans, fc.ocr_labels.garbled,
+         fc.ocr_labels.numeric_spans) = self._saved
+
+    def test_numbers_only_and_sure_ones(self):
+        got = fc.ocr_labels.outline_numeric_spans(_Outlined())
+        self.assertEqual([v for _b, v in got], [15.0, 500.0, 100.0])
+
+    def test_one_ticks_labels_abut_as_line_boxes(self):
+        # 3.2 pt of white between the two inks; _axis_columns joins a run
+        # whose boxes come within _TICK_GAP (1.5 pt)
+        (b15, _), (b500, _) = fc.ocr_labels.outline_numeric_spans(_Outlined())[:2]
+        self.assertLess(b500[0] - b15[2], fc._TICK_GAP)
+        self.assertEqual((b15[1], b15[3]), (95.9, 104.2))   # along the run: as drawn
+
+    def test_an_outlined_page_reads_its_drawn_numbers(self):
+        self.assertEqual([v for _b, v in fc._numeric_spans(_Outlined())],
+                         [15.0, 500.0, 100.0])
+
+    def test_the_page_pass_when_nothing_drawn_is_a_number(self):
+        fc.ocr_labels.outline_spans = lambda page, accept=None: []
+        self.assertEqual(fc._numeric_spans(_Outlined()), [((0, 0, 1, 1), 7.0)])
+
+    def test_a_type3_page_keeps_the_page_pass(self):
+        self.assertEqual(fc._numeric_spans(_Outlined(text="\x01\x02\x03")),
+                         [((0, 0, 1, 1), 7.0)])
+
+
+class OutlinedOrientation(unittest.TestCase):
+    """00234 p77's OCR reads "Time nim", so the axis title said nothing and
+    the sheet fell back to /Rotate 0 — "x" — though it is drawn sideways."""
+
+    def setUp(self):
+        self._saved = (fc.ocr_labels.outline_spans, fc.ocr_labels.garbled,
+                       fc.ocr_labels.text_spans)
+        fc.ocr_labels.garbled = lambda page: True
+        fc.ocr_labels.text_spans = lambda page: [((509.0, 365.8, 608.8, 496.1),
+                                                  "Time nim")]
+
+    def tearDown(self):
+        (fc.ocr_labels.outline_spans, fc.ocr_labels.garbled,
+         fc.ocr_labels.text_spans) = self._saved
+
+    def _orient(self, strings, text=""):
+        import fitz
+        fc.ocr_labels.outline_spans = lambda page, accept=None: strings
+        return fc._orientation(_Outlined(text),
+                               fitz.Rect(94.4, 116.3, 547.8, 745.8))
+
+    def test_labels_running_along_y(self):
+        self.assertEqual(self._orient(P74_DRAWN), "y")
+
+    def test_labels_running_along_x(self):
+        self.assertEqual(self._orient([_string((90, 40, 300, 50), "Treating Pressure",
+                                               d=(1.0, 0.0))]), "x")
+
+    def test_single_glyphs_say_nothing(self):
+        # a lone "0" has no direction of its own (outline_spans calls it
+        # (1, 0)); with nothing else drawn, /Rotate decides as before
+        self.assertEqual(self._orient([_string((90, 40, 96, 48), "0", d=(1.0, 0.0),
+                                               n=1)]), "x")
+
+    def test_the_axis_title_still_comes_first(self):
+        fc.ocr_labels.text_spans = lambda page: [((540.0, 365.8, 604.8, 496.1),
+                                                  "Time (min)")]
+        self.assertEqual(self._orient([_string((90, 40, 300, 50), "Treating",
+                                               d=(1.0, 0.0))]), "y")
+
+
 if __name__ == "__main__":
     unittest.main()
