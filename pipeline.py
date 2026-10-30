@@ -3657,6 +3657,58 @@ def _offset_well_names(results, notes, near=40.0):
                      f"reliably on every page")
 
 
+def _step_borrowed_names(results, notes):
+    """A name for each colour a STEP treatment chart could not name itself,
+    from the file's other treatment charts.
+
+    00247 p107 and p109 print their treatment charts under the offset chart's
+    legend (step1, "borrow_names"). The colour table names the pressure, the
+    slurry rate and the two prop concs, but not the coil: its magenta fluid
+    rate went out as "Series (magenta)" on those two stages and "Coil Fluid
+    Rate" on the rest. The book prints the same pen in the same colour on the
+    same axis on every stage, so the name the other charts' legends give that
+    colour on that axis is the one meant. Without an axis that agrees, the
+    neutral name stays."""
+    import collections
+
+    def top(r, label):
+        fr = (r.get("frames") or {}).get(label)
+        return round(max(abs(fr[0]), abs(fr[1])), 3) if fr else None
+    donors = collections.defaultdict(collections.Counter)
+    takers = []
+    for r in results:
+        fams = r.pop("pen_fams", None) or {}
+        if r.pop("borrow_names", False):
+            takers.append((r, fams))
+            continue
+        if r.get("offset_wells"):
+            continue                      # wells, not the treatment chart's pens
+        for label, fam in fams.items():
+            if not label.startswith("Series (") and top(r, label) is not None:
+                donors[(fam, top(r, label))][(label, (r.get("units") or {}).get(label, ""))] += 1
+    renamed = 0
+    for r, fams in takers:
+        for label, fam in fams.items():
+            got = donors.get((fam, top(r, label))) if label.startswith("Series (") else None
+            if not got:
+                continue
+            (new, unit), _n = got.most_common(1)[0]
+            if new in (r.get("data") or {}):
+                continue
+            for key in ("data", "units", "scales", "frames", "deduced",
+                        "labels", "held_ends"):
+                d = r.get(key)
+                if isinstance(d, dict) and label in d:
+                    d[new] = d.pop(label)
+            if isinstance(r.get("units"), dict):
+                r["units"][new] = unit
+            renamed += 1
+    if renamed:
+        notes.append(f"{renamed} curve(s) on treatment charts printed under the "
+                     f"wrong legend named as the file's other treatment charts "
+                     f"name that colour on that axis")
+
+
 def _step_stage_from_depth(doc, results, notes):
     if step_summary is None or not any(
             r.get("type") == "series" and str(r.get("source") or "").startswith("STEP")
@@ -5448,6 +5500,13 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
                                 if c.get("offset")}
                         if offs:
                             results[-1]["offset_wells"] = offs
+                        # each curve's colour, for _step_borrowed_names
+                        if tag == "t":
+                            results[-1]["pen_fams"] = {
+                                c["label"]: c["key"].replace("series-", "").rstrip("2")
+                                for c in chans}
+                            if info.get("borrow_names"):
+                                results[-1]["borrow_names"] = True
             except Exception as e:
                 notes.append(f"p{pno + 1}: STEP chart failed — {e}")
             continue
@@ -5775,6 +5834,7 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
         _calfrac_page_heads(results, notes)
         _calfrac_days(results, notes)
 
+    _step_borrowed_names(results, notes)
     _offset_well_names(results, notes)
     _apply_fix_file(doc, results, notes, fix_text=fix_text)
     _step_stage_from_depth(doc, results, notes)
