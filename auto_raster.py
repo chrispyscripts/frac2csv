@@ -953,6 +953,13 @@ def _repaired_ladder(strict, fit):
         labels are exact, and every label between lies on the line through
         them to within half its own last printed digit.
 
+      - two ladders printed in one ink, which come as one set of labels for
+        the fit to run between. 00269 p100's 0..10 rate and 0..2.00
+        chemical ladders made Aqucar -0.2..3.8, and 00250 p100's grey and
+        black wells at 0..30 took the green F Well off its own 20, 15, 10, 5,
+        0. A ladder of four labels or more that lie on one line to the pixel
+        is taken where the line in hand holds fewer.
+
     The repaired line is taken only where it carries more different labels
     than the line as read, and three at least."""
     if not strict:
@@ -1005,15 +1012,22 @@ def _repaired_ladder(strict, fit):
     # 0..16 exactly, and a "55" under the frame offered as 0.55 made a line
     # that let 12 and 4 through at half a digit — Slurry Rate on 16..1;
     # 00201 p95's 5, 4, 3 and a "30" went out 5..0.5 the same way.
-    if alt and got > floor and _rounded_count(alt, strict) > _exact_count(strict):
-        best = alt
+    exact, n_exact = _exact_line(strict)
+    if alt and got > floor and _rounded_count(alt, strict) > n_exact:
+        return alt
+    # ...and a ladder read exactly over one the line in hand does not hold
+    if exact and n_exact >= 4 and n_exact > best_n:
+        return exact
     return best
 
 
-def _exact_count(pts, px=3):
-    """The most different labels [(value, y)] one falling line through two of
-    them holds to within `px` pixels: how much of a ladder reads exactly."""
-    best = 0
+def _exact_line(pts, px=3):
+    """The falling line through two labels [(value, y)] that holds the most
+    different labels to within `px` pixels -> (fit, count), or (None, 0):
+    how much of a ladder reads exactly. Where two lines hold as many (00269
+    p94's 10, 6, 4, 2, 0 and 2.0, 1.6, 0.8, 0.4, 0, both brown), the count
+    stands and the fit is None: nothing says whose ladder is whose."""
+    best, best_n, sets = None, 0, set()
     for i, (v1, y1) in enumerate(pts):
         for v2, y2 in pts[i + 1:]:
             if y2 == y1:
@@ -1022,9 +1036,14 @@ def _exact_count(pts, px=3):
             if b >= 0:
                 continue
             a = v1 - b * y1
-            best = max(best, len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
-                                  if abs(a + b * y - v) <= abs(b) * px}))
-    return best
+            held = [(v, y) for v, y in pts if abs(a + b * y - v) <= abs(b) * px]
+            got = frozenset((round(v, 6), int(round(y / 8.0))) for v, y in held)
+            if len(got) > best_n:
+                b, a = np.polyfit([y for _v, y in held], [v for v, _y in held], 1)
+                best, best_n, sets = (float(a), float(b), len(got)), len(got), {got}
+            elif len(got) == best_n:
+                sets.add(got)
+    return (best if len(sets) == 1 else None), best_n
 
 
 def _rounded_count(fit, pts):

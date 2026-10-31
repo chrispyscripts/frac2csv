@@ -214,6 +214,35 @@ class TickLabels(unittest.TestCase):
             a, b, _n = fit
             self.assertAlmostEqual(a + b * 743, 0.0, delta=0.05)
 
+    def test_two_ladders_in_one_ink(self):
+        # 00269 p100: the rate ladder 10..0 and the chemical 2.00..0.00 both
+        # brown, in one set of labels; Aqucar went out on -0.2..3.8
+        pts = [(10.0, 1363), (2.0, 1363), (3.0, 1501), (1.6, 1501), (26.0, 1641),
+               (2.0, 1686), (2.0, 1705), (3.0, 1752), (4.0, 1780), (0.8, 1780),
+               (2.0, 1920), (0.4, 1920), (0.0, 2059), (41.0, 2071), (40.0, 2071)]
+        a, b, _n = ar.fit_ticks_guarded([(v, y, True) for v, y in pts], repairs=True)
+        self.assertAlmostEqual(a + b * 1363, 2.0, delta=0.02)
+        self.assertAlmostEqual(a + b * 2059, 0.0, delta=0.02)
+        # 00250 p100: the green F Well's 20..0 among the grey and black
+        # wells' 30..0; it went out on -2..32
+        pts = [(30.0, 353), (20.0, 369), (30.0, 387), (22.5, 510), (15.0, 527),
+               (22.5, 544), (15.0, 669), (10.0, 685), (15.0, 702), (7.5, 826),
+               (5.0, 842), (0.0, 1001)]
+        a, b, _n = ar.fit_ticks_guarded([(v, y, True) for v, y in pts], repairs=True)
+        self.assertAlmostEqual(a + b * 369, 20.0, delta=0.2)
+        self.assertAlmostEqual(a + b * 1000, 0.0, delta=0.2)
+
+    def test_two_exact_ladders_say_nothing(self):
+        # 00269 p94: 10, 6, 4, 2, 0 and 2.0, 1.6, 0.8, 0.4, 0, five each
+        ys = (1363, 1501, 1641, 1780, 1920, 2059)
+        pts = [(10.0, ys[0]), (6.0, ys[2]), (4.0, ys[3]), (2.0, ys[4]), (0.0, ys[5]),
+               (2.0, ys[0]), (1.6, ys[1]), (0.8, ys[3]), (0.4, ys[4])]
+        fit, n = ar._exact_line(pts)
+        self.assertIsNone(fit)
+        self.assertEqual(n, 5)
+        fit, n = ar._exact_line(pts[5:] + [(0.0, ys[5])])
+        self.assertAlmostEqual(fit[0] + fit[1] * ys[0], 2.0, places=2)
+
     def test_an_exact_ladder_keeps_its_own_fit(self):
         pts = [(v, 100 + 50 * k, True) for k, v in enumerate((10, 8, 6, 4, 2, 0))]
         a, b, n = ar.fit_ticks_guarded(pts, repairs=True)
