@@ -2662,7 +2662,14 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
                 return (0 if agrees else 1, -cal[2])
 
             cands = [c for c in (lcal, alt) if c]
-            if cands:
+            # ...and where no crop agrees with it, the whole strip fitted the
+            # OTHER axis. 00243 p77's TP Rate 0..1000 fits by itself since
+            # auto_raster takes a ladder read to the pixel, and its pressure
+            # crops, the time label's "2" under the frame among them, went out
+            # 5..80. Its own column, as where the strip fits nothing.
+            if two_axes and cands and not any(_rank(c)[0] == 0 for c in cands):
+                lcal = own_column() or min(cands, key=_rank)
+            elif cands:
                 lcal = min(cands, key=_rank)
             else:
                 lcal = (own_column() if two_axes else None) or whole
