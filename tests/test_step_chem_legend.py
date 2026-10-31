@@ -198,6 +198,22 @@ class TickLabels(unittest.TestCase):
         a, b, _n = ar.fit_ticks_guarded(pts, repairs=True)
         self.assertAlmostEqual(a + b * 1018, 0.0, delta=0.1)
 
+    def test_three_exact_labels_beat_a_stray_at_a_tenth(self):
+        # 00198 p41's rate ladder 16, 12, (8), 4, 0: the 8 unread, the 0 read
+        # "5" and "55". 55 offered as 0.55 went out on 16..1
+        pts = [(16.0, 23, True), (16.0, 23, True), (12.0, 203, True), (12.0, 203, True),
+               (4.0, 563, True), (5.0, 749, True), (55.0, 755, True)]
+        a, b, _n = ar.fit_ticks_guarded(pts, repairs=True)
+        self.assertAlmostEqual(a + b * 743, 0.0, delta=0.05)
+        # 00201 p95's 5, 4, 3, (2), 1, 0: the 1 read "4", the 0 "30" twice;
+        # no line holds four, and 30 offered as 0.3 went out on 5..0.5
+        pts = [(5.0, 23, True), (4.0, 167, True), (3.0, 311, True), (4.0, 599, True),
+               (30.0, 749, True), (30.0, 755, True)]
+        fit = ar.fit_ticks_guarded(pts, repairs=True)
+        if fit:
+            a, b, _n = fit
+            self.assertAlmostEqual(a + b * 743, 0.0, delta=0.05)
+
     def test_an_exact_ladder_keeps_its_own_fit(self):
         pts = [(v, 100 + 50 * k, True) for k, v in enumerate((10, 8, 6, 4, 2, 0))]
         a, b, n = ar.fit_ticks_guarded(pts, repairs=True)

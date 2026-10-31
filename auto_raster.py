@@ -1000,8 +1000,30 @@ def _repaired_ladder(strict, fit):
         return best
     floor = max(best_n, _rounded_count(held, strict) if held else 0)
     alt, got = _rounded_ladder(list(strict) + shrunk + fours)
-    if alt and got > floor:
+    # Nor where its own labels hold no more of the ladder as read than a
+    # line through them holds to the pixel: 00198 p41's 16, 12 and 4 lie on
+    # 0..16 exactly, and a "55" under the frame offered as 0.55 made a line
+    # that let 12 and 4 through at half a digit — Slurry Rate on 16..1;
+    # 00201 p95's 5, 4, 3 and a "30" went out 5..0.5 the same way.
+    if alt and got > floor and _rounded_count(alt, strict) > _exact_count(strict):
         best = alt
+    return best
+
+
+def _exact_count(pts, px=3):
+    """The most different labels [(value, y)] one falling line through two of
+    them holds to within `px` pixels: how much of a ladder reads exactly."""
+    best = 0
+    for i, (v1, y1) in enumerate(pts):
+        for v2, y2 in pts[i + 1:]:
+            if y2 == y1:
+                continue
+            b = (v2 - v1) / float(y2 - y1)
+            if b >= 0:
+                continue
+            a = v1 - b * y1
+            best = max(best, len({(round(v, 6), int(round(y / 8.0))) for v, y in pts
+                                  if abs(a + b * y - v) <= abs(b) * px}))
     return best
 
 
