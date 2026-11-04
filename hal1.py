@@ -762,6 +762,35 @@ def extract_image(img, sample_sec=1.0):
     return samples, channels, info
 
 
+def _turned_geom(info, width, height, matrix):
+    """Chart geometry for an image read through np.rot90(img, -1), in step1's
+    convention: elapsed second e sits at page coord (e - ta) / tb along `axis`,
+    and v0/v1 are the frame's top and bottom across it, on the unrotated page.
+
+    The turn sends a stored pixel (col, row) to (height - row, col), and the
+    page's image matrix takes the stored image's unit square to the page. Time
+    runs along whichever side of the page that lands on: up the page for the
+    sideways filings, but the matrix decides rather than an assumption.
+    """
+    box = info.get("plot")
+    dur = float(info.get("duration_s") or 0)
+    if not box or dur <= 0:
+        return None
+    x0, y0, x1, y1 = box
+
+    def on_page(x, y):
+        return fitz.Point(y / float(width), (height - x) / float(height)) * matrix
+    origin, later, below = on_page(x0, y0), on_page(x1, y0), on_page(x0, y1)
+    axis = "y" if abs(later.y - origin.y) > abs(later.x - origin.x) else "x"
+    start, end = (origin.y, later.y) if axis == "y" else (origin.x, later.x)
+    if abs(end - start) < 1e-6:
+        return None
+    tb = dur / (end - start)
+    v0, v1 = (origin.x, below.x) if axis == "y" else (origin.y, below.y)
+    return {"axis": axis, "ta": float(-tb * start), "tb": float(tb),
+            "v0": float(v0), "v1": float(v1)}
+
+
 def extract_page(page, sample_sec=1.0):
     """-> (meta, samples, channels, info)"""
     doc = page.parent
@@ -800,17 +829,16 @@ def extract_page(page, sample_sec=1.0):
     # offset — exactly step1's raster case, so it uses step1's converter and
     # inherits its convention (ta relative to the STAGE start, v0/v1 the
     # frame's top and bottom in mupdf y-down page units).
-    # Only for a page read the way it was drawn. geom is a plain scale and
-    # offset from image pixels to page units, and that is not what it is any
-    # more once the image has been turned — the Lab would lay the source page
-    # behind the curves at ninety degrees to them. No geom means no underlay,
-    # which is a feature missing rather than a feature lying.
-    if not rotated:
-        try:
-            r = page.get_image_rects(im[0])[0]
-            if r.width > 1 and r.height > 1:
-                info["geom"] = _page_geom(info, pix.width / r.width,
-                                          pix.height / r.height, r.x0, r.y0)
-        except Exception:
-            pass
+    # A turned page's frame is in the turned image's pixels, and _turned_geom
+    # carries it back through the turn; without geometry the Lab can only show
+    # the sheet as printed, sideways under an upright graph.
+    try:
+        r, m = page.get_image_rects(im[0], transform=True)[0]
+        if rotated:
+            info["geom"] = _turned_geom(info, pix.width, pix.height, m)
+        elif r.width > 1 and r.height > 1:
+            info["geom"] = _page_geom(info, pix.width / r.width,
+                                      pix.height / r.height, r.x0, r.y0)
+    except Exception:
+        pass
     return page_meta(page), samples, channels, info

@@ -256,6 +256,9 @@
   #sumcanvas { width:100%; height:auto; background:#fff; border:1px solid var(--line); }
   .files { flex:1; overflow:auto; }
   .filehead.sel { background:var(--panel2); border-left:2px solid var(--carmine); padding-left:12px; }
+  /* the list the arrow keys are walking */
+  body[data-nav="files"] .filehead.sel { box-shadow:inset 0 0 0 1px var(--carmine); }
+  body:not([data-nav="files"]) .stagerow.sel { box-shadow:inset 0 0 0 1px var(--carmine); }
   .drop { margin:12px; border:1.5px dashed #39414d; border-radius:10px; padding:20px 12px;
           text-align:center; cursor:pointer; color:var(--mut); font-size:12.5px; transition:.15s; }
   /* No fill on hover/drag — a hardcoded dark background went unreadable in
@@ -1281,7 +1284,11 @@ function makeFileEntry(name) {
       prog.firstChild.style.width = Math.max(0, Math.min(1, frac)) * 100 + "%";
     }
   };
-  head.addEventListener("click", () => { if (entry.items.length) selectFile(entry); });
+  head.addEventListener("click", () => {
+    if (!entry.items.length) return;
+    setNavList("files");
+    selectFile(entry);
+  });
   head.querySelector(".del").addEventListener("click", e => {
     e.stopPropagation(); deleteEntry(entry);
   });
@@ -2361,6 +2368,7 @@ function selectFile(entry) {
     row.addEventListener("click", ev => {
       if (ev.target.closest(".editlbl")) { ev.stopPropagation(); askStageName(entry, it); return; }
       if (ev.target.closest(".fixtime")) { ev.stopPropagation(); askTimeFix(entry, it); return; }
+      setNavList("charts");
       selectItem(entry, entry.well, it, row);
     });
     list.appendChild(row);
@@ -4762,6 +4770,44 @@ async function syncOrig() {
   }
 }
 
+// A chart's geometry -> pdf.js user space. The geometry arrives in mupdf
+// coordinates on the UNROTATED page: 00047 p188 is displayed 792x612 under
+// /Rotate 90, and its chart runs down to y 622. Its origin is the CROPBOX
+// corner — mupdf normalises every page to start at (0,0). pdf.js wants true
+// user space, so the crop offset has to go back on. Most pages crop at the
+// origin and the two agree, which is why this only showed up on 00180: its
+// cropbox starts at x -14, and every ghost curve on the file sat 14 units —
+// about 3.5% of the plot — to one side of its own ink.
+function geomToPdf(page, g) {
+  const vx = page.view[0], vTop = page.view[3];
+  return (axisC, vC) => g.axis === "y"
+    ? [vC + vx, vTop - axisC]                   // mupdf(y-down) -> pdf(y-up)
+    : [axisC + vx, vTop - vC];
+}
+
+// The rotation that shows a chart the way our graph draws it, with time running
+// left to right. pdf.js takes an ABSOLUTE rotation here, replacing the page's
+// own /Rotate, which is what a chart that is sideways on the displayed page
+// needs: time along the page's height wants a quarter turn, and a half turn on
+// top of that if it runs the wrong way.
+function chartRotation(page, g) {
+  const toPdf = geomToPdf(page, g);
+  const A = toPdf(0, 0), Z = toPdf(g.tb < 0 ? -1 : 1, 0);   // later in time
+  const rot = g.axis === "y" ? 90 : 0;
+  const vp = page.getViewport({ scale: 1, rotation: rot });
+  return vp.convertToViewportPoint(...Z)[0] > vp.convertToViewportPoint(...A)[0]
+    ? rot : (rot + 180) % 360;
+}
+
+// The fitted and full-page views turn the sheet the same way as the chart, so
+// the panel under the graph always reads the same way up as the graph. A chart
+// with no geometry has nothing to go by and shows as the page displays it.
+function pageRotation(page) {
+  const srcs = (current && current.item && current.item.srcs) || [];
+  const src = srcs[Math.min(orig.pageIdx, srcs.length - 1)] || srcs[0];
+  return src && src.geom ? chartRotation(page, src.geom) : page.rotate;
+}
+
 // The chart region of the source page, re-rendered from vector at the graph's
 // exact time window — zoom/pan stay in lockstep with the graph.
 //
@@ -4778,29 +4824,13 @@ async function syncOrig() {
 async function renderSynced(ctx, cv, page, g, mySeq, forGhost) {
   const { L, R, T, B } = GP, W = cv.width, H = cv.height;
   const plotW = W - L - R, plotH = H - ORIG_FOOT - T - B;
-  // The geometry arrives in mupdf page coordinates, whose origin is the
-  // CROPBOX corner — mupdf normalises every page to start at (0,0). pdf.js
-  // wants true user space, so the crop offset has to go back on. Most pages
-  // crop at the origin and the two agree, which is why this only showed up on
-  // 00180: its cropbox starts at x -14, and every ghost curve on the file sat
-  // 14 units — about 3.5% of the plot — to one side of its own ink.
-  const vx = page.view[0], vTop = page.view[3];
+  const toPdf = geomToPdf(page, g);
   const coord = t => (t - g.ta) / g.tb;         // elapsed s -> mupdf axis coord
-  const toPdf = (axisC, vC) => g.axis === "y"
-    ? [vC + vx, vTop - axisC]                   // mupdf(y-down) -> pdf(y-up)
-    : [axisC + vx, vTop - vC];
   const c0 = coord(gState.t0), c1 = coord(gState.t1);
   const vmid = (g.v0 + g.v1) / 2;
-  let rot = g.axis === "y" ? 90 : 0;
-  let vp = page.getViewport({ scale: 1, rotation: rot });
-  let A = vp.convertToViewportPoint(...toPdf(c0, vmid));
-  let Z = vp.convertToViewportPoint(...toPdf(c1, vmid));
-  if (Z[0] < A[0]) {                            // time must run left -> right
-    rot = (rot + 180) % 360;
-    vp = page.getViewport({ scale: 1, rotation: rot });
-    A = vp.convertToViewportPoint(...toPdf(c0, vmid));
-    Z = vp.convertToViewportPoint(...toPdf(c1, vmid));
-  }
+  const vp = page.getViewport({ scale: 1, rotation: chartRotation(page, g) });
+  const A = vp.convertToViewportPoint(...toPdf(c0, vmid));
+  const Z = vp.convertToViewportPoint(...toPdf(c1, vmid));
   const E0 = vp.convertToViewportPoint(...toPdf(c0, g.v0));
   const E1 = vp.convertToViewportPoint(...toPdf(c0, g.v1));
   const sx = plotW / Math.max(1e-9, Z[0] - A[0]);
@@ -4996,7 +5026,7 @@ async function renderPageBitmap(cv, mySeq, known) {
   }
   const page = known || await orig.doc.getPage(src.page);
   if (mySeq !== orig.seq) return;
-  const vp = page.getViewport({ scale });
+  const vp = page.getViewport({ scale, rotation: pageRotation(page) });
   const off = document.createElement("canvas");
   off.width = Math.max(1, Math.ceil(vp.width));
   off.height = Math.max(1, Math.ceil(vp.height));
@@ -5045,8 +5075,9 @@ function pagePanBy(cv, dx, dy) {
 
 async function renderFit(ctx, cv, page, mySeq) {   // no geometry: fit the page
   const p = orig.page;
-  const vp1 = page.getViewport({ scale: 1 });
-  const key = pageViewKey(cv);
+  const rotation = pageRotation(page);
+  const vp1 = page.getViewport({ scale: 1, rotation });
+  const key = `${pageViewKey(cv)}|${rotation}`;
   if (p.key !== key) { resetPageView(); p.key = key; }
   p.pw = vp1.width; p.ph = vp1.height;
   p.fit = Math.min(cv.width / vp1.width, cv.height / vp1.height);
@@ -7908,10 +7939,26 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && !$("settingsback").hidden) closeSettings();
 });
 
-// ---------- arrow-key stage navigation ----------
-// Down/Up step through the stage list and roll over into the next/previous
-// report, so a whole drive list can be reviewed without touching the mouse.
-// Files that produced nothing are skipped — there is no stage to land on.
+// ---------- arrow-key navigation ----------
+// Down/Up walk whichever list was clicked last. In the charts they step through
+// the stage list and roll over into the next/previous report, so a whole drive
+// list can be reviewed without touching the mouse. In the files they step from
+// report to report, each opening on its first chart. Files that produced
+// nothing are skipped — there is no stage to land on.
+function setNavList(which) {
+  document.body.dataset.nav = which;
+}
+
+function navFile(dir) {
+  const list = navigableEntries();
+  if (!list.length) return;
+  const k = current ? list.indexOf(current.entry) : -1;
+  const nxt = k < 0 ? list[dir > 0 ? 0 : list.length - 1] : list[k + dir];
+  if (!nxt) return;                     // stop at the first/last report
+  selectFile(nxt);
+  nxt.head.scrollIntoView({ block: "nearest" });
+}
+
 function navigableEntries() {
   return entries
     .filter(e => e.items && e.items.length)
@@ -7988,7 +8035,9 @@ document.addEventListener("keydown", e => {
     return;
   }
   e.preventDefault();                   // otherwise the page scrolls too
-  navStage(k === "ArrowDown" ? 1 : -1);
+  const dir = k === "ArrowDown" ? 1 : -1;
+  if (document.body.dataset.nav === "files") navFile(dir);
+  else navStage(dir);
 });
 
 // destination folder — desktop opens a native picker server-side; web can't
