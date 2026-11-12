@@ -977,9 +977,25 @@ def _repaired_ladder(strict, fit):
         def whole_there(v, k):
             return any(abs(w - v * 10 ** k) < tol and abs(a + b * yw - w) < tol
                        for w, yw in strict)
+        # ...and only where it lands on a rung of the ladder as read: the
+        # intact label is one of the ladder's own labels. 00208 p22's "10.0"
+        # is 10000 on the 0, 2500, 5000, 7500 ladder, its top rung. 00047
+        # p213 (2026 STEP) prints 100, 80, 60, 40, 20; a stray "5" between 60
+        # and 40 lands near 50, which a ladder in steps of 20 never prints,
+        # and the pressure went out ten times low on 7 charts in 4 files.
+        on_line = sorted({w for w, yw in strict if abs(a + b * yw - w) < tol})
+        steps = [q - p for p, q in zip(on_line, on_line[1:]) if q - p > tol]
+        step = min(steps) if steps else None
+
+        def on_rung(x):
+            if not step:
+                return True
+            n = round((x - on_line[0]) / step)
+            return abs(on_line[0] + n * step - x) < tol
         for k in (1, 2, 3):
             if any(v and abs(a + b * y - v * 10 ** k) < tol
-                   and not whole_there(v, k) for v, y in strict):
+                   and not whole_there(v, k) and on_rung(v * 10 ** k)
+                   for v, y in strict):
                 # the slipped labels at their true size, the intact as read
                 sets.append([(v / 10 ** k if abs(v) >= 10 ** k else v, y)
                              for v, y in strict])
