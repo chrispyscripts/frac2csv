@@ -364,6 +364,9 @@
   .stclock { margin-left:8px; font-size:10px; color:var(--mut);
              font-variant-numeric:tabular-nums; }
   .badclock { color:var(--carmine); font-weight:600; }
+  .wellspan { display:flex; align-items:center; padding:7px 14px 7px 26px;
+              font-size:12px; color:var(--mut); border-bottom:1px solid var(--line); }
+  .wellspan .lbl { font-weight:600; color:var(--ink); }
   .nodate { font-style:italic; }
   /* On every stage now, not only the flagged ones — a clock can be wrong
      without tripping the rule. Muted and hover-revealed so sixty-six rows do
@@ -1173,7 +1176,7 @@ async function flushEmptyReports() {
   try {
     const r = await fetch(FLAG_ENDPOINT, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: flagBody({
         description: one
           ? "No extractable data — " + batch[0].name
             + (batch[0].path ? `\n\n${batch[0].path}` : "")
@@ -2425,6 +2428,24 @@ function selectFile(entry) {
   } else {
     tw.hidden = true;
   }
+  // The well from end to end: its earliest stage start and its latest stage
+  // end, off the same clocks as the rows. A stage flagged for a clock that
+  // runs backwards is left out, or one wrong date would stretch the well.
+  const spans = entry.items
+    .filter(it => it.type === "stage" && it.meta && !it.meta.continuous
+                  && stageHasClock(it) && !badTimes.has(String(it.key)))
+    .map(it => [stageStartMs(it), itemEndMs(it)])
+    .filter(([a, b]) => isFinite(a) && isFinite(b));
+  if (spans.length) {
+    const w = document.createElement("div");
+    w.className = "wellspan";
+    w.title = "First stage start to last stage end"
+      + (badTimes.size ? " (stages flagged ⚠ left out)" : "");
+    w.innerHTML = `<span class="lbl">Well</span><span class="stclock">`
+      + `${fmtClockMs(Math.min(...spans.map(x => x[0])))} → `
+      + `${fmtClockMs(Math.max(...spans.map(x => x[1])))}</span>`;
+    list.appendChild(w);
+  }
   let lastKind = null;
   for (const it of entry.items) {
     // a heading above each run of tables of one kind, so a 14-table filing
@@ -2455,9 +2476,15 @@ function selectFile(entry) {
       const _d = fixed ? fixed.date : ((it.meta && it.meta.date) || "");
       const _t = fixed ? fixed.time
                        : ((it.meta && it.meta.start_time) || "");
+      // ...and where it ends, so a gap or an overlap between two stages
+      // reads straight off the list.
+      const _e = stageHasClock(it) ? itemEndMs(it) : NaN;
       const _clock = _d || _t
-        ? `<span class="stclock${bad ? " badclock" : ""}">`
-          + `${_d || "no date"} ${(_t || "").slice(0, 8)}</span>`
+        ? `<span class="stclock${bad ? " badclock" : ""}"`
+          + (isFinite(_e) ? ` title="Start to end. The end is not printed: `
+             + `it is the start plus the stage's charted length."` : "")
+          + `>${_d || "no date"} ${(_t || "").slice(0, 8)}`
+          + (isFinite(_e) ? ` → ${fmtClockMs(_e)}` : "") + `</span>`
         : `<span class="stclock nodate">no clock</span>`;
       const renamed = stageNameGet(it.key);
       row.innerHTML = `<span class="stg">`
@@ -5302,6 +5329,20 @@ function stageEndMs(st) {
   const a = stageStartMs(st);
   if (!isFinite(a)) return NaN;
   return a + (st.n || 0) * ((st.sample_sec || 1) * 1000);
+}
+
+// A stage row's end. It is not printed anywhere: it is the start plus the
+// stage's charted length — its charts laid out by their own clocks, without
+// the minutes handed to the next stage — the same span the graph draws. A
+// start fixed by hand moves the end with it.
+function itemEndMs(it) {
+  const a = stageStartMs(it);
+  if (!isFinite(a)) return NaN;
+  const n = it.__nBase != null ? it.__nBase : (it.n || 0);
+  return a + n * (it.sample_sec || 1) * 1000;
+}
+function fmtClockMs(ms) {
+  return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
 }
 
 // How much overlap is worth reporting.
@@ -8232,6 +8273,39 @@ $("destpath").addEventListener("change", () => {
 // clear before sending. He edits it on the issue in the rare case it
 // was someone else.
 const FLAG_REPORTER = "Carmine";
+// Where a flagged file came from, without anyone's home folder or a scratch
+// copy's location. Carmine asked for the path (#355): "00058-…pdf" alone does
+// not say which drive or folder it came from. But the whole path also put
+// user names and temp folders on a public issue tracker (111 flags cleaned by
+// hand, 2026-11-11). So the drive and the folders under it stay, and the
+// rest goes: /Volumes/CnC-2TB-ssd/AER/x.pdf -> CnC-2TB-ssd/AER/x.pdf,
+// /Users/name/frac/x.pdf -> ~/frac/x.pdf, a temp copy -> x.pdf, and
+// K:\BCER-Frac\_STEP-Type\x.PDF is kept as it is.
+function shareablePath(p) {
+  const s = String(p || "");
+  let m;
+  if (/^\/(private\/|tmp\/|var\/folders\/)/.test(s)
+      || /\\(Temp|AppData)\\/i.test(s)) return s.split(/[\\/]/).pop();
+  if ((m = s.match(/^\/Volumes\/(.+)$/))) return m[1];
+  if ((m = s.match(/^\/Users\/[^/]+(?:\/(.*))?$/))) return "~/" + (m[1] || "");
+  if ((m = s.match(/^[A-Za-z]:\\Users\\[^\\]+(?:\\(.*))?$/))) return "~\\" + (m[1] || "");
+  return s;
+}
+// Every absolute path in a piece of text, made shareable: a file's path runs
+// to its ".pdf" (names carry spaces), a folder's to the next space.
+function scrubPaths(text) {
+  const ROOT = "(?:\\/(?:Users|Volumes|private|tmp|var\\/folders)\\/|\\b[A-Za-z]:\\\\)";
+  return String(text)
+    .replace(new RegExp(ROOT + "[^|\\n]*?\\.pdf\\b", "gi"), shareablePath)
+    .replace(new RegExp(ROOT + "[^\\s|]+", "g"), shareablePath);
+}
+// A flag's request body, every string in it scrubbed. All three senders go
+// through this, so a path in a note, a file list or the description cannot
+// reach the tracker either. The screenshot is an image, left alone.
+function flagBody(obj) {
+  return JSON.stringify(obj, (k, v) =>
+    typeof v === "string" && k !== "screenshot" ? scrubPaths(v) : v);
+}
 const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
                        location.hostname === "localhost")
   ? "https://carmines-lab.vercel.app/api/flag" : "/api/flag";
@@ -8602,7 +8676,7 @@ $("flagsend").addEventListener("click", async () => {
     try {
       const r = await fetch(FLAG_ENDPOINT, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: desc,
+        body: flagBody({ description: desc,
                                reporter: FLAG_REPORTER,
                                diagnostics: { ...flagDiagnostics(),
                                               shot: flagShotKind },
@@ -9002,7 +9076,7 @@ async function reportAllEmpty() {
   try {
     const r = await fetch(FLAG_ENDPOINT, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: flagBody({
         description: `No extractable data — ${list.length} files in one batch`
           + `\n\n${lines.join("\n")}`,
         reporter: "user (auto, batch)",
