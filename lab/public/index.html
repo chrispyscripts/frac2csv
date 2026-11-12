@@ -641,6 +641,19 @@
             <button type="button" class="btn" id="destpick">Browse…</button>
           </div>
         </div>
+        <div class="setrow col">
+          <div class="setlabel">WellSight printouts
+            <span class="sethint" id="wslibhint">The folder that holds the LogViewer
+              printouts (and all the folders under it). A log dropped on the Lab takes
+              its printout from here. Empty: a SK-VIKING\WellSight folder on any drive.</span></div>
+          <div class="destrow">
+            <input type="text" id="wslib" placeholder="Any drive's SK-VIKING\WellSight"
+                   spellcheck="false">
+            <button type="button" class="btn" id="wslibpick">Browse…</button>
+            <button type="button" class="btn" id="wslibscan"
+                    title="Look through the folder again for printouts added since">Re-index</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -953,6 +966,8 @@ mouse wheel zoom at the pointer; drag to move along the log."></label>
           <button type="button" class="btn" id="wsstackbtn"
                   title="Open the LAS curves and the printout side by side, depth
 down, in a separate window that follows this one">Stacked ↗</button>
+          <button type="button" class="btn" id="wsfindbtn" hidden
+                  title="Look for this log's printout in the printouts folder (Settings)">Look again</button>
           <button type="button" class="btn" id="wsopenpdf" hidden
                   title="Open the stitched printout PDF">Open PDF ↗</button>
         </div>
@@ -972,6 +987,7 @@ const MAX_BYTES = 3 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const settings = { format: "both", xlsxTabs: true, reuse: false,
                    chartLabels: "canon", ghost: true, destFolder: "",
+                   wsLibrary: "",          // folder of WellSight printouts
                    ghostOurs: true, ghostRef: true, tipScale: 1,
                    // { provider: { column: true } } — a column listed here is
                    // DROPPED from that provider's exports. Only exclusions are
@@ -991,7 +1007,15 @@ function tipScale() {
 // access (raster/OCR on, drive lists resolved server-side, no upload limit)
 let localInfo = null;
 fetch("/api/local-info").then(r => r.ok ? r.json() : null)
-  .then(j => { localInfo = j; refreshDestUI(); }).catch(() => {});
+  .then(j => {
+    localInfo = j; refreshDestUI();
+    // index the WellSight printouts folder now, so the first log dropped
+    // does not wait for a walk of a whole drive
+    if (j && j.local && settings.wsLibrary)
+      fetch("/api/wellsight-library", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folder: settings.wsLibrary }) }).catch(() => {});
+  }).catch(() => {});
 // destination-folder field: editable on the desktop app, informational on web
 function refreshDestUI() {
   const local = !!(localInfo && localInfo.local);
@@ -1502,14 +1526,15 @@ const WS_SETS = [{ key: "curves", label: "Curve Track" }];
 async function handleWellsight(f, q, printoutFile) {
   try {
     q.set("reading log"); q.progress(0.25);
-    const body = { filename: f.name,
+    const body = { filename: f.name, printoutFolder: settings.wsLibrary || "",
                    data: await b64(new Uint8Array(await f.arrayBuffer())) };
     if (printoutFile) {
       body.printout = await b64(new Uint8Array(await printoutFile.arrayBuffer()));
       body.printoutName = printoutFile.name;
     }
     const out = await postJson("/api/wellsight", body);
-    q.ws = { id: out.id, payload: out.payload, printout: out.printout || null };
+    q.ws = { id: out.id, payload: out.payload, printout: out.printout || null,
+             lookup: out.printoutLookup || "" };
     q.provider = "WellSight";
     q.items = WS_SETS.map(s => ({ type: "wsset", key: s.key, label: s.label }));
     const nm = q.head.querySelector(".nm");
@@ -1531,6 +1556,7 @@ function wellsightLine(q, printoutError) {
     bits.push(`printout stitched (${q.ws.printout.log_pages} pages`
       + (c.worst_m != null ? `, labels within ${c.worst_m} m` : "") + ")");
   }
+  else if (q.ws.lookup) bits.push("no printout found");
   if (printoutError) bits.push("printout: " + printoutError);
   q.set("✓ " + bits.join(" · "), printoutError ? "err" : "ok");
 }
@@ -1623,6 +1649,7 @@ function wsNotes() {
       + (P.gaps && P.gaps.length ? `; gaps at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
       + ` (${P.source || "printout"}).`);
     out.push("LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.");
+    if (P.library) out.push(`Printout from the printouts folder: ${P.library.path}`);
   }
   for (const w of p.warnings || []) out.push(w);
   $("ws-notes").textContent = out.join("\n");
@@ -1633,9 +1660,12 @@ function wsNotes() {
   $("wsprintlbl").textContent = has
     ? `Printed log (LogViewer, stitched) · ${P.log_pages} pages · ${P.pt_per_m} pt/m`
     : "Printed log";
-  if (!has) $("wsnoprint").textContent = "No printout yet. Print with LogViewer (Windows), "
-    + "or Add printout PDF: in LogViewer, File > Print, Microsoft Print to PDF, All, "
-    + "Page Breaks off. A PDF dropped with the log under the same name is taken too.";
+  $("wsfindbtn").hidden = has;
+  if (!has) $("wsnoprint").textContent = (wsv.entry.ws.lookup ? "Not in the printouts folder: "
+      + wsv.entry.ws.lookup + ". " : "No printout yet. ")
+    + "Print with LogViewer (Windows), or Add printout PDF: in LogViewer, File > Print, "
+    + "Microsoft Print to PDF, All, Page Breaks off. A PDF dropped with the log under the "
+    + "same name is taken too, and Settings, WellSight printouts names the folder to look in.";
 }
 
 function wsLegend() {
@@ -1942,6 +1972,55 @@ $("wssavebtn").addEventListener("click", async () => {
   } catch (e) { wsMsg("Save: " + e.message, true); }
 });
 $("wsflagbtn").addEventListener("click", () => openFlag());
+$("wsfindbtn").addEventListener("click", async () => {
+  const entry = current && current.entry;
+  if (!entry || !entry.ws) return;
+  wsMsg("Looking in the printouts folder…");
+  try {
+    const out = await postJson("/api/wellsight-find", { id: entry.ws.id,
+                                                        folder: settings.wsLibrary || "" });
+    entry.ws.lookup = "";
+    wsMsg("");
+    wsPrintoutChanged(entry, out.printout);
+  } catch (e) {
+    entry.ws.lookup = e.message;
+    wsMsg(e.message, true);
+    if (current && current.entry === entry) wsNotes();
+  }
+});
+// Settings: the printouts folder, and how many printouts it holds
+async function wsLibraryStatus(refresh) {
+  const hint = $("wslibhint");
+  if (!isLocal()) { hint.textContent = "WellSight logs open in the desktop app."; return; }
+  hint.textContent = refresh ? "Looking through the folder…" : "Checking the folder…";
+  try {
+    const out = await postJson("/api/wellsight-library", { folder: settings.wsLibrary || "",
+                                                           refresh: !!refresh });
+    hint.textContent = out.folder
+      ? `${out.prints.toLocaleString()} printouts (${out.pdfs.toLocaleString()} PDFs) in `
+        + `${out.folder}${out.auto ? " (found on its own)" : ""} · indexed ${out.at}`
+      : "No folder set, and no SK-VIKING\\WellSight folder on any drive.";
+  } catch (e) { hint.textContent = e.message; }
+}
+$("wslib").addEventListener("change", () => {
+  settings.wsLibrary = $("wslib").value.trim();
+  saveSettings();
+  wsLibraryStatus(false);
+});
+$("wslibscan").addEventListener("click", () => wsLibraryStatus(true));
+$("wslibpick").addEventListener("click", async () => {
+  if (!isLocal()) return;
+  $("wslibpick").disabled = true;
+  try {
+    const out = await (await fetch("/api/pick-folder")).json();
+    if (out.path) {
+      settings.wsLibrary = out.path; $("wslib").value = out.path;
+      saveSettings();
+      wsLibraryStatus(false);
+    }
+  } catch (e) { /* the picker returns empty on cancel */ }
+  $("wslibpick").disabled = false;
+});
 $("wsopenpdf").addEventListener("click", () => {
   if (wsv) window.open("/api/wellsight-strip.pdf?id=" + encodeURIComponent(wsv.id), "_blank");
 });
@@ -8705,6 +8784,7 @@ function loadSettings() {
   setSeg($("lay"), settings.xlsxTabs ? "tabs" : "single");
   $("layopt").classList.toggle("off", settings.format === "csv");
   $("destpath").value = settings.destFolder || "";
+  $("wslib").value = settings.wsLibrary || "";
   const ts = $("tipscale");
   if (ts) { ts.value = String(Math.round(tipScale() * 100));
             $("tipscaleval").textContent = tipScale().toFixed(1) + "\u00d7"; }
@@ -8714,6 +8794,7 @@ function saveSettings() {
   localStorage.setItem("frac2csv-settings", JSON.stringify({
     format: settings.format, xlsxTabs: settings.xlsxTabs,
     destFolder: settings.destFolder || "",
+    wsLibrary: settings.wsLibrary || "",
     ghost: settings.ghost,
     ghostOurs: settings.ghostOurs, ghostRef: settings.ghostRef,
     tipScale: settings.tipScale,
@@ -8728,7 +8809,7 @@ $("tipscale").addEventListener("input", e => {
   // actual readout, so the chart has to move while it is being dragged
   if (gState.channels.length) redrawGraph();
 });
-function openSettings() { $("settingsback").hidden = false; }
+function openSettings() { $("settingsback").hidden = false; wsLibraryStatus(false); }
 function closeSettings() { $("settingsback").hidden = true; }
 $("settingsbtn").addEventListener("click", openSettings);
 $("settingsclose").addEventListener("click", closeSettings);

@@ -6,6 +6,8 @@ POST /api/wellsight            {filename, data, printout?}  decode (+ stitch)
 POST /api/wellsight-printout   {id, data}                    stitch a dropped printout
 POST /api/wellsight-logviewer  {id}                          print with LogViewer, stitch
 POST /api/wellsight-save       {id, folder, destFolder}      write LAS, CSV, JSON, strip
+POST /api/wellsight-library    {folder, refresh?}            index a printouts folder
+POST /api/wellsight-find       {id, folder}                  stitch the log's printout from it
 GET  /api/wellsight-status                                    can LogViewer print here?
 GET  /api/wellsight-view?id=                                  what the stacked view draws
 GET  /api/wellsight-strip?id=&d0=&d1=&ppm=                    PNG of the strip, by depth
@@ -22,6 +24,7 @@ import uuid
 import wellsight_app as wa
 import wellsight_print as wp
 import wellsight_logviewer as lv
+import wellsight_library as lib
 
 _KEEP = 24                      # logs held at once; the oldest goes first
 _STORE = collections.OrderedDict()
@@ -77,8 +80,71 @@ def decode(req):
             resp["printout"] = rec["strip_info"]
         except Exception as e:  # noqa: BLE001
             resp["printoutError"] = str(e)
+    else:
+        # no printout dropped with it: the printouts folder may have one
+        found = _from_library(rec, req.get("printoutFolder") or "")
+        resp["printout"] = rec.get("strip_info")
+        if found:
+            resp["printoutLookup"] = found
     _put(rec)
     return 200, resp
+
+
+def _library_folder(folder):
+    return (folder or "").strip() or lib.default_folder() or ""
+
+
+def _from_library(rec, folder):
+    """Stitch the log's printout from the printouts folder. Returns a
+    sentence for the Lab when it could not, else None."""
+    folder = _library_folder(folder)
+    if not folder:
+        rec["lookup"] = "no printouts folder set (Settings, WellSight printouts)"
+        return rec["lookup"]
+    try:
+        ix = lib.index(folder)
+    except OSError as e:
+        rec["lookup"] = str(e)
+        return rec["lookup"]
+    path, kind = lib.find(ix, rec["payload"]["file"])
+    if not path:
+        rec["lookup"] = kind
+        return kind
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        rel = os.path.relpath(path, ix["folder"])
+        _stitch(rec, data, rel)
+        rec["strip_info"]["library"] = {"folder": ix["folder"], "path": rel, "kind": kind}
+        rec["lookup"] = None
+        return None
+    except Exception as e:  # noqa: BLE001
+        rec["lookup"] = f"{os.path.basename(path)}: {e}"
+        return rec["lookup"]
+
+
+def library(req):
+    folder = _library_folder(req.get("folder"))
+    if not folder:
+        return 200, {"folder": "", "pdfs": 0, "auto": False,
+                     "why": "no folder set, and no SK-VIKING\\WellSight folder on any drive"}
+    try:
+        ix = lib.index(folder, refresh=bool(req.get("refresh")))
+    except OSError as e:
+        return 404, {"error": str(e)}
+    out = lib.summary(ix)
+    out["auto"] = not (req.get("folder") or "").strip()
+    return 200, out
+
+
+def find(req):
+    rec = _get(req.get("id"))
+    if not rec:
+        return 404, {"error": "that log is no longer loaded; drop it again"}
+    why = _from_library(rec, req.get("folder") or "")
+    if why:
+        return 404, {"error": why}
+    return 200, {"printout": rec["strip_info"]}
 
 
 def printout(req):

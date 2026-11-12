@@ -205,7 +205,7 @@ _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "logs_from_las.py", "pad_inputs_from_bcer.py",
                  # WellSight logs have their own path and no cached analyses
                  "wellsight_app.py", "wellsight_print.py", "wellsight_logviewer.py",
-                 "wellsight_server.py"}
+                 "wellsight_server.py", "wellsight_library.py"}
 
 
 def code_stamp():
@@ -685,6 +685,9 @@ def _nt_drive_letters():
         return [d for d in string.ascii_uppercase if d not in ("A", "B")]
 
 
+wss.lib.DRIVE_LETTERS = _nt_drive_letters if os.name == "nt" else None
+
+
 def find_drive_roots(manifest_path):
     """Locate the manifest path's top folder (e.g. 'BCER-Frac') on any
     mounted volume (mac) or drive letter (windows) — the drive letter in
@@ -867,6 +870,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(*wss.logviewer(req))
             if self.path == "/api/wellsight-save":
                 return self._json(*wss.save(req, export_folder))
+            if self.path == "/api/wellsight-library":
+                with _READ_GATE:
+                    return self._json(*wss.library(req))
+            if self.path == "/api/wellsight-find":
+                with _READ_GATE:
+                    return self._json(*wss.find(req))
             if self.path == "/api/extract":
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":
