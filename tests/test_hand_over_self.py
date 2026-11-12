@@ -68,6 +68,16 @@ class HandOverSelf(unittest.TestCase):
         ws = " ".join(a["meta"].get("warnings") or [])
         self.assertIn("cannot re-plot itself", ws)
 
+    def test_the_refusal_hands_nothing_over(self):
+        # the refused pairing used to keep its tail anyway, named after the
+        # chart's OWN stage: 133 such tails on the 92-file STEP batch, which
+        # the Lab drew as minutes "handed to stage 1" on stage 1 (00270 p19)
+        a = series("7", "08:40:00", 12000, at=0)
+        b = series("7", "08:50:00", 11400, at=600)
+        pipeline._hand_over_tails([a, b], [])
+        self.assertIsNone(a.get("handover"),
+                          "a refused hand-over still carries a tail to its own stage")
+
     def test_a_genuine_handover_still_happens(self):
         # different stages: this is the behaviour #645 asked for, untouched.
         # B re-plots A's last ten minutes, a tail. (This used the 00028 shape,
@@ -78,6 +88,8 @@ class HandOverSelf(unittest.TestCase):
         pipeline._hand_over_tails([a, b], [])
         self.assertLess(trimmed_len(a), 12000,
                         "a real handover between two stages stopped working")
+        self.assertEqual((a.get("handover") or {}).get("to"), "8",
+                         "and its tail still goes with it, to the next stage")
 
     def test_unlabelled_charts_are_not_refused(self):
         # two charts with no stage number are not evidence of anything, and

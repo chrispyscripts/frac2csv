@@ -1865,11 +1865,24 @@ function wellModel(stages, file) {
     const M = grp[0].meta;
     const t0 = new Date((M.date || "2000-01-01") + "T" + (M.start_time || "00:00:00"));
     const dsec = grp[0].sample_sec || 1;
-    const n = Math.max(...grp.map(st => st.n));
+    // the stage's charts on one timeline, exactly as the graph lays them out
+    // (chartPlace / shiftChannel), so the rows the CSV writes are the minutes
+    // the screen shows — not the longest chart counted from the first one's
+    // start, which gave 00270 stage 1 a 264-min block for a 98-min stage
+    const place = chartPlace(grp);
+    let n = Math.max(...grp.map((st, gi) => place[gi] + st.n));
     const chan = {};                       // channel key -> values array
-    for (const st of grp)
+    const owner = new Map();
+    grp.forEach((st, gi) => {
       for (const c of st.channels)
-        if (!(c.key in chan)) chan[c.key] = c.values;
+        if (!(c.key in chan)) { chan[c.key] = shiftChannel(c, place[gi]).values; owner.set(c.key, gi); }
+    });
+    // "Export the whole chart" splices the handed-over minutes onto the
+    // channels; the rows have to reach that far or the splice never exports
+    if (keepTailOn(M)) {
+      const h = stageTail(grp, key, place, owner);
+      if (h) n = Math.max(n, h.end);
+    }
     const rows = [];
     for (let i = 0; i < n; i++) {
       const s = i * dsec;
@@ -2105,9 +2118,18 @@ function stageItems(stages, keepContinuous) {
                        (a < b ? -1 : a > b ? 1 : 0));
   const out = order.map(k => {
     const grp = groups.get(k);
-    const channels = [], seen = new Set();
-    for (const st of grp) for (const c of st.channels)
-      if (!seen.has(c.key)) { seen.add(c.key); channels.push(c); }
+    // Each chart on the stage's own timeline (see chartPlace): a chart that
+    // opens later is padded in front, one that opened earlier loses what it
+    // drew before the stage began.
+    const place = chartPlace(grp);
+    const channels = [], seen = new Set(), owner = new Map();
+    grp.forEach((st, gi) => {
+      for (const c of st.channels)
+        if (!seen.has(c.key)) {
+          seen.add(c.key); owner.set(c.key, gi);
+          channels.push(shiftChannel(c, place[gi]));
+        }
+    });
     // The minutes this stage handed to the next one, carried through with it.
     //
     // This list is what the UI actually opens, and it names every field it
@@ -2120,18 +2142,123 @@ function stageItems(stages, keepContinuous) {
     // Three releases went out insisting the feature worked, tested through a
     // path no user takes (#665, #668, #669, #679, #680, #681).
     //
-    // Taken from whichever chart of this stage carries one — a stage can be
-    // several charts and only the one that runs on hands anything over.
-    const handover = (grp.find(s => s.handover) || {}).handover || null;
+    // Taken from every chart of this stage that carries one — a stage can be
+    // several charts, and the treatment and chemical charts of one page can
+    // each run on — and each tail starts where ITS chart ends (stageTail).
+    const handover = stageTail(grp, k, place, owner);
     return { type: "stage", key: k, meta: grp[0].meta, source: grp[0].source, channels,
              srcs: grp.filter(s => s.page)
                        .map(s => ({ page: s.page, geom: s.geom || null })),
              pages: grp.map(s => s.page).filter(Boolean),   // source PDF pages
              handover,
-             n: Math.max(...grp.map(s => s.n)), sample_sec: grp[0].sample_sec || 1 };
+             n: Math.max(...grp.map((s, gi) => place[gi] + s.n)),
+             sample_sec: grp[0].sample_sec || 1 };
   }).map((it, i) => ({ ...it, seq: i + 1 }));   // 1..N position for sequential labels
   keepTailApplyAll(out);
   return out;
+}
+
+// Where each chart of a stage sits on the stage's timeline, in samples from
+// the first chart's start.
+//
+// A stage is often several charts — STEP prints a Treatment page with a
+// Chemical plot under it and an Offset Analysis page after it — and they were
+// laid over each other from sample 0, as if every one opened when the first
+// did. They do not. 00270 stage 17's offset page opens 6.1 min after its
+// treatment page, so its pressures drew 6 min early; stage 1's offset page
+// opens 2 h 45 min before (an 18:35-22:59 window), so its curves drew 2 h 45
+// late and stretched the chart to 267 min for a 95-min stage (#846). Checked
+// against the curves — a chart sits right where the pressure pen it shares
+// with the first chart matches it, within a minute — this placement is right
+// for 976 of the 1,005 charts in the 92-file batch that can be checked that
+// way; sample 0 was right for 817.
+//
+// Two exceptions keep the old placement:
+// - a plot on the same page as the first chart. The page's plots share a
+//   window, and their filed clocks are moved separately when stages are
+//   paired, so they can drift minutes apart while the curves still line up
+//   at sample 0 (00184 stage 38: +802 s and +483 s on one page).
+// - a clock that puts the chart wholly outside the first chart's window. That
+//   clock cannot be this stage's, so it is not followed (00270 p63 is stage
+//   24's offset chart reprinted on stage 23's page, its clock and all).
+function chartPlace(grp) {
+  const ms = st => {
+    const m = (st && st.meta) || {};
+    if (!m.date) return null;
+    const d = new Date(m.date + "T" + (m.start_time || "00:00:00"));
+    return isNaN(d) ? null : d.getTime();
+  };
+  const a = grp[0], t0 = ms(a), dt = (a && a.sample_sec) || 1;
+  return grp.map((st, i) => {
+    if (i === 0 || t0 == null || st.page == null || st.page === a.page) return 0;
+    const ti = ms(st);
+    if (ti == null) return 0;
+    const off = Math.round((ti - t0) / 1000 / dt);
+    if (off >= a.n || off + st.n <= 0) return 0;
+    return off;
+  });
+}
+
+// A channel moved `off` samples along the stage's timeline: padded in front
+// when its chart opens later, cut in front when it opened earlier. The runs
+// the reader deduced move with it; nothing else in a channel counts samples.
+//
+// The moved copy is kept on the channel (not enumerable, so it never rides
+// into a saved file) and handed out again: the graph's corrections, filters
+// and "export the whole chart" act on the object the list holds, and the CSV
+// (wellModel) has to read that same object or it would export the curve
+// as it was before anyone touched it.
+function shiftChannel(c, off) {
+  if (!off) return c;
+  if (c.__shifted && c.__shifted.off === off) return c.__shifted.copy;
+  const v = c.values || [];
+  const values = off > 0 ? new Array(off).fill(null).concat(v) : v.slice(-off);
+  const deducedRuns = (c.deducedRuns || [])
+    .map(r => [Math.max(0, r[0] + off), r[1] + off])
+    .filter(r => r[1] > r[0]);
+  const copy = { ...c, values, deducedRuns };
+  Object.defineProperty(c, "__shifted", { value: { off, copy }, enumerable: false,
+                                          configurable: true, writable: true });
+  return copy;
+}
+
+// The minutes a stage hands on, from EVERY chart of it that runs on, each
+// channel's tail starting where its own chart ends.
+//
+// It was the first chart's tail only, drawn from the end of the stage's
+// LONGEST chart. On 00270 stage 17 the treatment page is cut at 14:19:53,
+// where stage 18's chart opens, while its chemical plot and offset page run
+// to 14:30 — so the treatment curves stopped, ten blank minutes followed, and
+// the greyed tail was drawn after them, past the end of the printed chart.
+// Reported as "missing end of data" on stages 17, 31 and 35 (#847, #849,
+// #850): 164 stages across 24 files of the batch drew a gap like it.
+//
+// A chart whose handover names its own stage is skipped: the reader refused
+// that hand-over (a stage cannot re-plot itself) and keeps both charts whole.
+function stageTail(grp, k, place, owner) {
+  let to = null, at0 = Infinity, end = 0, n = 0;
+  const chans = [], have = new Set();
+  // the chart that owns a channel gives its tail first
+  const order = grp.map((st, gi) => gi);
+  for (const pass of [true, false]) for (const gi of order) {
+    const h = grp[gi].handover;
+    if (!h || !(h.n > 0) || !h.channels) continue;
+    if (String(h.to) === String(k)) continue;
+    const at = place[gi] + grp[gi].n;
+    if (at < 0) continue;
+    let took = false;
+    for (const hc of h.channels) {
+      const key = hc.key || hc.label;
+      if (have.has(key) || (owner && (owner.get(key) === gi) !== pass)) continue;
+      have.add(key); took = true;
+      chans.push({ ...hc, at });
+    }
+    if (!took) continue;
+    if (to == null) to = h.to;
+    at0 = Math.min(at0, at); end = Math.max(end, at + h.n); n = Math.max(n, h.n);
+  }
+  if (!chans.length) return null;
+  return { to, n, at: at0, end, channels: chans };
 }
 
 // stage label shown in the UI, per the As-labeled / Sequential toggle
@@ -3322,11 +3449,19 @@ function setGraph(channels, n, sampleSec, meta, handover) {
   // channel name, and the axis is stretched to cover it.
   gState.handover = null;
   if (handover && handover.n > 0 && handover.channels) {
-    const by = {};
-    for (const hc of handover.channels) by[hc.key || hc.label] = hc.values;
-    gState.handover = { to: handover.to, n: handover.n, by };
+    // Each channel's tail starts where its own chart ends (stageTail); a
+    // tail with no `at` is the old single-chart shape and starts at n.
+    const by = {}, at = {};
+    for (const hc of handover.channels) {
+      const k = hc.key || hc.label;
+      by[k] = hc.values;
+      at[k] = hc.at != null ? hc.at : n;
+    }
+    const a0 = handover.at != null ? handover.at : n;
+    const end = handover.end != null ? handover.end : n + handover.n;
+    gState.handover = { to: handover.to, n: handover.n, by, at, a0, end };
   }
-  const nTotal = n + (gState.handover ? gState.handover.n : 0);
+  const nTotal = Math.max(n, gState.handover ? gState.handover.end : 0);
   gState.tMax = Math.max(1, (nTotal - 1) * gState.dsec);
   gState.t0 = 0; gState.t1 = gState.tMax;
   gState.hidden = applyHidden(channels, hiddenKeys); gState.hover = null;
@@ -4334,14 +4469,15 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
       gState._splShaded = true;
     }
     const tail = gState.handover && gState.handover.by[c.key || c.label];
+    const tailAt = tail ? gState.handover.at[c.key || c.label] : 0;
     if (tail && tail.length && !gState.isolate) {
       // Shade the handed-over span before drawing it. Dashes alone are ~60 px
       // of light grey on Carmine's panel and he has reported the same chart as
       // truncated across three builds; a band says "this part is different"
       // at any zoom, which is what made it legible when I drew it by hand.
       if (!gState._tailShaded) {
-        const xa = L + ((gState.n * dsec) - t0) / span * plotW;
-        const xb = L + (((gState.n + gState.handover.n - 1) * dsec) - t0) / span * plotW;
+        const xa = L + ((gState.handover.a0 * dsec) - t0) / span * plotW;
+        const xb = L + (((gState.handover.end - 1) * dsec) - t0) / span * plotW;
         if (xb > L && xa < W - R) {
           ctx.save();
           ctx.fillStyle = "rgba(141,154,168,.13)";
@@ -4360,7 +4496,7 @@ function drawCurves(ctx, W, H, hi, alphaMul, chartScale) {
       for (let j = 0; j < tail.length; j += step) {
         const v = tail[j];
         if (v == null || !isFinite(v)) { tpen = false; continue; }
-        const x = L + (((gState.n + j) * dsec) - t0) / span * plotW;
+        const x = L + (((tailAt + j) * dsec) - t0) / span * plotW;
         if (x < L - 2 || x > W - R + 2) { tpen = false; continue; }
         const y = T + (1 - chanFrac(c, v)) * (H - T - B);
         if (!tpen) { ctx.moveTo(x, y); tpen = true; } else ctx.lineTo(x, y);
@@ -5939,20 +6075,33 @@ function keepTailSyncUI() {
 function keepTailApply(item, on) {
   const h = item && item.handover;
   if (!h || !h.n || !item.channels) return 0;
-  const by = {};
-  for (const hc of (h.channels || [])) by[hc.key || hc.label] = hc.values;
+  const by = {}, at = {};
+  for (const hc of (h.channels || [])) {
+    by[hc.key || hc.label] = hc.values;
+    at[hc.key || hc.label] = hc.at;
+  }
   if (item.__nBase == null) item.__nBase = item.n;
   let n = 0;
   for (const c of item.channels) {
     if (!c.__tailBase) c.__tailBase = (c.values || []).slice();
     const tail = by[c.key || c.label];
-    if (on && tail && tail.length) { c.values = c.__tailBase.concat(tail); n++; }
+    if (on && tail && tail.length) {
+      // laid in where its own chart ends (stageTail), never over a reading
+      const v = c.__tailBase.slice();
+      const a = at[c.key || c.label] != null ? at[c.key || c.label] : v.length;
+      for (let j = 0; j < tail.length; j++) {
+        while (v.length <= a + j) v.push(null);
+        if (v[a + j] == null) v[a + j] = tail[j];
+      }
+      c.values = v; n++;
+    }
     else { c.values = c.__tailBase.slice(); }
     // the filter chain re-reads from __base, so it has to follow or a filtered
     // chart would snap back to the trimmed length on the next slider move
     c.__base = c.values.slice();
   }
-  item.n = on ? item.__nBase + h.n : item.__nBase;
+  const end = h.end != null ? h.end : item.__nBase + h.n;
+  item.n = on ? Math.max(item.__nBase, end) : item.__nBase;
   return n;
 }
 // Re-applied over a fresh read, like every other correction.

@@ -2883,6 +2883,89 @@ def _align_page_plots(per, placed, axis0, by_samples, cut_by_samples,
             trimmed.append((md.get("stage") or "?", cut))
 
 
+def _step_chart_reprints(results, notes):
+    """Drop a STEP chart that is another stage's chart printed again.
+
+    00270 prints stage 23's Chemical Analysis plot a second time under
+    Treatment 22 (p60 and p62: the same values, the same 19:46:05 clock), and
+    stage 24's Offset Analysis page a second time as stage 23's (p63 and p65,
+    20:23:28). Filed under 22 and 23, each copy carried its clock into a stage
+    it does not belong to, and the Lab said stages 23 and 24 "start before the
+    stage before them finished" — a clock fault the user could not fix,
+    because both stages' own starts were right (#848).
+
+    The test is narrow on purpose. A copy is dropped only when all of these
+    hold: it is the same data, value for value, as a chart filed under another
+    stage; it is not the first chart of its own stage (so no stage loses its
+    own chart); its own stage's first chart covers under a quarter of its
+    window; and its twin's stage's first chart covers at least three quarters
+    of the twin's. Not "wholly outside": this runs before the hand-over cut,
+    so a first chart still carries the minute or two it re-plots of the next
+    stage, and 00270's p60 copy overlaps stage 22 by 100 s. On the 92-file
+    STEP batch the copies dropped cover 0-4% and their twins 97-100%; where
+    both copies fit their stages (00249 stages 33 and 34, both 100%) nothing
+    says which is the reprint, and both stay, as before. Nine charts go:
+    00197 p81 and p121, 00201 p63, 00242 p39, 00243 p93, 00270 p60 and p63,
+    00274 p53 and p54 (00197 p81 is stage 13's p41 filed under stage 33).
+    """
+    import numpy as np
+    live = [r for r in results
+            if r.get("type") == "series" and not r["meta"].get("continuous")
+            and str(r.get("source") or "").startswith("STEP")
+            and r.get("samples") is not None and len(r["samples"])]
+    first = {}
+    for r in live:
+        first.setdefault(str(r["meta"].get("stage") or ""), r)
+
+    def window(r):
+        t0 = _abs_start(r)
+        if t0 is None:
+            return None
+        return t0, t0 + timedelta(seconds=len(r["samples"]) * _sample_sec(r))
+
+    def share(r):
+        """How much of r's window its own stage's first chart covers, 0..1."""
+        a = first.get(str(r["meta"].get("stage") or ""))
+        if a is r:
+            return 1.0
+        wa, wr = (window(a) if a is not None else None), window(r)
+        if wa is None or wr is None:
+            return None
+        ov = (min(wa[1], wr[1]) - max(wa[0], wr[0])).total_seconds()
+        return max(0.0, ov) / max(1e-9, (wr[1] - wr[0]).total_seconds())
+
+    def same(a, b):
+        if len(a["samples"]) != len(b["samples"]) or set(a["data"]) != set(b["data"]):
+            return False
+        return all(np.array_equal(np.asarray(a["data"][k], float),
+                                  np.asarray(b["data"][k], float), equal_nan=True)
+                   for k in a["data"])
+
+    drop, said = set(), []
+    for r in live:
+        sr = str(r["meta"].get("stage") or "")
+        mine = share(r)
+        if not sr or first.get(sr) is r or mine is None or mine >= 0.25:
+            continue
+        for o in live:
+            so = str(o["meta"].get("stage") or "")
+            if o is r or not so or so == sr or id(o) in drop:
+                continue
+            if (share(o) or 0.0) >= 0.75 and same(r, o):
+                drop.add(id(r))
+                said.append((sr, r.get("page"), so, o.get("page")))
+                break
+    if not drop:
+        return
+    results[:] = [r for r in results if id(r) not in drop]
+    notes.append(
+        f"{len(said)} chart(s) left out as reprints of another stage's chart — "
+        f"the same values under the same clock, and that clock is outside the "
+        f"stage it was filed under: "
+        + ", ".join(f"p{p} (filed as stage {s}) is stage {so}'s p{po}"
+                    for s, p, so, po in said))
+
+
 def _hand_over_tails(results, notes):
     """Where one chart runs on into the next and the next re-plots those
     minutes, cut the first at the second's start.
@@ -3198,13 +3281,12 @@ def _hand_over_tails(results, notes):
             # that reads as data loss. It is not; it is a handover. Carried as
             # its own series so nothing downstream can mistake it for the
             # stage's own samples, and drawn greyed with the stage it went to.
+            # (the tail itself is kept below, once the pairing is known to
+            # stand: a refused pairing hands nothing over, and a tail left on
+            # it named the chart's own stage — 133 of them on the 92-file STEP
+            # batch, drawn by the Lab as minutes "handed to" the stage they
+            # were already in)
             tail_s = a["samples"][off:]
-            if len(tail_s):
-                a["handover"] = {
-                    "to": sb,
-                    "samples": tail_s,
-                    "data": {l: v[off:] for l, v in a["data"].items()},
-                }
             # A stage cannot re-plot itself.
             #
             # The pairing walks charts in time order within a source group and
@@ -3232,6 +3314,12 @@ def _hand_over_tails(results, notes):
                     f"same stage; both kept as printed")
                 differ.append((sa, sb, ov, id(a)))
                 continue
+            if len(tail_s):
+                a["handover"] = {
+                    "to": sb,
+                    "samples": tail_s,
+                    "data": {l: v[off:] for l, v in a["data"].items()},
+                }
             if off > off_before:
                 pumped.add(id(a))
             a["samples"] = a["samples"][:off]
@@ -6009,6 +6097,8 @@ def extract_document(doc, sample_sec=1.0, enable_raster=True, filename=None,
 
     # a Trican CONTINUOUS chart re-plots the stage charts end to end
     _trican_continuous(results, notes)
+    # STEP: one stage's chart printed again under another stage's number
+    _step_chart_reprints(results, notes)
     # consecutive charts that print the same minutes twice
     _hand_over_tails(results, notes)
 
