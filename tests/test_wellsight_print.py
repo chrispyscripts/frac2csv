@@ -25,8 +25,32 @@ if fitz:
 PPM = 72 / 0.0254 / 240          # points per metre at 1:240
 
 
+def tracks(pg, landscape, run, curve_color=(1, 0, 0)):
+    """LogViewer's tracks across a page: the curve track (dark borders, grey
+    grid, a red curve in short strokes), then a lithology track (dark
+    borders, no colour). Across = x on a portrait page, y on a landscape one."""
+    def line(a, b, c0, c1, color, width=0.7):
+        if landscape:
+            pg.draw_line((c0, a), (c1, b), color=color, width=width)
+        else:
+            pg.draw_line((a, c0), (b, c1), color=color, width=width)
+    for a in (CURVE[0], CURVE[1], LITH[0], LITH[1]):
+        line(a, a, 0, run, (0, 0, 0))
+    for k in range(1, 10):
+        x = CURVE[0] + k * (CURVE[1] - CURVE[0]) / 10
+        line(x, x, 0, run, (0.5, 0.5, 0.5), 0.4)
+    import math as _m
+    for i in range(0, int(run) - 4, 4):
+        x0 = 100 + 40 * _m.sin(i / 23.0)
+        x1 = 100 + 40 * _m.sin((i + 4) / 23.0)
+        line(x0, x1, i, i + 4, curve_color, 1.0)
+
+
+CURVE, LITH = (40.0, 190.0), (420.0, 480.0)     # across the page, points
+
+
 def printout(top, bottom, landscape=False, start_y=560.0, second_column=True,
-             round_off=True):
+             round_off=True, with_tracks=False, curve_color=(1, 0, 0)):
     """A fake LogViewer printout, depth down (or across) the pages, and the
     true depth at the start of each of its pages."""
     doc = fitz.open()
@@ -41,6 +65,8 @@ def printout(top, bottom, landscape=False, start_y=560.0, second_column=True,
     while True:
         pg = doc.new_page(width=W, height=H)
         starts[len(doc)] = d_at                          # 1-based page number
+        if with_tracks:
+            tracks(pg, landscape, run, curve_color)
         if d_at > bottom:
             break
         d_end = d_at + run / PPM
@@ -119,6 +145,49 @@ class Stitch(unittest.TestCase):
         data, info = self.check(575, 815)
         png = wp.render(data, 600, 650, info["top"], info["pt_per_m"], 10)
         self.assertTrue(png.startswith(b"\x89PNG"))
+
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class CurveTrack(unittest.TestCase):
+    """For now the views show one compartment of the printout: the track the
+    curves are drawn in."""
+    def strip(self, landscape):
+        pdf, _ = printout(1300, 1400, landscape=landscape, with_tracks=True)
+        return wp.stitch(pdf, 1300, 1400)
+
+    def test_the_curve_track_is_found_on_a_strip_log(self):
+        data, info = self.strip(False)
+        x0, x1 = info["curves_pt"]
+        self.assertAlmostEqual(x1 - x0, CURVE[1] - CURVE[0], delta=1.0)
+
+    def test_and_on_a_horizontal_log_turned_to_run_down(self):
+        data, info = self.strip(True)
+        x0, x1 = info["curves_pt"]
+        self.assertAlmostEqual(x1 - x0, CURVE[1] - CURVE[0], delta=1.0)
+
+    def test_only_that_track_is_drawn_and_cut(self):
+        data, info = self.strip(False)
+        png = wp.render(data, 1320, 1330, 1300, info["pt_per_m"], 20, None, tuple(info["curves_pt"]))
+        pm = fitz.Pixmap(png)
+        self.assertAlmostEqual(pm.width, round((CURVE[1] - CURVE[0]) * 20 / info["pt_per_m"]), delta=2)
+        red = sum(1 for i in range(0, len(pm.samples), 3)
+                  if pm.samples[i] > 200 and pm.samples[i + 1] < 80 and pm.samples[i + 2] < 80)
+        self.assertGreater(red, 20)                      # the curve is in it
+        cut = fitz.open(stream=wp.cut(data, *info["curves_pt"]), filetype="pdf")[0]
+        self.assertAlmostEqual(cut.rect.width, CURVE[1] - CURVE[0], delta=1.0)
+
+    def test_a_black_curve_found_by_its_slant(self):
+        # a TVD gamma log draws its one curve in black
+        pdf, _ = printout(1300, 1400, with_tracks=True, curve_color=(0, 0, 0))
+        data, info = wp.stitch(pdf, 1300, 1400)
+        x0, x1 = info["curves_pt"]
+        self.assertAlmostEqual(x1 - x0, CURVE[1] - CURVE[0], delta=1.0)
+
+    def test_no_coloured_curve_no_track(self):
+        pdf, _ = printout(1300, 1400)                    # gridlines and labels only
+        data, info = wp.stitch(pdf, 1300, 1400)
+        self.assertIsNone(info["curves_pt"])
 
 
 if __name__ == "__main__":

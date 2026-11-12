@@ -21,10 +21,16 @@ The strip is vector: show_pdf_page carries the drawing over, so curves stay
 lines and text stays text. The scale is the printout's own (11.81 pt per
 metre at 1:240).
 
+The strip keeps every track LogViewer printed, and curve_track() finds the
+one the LAS curves are drawn in, so a view can show that compartment alone:
+the reference for the curves, without the descriptions, lithology and
+cross-section beside it.
+
 Needs PyMuPDF.
 """
 import bisect
 import collections
+import math
 import re
 
 import fitz
@@ -333,7 +339,70 @@ def stitch(pdf, top, bottom):
             "placed": placed, "gaps": gaps, "worst_seam_m": round(worst_seam, 3),
             "over_page_limit": height > PAGE_MAX}
     info["check"] = check(data, top, bottom, ppm)
+    ct = curve_track(fitz.open(stream=data, filetype="pdf")[0])
+    info["curves_pt"] = [round(ct[0], 1), round(ct[1], 1)] if ct else None
     return data, info
+
+
+def curve_track(pg):
+    """(x0, x1), in points across a stitched strip (depth running down),
+    of the track the curves are drawn in; None if there is none.
+
+    LogViewer prints each track between long dark lines that run the length
+    of the log, and grids it in grey. The curves (ROP, gas, gamma) are drawn
+    in colour, as many short strokes; borders, gridlines and text are black
+    or grey. So the curve track is the space between two neighbouring long
+    dark lines that holds the most coloured stroke. On a horizontal log the
+    well-bore cross-section has some colour too (its outlines), at most 0.6
+    of what the data-curves track has on 400 printouts of the drive.
+
+    A TVD gamma log draws its one curve in black. With no coloured curve
+    along the log, the track with the most slanting dark stroke is taken
+    instead: gridlines and borders run straight along or across, a curve
+    wanders."""
+    H = pg.rect.height
+    runs = collections.defaultdict(float)        # x of a dark line down the log -> length
+    curve, slant = [], []                        # (x, length): coloured, dark slanting strokes
+    for d in pg.get_drawings():
+        col = d.get("color")
+        if not col:
+            continue                             # a fill
+        coloured = max(col) - min(col) > 0.3
+        dark = max(col) < 0.35
+        for it in d["items"]:
+            if it[0] == "l":
+                p, q = it[1], it[2]
+                dx, dy = abs(p.x - q.x), abs(p.y - q.y)
+                if dark and dx < 0.3 and dy > 2:
+                    runs[round(p.x * 2) / 2] += dy
+                elif coloured:
+                    curve.append(((p.x + q.x) / 2, min(20.0, math.hypot(dx, dy))))
+                elif dark and dx >= 0.3 and dy >= 0.3:
+                    slant.append(((p.x + q.x) / 2, min(20.0, math.hypot(dx, dy))))
+            elif it[0] == "re" and dark:
+                r = it[1]
+                runs[round(r.x0 * 2) / 2] += r.height
+                runs[round(r.x1 * 2) / 2] += r.height
+    xs = []
+    for x in sorted(x for x, n in runs.items() if n >= 0.3 * H):
+        if not xs or x - xs[-1] > 1.0:
+            xs.append(x)
+    def best_by(strokes):
+        best = None
+        for a, b in zip(xs, xs[1:]):
+            if b - a < 20:
+                continue
+            w = sum(n for x, n in strokes if a <= x <= b)
+            if best is None or w > best[2]:
+                best = (a, b, w)
+        return best
+    # a curve along the log has at least a tenth of the log's length in
+    # strokes; less is a mark or two, not a curve
+    for strokes in (curve, slant):
+        best = best_by(strokes)
+        if best and best[2] >= 0.1 * H:
+            return best[0], best[1]
+    return None
 
 
 def check(strip, top, bottom, ppm):
@@ -366,19 +435,38 @@ def check(strip, top, bottom, ppm):
             "cut_at_page_edge": cut}
 
 
-def render(strip, d0, d1, top, ppm, px_per_m, width_px=None):
+def render(strip, d0, d1, top, ppm, px_per_m, width_px=None, across=None):
     """A PNG of the strip from depth d0 to d1 at px_per_m pixels per metre.
     width_px stretches it across to that many pixels (the stacked window
     does, when the whole log is fitted to the screen and the strip at its own
-    proportions would be a sliver); otherwise it keeps its proportions."""
-    doc = strip if isinstance(strip, fitz.Document) else fitz.open(stream=strip, filetype="pdf")
-    pg = doc[0]
+    proportions would be a sliver); otherwise it keeps its proportions.
+    across=(x0, x1) shows that part of the strip only (the curve track).
+    strip: the PDF bytes, a Document, or the DisplayList of its page (the
+    fast way to draw one page many times)."""
+    if isinstance(strip, fitz.DisplayList):
+        src = strip
+    else:
+        doc = strip if isinstance(strip, fitz.Document) else fitz.open(stream=strip, filetype="pdf")
+        src = doc[0]
+    R = src.rect
+    x0, x1 = (max(R.x0, across[0]), min(R.x1, across[1])) if across else (R.x0, R.x1)
     y0 = max(0.0, (d0 - top) * ppm)
-    y1 = min(pg.rect.height, (d1 - top) * ppm)
-    if y1 <= y0:
+    y1 = min(R.height, (d1 - top) * ppm)
+    if y1 <= y0 or x1 <= x0:
         return None
     zy = px_per_m / ppm
-    zx = (float(width_px) / pg.rect.width) if width_px else zy
-    pix = pg.get_pixmap(matrix=fitz.Matrix(zx, zy), clip=fitz.Rect(0, y0, pg.rect.width, y1),
-                        alpha=False)
+    zx = (float(width_px) / (x1 - x0)) if width_px else zy
+    pix = src.get_pixmap(matrix=fitz.Matrix(zx, zy), clip=fitz.Rect(x0, y0, x1, y1), alpha=False)
     return pix.tobytes("png")
+
+
+def cut(strip, x0, x1):
+    """The strip with only the part from x0 to x1 across: one compartment of
+    the printout as its own PDF, still vector."""
+    src = fitz.open(stream=strip, filetype="pdf")
+    R = src[0].rect
+    out = fitz.open()
+    pg = out.new_page(width=x1 - x0, height=R.height)
+    pg.show_pdf_page(pg.rect, src, 0, clip=fitz.Rect(x0, R.y0, x1, R.y1))
+    out.set_metadata(src.metadata)
+    return out.tobytes(garbage=3, deflate=True)

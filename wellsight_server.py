@@ -27,6 +27,12 @@ import wellsight_logviewer as lv
 import wellsight_library as lib
 
 _KEEP = 24                      # logs held at once; the oldest goes first
+# A PyMuPDF document must not be drawn from two threads at once, and the
+# server answers each request on a thread of its own: the printout tiles a
+# zoom asks for come in together. One at a time, from the page's display
+# list, which draws a piece of a long page several times faster than the
+# page itself (the page is read once, not once per tile).
+_RENDER = threading.Lock()
 _STORE = collections.OrderedDict()
 _LOCK = threading.Lock()
 
@@ -57,8 +63,18 @@ def _stitch(rec, pdf_bytes, source):
     data, info = wp.stitch(pdf_bytes, p["top"], p["bottom"])
     info["source"] = source
     info["file"] = _strip_name(rec)
-    rec["strip"], rec["strip_info"] = data, info
-    rec["strip_doc"] = None
+    # For now the views show the curve track alone: the printout's
+    # reference for the LAS curves. The whole strip is kept (and saved).
+    if info.get("curves_pt"):
+        x0, x1 = info["curves_pt"]
+        info["full_width_pt"] = info["width_pt"]
+        info["width_pt"] = round(x1 - x0, 1)
+        info["part"] = "curves"
+    else:
+        info["part"] = "all"
+    with _RENDER:
+        rec["strip"], rec["strip_info"] = data, info
+        rec["strip_doc"] = rec["strip_dl"] = rec["strip_cut"] = None
     return info
 
 
@@ -199,6 +215,9 @@ def save(req, export_folder):
     files = dict(rec["files"])
     if rec.get("strip"):
         files[_strip_name(rec)] = rec["strip"]
+        cut = _curves_pdf(rec)
+        if cut is not rec["strip"]:
+            files[rec["payload"]["file"] + ".printout-curves.pdf"] = cut
     if rec.get("printout_raw"):
         files[rec["payload"]["file"] + ".printout.pdf"] = rec["printout_raw"]
     for name, data in files.items():
@@ -220,25 +239,50 @@ def view(q):
     return 200, _public(rec)
 
 
+def _across(rec, q):
+    """the part of the strip a view shows: the curve track, unless
+    part=all asks for every track"""
+    info = rec["strip_info"]
+    if q.get("part") == "all" or not info.get("curves_pt"):
+        return None
+    return tuple(info["curves_pt"])
+
+
 def strip_png(q):
     rec = _get(q.get("id"))
     if not rec or not rec.get("strip"):
         return 404, None
     info = rec["strip_info"]
-    if rec.get("strip_doc") is None:
-        import fitz
-        rec["strip_doc"] = fitz.open(stream=rec["strip"], filetype="pdf")
     d0, d1 = float(q.get("d0", info["top"])), float(q.get("d1", info["bottom"]))
     ppm = min(max(float(q.get("ppm", 20)), 0.05), 400.0)
     w = q.get("w")
     w = min(max(int(float(w)), 16), 4000) if w else None
     if d1 <= d0 or (d1 - d0) * ppm > 12000:
         return 400, None
-    return 200, wp.render(rec["strip_doc"], d0, d1, info["top"], info["pt_per_m"], ppm, w)
+    with _RENDER:
+        if rec.get("strip_dl") is None:
+            import fitz
+            rec["strip_doc"] = fitz.open(stream=rec["strip"], filetype="pdf")
+            rec["strip_dl"] = rec["strip_doc"][0].get_displaylist()
+        png = wp.render(rec["strip_dl"], d0, d1, info["top"], info["pt_per_m"], ppm, w,
+                        _across(rec, q))
+    return (200, png) if png else (400, None)
+
+
+def _curves_pdf(rec):
+    """the curve track of the strip as its own PDF (the whole strip if no
+    curve track was found)"""
+    ct = rec["strip_info"].get("curves_pt")
+    if not ct:
+        return rec["strip"]
+    with _RENDER:
+        if rec.get("strip_cut") is None:
+            rec["strip_cut"] = wp.cut(rec["strip"], *ct)
+        return rec["strip_cut"]
 
 
 def strip_pdf(q):
     rec = _get(q.get("id"))
     if not rec or not rec.get("strip"):
         return 404, None
-    return 200, rec["strip"]
+    return 200, (rec["strip"] if _across(rec, q) is None else _curves_pdf(rec))
