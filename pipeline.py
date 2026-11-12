@@ -3009,7 +3009,7 @@ def _hand_over_tails(results, notes):
     _trim_wide_plots(per, placed, notes)
     axis0 = {id(r): r.get("axis_t0_s") for items in per.values() for t0, r in items}
     opens_by = _next_stage_opens(per)
-    trimmed, differ, moved, kept, reprinted = [], [], [], [], []
+    trimmed, differ, moved, kept, reprinted, wide = [], [], [], [], [], []
     by_samples = {}                       # id(chart) -> pens its place was read off
                                           #   (0.5: the printed axes alone)
     cut_by_samples = {}                   # id(chart) -> pens its cut was read off
@@ -3118,6 +3118,30 @@ def _hand_over_tails(results, notes):
                     f"numbers. Both kept as printed and nothing cut; this "
                     f"stage's own chart is not in the file")
                 reprinted.append((sa or "?", sb, shared * sec))
+                continue
+            # Nor does a chart run on into an EARLIER stage. A hand-over is
+            # the tail of stage N's chart re-plotted by N+1's; a chart of
+            # stage N that B, a stage before N, opens in the first half of
+            # is a wider window than its stage: the Offset Analysis of the
+            # whole day, filed under the last treatment it shows. 00272 p49
+            # (stage 15) prints 02:45-15:45, stages 7 to 15; cut where stage
+            # 7 opens, it kept 2 h of the day and handed 10.9 h, stage 15's
+            # own minutes among them, to stage 7. 00269 p85 (stage 29,
+            # 13:00-20:45) and 00242 p70 (stage 25's chemistry, 286 s kept
+            # of 2 h) went the same way. A wide window has no tail to give:
+            # it is kept as printed. (A backward pair that hands over a few
+            # minutes is left alone: 00197 p52 prints stage 15's window under
+            # stage 19, and its last 5 min are stage 16's.)
+            na_, nb_ = _stage_number(a), _stage_number(b)
+            if na_ is not None and nb_ is not None and nb_ < na_ \
+                    and (n_a - off) * 2 > n_a:
+                a["meta"].setdefault("warnings", []).append(
+                    f"its window holds stage {sb}'s chart and runs "
+                    f"{(n_a - off) * sec / 60:.0f} min past where that one "
+                    f"opens: a wider plot than this stage (the day's "
+                    f"offsets), not a chart running on into the next stage. "
+                    f"Kept as printed, nothing handed over")
+                wide.append((sa or "?", sb, (n_a - off) * sec))
                 continue
             # Never further than the bounds say B can sit: within
             # HANDOVER_DRIFT_S of its filed start, and open before the next
@@ -3401,6 +3425,13 @@ def _hand_over_tails(results, notes):
                      + ", ".join(f"{a}→{b} ({o / 60:.1f} min)"
                                  for a, b, o in reprinted[:8])
                      + (", …" if len(reprinted) > 8 else ""))
+    if wide:
+        notes.append(f"{len(wide)} chart(s) plot a wider window than their "
+                     f"stage and hold an earlier stage's chart, so nothing "
+                     f"was handed over and they are kept as printed: "
+                     + ", ".join(f"{a}→{b} ({o / 3600:.1f} h)"
+                                 for a, b, o in wide[:8])
+                     + (", …" if len(wide) > 8 else ""))
     if differ:
         notes.append(f"{len(differ)} pair(s) of charts overlap and disagree "
                      f"there, kept as printed: "

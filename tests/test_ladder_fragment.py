@@ -27,6 +27,19 @@ class LadderFragment(unittest.TestCase):
         top = fit[0] + fit[1] * 9
         self.assertAlmostEqual(top, 100.0, delta=3.0)
 
+    def test_a_stray_label_between_rungs_is_not_a_lost_point(self):
+        # 00047 p213 (2026 STEP): 100, 80, 60, 40, 20 and a "5" (with two
+        # "2"s) between 60 and 40, near where 50 would be. A ladder in steps
+        # of 20 prints no 50, so the 5 is no intact label of it: the axis
+        # stays 0..100. (Also 00047 p214, 00049 p143, 00052 p156-157,
+        # 00054 p163-164.)
+        strict = [(100.0, 6), (100.0, 6), (80.0, 113), (60.0, 221), (2.0, 273),
+                  (5.0, 280), (2.0, 295), (40.0, 328), (20.0, 435)]
+        fit = (101.118, -0.18639, 6)
+        out = ar._repaired_ladder(strict, fit)
+        top = (out or fit)[0] + (out or fit)[1] * 6
+        self.assertAlmostEqual(top, 100.0, delta=3.0)
+
     def test_a_real_lost_point_is_still_repaired(self):
         # 00208 p22: 10.000, 7.500, 5.000, 2.500, 0.0 read 10.0, 7500, 5000, 2500, 0
         strict = [(10.0, 10), (7500.0, 110), (5000.0, 210), (2500.0, 310), (0.0, 410)]

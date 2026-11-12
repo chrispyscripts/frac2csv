@@ -2263,6 +2263,28 @@ def _pale_titles(rows, xa, xb, ccw, only=None):
     return []
 
 
+def _with_legend_pens(channels, extra, lqty):
+    """The chart's pens once the legend under the plot has been read.
+
+    On a pressure chart the legend adds the offset wells to the colour
+    table's pens. Otherwise it names every pen and replaces them — except
+    where it read the additives and not the clean rate: then the colour
+    table's clean rate stays. 00050 p140 (2026 STEP) read two of its three
+    legend columns, the SFR-990Z pens, and the chart lost its Combined Clean
+    Rate, which v1.11.53 read. (The colour table's rate pen is still "Slurry
+    Rate" here; _name_chemical makes it the clean rate on a chemical chart.)
+    """
+    if lqty == "pressure":
+        return channels + extra
+
+    def clean(c):
+        return "clean rate" in str(c.get("label") or "").lower()
+    if any(clean(c) for c in extra):
+        return list(extra)
+    return list(extra) + [c for c in channels
+                          if clean(c) or c.get("label") == "Slurry Rate"]
+
+
 def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
     """Chart with black tick labels on stacked value axes, each named by its
     own rotated title (Pressure / Rate / Concentration).
@@ -2846,10 +2868,7 @@ def _extract_new_chart(img, sample_sec=1.0, box=None, require_titles=False):
         extra = _legend_below_channels(img, box, axes, lqty, raw_masks, samples,
                                        ta, tb, t_start, ends_ink, sample_sec)
         if extra is not None:
-            if lqty != "pressure":
-                channels = extra            # the legend names every pen
-            else:
-                channels += extra
+            channels = _with_legend_pens(channels, extra, lqty)
     if not channels:
         raise ValueError("step1: no channel calibrated")
     info = {"plot": box, "t0_seconds": float(t_start),
