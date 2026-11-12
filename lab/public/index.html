@@ -307,6 +307,21 @@
                    padding:3px 8px; border-radius:5px; }
   .midhead .clr:hover, .filehdr .clr:hover { color:var(--carmine); border-color:var(--carmine); }
   .filehdr { display:flex; align-items:center; justify-content:space-between; }
+  /* WellSight log pane */
+  .wsctl { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           margin:10px 18px 0; font-size:12px; color:var(--mut); }
+  .wsctl .wszoom { display:flex; align-items:center; gap:6px; }
+  .wsctl #wszoom { width:180px; }
+  .wsctl #wspos { flex:1 1 200px; min-width:120px; }
+  .wsctl .wsrange { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .wsprinthead { display:flex; align-items:center; gap:8px; margin:4px 18px 0; }
+  .wsprintlbl { font-size:12px; font-weight:600; flex:1; min-width:0;
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .wsnoprint { font-size:12px; color:var(--mut); padding:10px 18px 14px; }
+  #wsgraph, #wsprint { width:100%; display:block; background:var(--panel);
+                       border:1px solid var(--line); border-radius:8px; cursor:grab; }
+  #ws-legend b { font-family:var(--mono); font-weight:600; color:var(--ink); }
+  #wsgraph.drag, #wsprint.drag { cursor:grabbing; }
   .stagerow { display:flex; justify-content:space-between; align-items:center;
               padding:5px 14px 5px 26px; cursor:pointer; font-size:12px; color:var(--mut); }
   .stagerow:hover { background:var(--panel); color:var(--ink); }
@@ -898,6 +913,53 @@ side-by-side comparison">Open PDF ↗</button>
         <div class="tablewrap" id="pv-table"></div>
         <div class="notes" id="pv-notes"></div>
       </div>
+      <!-- A WellSight log (StripLog / HorizontalLog) in place of a chart: the
+           LAS curve track with depth across, and under it the LogViewer
+           printout turned the same way, both on one depth window. -->
+      <div id="wspane" hidden>
+        <div class="previewhead">
+          <div class="phmeta">
+            <div class="title" id="ws-title">&mdash;</div>
+            <div class="sub" id="ws-sub"></div>
+          </div>
+          <button type="button" class="btn" id="wsprintbtn" hidden
+                  title="Print this log to PDF with WellSight LogViewer, then stitch it">Print with LogViewer</button>
+          <button type="button" class="btn" id="wspdfbtn"
+                  title="Stitch a printout PDF of this log (LogViewer: File > Print,
+Microsoft Print to PDF, All, Page Breaks off)">Add printout PDF</button>
+          <button type="button" class="btn" id="wssavebtn"
+                  title="Write the LAS, CSV, JSON and the stitched printout">Save LAS</button>
+          <button type="button" class="btn" id="wsflagbtn"
+                  title="Report a problem with this log — sends your notes plus a
+picture of these panels and the reading's details">Flag Error</button>
+          <input type="file" id="wspdfin" accept=".pdf" hidden>
+          <span class="stackmsg" id="wsmsg" hidden></span>
+          <div class="legend" id="ws-legend"></div>
+        </div>
+        <div class="wsctl">
+          <button type="button" class="btn" id="wswhole"
+                  title="Show the whole log">Whole log</button>
+          <label class="wszoom">Zoom
+            <input type="range" id="wszoom" min="0" max="1000" step="1" value="0"
+                   title="How many metres the window shows. Ctrl or ⌘ and the
+mouse wheel zoom at the pointer; drag to move along the log."></label>
+          <span class="wsrange" id="wsrange"></span>
+          <input type="range" id="wspos" min="0" max="1000" step="1" value="0"
+                 title="Where along the log the window sits">
+        </div>
+        <div class="canvaswrap" id="wsgraphwrap"><canvas id="wsgraph" width="1120" height="360"></canvas></div>
+        <div class="wsprinthead">
+          <span class="wsprintlbl" id="wsprintlbl">Printed log</span>
+          <button type="button" class="btn" id="wsstackbtn"
+                  title="Open the LAS curves and the printout side by side, depth
+down, in a separate window that follows this one">Stacked ↗</button>
+          <button type="button" class="btn" id="wsopenpdf" hidden
+                  title="Open the stitched printout PDF">Open PDF ↗</button>
+        </div>
+        <div class="canvaswrap" id="wsprintwrap"><canvas id="wsprint" width="1120" height="160"></canvas></div>
+        <div class="wsnoprint" id="wsnoprint" hidden></div>
+        <div class="notes" id="ws-notes"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1433,6 +1495,10 @@ async function postJson(url, body) {
   return out;
 }
 
+// The data sets a log offers in the middle column, where a report lists its
+// stages. One for now; lithology, text and survey are the obvious next ones.
+const WS_SETS = [{ key: "curves", label: "Curve Track" }];
+
 async function handleWellsight(f, q, printoutFile) {
   try {
     q.set("reading log"); q.progress(0.25);
@@ -1445,10 +1511,11 @@ async function handleWellsight(f, q, printoutFile) {
     const out = await postJson("/api/wellsight", body);
     q.ws = { id: out.id, payload: out.payload, printout: out.printout || null };
     q.provider = "WellSight";
+    q.items = WS_SETS.map(s => ({ type: "wsset", key: s.key, label: s.label }));
     const nm = q.head.querySelector(".nm");
     if (nm && out.payload.well) nm.title = out.payload.well;
-    await wellsightButtons(q);
     wellsightLine(q, out.printoutError);
+    if (!current) selectFile(q);
   } catch (e) {
     q.set("✗ " + e.message, "err");
   }
@@ -1468,59 +1535,451 @@ function wellsightLine(q, printoutError) {
   q.set("✓ " + bits.join(" · "), printoutError ? "err" : "ok");
 }
 
-async function wellsightButtons(q) {
-  const before = q.head.querySelector(".del");
-  const btn = (label, title, fn) => {
-    const b = document.createElement("button");
-    b.className = "rptbtn"; b.textContent = label; b.title = title;
-    b.addEventListener("click", async ev => {
-      ev.stopPropagation();
-      b.disabled = true;
-      try { await fn(b); } finally { b.disabled = false; }
-    });
-    q.head.insertBefore(b, before);
-    return b;
-  };
-  btn("Stacked", "LAS curves beside the printout, locked together by depth", () => {
-    window.open("logstack.html?id=" + encodeURIComponent(q.ws.id),
-                winName("logstack-" + q.ws.id), "noopener=no");
-  });
-  const st = await wellsightStatus();
-  if (st.available)
-    btn("Print", "Print this log to PDF with WellSight LogViewer, then stitch it",
-        async () => {
-          q.set("printing with LogViewer…");
-          try {
-            const out = await postJson("/api/wellsight-logviewer", { id: q.ws.id });
-            q.ws.printout = out.printout;
-            wellsightLine(q);
-          } catch (e) { wellsightLine(q, e.message); }
-        });
-  const pick = document.createElement("input");
-  pick.type = "file"; pick.accept = ".pdf"; pick.hidden = true;
-  pick.addEventListener("change", async () => {
-    const f = pick.files[0]; pick.value = "";
-    if (!f) return;
-    q.set("stitching printout…");
-    try {
-      const out = await postJson("/api/wellsight-printout", { id: q.ws.id,
-        filename: f.name, data: await b64(new Uint8Array(await f.arrayBuffer())) });
-      q.ws.printout = out.printout;
-      wellsightLine(q);
-    } catch (e) { wellsightLine(q, e.message); }
-  });
-  q.el.appendChild(pick);
-  btn("PDF", "Stitch a printout PDF of this log (LogViewer: File > Print, "
-      + "Microsoft Print to PDF, All, Page Breaks off)"
-      + (st.available ? "" : ". " + (st.why || "")), () => pick.click());
-  btn("Save", "Write the LAS, CSV, JSON and the stitched printout", async () => {
-    try {
-      const out = await postJson("/api/wellsight-save", { id: q.ws.id,
-        folder: folderFor(q), destFolder: settings.destFolder });
-      q.set(`✓ ${out.written.length} files saved to ${out.folder}`, "ok");
-    } catch (e) { q.set("✗ save: " + e.message, "err"); }
-  });
+// ---- a log selected: its data sets in the middle, the log on the right ----
+function selectWellsight(entry) {
+  scopeFile = entry.name;
+  document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
+  entry.head.classList.add("sel");
+  $("viewtoggle").hidden = true;
+  $("timewarn").hidden = true;
+  $("dropnote").hidden = true;
+  const list = $("stages"); list.innerHTML = "";
+  const h = document.createElement("div");
+  h.className = "grouphdr"; h.textContent = "Data sets";
+  list.appendChild(h);
+  const p = entry.ws.payload;
+  for (const it of entry.items) {
+    const row = document.createElement("div");
+    row.className = "stagerow";
+    const n = it.key === "curves" ? `${p.curves.length} curve${p.curves.length === 1 ? "" : "s"}` : "";
+    row.innerHTML = `<span class="stg"><span class="nmtxt">${escHtml(it.label)}</span></span>`
+      + `<span class="ch">${escHtml(n)}</span>`;
+    row.addEventListener("click", () => { setNavList("stages"); selectItem(entry, null, it, row); });
+    it._row = row;
+    list.appendChild(row);
+  }
+  const keep = current && current.entry === entry && entry.items.includes(current.item)
+    ? current.item : entry.items[0];
+  selectItem(entry, null, keep, keep._row);
 }
+
+// The view: one depth window [d0, d1] shared by the curve chart and the
+// printout under it. Depth runs across, like time on a report's chart.
+let wsv = null;
+const WS_M = { L: 62, R: 18, T: 10, B: 40, LITH: 12 };   // chart margins, css px
+const WS_COLORS = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f",
+                   "#0f7d7d", "#5a5f6e", "#8a2f5e"];
+const WS_ROCK = { SS: "#f2d14b", SAND: "#f2d14b", SH: "#8a9a7b", SHALE: "#8a9a7b",
+  SLTST: "#c9a46b", LS: "#6fa8dc", LMST: "#6fa8dc", DOL: "#b48ad8", COAL: "#1b1b1b",
+  ANHY: "#f4b6c2", SALT: "#e8eef4", CHT: "#b5651d", CGL: "#e39b5b", MDST: "#9fb7a0",
+  TILL: "#c7c0a8", BENT: "#d9c27a", GYP: "#f0c8d8" };
+function wsRock(code) {
+  const c = String(code || "").toUpperCase();
+  if (WS_ROCK[c]) return WS_ROCK[c];
+  let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360} 45% 62%)`;
+}
+function wsFmt(v) {
+  if (v == null || !isFinite(v)) return "–";
+  const a = Math.abs(v);
+  return a >= 1000 ? v.toFixed(0) : a >= 100 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
+}
+function wsRange(vals) {
+  const v = vals.filter(x => x != null && isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return [0, 1];
+  let lo = v[0], hi = v[v.length - 1];
+  if (v.length > 20) { lo = v[Math.floor(v.length * 0.005)]; hi = v[Math.ceil(v.length * 0.995) - 1]; }
+  if (hi <= lo) hi = lo + 1;
+  return [lo, hi];
+}
+
+function showWellsight(entry, item) {
+  $("wspane").hidden = false;
+  const p = entry.ws.payload;
+  if (!wsv || wsv.id !== entry.ws.id) {
+    wsv = { id: entry.ws.id, d0: p.top, d1: p.bottom, hover: null,
+            ranges: p.curves.map(c => wsRange(c.values)) };
+  }
+  wsv.entry = entry; wsv.p = p; wsv.P = entry.ws.printout;
+  $("ws-title").textContent = p.well || p.file;
+  $("ws-sub").textContent = [p.file, `${p.app} ${p.version}`,
+    p.top != null ? `${p.top}–${p.bottom} m ${p.axis}` : "", p.scale,
+    p.licence && "licence " + p.licence].filter(Boolean).join(" · ");
+  wellsightStatus().then(st => { $("wsprintbtn").hidden = !st.available; });
+  $("wsmsg").hidden = true;
+  wsLegend();
+  wsNotes();
+  wsSyncSliders();
+  wsDraw();
+  wsStackPost();
+}
+
+function wsNotes() {
+  const p = wsv.p, P = wsv.P, out = [];
+  if (P) {
+    const c = P.check || {};
+    out.push(`Printout: ${P.log_pages} of ${P.pages} pages placed by their depth labels`
+      + (c.labels ? `; ${c.labels} labels, median ${c.median_m} m from their depth` : "")
+      + (P.gaps && P.gaps.length ? `; gaps at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
+      + ` (${P.source || "printout"}).`);
+    out.push("LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.");
+  }
+  for (const w of p.warnings || []) out.push(w);
+  $("ws-notes").textContent = out.join("\n");
+  const has = !!P;
+  $("wsprintwrap").hidden = !has;
+  $("wsopenpdf").hidden = !has;
+  $("wsnoprint").hidden = has;
+  $("wsprintlbl").textContent = has
+    ? `Printed log (LogViewer, stitched) · ${P.log_pages} pages · ${P.pt_per_m} pt/m`
+    : "Printed log";
+  if (!has) $("wsnoprint").textContent = "No printout yet. Print with LogViewer (Windows), "
+    + "or Add printout PDF: in LogViewer, File > Print, Microsoft Print to PDF, All, "
+    + "Page Breaks off. A PDF dropped with the log under the same name is taken too.";
+}
+
+function wsLegend() {
+  const Lg = $("ws-legend"); Lg.innerHTML = "";
+  const p = wsv.p;
+  const i = wsv.hover == null ? -1 : Math.round((wsv.hover - p.depth0) / p.step);
+  p.curves.forEach((c, k) => {
+    const sp = document.createElement("span");
+    const r = wsv.ranges[k];
+    const v = i >= 0 && i < p.rows ? c.values[i] : null;
+    sp.title = `${c.name} — track ${c.track || "-"}, recorded every ${c.recorded_step} m; `
+      + `drawn on ${wsFmt(r[0])}..${wsFmt(r[1])} ${c.unit}`;
+    sp.innerHTML = `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>`
+      + `${escHtml(c.name)} <span style="color:var(--mut)">${escHtml(c.unit)}</span>`
+      + (wsv.hover != null ? ` <b>${wsFmt(v)}</b>` : "");
+    Lg.appendChild(sp);
+  });
+  if (wsv.hover != null) {
+    const sp = document.createElement("span");
+    const iv = p.lithology.find(x => wsv.hover >= x.top && wsv.hover < x.base);
+    sp.innerHTML = `<b>${wsv.hover.toFixed(2)} m</b>` + (iv ? ` <span style="color:var(--mut)">${escHtml(iv.code)}</span>` : "");
+    Lg.appendChild(sp);
+  }
+}
+
+// ---- zoom and position ----
+function wsPlotW() {
+  const w = $("wsgraph").getBoundingClientRect().width || 1000;
+  return Math.max(100, w - WS_M.L - WS_M.R);
+}
+function wsMinLen() {
+  // the printout band under the chart keeps its proportions, so the closest
+  // zoom is where it would stand 1,400 px tall
+  const full = wsv.p.bottom - wsv.p.top;
+  let m = 5;
+  if (wsv.P) m = Math.max(m, wsv.P.width_pt * wsPlotW() / (wsv.P.pt_per_m * 1400));
+  return Math.min(m, full);
+}
+function wsSetWindow(d0, d1) {
+  const top = wsv.p.top, bot = wsv.p.bottom, full = bot - top;
+  let len = Math.max(wsMinLen(), Math.min(full, d1 - d0));
+  let a = d0 + ((d1 - d0) - len) / 2;
+  a = Math.max(top, Math.min(bot - len, a));
+  wsv.d0 = a; wsv.d1 = a + len;
+  wsSyncSliders();
+  wsDraw();
+}
+function wsSyncSliders() {
+  const full = wsv.p.bottom - wsv.p.top, len = wsv.d1 - wsv.d0, mn = wsMinLen();
+  const z = full > mn ? Math.log(full / len) / Math.log(full / mn) : 0;
+  $("wszoom").value = String(Math.round(Math.max(0, Math.min(1, z)) * 1000));
+  const room = full - len;
+  $("wspos").value = String(room > 0 ? Math.round((wsv.d0 - wsv.p.top) / room * 1000) : 0);
+  $("wspos").disabled = room <= 0;
+  $("wsrange").textContent = `${wsv.d0.toFixed(1)}–${wsv.d1.toFixed(1)} m (${len.toFixed(len < 20 ? 1 : 0)} m)`;
+}
+function wsPan(frac) {
+  const len = wsv.d1 - wsv.d0;
+  wsSetWindow(wsv.d0 + frac * len, wsv.d1 + frac * len);
+}
+function wsZoomAt(depth, factor) {
+  const a = depth - (depth - wsv.d0) * factor, b = depth + (wsv.d1 - depth) * factor;
+  wsSetWindow(a, b);
+}
+
+// ---- drawing ----
+let wsRaf = 0;
+function wsDraw() {
+  if (wsRaf) return;
+  wsRaf = requestAnimationFrame(() => { wsRaf = 0; wsDrawNow(); });
+}
+function wsCanvas(cv, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.getBoundingClientRect().width || 1000;
+  cv.style.height = cssH + "px";
+  const W = Math.round(w * dpr), H = Math.round(cssH * dpr);
+  if (cv.width !== W) cv.width = W;
+  if (cv.height !== H) cv.height = H;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, w, h: cssH, dpr };
+}
+function wsGridStep(len, plotW) {
+  for (const s of [1, 2, 5, 10, 20, 50, 100, 200, 500])
+    if (s * plotW / len >= 60) return s;
+  return 1000;
+}
+function wsDrawNow() {
+  if (!wsv || $("wspane").hidden) return;
+  const p = wsv.p, { L, R, T, B, LITH } = WS_M;
+  if (($("wsgraph").getBoundingClientRect().width || 0) < L + R + 100) return;  // laid out too narrow yet
+  const { g, w, h } = wsCanvas($("wsgraph"), 360);
+  const plotW = w - L - R, plotH = h - T - B - (p.lithology.length ? LITH + 4 : 0);
+  const d0 = wsv.d0, d1 = wsv.d1, X = d => L + (d - d0) / (d1 - d0) * plotW;
+  g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+  const step = wsGridStep(d1 - d0, plotW);
+  g.lineWidth = 1; g.font = "11px ui-monospace,Menlo,Consolas,monospace";
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (let d = Math.ceil(d0 / step) * step; d <= d1 + 1e-9; d += step) {
+    const x = Math.round(X(d)) + 0.5;
+    g.strokeStyle = "#e6e8eb"; g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + plotH); g.stroke();
+    g.fillStyle = "#3a4048"; g.fillText(String(+d.toFixed(2)), x, h - B + 8);
+  }
+  for (let k = 0; k <= 4; k++) {
+    const y = Math.round(T + plotH * k / 4) + 0.5;
+    g.strokeStyle = "#eef0f2"; g.beginPath(); g.moveTo(L, y); g.lineTo(L + plotW, y); g.stroke();
+  }
+  g.strokeStyle = "#d2d6db"; g.strokeRect(L + 0.5, T + 0.5, plotW, plotH);
+  g.fillStyle = "#697077"; g.textAlign = "left";
+  g.fillText(`depth, m ${p.axis || ""}`, L, h - B + 23);
+  // each curve on its own scale, as the printed curve track draws them
+  const i0 = Math.max(0, Math.floor((d0 - p.depth0) / p.step) - 1);
+  const i1 = Math.min(p.rows - 1, Math.ceil((d1 - p.depth0) / p.step) + 1);
+  g.save(); g.beginPath(); g.rect(L, T, plotW, plotH); g.clip();
+  p.curves.forEach((c, k) => {
+    const [lo, hi] = wsv.ranges[k];
+    g.strokeStyle = WS_COLORS[k % WS_COLORS.length]; g.lineWidth = 1.3; g.beginPath();
+    let pen = false;
+    for (let i = i0; i <= i1; i++) {
+      const v = c.values[i];
+      if (v == null) { pen = false; continue; }
+      const x = X(p.depth0 + i * p.step);
+      const y = T + plotH * (1 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))));
+      if (pen) g.lineTo(x, y); else g.moveTo(x, y);
+      pen = true;
+    }
+    g.stroke();
+  });
+  g.restore();
+  // the scale of the first curves, at the left edge
+  g.textAlign = "right"; g.textBaseline = "middle"; g.font = "10.5px ui-monospace,Menlo,Consolas,monospace";
+  p.curves.slice(0, 3).forEach((c, k) => {
+    const [lo, hi] = wsv.ranges[k];
+    g.fillStyle = WS_COLORS[k % WS_COLORS.length];
+    g.fillText(wsFmt(hi), L - 6, T + 6 + k * 12);
+    g.fillText(wsFmt(lo), L - 6, T + plotH - 6 - (2 - k) * 12);
+  });
+  if (p.lithology.length) {
+    const y = T + plotH + 4;
+    for (const iv of p.lithology) {
+      if (iv.base < d0 || iv.top > d1) continue;
+      const a = Math.max(L, X(iv.top)), b = Math.min(L + plotW, X(iv.base));
+      g.fillStyle = wsRock(iv.code); g.fillRect(a, y, Math.max(1, b - a), LITH);
+    }
+    g.fillStyle = "#697077"; g.textAlign = "right"; g.textBaseline = "middle";
+    g.fillText("Lith", L - 6, y + LITH / 2);
+  }
+  if (wsv.hover != null && wsv.hover >= d0 && wsv.hover <= d1) {
+    const x = Math.round(X(wsv.hover)) + 0.5;
+    g.strokeStyle = "rgba(163,22,49,.8)"; g.beginPath(); g.moveTo(x, T); g.lineTo(x, h - B); g.stroke();
+  }
+  wsDrawPrint(plotW);
+}
+
+const wsTiles = new Map();
+function wsTile(id, a, b, ppm) {
+  const key = `${id}:${ppm.toFixed(3)}:${a}`;
+  let t = wsTiles.get(key);
+  if (!t) {
+    t = { img: new Image(), ok: false };
+    t.img.onload = () => { t.ok = true; wsDraw(); };
+    t.img.src = `/api/wellsight-strip?id=${encodeURIComponent(id)}&d0=${a}&d1=${b}&ppm=${ppm.toFixed(3)}`;
+    wsTiles.set(key, t);
+    if (wsTiles.size > 200) wsTiles.delete(wsTiles.keys().next().value);
+  }
+  return t;
+}
+function wsDrawPrint(plotW) {
+  const P = wsv.P;
+  if (!P) return;
+  const { L } = WS_M, d0 = wsv.d0, d1 = wsv.d1;
+  const pxPerM = plotW / (d1 - d0);
+  if (!(pxPerM > 0) || !isFinite(pxPerM)) return;
+  const bandH = Math.max(30, Math.round(P.width_pt * pxPerM / P.pt_per_m));
+  const { g, w, h, dpr } = wsCanvas($("wsprint"), bandH);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+  const X = d => L + (d - d0) * pxPerM;
+  const ppm = pxPerM * dpr;
+  const T = Math.max(2, Math.round(600 / pxPerM));          // metres per tile
+  g.save(); g.beginPath(); g.rect(L, 0, plotW, h); g.clip();
+  for (let a = Math.floor((d0 - P.top) / T) * T + P.top; a < Math.min(d1, P.bottom); a += T) {
+    const b = Math.min(a + T, P.bottom);
+    const t = wsTile(wsv.id, +a.toFixed(3), +b.toFixed(3), ppm);
+    if (!t.ok) { g.fillStyle = "#f4f5f7"; g.fillRect(X(a), 0, (b - a) * pxPerM, h); continue; }
+    // the strip runs depth-down; turned a quarter left, depth runs across
+    g.save();
+    g.translate(X(a), h);
+    g.rotate(-Math.PI / 2);
+    g.drawImage(t.img, 0, 0, h, (b - a) * pxPerM);
+    g.restore();
+  }
+  g.restore();
+  if (wsv.hover != null && wsv.hover >= d0 && wsv.hover <= d1) {
+    const x = Math.round(X(wsv.hover)) + 0.5;
+    g.strokeStyle = "rgba(163,22,49,.8)"; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+  }
+}
+
+// ---- mouse: hover reads, drag moves, Ctrl/⌘ + wheel zooms ----
+(function wsMouse() {
+  const depthAt = (cv, clientX) => {
+    const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
+    return wsv.d0 + (clientX - r.left - WS_M.L) / plotW * (wsv.d1 - wsv.d0);
+  };
+  let drag = null;
+  for (const id of ["wsgraph", "wsprint"]) {
+    const cv = $(id);
+    cv.addEventListener("mousemove", e => {
+      if (!wsv) return;
+      if (drag) {
+        const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
+        const dd = (e.clientX - drag.x) / plotW * (drag.d1 - drag.d0);
+        wsSetWindow(drag.d0 - dd, drag.d1 - dd);
+        return;
+      }
+      const d = depthAt(cv, e.clientX);
+      wsv.hover = d >= wsv.d0 && d <= wsv.d1 ? d : null;
+      wsLegend(); wsDraw();
+    });
+    cv.addEventListener("mouseleave", () => {
+      if (!wsv || drag) return;
+      wsv.hover = null; wsLegend(); wsDraw();
+    });
+    cv.addEventListener("mousedown", e => {
+      if (!wsv || e.button !== 0) return;
+      drag = { x: e.clientX, d0: wsv.d0, d1: wsv.d1 };
+      cv.classList.add("drag"); e.preventDefault();
+    });
+    cv.addEventListener("dblclick", () => { if (wsv) wsSetWindow(wsv.p.top, wsv.p.bottom); });
+    cv.addEventListener("wheel", e => {
+      if (!wsv) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        wsZoomAt(depthAt(cv, e.clientX), Math.pow(1.0015, e.deltaY));
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        wsPan((e.deltaX || e.deltaY) / 800);
+      }
+    }, { passive: false });
+  }
+  window.addEventListener("mouseup", () => {
+    if (!drag) return;
+    drag = null;
+    for (const id of ["wsgraph", "wsprint"]) $(id).classList.remove("drag");
+  });
+  window.addEventListener("resize", () => { if (wsv && !$("wspane").hidden) { wsSyncSliders(); wsDraw(); } });
+  $("wszoom").addEventListener("input", () => {
+    const full = wsv.p.bottom - wsv.p.top, mn = wsMinLen();
+    const len = full * Math.pow(mn / full, Number($("wszoom").value) / 1000);
+    const mid = (wsv.d0 + wsv.d1) / 2;
+    wsSetWindow(mid - len / 2, mid + len / 2);
+  });
+  $("wspos").addEventListener("input", () => {
+    const len = wsv.d1 - wsv.d0, room = wsv.p.bottom - wsv.p.top - len;
+    const a = wsv.p.top + room * Number($("wspos").value) / 1000;
+    wsSetWindow(a, a + len);
+  });
+  $("wswhole").addEventListener("click", () => wsSetWindow(wsv.p.top, wsv.p.bottom));
+})();
+
+// ---- the pane's buttons ----
+function wsMsg(t, bad) {
+  const m = $("wsmsg");
+  m.hidden = !t; m.textContent = t || "";
+  m.style.color = bad ? "var(--carmine)" : "";
+}
+function wsPrintoutChanged(entry, printout) {
+  entry.ws.printout = printout;
+  wellsightLine(entry);
+  if (current && current.entry === entry) showWellsight(entry, current.item);
+}
+$("wsprintbtn").addEventListener("click", async () => {
+  const entry = current && current.entry;
+  if (!entry || !entry.ws) return;
+  const b = $("wsprintbtn"); b.disabled = true;
+  wsMsg("Printing with LogViewer… leave its window alone until it closes.");
+  try {
+    const out = await postJson("/api/wellsight-logviewer", { id: entry.ws.id });
+    wsMsg("");
+    wsPrintoutChanged(entry, out.printout);
+  } catch (e) { wsMsg(e.message, true); wellsightLine(entry, e.message); }
+  finally { b.disabled = false; }
+});
+$("wspdfbtn").addEventListener("click", () => $("wspdfin").click());
+$("wspdfin").addEventListener("change", async () => {
+  const f = $("wspdfin").files[0]; $("wspdfin").value = "";
+  const entry = current && current.entry;
+  if (!f || !entry || !entry.ws) return;
+  wsMsg("Stitching the printout…");
+  try {
+    const out = await postJson("/api/wellsight-printout", { id: entry.ws.id,
+      filename: f.name, data: await b64(new Uint8Array(await f.arrayBuffer())) });
+    wsMsg("");
+    wsPrintoutChanged(entry, out.printout);
+  } catch (e) { wsMsg(e.message, true); }
+});
+$("wssavebtn").addEventListener("click", async () => {
+  const entry = current && current.entry;
+  if (!entry || !entry.ws) return;
+  try {
+    const out = await postJson("/api/wellsight-save", { id: entry.ws.id,
+      folder: folderFor(entry), destFolder: settings.destFolder });
+    wsMsg(`${out.written.length} files saved to ${out.folder}`);
+  } catch (e) { wsMsg("Save: " + e.message, true); }
+});
+$("wsflagbtn").addEventListener("click", () => openFlag());
+$("wsopenpdf").addEventListener("click", () => {
+  if (wsv) window.open("/api/wellsight-strip.pdf?id=" + encodeURIComponent(wsv.id), "_blank");
+});
+
+// ---- the stacked window: opened from here, follows this window ----
+let wsStackWin = null;
+function wsStackAlive() { return !!(wsStackWin && !wsStackWin.closed); }
+function wsStackPost() {
+  if (!wsStackAlive() || !wsv) return;
+  try {
+    wsStackWin.postMessage({ type: "logstack:show", id: wsv.id,
+                             rev: wsv.P ? (wsv.P.file || "") + wsv.P.height_pt : "" },
+                           location.origin);
+  } catch (e) { /* closed between the check and the send */ }
+}
+$("wsstackbtn").addEventListener("click", () => {
+  if (!wsv) return;
+  if (wsStackAlive()) { wsStackPost(); wsStackWin.focus(); return; }
+  wsStackWin = window.open("logstack.html?id=" + encodeURIComponent(wsv.id),
+                           winName("logstack"));
+});
+// The arrow keys in the stacked window step through the logs here, so both
+// windows always show the same one.
+function wsNavLogs(dir) {
+  const list = navigableEntries().filter(e => e.ws);
+  if (!list.length) return;
+  const k = current ? list.indexOf(current.entry) : -1;
+  const nxt = k < 0 ? list[dir > 0 ? 0 : list.length - 1] : list[k + dir];
+  if (!nxt) return;
+  selectFile(nxt);
+  nxt.head.scrollIntoView({ block: "nearest" });
+}
+window.addEventListener("message", ev => {
+  if (ev.origin !== location.origin) return;
+  const d = ev.data || {};
+  if (d.type === "logstack:ready") { wsStackWin = ev.source; wsStackPost(); }
+  else if (d.type === "logstack:nav") wsNavLogs(d.dir > 0 ? 1 : -1);
+});
 
 function enqueue(files) {
   const refused = [];
@@ -2537,6 +2996,7 @@ function render(entry, fname, stages, tables, notes, summary) {
 
 // populate the middle column for one file, auto-select its first item
 function selectFile(entry) {
+  if (entry && entry.ws) return selectWellsight(entry);   // a WellSight log
   scopeFile = (entry && entry.name) || "";   // before any correction is read
   if (fvAlive() && entry && entry.name !== fvFile) setTimeout(fvPush, 0);
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
@@ -2750,6 +3210,12 @@ function selectItem(entry, well, item, rowEl) {
   scopeFile = (entry && entry.name) || "";
   current = { entry, well, item };
   $("empty").hidden = true;
+  if (item.type === "wsset") {               // a WellSight log's data set
+    $("previewpane").hidden = true;
+    showWellsight(entry, item);
+    return;
+  }
+  $("wspane").hidden = true;
   $("previewpane").hidden = false;
   if (item.type === "stage") showStage(entry, well, item);
   else if (item.type === "summary") showSummary(entry, item);
@@ -8365,6 +8831,11 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (k === "ArrowLeft" || k === "ArrowRight") {
+    if (current && current.item && current.item.type === "wsset") {
+      wsPan(k === "ArrowLeft" ? -0.25 : 0.25);   // along the log
+      e.preventDefault();
+      return;
+    }
     if (toggleGhostLayer(k === "ArrowLeft" ? "ours" : "ref")) e.preventDefault();
     return;
   }
@@ -8458,17 +8929,19 @@ const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
 // well, which stage, what the axes are, what the engine warned about. Draw
 // that header onto the composite so the picture stands on its own.
 function flagSnapshot() {
-  const parts = [$("graph"), $("origgraph")].filter(
+  // a WellSight log has its own panel: its curve chart and printout band
+  const ws = !!(current && current.item && current.item.type === "wsset");
+  const parts = (ws ? [$("wsgraph"), $("wsprint")] : [$("graph"), $("origgraph")]).filter(
     c => c && c.width && !c.closest(".canvaswrap").hidden);
   if (!parts.length) return null;
   const W = Math.max(...parts.map(c => c.width));
-  const title = $("pv-title").textContent.trim();
-  const sub = $("pv-sub").textContent.trim();
+  const title = $(ws ? "ws-title" : "pv-title").textContent.trim();
+  const sub = $(ws ? "ws-sub" : "pv-sub").textContent.trim();
   // ">" matters: each chip nests a span for the value, and matching both
   // repeats every reading twice in the header.
-  const legend = [...document.querySelectorAll("#pv-legend > span")]
+  const legend = [...document.querySelectorAll(ws ? "#ws-legend > span" : "#pv-legend > span")]
     .map(e => e.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const notes = ($("pv-notes").textContent || "").split("\n")
+  const notes = ($(ws ? "ws-notes" : "pv-notes").textContent || "").split("\n")
     .map(t => t.trim()).filter(Boolean).slice(0, 4);
 
   const pad = 14, lh = 17;
@@ -8561,6 +9034,35 @@ async function captureWindow() {
 // "it looks wrong" into something reproducible.
 function flagDiagnostics() {
   const e = current && current.entry, it = current && current.item;
+  if (e && e.ws && it && it.type === "wsset") {
+    // A WellSight log: what was read from it, what the printout stitch made
+    // of its pages, and the depth window on screen.
+    const p = e.ws.payload, P = e.ws.printout;
+    return {
+      version: (localInfo && localInfo.version) || "web",
+      build: localInfo && localInfo.local ? "desktop" : "web",
+      provider: "WellSight " + p.app + " " + p.version, file: e.name, path: "",
+      chart: it.label, well: p.well, licence: p.licence, uwi: p.uwi,
+      depth: `${p.top}-${p.bottom} m ${p.axis} (${p.axis_basis})`, scale: p.scale,
+      view: wsv ? `${wsv.d0.toFixed(2)}-${wsv.d1.toFixed(2)} m` : "",
+      // the flag server prints flat fields and a channels table, so the
+      // log's details go in as text
+      channels: p.curves.map((c, k) => ({ key: c.mnemonic, unit: c.unit || "",
+        axis: `track ${c.track || "-"}, recorded every ${c.recorded_step} m`,
+        peak: wsv && wsv.ranges[k] ? `drawn ${wsFmt(wsv.ranges[k][0])}..${wsFmt(wsv.ranges[k][1])}` : "" })),
+      lithologyIntervals: p.lithology.length,
+      printout: P ? `${P.source || "printout"}: ${P.log_pages} of ${P.pages} pages placed`
+        + `, left out ${(P.left_out || []).join(",") || "none"}`
+        + `, placed from a neighbour ${(P.inferred || []).join(",") || "none"}`
+        + `, gaps ${(P.gaps || []).map(g => g.join("-")).join(", ") || "none"}`
+        + `, worst seam ${P.worst_seam_m} m, ${P.pt_per_m} pt/m`
+        + (P.check ? `, labels ${P.check.labels} median ${P.check.median_m} m p95 ${P.check.p95_m} m` : "")
+        : "none",
+      warnings: (p.warnings || []).slice(0, 20).join(" | "),
+      notes: (e.notes || []).slice(0, 40),
+      userAgent: navigator.userAgent, platform: navigator.platform,
+    };
+  }
   const m = (it && it.meta) || {};
   const d = {
     version: (localInfo && localInfo.version) || "web",
@@ -9276,6 +9778,7 @@ function deleteEntry(entry) {
     current = null;
     clearStageList();
     $("previewpane").hidden = true;
+    $("wspane").hidden = true;
     $("empty").hidden = false;
     pushStacked();
     updateTableBtn();
@@ -9293,6 +9796,7 @@ function clearAll() {
   manifest = null;
   $("manifestbar").hidden = true;
   $("previewpane").hidden = true;
+  $("wspane").hidden = true;
   $("empty").hidden = false;
   updateCount();
   updateClearAll();

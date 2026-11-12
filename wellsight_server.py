@@ -156,10 +156,12 @@ def strip_png(q):
         import fitz
         rec["strip_doc"] = fitz.open(stream=rec["strip"], filetype="pdf")
     d0, d1 = float(q.get("d0", info["top"])), float(q.get("d1", info["bottom"]))
-    ppm = min(max(float(q.get("ppm", 20)), 1.0), 400.0)
-    if d1 - d0 > 400 or d1 <= d0:
+    ppm = min(max(float(q.get("ppm", 20)), 0.05), 400.0)
+    w = q.get("w")
+    w = min(max(int(float(w)), 16), 4000) if w else None
+    if d1 <= d0 or (d1 - d0) * ppm > 12000:
         return 400, None
-    return 200, wp.render(rec["strip_doc"], d0, d1, info["top"], info["pt_per_m"], ppm)
+    return 200, wp.render(rec["strip_doc"], d0, d1, info["top"], info["pt_per_m"], ppm, w)
 
 
 def strip_pdf(q):

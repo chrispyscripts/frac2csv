@@ -366,15 +366,19 @@ def check(strip, top, bottom, ppm):
             "cut_at_page_edge": cut}
 
 
-def render(strip, d0, d1, top, ppm, px_per_m):
-    """A PNG of the strip from depth d0 to d1 at px_per_m pixels per metre."""
+def render(strip, d0, d1, top, ppm, px_per_m, width_px=None):
+    """A PNG of the strip from depth d0 to d1 at px_per_m pixels per metre.
+    width_px stretches it across to that many pixels (the stacked window
+    does, when the whole log is fitted to the screen and the strip at its own
+    proportions would be a sliver); otherwise it keeps its proportions."""
     doc = strip if isinstance(strip, fitz.Document) else fitz.open(stream=strip, filetype="pdf")
     pg = doc[0]
     y0 = max(0.0, (d0 - top) * ppm)
     y1 = min(pg.rect.height, (d1 - top) * ppm)
     if y1 <= y0:
         return None
-    z = px_per_m / ppm
-    pix = pg.get_pixmap(matrix=fitz.Matrix(z, z), clip=fitz.Rect(0, y0, pg.rect.width, y1),
+    zy = px_per_m / ppm
+    zx = (float(width_px) / pg.rect.width) if width_px else zy
+    pix = pg.get_pixmap(matrix=fitz.Matrix(zx, zy), clip=fitz.Rect(0, y0, pg.rect.width, y1),
                         alpha=False)
     return pix.tobytes("png")
