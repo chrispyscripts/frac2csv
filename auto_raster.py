@@ -969,8 +969,17 @@ def _repaired_ladder(strict, fit):
         a, b, _n = fit
         vals = [v for v, _y in strict]
         tol = max(abs(b) * 20, (max(vals) - min(vals)) * 0.015 + 1e-9)
+        # A label is evidence of a lost point only where no label as read
+        # already says v x 10^k there. 00007 p136 (2026 STEP) read its "50"
+        # twice, whole and as a "5" 14 px under it; the fragment lands on the
+        # 0..100 line at ten times its value, and the pressure went out on
+        # 0..10, ten times low on 7 charts.
+        def whole_there(v, k):
+            return any(abs(w - v * 10 ** k) < tol and abs(a + b * yw - w) < tol
+                       for w, yw in strict)
         for k in (1, 2, 3):
-            if any(v and abs(a + b * y - v * 10 ** k) < tol for v, y in strict):
+            if any(v and abs(a + b * y - v * 10 ** k) < tol
+                   and not whole_there(v, k) for v, y in strict):
                 # the slipped labels at their true size, the intact as read
                 sets.append([(v / 10 ** k if abs(v) >= 10 ** k else v, y)
                              for v, y in strict])

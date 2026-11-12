@@ -1401,11 +1401,11 @@ def _legend_below_channels(img, box, axes, lqty, masks, samples, ta, tb,
             return None
     nq = [_header_qty(g["header"]) for g in groups]
     usable = [i for i, (_q, cal) in enumerate(axes) if cal]
-    pairs = []
+    pairs, taken = [], set()
     if lqty != "pressure" and len(groups) == len(axes):
         pairs = list(zip(groups, [cal for _q, cal in axes]))
+        taken = set(range(len(axes)))
     else:
-        taken = set()
         for g, q in zip(groups, nq):
             want = ("rate" if q == "tp" else q)
             cands = [i for i in usable if axes[i][0] == want and i not in taken]
@@ -1420,6 +1420,15 @@ def _legend_below_channels(img, box, axes, lqty, masks, samples, ta, tb,
             taken.add(cands[0])
             pairs.append((g, axes[cands[0]][1]))
     if not pairs:
+        return None
+    # A legend that names additives but not the clean rate was not read
+    # whole, and its pens would replace the colour table's, clean rate and
+    # all. 00007 p152 (2026 STEP) prints three columns, C - Clean Rate, A and
+    # B - Chem Conc; only A's header read, B's DR 42430 1 was taken into A
+    # (on A's axis), and the chart lost the Combined Clean Rate v1.11.53
+    # read. Such a chart is left to the colour table.
+    if lqty != "pressure" and any(axes[i][0] == "rate" for i in usable) \
+            and not any(axes[i][0] == "rate" for i in taken):
         return None
     entries = [e for g, _cal in pairs for e in g["entries"]]
     pens = _casing_masks(img, box, entries, masks)
