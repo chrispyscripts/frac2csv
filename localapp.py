@@ -41,6 +41,7 @@ import gaps                     # noqa: E402
 from version import VERSION     # noqa: E402
 import pipeline                 # noqa: E402
 import pipeline_export as pe    # noqa: E402
+import wellsight_server as wss  # noqa: E402  WellSight logs -> LAS + printout
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
@@ -201,7 +202,10 @@ _READ_GATE = threading.BoundedSemaphore(
 
 _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "pad_json.py", "stages_from_csv.py", "stages_from_bcer.py",
-                 "logs_from_las.py", "pad_inputs_from_bcer.py"}
+                 "logs_from_las.py", "pad_inputs_from_bcer.py",
+                 # WellSight logs have their own path and no cached analyses
+                 "wellsight_app.py", "wellsight_print.py", "wellsight_logviewer.py",
+                 "wellsight_server.py"}
 
 
 def code_stamp():
@@ -728,8 +732,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _bytes(self, code, data, ctype):
+        if data is None:
+            self.send_response(code)
+            self.end_headers()
+            return
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _wellsight_get(self, p):
+        """WellSight logs (wellsight_server.py): the stacked view's data and
+        the stitched printout. None when the path is not one of them."""
+        import urllib.parse
+        q = dict(urllib.parse.parse_qsl(self.path.split("?", 1)[1])) \
+            if "?" in self.path else {}
+        if p == "/api/wellsight-status":
+            self._json(*wss.status())
+        elif p == "/api/wellsight-view":
+            self._json(*wss.view(q))
+        elif p == "/api/wellsight-strip":
+            self._bytes(*wss.strip_png(q), "image/png")
+        elif p == "/api/wellsight-strip.pdf":
+            self._bytes(*wss.strip_pdf(q), "application/pdf")
+        else:
+            return False
+        return True
+
     def do_GET(self):
         p = self.path.split("?")[0]
+        if p.startswith("/api/wellsight") and self._wellsight_get(p):
+            return
         if p == "/api/local-info":
             return self._json(200, {"local": True, "version": VERSION,
                                     "raster": pipeline.raster_available()})
@@ -814,6 +850,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, {"written": dest})
                 except OSError as e:
                     return self._json(500, {"error": str(e)})
+            # WellSight logs: decode, stitch a printout, print one with
+            # LogViewer, save (wellsight_server.py). One at a time, behind the
+            # same gate as a PDF read: LogViewer is a whole program.
+            if self.path == "/api/wellsight":
+                with _READ_GATE:
+                    try:
+                        return self._json(*wss.decode(req))
+                    except wss.wa.NotWellSight as e:
+                        return self._json(422, {"error": str(e)})
+            if self.path == "/api/wellsight-printout":
+                with _READ_GATE:
+                    return self._json(*wss.printout(req))
+            if self.path == "/api/wellsight-logviewer":
+                with _READ_GATE:
+                    return self._json(*wss.logviewer(req))
+            if self.path == "/api/wellsight-save":
+                return self._json(*wss.save(req, export_folder))
             if self.path == "/api/extract":
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":

@@ -31,6 +31,9 @@ jobs:
           --add-data "C:\Program Files\Tesseract-OCR;tesseract"
           --add-data "alias_table.txt;."
           --add-data "lab\public;lab\public"
+          --paths wellsight_convert
+          --hidden-import wellsight --hidden-import convert --hidden-import export_las
+          --hidden-import pywinauto --hidden-import win32print
           localapp.py
 
       - name: Build legacy Tk exe
@@ -42,7 +45,7 @@ jobs:
           frac2csv_gui.py
 
       - name: Smoke test imports
-        run: python -c "import pipeline, pipeline_export, aliases, localapp; print('pipeline ok; canonical', aliases.CANONICAL)"
+        run: python -c "import pipeline, pipeline_export, aliases, localapp, wellsight_app, wellsight_print, wellsight_logviewer; print('pipeline ok; canonical', aliases.CANONICAL); print('logviewer', wellsight_logviewer.status())"
 
       - uses: actions/upload-artifact@v4
         with:

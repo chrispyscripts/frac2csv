@@ -3,3 +3,6 @@
 -r requirements.txt
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.8
+# Drives WellSight LogViewer's File > Print on Windows (wellsight_logviewer.py).
+# Windows only; brings pywin32 and comtypes. Not a reader dependency.
+pywinauto==0.6.9; sys_platform == "win32"

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stacked log — Carmine's Lab</title>
+<style>
+  /* Same palette and type as the Lab and stacked.html. Light only. */
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --grid:#eef0f2; --grid2:#d9dce0; --carmine:#a31631; --ok:#1e7a34;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { background:var(--bg); color:var(--ink); display:flex; flex-direction:column;
+         font:14px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  .top { display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;
+         padding:10px 16px; border-bottom:1px solid var(--line); background:var(--bg); }
+  .top .meta { flex:1 1 280px; min-width:0; }
+  .wordmark { font-size:13px; font-weight:700; letter-spacing:-0.01em; }
+  .wordmark::after { content:"."; color:var(--carmine); }
+  .title { font-size:14px; font-weight:600; margin-top:1px; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap; }
+  .sub { font-size:11.5px; color:var(--mut); font-family:var(--mono); margin-top:2px;
+         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .tools label { font-size:12px; color:var(--mut); display:flex; gap:5px; align-items:center; }
+  .tools select { font:inherit; font-size:12px; color:var(--ink); border:1px solid var(--line);
+                  border-radius:6px; padding:2px 6px; background:var(--panel); }
+  .btn { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+         color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+         padding:3px 10px; cursor:pointer; text-decoration:none; }
+  .btn:hover { border-color:var(--carmine); color:var(--carmine); }
+  .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .note { font-size:12px; color:var(--mut); padding:6px 16px; border-bottom:1px solid var(--line); }
+  .note b { color:var(--ink); font-weight:600; }
+  .heads { display:flex; padding:0 16px; gap:0; border-bottom:1px solid var(--line);
+           background:var(--panel); overflow:hidden; flex-shrink:0; }
+  .head { flex-shrink:0; padding:5px 6px 4px; border-right:1px solid var(--line);
+          font-size:11.5px; line-height:1.35; overflow:hidden; }
+  .head .nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .head .nm i { display:inline-block; width:12px; height:3px; border-radius:2px;
+                vertical-align:middle; margin-right:5px; }
+  .head .rg { color:var(--mut); font-family:var(--mono); font-size:10.5px; white-space:nowrap;
+              display:flex; justify-content:space-between; }
+  .head .ro { font-family:var(--mono); font-size:11px; min-height:15px; white-space:nowrap;
+              overflow:hidden; text-overflow:ellipsis; }
+  .scroller { flex:1 1 auto; overflow:auto; position:relative; padding:0 16px; }
+  .spacer { position:relative; }
+  canvas#cv { position:sticky; top:0; display:block; }
+  .empty { padding:40px 16px; color:var(--mut); }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="meta">
+      <div class="wordmark">Frac2CSV</div>
+      <div class="title" id="title">Stacked log</div>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="tools">
+      <label>Scale
+        <select id="scale">
+          <option value="240">1:240 (as printed)</option>
+          <option value="500" selected>1:500</option>
+          <option value="1000">1:1000</option>
+          <option value="2000">1:2000</option>
+        </select>
+      </label>
+      <button class="btn on" id="clip" title="Scale each curve to the middle 99% of its values">Clip spikes</button>
+      <button class="btn on" id="showprint" title="The stitched LogViewer printout, on the same depth scale">Printout</button>
+      <a class="btn" id="pdflink" target="_blank" hidden>Open stitched PDF</a>
+    </div>
+  </div>
+  <div class="note" id="note" hidden></div>
+  <div class="heads" id="heads"></div>
+  <div class="scroller" id="scroller">
+    <div class="spacer" id="spacer"><canvas id="cv"></canvas></div>
+  </div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const ID = new URLSearchParams(location.search).get("id") || "";
+const CSS_PX_PER_M_240 = 96 / 0.0254 / 240;        // 1:240 on a 96 dpi screen
+const TRACK_W = 150, DEPTH_W = 54, LITH_W = 46;
+const COLORS = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
+                "#5a5f6e", "#8a2f5e"];
+// rock colours: the common strip-log codes, then a stable hash colour
+const ROCK = { SS: "#f2d14b", SAND: "#f2d14b", SNDST: "#f2d14b", SH: "#8a9a7b",
+  SHALE: "#8a9a7b", SHGY: "#8a9a7b", SLTST: "#c9a46b", SILT: "#c9a46b", LS: "#6fa8dc",
+  LMST: "#6fa8dc", LIME: "#6fa8dc", DOL: "#b48ad8", DOLO: "#b48ad8", COAL: "#1b1b1b",
+  ANHY: "#f4b6c2", SALT: "#e8eef4", CHT: "#b5651d", CHERT: "#b5651d", CGL: "#e39b5b",
+  CONGL: "#e39b5b", MRST: "#9fb7a0", MDST: "#9fb7a0", CLYST: "#a8b39b", TILL: "#c7c0a8",
+  BENT: "#d9c27a", GYP: "#f0c8d8" };
+function rockColor(code) {
+  const c = String(code || "").toUpperCase();
+  if (ROCK[c]) return ROCK[c];
+  let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${h % 360} 45% 62%)`;
+}
+
+let D = null, P = null;            // payload, printout info
+let pxPerM = 0, clip = true, showPrint = true;
+let ranges = [];                   // per curve [lo, hi]
+let hoverDepth = null;
+const tiles = new Map();           // key -> {img, d0, d1, ok}
+
+function setScale() {
+  pxPerM = CSS_PX_PER_M_240 * 240 / Number($("scale").value);
+  layout();
+}
+
+function curveRange(vals) {
+  const v = vals.filter(x => x != null && isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return [0, 1];
+  let lo = v[0], hi = v[v.length - 1];
+  if (clip && v.length > 20) {
+    lo = v[Math.floor(v.length * 0.005)];
+    hi = v[Math.ceil(v.length * 0.995) - 1];
+  }
+  if (hi <= lo) hi = lo + 1;
+  return [lo, hi];
+}
+
+function printWidth() {
+  if (!P || !showPrint) return 0;
+  return Math.round(P.width_pt * pxPerM / P.pt_per_m);
+}
+function trackX() {
+  // depth | curves... | LITH | printout
+  const xs = [];
+  let x = 0;
+  xs.push({ kind: "depth", x, w: DEPTH_W }); x += DEPTH_W;
+  D.curves.forEach((c, i) => { xs.push({ kind: "curve", i, x, w: TRACK_W }); x += TRACK_W; });
+  if (D.lithology.length) { xs.push({ kind: "lith", x, w: LITH_W }); x += LITH_W; }
+  const pw = printWidth();
+  if (pw) { xs.push({ kind: "print", x, w: pw }); x += pw; }
+  return { xs, width: x };
+}
+
+function layout() {
+  if (!D) return;
+  ranges = D.curves.map(c => curveRange(c.values));
+  const { xs, width } = trackX();
+  const total = (D.bottom - D.top) * pxPerM;
+  const sc = $("scroller");
+  $("spacer").style.height = Math.ceil(total) + "px";
+  $("spacer").style.width = width + "px";
+  const heads = $("heads");
+  heads.innerHTML = "";
+  for (const t of xs) {
+    const h = document.createElement("div");
+    h.className = "head"; h.style.width = t.w + "px";
+    if (t.kind === "depth") h.innerHTML = `<div class="nm">Depth</div><div class="rg">m ${D.axis || ""}</div><div class="ro" id="ro-depth"></div>`;
+    if (t.kind === "curve") {
+      const c = D.curves[t.i], r = ranges[t.i];
+      h.innerHTML = `<div class="nm" title="${esc(c.name)} — track ${esc(c.track || "-")}, recorded every ${c.recorded_step} m"><i style="background:${COLORS[t.i % COLORS.length]}"></i>${esc(c.name)} <span style="color:var(--mut);font-weight:400">${esc(c.unit)}</span></div>`
+        + `<div class="rg"><span>${fmt(r[0])}</span><span>${fmt(r[1])}</span></div><div class="ro" id="ro-${t.i}"></div>`;
+    }
+    if (t.kind === "lith") h.innerHTML = `<div class="nm">Lith</div><div class="rg">&nbsp;</div><div class="ro" id="ro-lith"></div>`;
+    if (t.kind === "print") h.innerHTML = `<div class="nm">Printout (LogViewer, stitched)</div><div class="rg">${P.log_pages} pages · ${P.pt_per_m} pt/m</div><div class="ro" id="ro-print"></div>`;
+    heads.appendChild(h);
+  }
+  // headers scroll sideways with the tracks
+  sc.onscroll = () => { heads.scrollLeft = sc.scrollLeft; draw(); };
+  draw();
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function fmt(v) {
+  if (v == null || !isFinite(v)) return "–";
+  const a = Math.abs(v);
+  return a >= 1000 ? v.toFixed(0) : a >= 100 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
+}
+
+function gridStep() {
+  for (const s of [1, 2, 5, 10, 20, 50, 100, 200, 500])
+    if (s * pxPerM >= 14) return s;
+  return 1000;
+}
+
+function tileFor(d0, d1, ppmDev) {
+  const key = `${ppmDev.toFixed(3)}:${d0}`;
+  let t = tiles.get(key);
+  if (!t) {
+    t = { img: new Image(), d0, d1, ok: false };
+    t.img.onload = () => { t.ok = true; draw(); };
+    t.img.src = `/api/wellsight-strip?id=${encodeURIComponent(ID)}&d0=${d0}&d1=${d1}&ppm=${ppmDev.toFixed(3)}`;
+    tiles.set(key, t);
+    if (tiles.size > 160) tiles.delete(tiles.keys().next().value);
+  }
+  return t;
+}
+
+function draw() {
+  if (!D) return;
+  const sc = $("scroller"), cv = $("cv");
+  const dpr = window.devicePixelRatio || 1;
+  const { xs, width } = trackX();
+  const h = sc.clientHeight;
+  cv.width = Math.round(width * dpr); cv.height = Math.round(h * dpr);
+  cv.style.width = width + "px"; cv.style.height = h + "px";
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = "#fff"; g.fillRect(0, 0, width, h);
+  const d0 = D.top + sc.scrollTop / pxPerM, d1 = d0 + h / pxPerM;
+  const y = d => (d - d0) * pxPerM;
+  const step = gridStep();
+  // grid across the data tracks
+  g.lineWidth = 1;
+  for (let d = Math.ceil(d0 / step) * step; d <= d1; d += step) {
+    const yy = Math.round(y(d)) + 0.5;
+    g.strokeStyle = d % (step * 5) === 0 ? "#d2d6db" : "#eceef1";
+    g.beginPath(); g.moveTo(DEPTH_W, yy);
+    const end = xs.find(t => t.kind === "print");
+    g.lineTo(end ? end.x : width, yy); g.stroke();
+  }
+  for (const t of xs) {
+    if (t.kind === "depth") {
+      g.fillStyle = "#3a4048"; g.font = "11px ui-monospace,Menlo,Consolas,monospace";
+      g.textAlign = "right"; g.textBaseline = "middle";
+      const ls = step * (step * pxPerM < 30 ? 5 : 1);
+      for (let d = Math.ceil(d0 / ls) * ls; d <= d1; d += ls) g.fillText(String(+d.toFixed(2)), t.x + t.w - 6, y(d));
+    }
+    if (t.kind === "curve") {
+      const c = D.curves[t.i], [lo, hi] = ranges[t.i];
+      const i0 = Math.max(0, Math.floor((d0 - D.depth0) / D.step) - 1);
+      const i1 = Math.min(D.rows - 1, Math.ceil((d1 - D.depth0) / D.step) + 1);
+      g.save(); g.beginPath(); g.rect(t.x, 0, t.w, h); g.clip();
+      g.strokeStyle = COLORS[t.i % COLORS.length]; g.lineWidth = 1.2; g.beginPath();
+      let pen = false;
+      for (let i = i0; i <= i1; i++) {
+        const v = c.values[i];
+        if (v == null) { pen = false; continue; }
+        const xx = t.x + 2 + (t.w - 4) * Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+        const yy = y(D.depth0 + i * D.step);
+        if (pen) g.lineTo(xx, yy); else g.moveTo(xx, yy);
+        pen = true;
+      }
+      g.stroke(); g.restore();
+    }
+    if (t.kind === "lith") {
+      for (const iv of D.lithology) {
+        if (iv.base < d0 || iv.top > d1) continue;
+        g.fillStyle = rockColor(iv.code);
+        g.fillRect(t.x + 3, y(iv.top), t.w - 6, Math.max(1, (iv.base - iv.top) * pxPerM));
+      }
+    }
+    if (t.kind === "print") {
+      const ppmDev = pxPerM * dpr;
+      const T = Math.max(5, Math.round(900 / pxPerM / 5) * 5);   // metres per tile
+      const first = Math.floor((d0 - P.top) / T) * T + P.top;
+      for (let a = first; a < Math.min(d1, P.bottom); a += T) {
+        const b = Math.min(a + T, P.bottom);
+        const tl = tileFor(+a.toFixed(3), +b.toFixed(3), ppmDev);
+        if (tl.ok) g.drawImage(tl.img, t.x, y(a), t.w, (b - a) * pxPerM);
+        else { g.fillStyle = "#f6f7f8"; g.fillRect(t.x, y(a), t.w, (b - a) * pxPerM); }
+      }
+    }
+    g.strokeStyle = "#e3e5e8"; g.beginPath(); g.moveTo(t.x + t.w - 0.5, 0); g.lineTo(t.x + t.w - 0.5, h); g.stroke();
+  }
+  if (hoverDepth != null && hoverDepth >= d0 && hoverDepth <= d1) {
+    g.strokeStyle = "rgba(163,22,49,.75)"; g.lineWidth = 1;
+    const yy = Math.round(y(hoverDepth)) + 0.5;
+    g.beginPath(); g.moveTo(0, yy); g.lineTo(width, yy); g.stroke();
+  }
+}
+
+function readout() {
+  const set = (id, s) => { const el = $(id); if (el) el.textContent = s; };
+  if (hoverDepth == null) {
+    set("ro-depth", ""); D.curves.forEach((c, i) => set("ro-" + i, ""));
+    set("ro-lith", ""); return;
+  }
+  set("ro-depth", hoverDepth.toFixed(2));
+  const i = Math.round((hoverDepth - D.depth0) / D.step);
+  D.curves.forEach((c, k) => set("ro-" + k, i >= 0 && i < D.rows ? fmt(c.values[i]) : "–"));
+  const iv = D.lithology.find(v => hoverDepth >= v.top && hoverDepth < v.base);
+  set("ro-lith", iv ? iv.code : "");
+}
+
+async function load() {
+  if (!ID) { document.body.insertAdjacentHTML("beforeend", '<div class="empty">No log given.</div>'); return; }
+  let out;
+  try {
+    const r = await fetch("/api/wellsight-view?id=" + encodeURIComponent(ID));
+    out = await r.json();
+    if (!r.ok) throw new Error(out.error || r.status);
+  } catch (e) {
+    $("title").textContent = "This log is not loaded";
+    $("sub").textContent = String(e.message || e) + " — drop the file on the Lab again.";
+    return;
+  }
+  D = out.payload; P = out.printout;
+  document.title = (D.well || D.file) + " — stacked log";
+  $("title").textContent = D.well || D.file;
+  $("sub").textContent = [D.file, `${D.app} ${D.version}`, `${D.top}–${D.bottom} m ${D.axis}`,
+                          D.scale, D.licence && "licence " + D.licence].filter(Boolean).join(" · ");
+  const note = $("note");
+  if (!P) {
+    note.hidden = false;
+    note.innerHTML = "No printout yet. In the Lab, <b>Print</b> makes one with WellSight LogViewer "
+      + "(Windows), or <b>PDF</b> takes one you printed: File &gt; Print, Microsoft Print to PDF, "
+      + "All, Page Breaks off.";
+    $("showprint").hidden = true;
+  } else {
+    const c = P.check || {};
+    note.hidden = false;
+    note.innerHTML = `Printout: <b>${P.log_pages}</b> of ${P.pages} pages placed by their depth labels`
+      + (c.labels ? `; ${c.labels} labels, median ${c.median_m} m from their depth, ${Math.round((c["within_0.1m"] || 0) * 100)}% within 0.1 m` : "")
+      + (P.gaps && P.gaps.length ? `; <b>gaps</b> at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
+      + ". LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.";
+    const a = $("pdflink");
+    a.hidden = false; a.href = "/api/wellsight-strip.pdf?id=" + encodeURIComponent(ID);
+  }
+  setScale();
+}
+
+$("scale").addEventListener("change", () => {
+  const sc = $("scroller");
+  const mid = D ? D.top + (sc.scrollTop + sc.clientHeight / 2) / pxPerM : 0;
+  setScale();
+  if (D) sc.scrollTop = (mid - D.top) * pxPerM - sc.clientHeight / 2;
+});
+$("clip").addEventListener("click", () => { clip = !clip; $("clip").classList.toggle("on", clip); layout(); });
+$("showprint").addEventListener("click", () => { showPrint = !showPrint; $("showprint").classList.toggle("on", showPrint); layout(); });
+$("scroller").addEventListener("mousemove", e => {
+  if (!D) return;
+  const r = $("cv").getBoundingClientRect();
+  hoverDepth = D.top + ($("scroller").scrollTop + (e.clientY - r.top)) / pxPerM;
+  draw(); readout();
+});
+$("scroller").addEventListener("mouseleave", () => { hoverDepth = null; draw(); if (D) readout(); });
+window.addEventListener("resize", draw);
+load();
+</script>
+</body>
+</html>
