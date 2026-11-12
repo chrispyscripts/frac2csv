@@ -53,7 +53,7 @@ KNOWN = {"Tr Press": "#b02e2e", "Slurry Rate": "#1d5bd8",
 ALLOWED_FILES = set()
 
 
-def pick_folder():
+def pick_folder(prompt="Choose the export destination folder"):
     """Open the OS's native folder chooser and return the picked path (or
     None if cancelled). macOS uses osascript; Windows a PowerShell dialog;
     otherwise tkinter."""
@@ -62,8 +62,7 @@ def pick_folder():
         if sys.platform == "darwin":
             out = subprocess.run(
                 ["osascript", "-e",
-                 'POSIX path of (choose folder with prompt '
-                 '"Choose the export destination folder")'],
+                 'POSIX path of (choose folder with prompt "%s")' % prompt],
                 capture_output=True, text=True, timeout=120,
                 encoding="utf-8", errors="replace")
             return out.stdout.strip() or None
@@ -83,7 +82,7 @@ def pick_folder():
                 "$o.Size=New-Object System.Drawing.Size(1,1);"
                 "$o.ShowInTaskbar=$false;$o.TopMost=$true;$o.Show();"
                 "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
-                "$f.Description='Choose the export destination folder';"
+                "$f.Description='%s';" % prompt +
                 "$f.ShowNewFolderButton=$true;"
                 "$r=$f.ShowDialog($o);"
                 "$o.Close();"
@@ -784,7 +783,12 @@ class Handler(BaseHTTPRequestHandler):
                 done, total = JOBS.get(m.group(1) if m else "", (0, 0))
             return self._json(200, {"done": done, "total": total})
         if p == "/api/pick-folder":
-            return self._json(200, {"path": pick_folder() or ""})
+            # the prompt is one of these fixed strings, never text from the
+            # request: it goes into an osascript / PowerShell command line
+            prompt = ("Choose the folder that holds the WellSight printouts"
+                      if "for=wellsight" in self.path else
+                      "Choose the export destination folder")
+            return self._json(200, {"path": pick_folder(prompt) or ""})
         if p == "/api/file":
             q = self.path.split("?", 1)[1] if "?" in self.path else ""
             m = re.search(r"path=([^&]+)", q)
@@ -873,6 +877,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/wellsight-library":
                 with _READ_GATE:
                     return self._json(*wss.library(req))
+            if self.path == "/api/wellsight-folders":      # the Lab's folder chooser
+                return self._json(*wss.folders(req))
             if self.path == "/api/wellsight-find":
                 with _READ_GATE:
                     return self._json(*wss.find(req))

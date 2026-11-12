@@ -78,5 +78,47 @@ class Library(unittest.TestCase):
             lib.index(os.path.join(self.root, "nope"), refresh=True)
 
 
+class Chooser(unittest.TestCase):
+    """The Lab's folder chooser: drives, then folders, one level at a time."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        r = self.root = self.tmp.name
+        touch(r, "WellSight/HLG/Pdf/a.pdf")
+        touch(r, "WellSight/HLG/Pdf/b.PDF")
+        touch(r, "WellSight/HLG/Pdf/._a.pdf")
+        touch(r, "WellSight/HLG/Pdf/a.hl6")
+        os.makedirs(os.path.join(r, "WellSight", "SLG"))
+        os.makedirs(os.path.join(r, "WellSight", ".hidden"))
+        os.makedirs(os.path.join(r, "WellSight", "$RECYCLE.BIN"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_sub_folders_sorted_hidden_ones_left_out(self):
+        out = lib.folders(os.path.join(self.root, "WellSight"))
+        self.assertEqual([d["name"] for d in out["dirs"]], ["HLG", "SLG"])
+        self.assertEqual(out["parent"], os.path.abspath(self.root))
+        self.assertEqual(out["pdfs"], 0)
+
+    def test_pdfs_counted_litter_not(self):
+        out = lib.folders(os.path.join(self.root, "WellSight", "HLG", "Pdf"))
+        self.assertEqual(out["pdfs"], 2)
+        self.assertEqual(out["dirs"], [])
+
+    def test_no_path_lists_the_drives(self):
+        out = lib.folders("")
+        self.assertEqual(out["path"], "")
+        self.assertIsNone(out["parent"])
+        self.assertTrue(out["dirs"])              # at least the home folder
+
+    def test_top_of_a_drive_goes_up_to_the_drives(self):
+        top = os.path.abspath(os.sep)
+        self.assertEqual(lib.folders(top)["parent"], "")
+
+    def test_missing_folder_says_so(self):
+        with self.assertRaises(FileNotFoundError):
+            lib.folders(os.path.join(self.root, "nope"))
+
+
 if __name__ == "__main__":
     unittest.main()

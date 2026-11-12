@@ -318,6 +318,24 @@
   .wsprintlbl { font-size:12px; font-weight:600; flex:1; min-width:0;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .wsnoprint { font-size:12px; color:var(--mut); padding:10px 18px 14px; }
+  .wsfold { margin-top:8px; border:1px solid var(--line); border-radius:8px;
+            background:var(--panel); overflow:hidden; }
+  .wsfoldbar { display:flex; align-items:center; gap:8px; padding:6px 8px;
+               border-bottom:1px solid var(--line); background:var(--panel2); }
+  .wsfpath { font-family:var(--mono); font-size:11.5px; min-width:0; word-break:break-all; }
+  .wsfoldbar .btn, .wsfoldfoot .btn { flex-shrink:0; white-space:nowrap; }
+  .wsflist { max-height:220px; overflow-y:auto; }
+  .wsflist .f { display:block; width:100%; text-align:left; border:none; background:none;
+                font:inherit; font-size:12.5px; color:var(--ink); padding:4px 10px 4px 12px;
+                cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .wsflist .f:hover { background:var(--panel2); color:var(--carmine); }
+  .wsflist .f::before { content:"▸ "; color:var(--mut); }
+  .wsflist .f.sug { font-weight:600; }
+  .wsflist .f.sug::before { content:"★ "; color:var(--carmine); }
+  .wsflist .empty { font-size:12px; color:var(--mut); padding:8px 12px; }
+  .wsfoldfoot { display:flex; align-items:center; gap:6px; padding:6px 8px;
+                border-top:1px solid var(--line); }
+  .wsfnote { flex:1; min-width:0; font-size:11.5px; color:var(--mut); }
   #wsgraph, #wsprint { width:100%; display:block; background:var(--panel);
                        border:1px solid var(--line); border-radius:8px; cursor:grab; }
   #ws-legend b { font-family:var(--mono); font-weight:600; color:var(--ink); }
@@ -648,10 +666,26 @@
               its printout from here. Empty: a SK-VIKING\WellSight folder on any drive.</span></div>
           <div class="destrow">
             <input type="text" id="wslib" placeholder="Any drive's SK-VIKING\WellSight"
-                   spellcheck="false">
-            <button type="button" class="btn" id="wslibpick">Browse…</button>
+                   spellcheck="false" title="Type or paste a folder and press Enter, or Change folder…">
+            <button type="button" class="btn primary" id="wslibpick">Change folder…</button>
             <button type="button" class="btn" id="wslibscan"
                     title="Look through the folder again for printouts added since">Re-index</button>
+          </div>
+          <!-- The Lab's own folder chooser: drives, then folders. A Windows
+               folder dialog can open behind the browser or not at all. -->
+          <div class="wsfold" id="wsfold" hidden>
+            <div class="wsfoldbar">
+              <button type="button" class="btn" id="wsfup" title="Up one folder">↑ Up</button>
+              <span class="wsfpath" id="wsfpath">Drives</span>
+            </div>
+            <div class="wsflist" id="wsflist"></div>
+            <div class="wsfoldfoot">
+              <span class="wsfnote" id="wsfnote"></span>
+              <button type="button" class="btn" id="wsfwin"
+                      title="Pick the folder in a Windows folder window instead">Folder window…</button>
+              <button type="button" class="btn" id="wsfcancel">Cancel</button>
+              <button type="button" class="btn primary" id="wsfuse">Use this folder</button>
+            </div>
           </div>
         </div>
       </div>
@@ -964,10 +998,12 @@ mouse wheel zoom at the pointer; drag to move along the log."></label>
         <div class="wsprinthead">
           <span class="wsprintlbl" id="wsprintlbl">Printed log</span>
           <button type="button" class="btn" id="wsstackbtn"
-                  title="Open the LAS curves and the printout side by side, depth
-down, in a separate window that follows this one">Stacked ↗</button>
+                  title="Open the LAS curves stacked over the printout, depth across,
+in a separate window that follows this one">Stacked ↗</button>
           <button type="button" class="btn" id="wsfindbtn" hidden
                   title="Look for this log's printout in the printouts folder (Settings)">Look again</button>
+          <button type="button" class="btn" id="wsfolderbtn"
+                  title="Choose the folder that holds the LogViewer printouts">Printouts folder…</button>
           <button type="button" class="btn" id="wsopenpdf" hidden
                   title="Open the stitched printout PDF">Open PDF ↗</button>
         </div>
@@ -1665,7 +1701,7 @@ function wsNotes() {
       + wsv.entry.ws.lookup + ". " : "No printout yet. ")
     + "Print with LogViewer (Windows), or Add printout PDF: in LogViewer, File > Print, "
     + "Microsoft Print to PDF, All, Page Breaks off. A PDF dropped with the log under the "
-    + "same name is taken too, and Settings, WellSight printouts names the folder to look in.";
+    + "same name is taken too, and Printouts folder… names the folder to look in.";
 }
 
 function wsLegend() {
@@ -1972,6 +2008,7 @@ $("wssavebtn").addEventListener("click", async () => {
   } catch (e) { wsMsg("Save: " + e.message, true); }
 });
 $("wsflagbtn").addEventListener("click", () => openFlag());
+$("wsfolderbtn").addEventListener("click", () => wsChooseFolder());
 $("wsfindbtn").addEventListener("click", async () => {
   const entry = current && current.entry;
   if (!entry || !entry.ws) return;
@@ -2002,25 +2039,94 @@ async function wsLibraryStatus(refresh) {
       : "No folder set, and no SK-VIKING\\WellSight folder on any drive.";
   } catch (e) { hint.textContent = e.message; }
 }
-$("wslib").addEventListener("change", () => {
+$("wslib").addEventListener("change", async () => {
   settings.wsLibrary = $("wslib").value.trim();
   saveSettings();
-  wsLibraryStatus(false);
+  await wsLibraryStatus(false);
+  wsRetryPrintouts();
 });
 $("wslibscan").addEventListener("click", () => wsLibraryStatus(true));
-$("wslibpick").addEventListener("click", async () => {
-  if (!isLocal()) return;
-  $("wslibpick").disabled = true;
-  try {
-    const out = await (await fetch("/api/pick-folder")).json();
-    if (out.path) {
-      settings.wsLibrary = out.path; $("wslib").value = out.path;
-      saveSettings();
-      wsLibraryStatus(false);
+// The folder chooser: the drives, then a folder's sub-folders, one click each.
+// It lists folders on this computer through the app, so it works the same on
+// every machine; the Windows folder window is still there as "Folder window…".
+let wsFoldAt = "";
+async function wsUseFolder(path) {
+  settings.wsLibrary = path; $("wslib").value = path;
+  saveSettings();
+  $("wsfold").hidden = true;
+  await wsLibraryStatus(false);
+  wsRetryPrintouts();
+}
+// logs already open that found no printout look again in the new folder
+async function wsRetryPrintouts() {
+  for (const entry of entries.filter(e => e.ws && !e.ws.printout)) {
+    try {
+      const out = await postJson("/api/wellsight-find", { id: entry.ws.id,
+                                                          folder: settings.wsLibrary || "" });
+      entry.ws.lookup = "";
+      wsPrintoutChanged(entry, out.printout);
+    } catch (e) {
+      entry.ws.lookup = e.message;
+      if (current && current.entry === entry) wsNotes();
     }
-  } catch (e) { /* the picker returns empty on cancel */ }
-  $("wslibpick").disabled = false;
+  }
+}
+async function wsFoldGo(path) {
+  const list = $("wsflist");
+  list.innerHTML = '<div class="empty">Opening…</div>';
+  let out;
+  try { out = await postJson("/api/wellsight-folders", { path: path || "" }); }
+  catch (e) {
+    if (path) return wsFoldGo("");            // gone (a drive unplugged): back to the drives
+    list.innerHTML = ""; $("wsfnote").textContent = e.message; return;
+  }
+  wsFoldAt = out.path;
+  $("wsfpath").textContent = out.path || "This computer: pick a drive";
+  $("wsfup").disabled = out.parent == null;
+  $("wsfup").dataset.to = out.parent || "";
+  $("wsfuse").disabled = !out.path;
+  $("wsfnote").textContent = !out.path ? ""
+    : out.pdfs ? `${out.pdfs.toLocaleString()} PDFs directly in this folder (and its folders are searched too)`
+    : "Its folders are searched too";
+  list.innerHTML = "";
+  const add = (name, to, cls) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "f" + (cls ? " " + cls : "");
+    b.textContent = name; b.title = to;
+    b.addEventListener("click", () => wsFoldGo(to));
+    list.appendChild(b);
+  };
+  if (out.suggest && !out.path) add(`${out.suggest}  (the WellSight folder)`, out.suggest, "sug");
+  for (const d of out.dirs) add(d.name, d.path);
+  if (!out.dirs.length && !(out.suggest && !out.path))
+    list.innerHTML = `<div class="empty">${out.path ? "No folders in here." : "No drives found."}</div>`;
+}
+$("wslibpick").addEventListener("click", () => {
+  if (!isLocal()) { $("wslibhint").textContent = "Choosing a folder needs the desktop app."; return; }
+  if (!$("wsfold").hidden) { $("wsfold").hidden = true; return; }
+  $("wsfold").hidden = false;
+  wsFoldGo(settings.wsLibrary || "");
+  $("wsfold").scrollIntoView({ block: "nearest" });
 });
+$("wsfup").addEventListener("click", () => wsFoldGo($("wsfup").dataset.to || ""));
+$("wsfuse").addEventListener("click", () => { if (wsFoldAt) wsUseFolder(wsFoldAt); });
+$("wsfcancel").addEventListener("click", () => { $("wsfold").hidden = true; });
+$("wsfwin").addEventListener("click", async () => {
+  $("wsfwin").disabled = true;
+  $("wsfnote").textContent = "Pick the folder in the window that opened (it can open behind this one)…";
+  try {
+    const out = await (await fetch("/api/pick-folder?for=wellsight")).json();
+    if (out.path) wsUseFolder(out.path);
+    else $("wsfnote").textContent = "No folder chosen in the folder window.";
+  } catch (e) { $("wsfnote").textContent = "The folder window didn't open: " + e.message; }
+  $("wsfwin").disabled = false;
+});
+// from the log's own pane: straight to the chooser
+function wsChooseFolder() {
+  openSettings();
+  if ($("wsfold").hidden) $("wslibpick").click();
+  else $("wsfold").scrollIntoView({ block: "nearest" });
+}
 $("wsopenpdf").addEventListener("click", () => {
   if (wsv) window.open("/api/wellsight-strip.pdf?id=" + encodeURIComponent(wsv.id), "_blank");
 });

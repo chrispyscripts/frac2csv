@@ -137,6 +137,13 @@ def library(req):
     return 200, out
 
 
+def folders(req):
+    try:
+        return 200, lib.folders(req.get("path") or "")
+    except OSError as e:
+        return 404, {"error": str(e)}
+
+
 def find(req):
     rec = _get(req.get("id"))
     if not rec:

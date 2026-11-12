@@ -34,22 +34,19 @@
          padding:3px 10px; cursor:pointer; text-decoration:none; }
   .btn:hover { border-color:var(--carmine); color:var(--carmine); }
   .btn.on { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .seg button { border:none; border-right:1px solid var(--line); background:var(--panel);
+                color:var(--ink); font:inherit; font-size:12px; font-weight:600;
+                padding:3px 10px; cursor:pointer; }
+  .seg button:last-child { border-right:none; }
+  .seg button:hover { color:var(--carmine); }
+  .seg button.on { background:var(--carmine); color:#fff; }
   .note { font-size:12px; color:var(--mut); padding:6px 16px; border-bottom:1px solid var(--line); }
   .note b { color:var(--ink); font-weight:600; }
-  .heads { display:flex; padding:0 16px; border-bottom:1px solid var(--line);
-           background:var(--panel); overflow:hidden; flex-shrink:0; }
-  .head { flex-shrink:0; padding:5px 6px 4px; border-right:1px solid var(--line);
-          font-size:11.5px; line-height:1.35; overflow:hidden; }
-  .head .nm { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .head .nm i { display:inline-block; width:12px; height:3px; border-radius:2px;
-                vertical-align:middle; margin-right:5px; }
-  .head .rg { color:var(--mut); font-family:var(--mono); font-size:10.5px; white-space:nowrap;
-              display:flex; justify-content:space-between; gap:6px; }
-  .head .ro { font-family:var(--mono); font-size:11px; min-height:15px; white-space:nowrap;
-              overflow:hidden; text-overflow:ellipsis; }
-  .scroller { flex:1 1 auto; overflow:auto; position:relative; padding:0 16px; }
+  .scroller { flex:1 1 auto; overflow:auto; position:relative; cursor:grab; }
+  .scroller.drag { cursor:grabbing; }
   .spacer { position:relative; }
-  canvas#cv { position:sticky; top:0; display:block; }
+  canvas#cv { position:sticky; top:0; left:0; display:block; }
 </style>
 </head>
 <body>
@@ -60,30 +57,37 @@
       <div class="sub" id="sub"></div>
     </div>
     <div class="tools">
-      <button class="btn on" id="fit" title="Stretch the whole log to fit the window">Fit whole log</button>
+      <span class="seg" title="Each curve in a band of its own, or all of them on one chart">
+        <button type="button" id="mSep">Separated data</button><button type="button" id="mComb">Combined</button>
+      </span>
+      <button class="btn on" id="fit" title="Stretch the whole log across the window (or double-click it)">Fit whole log</button>
       <label title="Ctrl or ⌘ and the mouse wheel zoom too">Zoom
         <input type="range" id="zoom" min="0" max="1000" step="1" value="0"></label>
       <span class="scl" id="scl"></span>
       <button class="btn" id="asprint" title="The scale LogViewer printed it at">1:240</button>
       <button class="btn on" id="clip" title="Scale each curve to the middle 99% of its values">Clip spikes</button>
-      <button class="btn on" id="showprint" title="The stitched LogViewer printout, on the same depth scale">Printout</button>
+      <button class="btn on" id="showprint" title="The stitched LogViewer printout under the curves, on the same depth scale">Printout</button>
       <a class="btn" id="pdflink" target="_blank" hidden>Open stitched PDF</a>
     </div>
   </div>
   <div class="note" id="note" hidden></div>
-  <div class="heads" id="heads"></div>
   <div class="scroller" id="scroller">
     <div class="spacer" id="spacer"><canvas id="cv"></canvas></div>
   </div>
 <script>
 "use strict";
+// Depth runs across, like the Lab's own chart: the curves in bands one above
+// the other and the printout under them, every band on the same depth scale,
+// so a feature in the LAS sits straight above the same feature on the print.
 const $ = id => document.getElementById(id);
 const CSS_PX_PER_M = n => 96 / 0.0254 / n;          // 1:n on a 96 dpi screen
 const MAX_PX_PER_M = CSS_PX_PER_M(100);              // closest zoom, 1:100
-const TRACK_W = 150, DEPTH_W = 54, LITH_W = 46;
+const LABEL_W = 170, PAD_R = 16, RULER_H = 30, GAP = 8, LITH_H = 16, PAD_B = 10;
 // At a fitted scale the printout at its own proportions is a sliver; it is
-// stretched across to at least this, and its header says so.
-const PRINT_MIN_W = 300;
+// stretched to at least this tall, and its label says so.
+const PRINT_MIN_H = 220;
+const MONO = "ui-monospace,Menlo,Consolas,monospace";
+const SANS = "-apple-system,'Segoe UI',system-ui,sans-serif";
 const COLORS = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
                 "#5a5f6e", "#8a2f5e"];
 const ROCK = { SS: "#f2d14b", SAND: "#f2d14b", SNDST: "#f2d14b", SH: "#8a9a7b",
@@ -98,11 +102,16 @@ function rockColor(code) {
   let h = 0; for (const ch of c) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return `hsl(${h % 360} 45% 62%)`;
 }
-function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function fmt(v) {
   if (v == null || !isFinite(v)) return "–";
   const a = Math.abs(v);
   return a >= 1000 ? v.toFixed(0) : a >= 100 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toPrecision(2);
+}
+function fitText(g, s, w) {
+  s = String(s ?? "");
+  if (g.measureText(s).width <= w) return s;
+  while (s.length > 1 && g.measureText(s + "…").width > w) s = s.slice(0, -1);
+  return s + "…";
 }
 
 let ID = new URLSearchParams(location.search).get("id") || "";
@@ -111,9 +120,13 @@ let D = null, P = null;            // payload, printout info
 let pxPerM = CSS_PX_PER_M(500);
 let fit = true;                    // the whole log fills the window
 let clip = true, showPrint = true;
-let ranges = [];
+let mode = "separate";             // "separate": a band per curve; "combined": one chart
+try { if (localStorage.getItem("f2c.logstack.mode") === "combined") mode = "combined"; }
+catch (e) { /* storage blocked: start separated */ }
+let ranges = [], rows = [];
 let hoverDepth = null;
 const tiles = new Map();
+const sc = $("scroller");
 
 function curveRange(vals) {
   const v = vals.filter(x => x != null && isFinite(x)).sort((a, b) => a - b);
@@ -128,11 +141,10 @@ function curveRange(vals) {
 }
 
 // ---- scale: fitted, or set by the slider (logarithmic, fit .. 1:100) ----
-function fitPxPerM() {
-  const h = $("scroller").clientHeight || 600;
-  return Math.max(0.02, h / Math.max(1, D.bottom - D.top));
-}
+function plotW() { return Math.max(100, sc.clientWidth - LABEL_W - PAD_R); }
+function fitPxPerM() { return Math.max(0.01, plotW() / Math.max(1, D.bottom - D.top)); }
 function minPxPerM() { return Math.min(fitPxPerM(), MAX_PX_PER_M); }
+function clampPx(px) { return Math.max(minPxPerM(), Math.min(MAX_PX_PER_M, px)); }
 function sliderToPx(v) {
   const a = minPxPerM(), b = MAX_PX_PER_M;
   return a * Math.pow(b / a, v / 1000);
@@ -141,69 +153,67 @@ function pxToSlider(px) {
   const a = minPxPerM(), b = MAX_PX_PER_M;
   return b > a ? Math.round(1000 * Math.log(px / a) / Math.log(b / a)) : 0;
 }
+function midDepth() { return D.top + (sc.scrollLeft + plotW() / 2) / pxPerM; }
 function setPx(px, keepDepth) {
-  const sc = $("scroller");
-  const mid = keepDepth != null ? keepDepth
-    : (D ? D.top + (sc.scrollTop + sc.clientHeight / 2) / pxPerM : 0);
-  pxPerM = Math.max(minPxPerM(), Math.min(MAX_PX_PER_M, px));
+  if (!D) return;
+  const mid = keepDepth != null ? keepDepth : midDepth();
+  pxPerM = clampPx(px);
   layout();
-  if (D) sc.scrollTop = (mid - D.top) * pxPerM - sc.clientHeight / 2;
+  sc.scrollLeft = (mid - D.top) * pxPerM - plotW() / 2;
   syncZoomUI();
 }
 function syncZoomUI() {
-  $("zoom").value = String(pxToSlider(pxPerM));
-  $("scl").textContent = "1:" + Math.round(96 / 0.0254 / pxPerM).toLocaleString();
+  if (D) {
+    $("zoom").value = String(pxToSlider(pxPerM));
+    $("scl").textContent = "1:" + Math.round(96 / 0.0254 / pxPerM).toLocaleString();
+  }
   $("fit").classList.toggle("on", fit);
+  $("mSep").classList.toggle("on", mode === "separate");
+  $("mComb").classList.toggle("on", mode === "combined");
 }
 
-function printWidth() {
-  if (!P || !showPrint) return { w: 0, stretched: false };
+// ---- the bands, top to bottom ----
+function printBand() {
+  if (!P || !showPrint) return null;
   const own = Math.round(P.width_pt * pxPerM / P.pt_per_m);
-  return own >= PRINT_MIN_W ? { w: own, stretched: false } : { w: PRINT_MIN_W, stretched: true };
+  return own >= PRINT_MIN_H ? { h: own, stretched: false } : { h: PRINT_MIN_H, stretched: true };
 }
-function trackX() {
-  const xs = [];
-  let x = 0;
-  xs.push({ kind: "depth", x, w: DEPTH_W }); x += DEPTH_W;
-  D.curves.forEach((c, i) => { xs.push({ kind: "curve", i, x, w: TRACK_W }); x += TRACK_W; });
-  if (D.lithology.length) { xs.push({ kind: "lith", x, w: LITH_W }); x += LITH_W; }
-  const pw = printWidth();
-  if (pw.w) { xs.push({ kind: "print", x, w: pw.w, stretched: pw.stretched }); x += pw.w; }
-  return { xs, width: x };
+function buildRows() {
+  const vh = sc.clientHeight || 600;
+  const pb = printBand(), lith = D.lithology.length > 0, n = D.curves.length;
+  // the curves share what the printout leaves; it takes at most half the window
+  const avail = vh - RULER_H - PAD_B - GAP - (lith ? LITH_H + GAP : 0)
+    - (pb ? Math.min(pb.h, Math.round(vh * 0.5)) + GAP : 0);
+  const out = [];
+  let y = GAP;
+  if (n && mode === "combined") {
+    const h = Math.max(Math.max(160, 24 + n * 15), Math.min(440, avail));
+    out.push({ kind: "combined", y, h }); y += h + GAP;
+  } else if (n) {
+    const h = Math.max(64, Math.min(170, Math.floor(avail / n) - GAP));
+    D.curves.forEach((c, i) => { out.push({ kind: "curve", i, y, h }); y += h + GAP; });
+  }
+  if (lith) { out.push({ kind: "lith", y, h: LITH_H }); y += LITH_H + GAP; }
+  if (pb) { out.push({ kind: "print", y, h: pb.h, stretched: pb.stretched }); y += pb.h + GAP; }
+  return { rows: out, height: y };
 }
-
 function layout() {
   if (!D) return;
   ranges = D.curves.map(c => curveRange(c.values));
-  const { xs, width } = trackX();
-  const total = (D.bottom - D.top) * pxPerM;
-  const sc = $("scroller");
-  $("spacer").style.height = Math.ceil(Math.max(total, sc.clientHeight)) + "px";
-  $("spacer").style.width = width + "px";
-  const heads = $("heads");
-  heads.innerHTML = "";
-  for (const t of xs) {
-    const h = document.createElement("div");
-    h.className = "head"; h.style.width = t.w + "px";
-    if (t.kind === "depth") h.innerHTML = `<div class="nm">Depth</div><div class="rg">m ${esc(D.axis || "")}</div><div class="ro" id="ro-depth"></div>`;
-    if (t.kind === "curve") {
-      const c = D.curves[t.i], r = ranges[t.i];
-      h.innerHTML = `<div class="nm" title="${esc(c.name)} — track ${esc(c.track || "-")}, recorded every ${c.recorded_step} m"><i style="background:${COLORS[t.i % COLORS.length]}"></i>${esc(c.name)} <span style="color:var(--mut);font-weight:400">${esc(c.unit)}</span></div>`
-        + `<div class="rg"><span>${fmt(r[0])}</span><span>${fmt(r[1])}</span></div><div class="ro" id="ro-${t.i}"></div>`;
-    }
-    if (t.kind === "lith") h.innerHTML = `<div class="nm">Lith</div><div class="rg">&nbsp;</div><div class="ro" id="ro-lith"></div>`;
-    if (t.kind === "print") h.innerHTML = `<div class="nm">Printout (LogViewer, stitched)</div>`
-      + `<div class="rg">${P.log_pages} pages${t.stretched ? " · stretched across to fit" : " · as printed"}</div><div class="ro"></div>`;
-    heads.appendChild(h);
-  }
-  sc.onscroll = () => { heads.scrollLeft = sc.scrollLeft; draw(); };
+  const b = buildRows();
+  rows = b.rows;
+  const sp = $("spacer");
+  // rounded, not ceiled: at fit this is the window width exactly, and one
+  // pixel over would add a scrollbar that shrinks the window that sized it
+  sp.style.width = Math.round(Math.max(LABEL_W + (D.bottom - D.top) * pxPerM + PAD_R, sc.clientWidth)) + "px";
+  sp.style.height = Math.ceil(Math.max(RULER_H + b.height + PAD_B, sc.clientHeight)) + "px";
   draw();
 }
 
 function gridStep() {
-  for (const s of [1, 2, 5, 10, 20, 50, 100, 200, 500])
-    if (s * pxPerM >= 14) return s;
-  return 1000;
+  for (const s of [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000])
+    if (s * pxPerM >= 64) return s;
+  return 5000;
 }
 
 function tileFor(a, b, ppmDev, wDev) {
@@ -220,93 +230,171 @@ function tileFor(a, b, ppmDev, wDev) {
   return t;
 }
 
+// ---- drawing: the canvas is the window; it draws what is scrolled into view ----
 let raf = 0;
 function draw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; drawNow(); }); }
+
+function drawCurve(g, k, X, top, h, d0, d1, lw) {
+  const c = D.curves[k], [lo, hi] = ranges[k];
+  const i0 = Math.max(0, Math.floor((d0 - D.depth0) / D.step) - 1);
+  const i1 = Math.min(D.rows - 1, Math.ceil((d1 - D.depth0) / D.step) + 1);
+  g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = lw; g.beginPath();
+  let pen = false;
+  for (let i = i0; i <= i1; i++) {
+    const v = c.values[i];
+    if (v == null) { pen = false; continue; }
+    const x = X(D.depth0 + i * D.step);
+    const y = top + 3 + (h - 6) * (1 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))));
+    if (pen) g.lineTo(x, y); else g.moveTo(x, y);
+    pen = true;
+  }
+  g.stroke();
+}
+function valueAt(k) {
+  if (hoverDepth == null) return null;
+  const i = Math.round((hoverDepth - D.depth0) / D.step);
+  return i >= 0 && i < D.rows ? D.curves[k].values[i] : null;
+}
+
 function drawNow() {
   if (!D) return;
-  const sc = $("scroller"), cv = $("cv");
-  const dpr = window.devicePixelRatio || 1;
-  const { xs, width } = trackX();
-  const h = sc.clientHeight;
-  cv.width = Math.round(width * dpr); cv.height = Math.round(h * dpr);
-  cv.style.width = width + "px"; cv.style.height = h + "px";
+  const cv = $("cv"), dpr = window.devicePixelRatio || 1;
+  const vw = sc.clientWidth, vh = sc.clientHeight;
+  if (cv.width !== Math.round(vw * dpr)) cv.width = Math.round(vw * dpr);
+  if (cv.height !== Math.round(vh * dpr)) cv.height = Math.round(vh * dpr);
+  cv.style.width = vw + "px"; cv.style.height = vh + "px";
   const g = cv.getContext("2d");
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
-  g.fillStyle = "#fff"; g.fillRect(0, 0, width, h);
-  const d0 = D.top + sc.scrollTop / pxPerM, d1 = d0 + h / pxPerM;
-  const y = d => (d - d0) * pxPerM;
+  g.fillStyle = "#fbfbfa"; g.fillRect(0, 0, vw, vh);
+  const pw = vw - LABEL_W - PAD_R;
+  const d0 = D.top + sc.scrollLeft / pxPerM, d1 = d0 + pw / pxPerM;
+  const X = d => LABEL_W + (d - d0) * pxPerM;
   const step = gridStep();
-  const pr = xs.find(t => t.kind === "print");
-  g.lineWidth = 1;
-  for (let d = Math.ceil(d0 / step) * step; d <= d1; d += step) {
-    const yy = Math.round(y(d)) + 0.5;
-    g.strokeStyle = d % (step * 5) === 0 ? "#d2d6db" : "#eceef1";
-    g.beginPath(); g.moveTo(DEPTH_W, yy); g.lineTo(pr ? pr.x : width, yy); g.stroke();
-  }
-  for (const t of xs) {
-    if (t.kind === "depth") {
-      g.fillStyle = "#3a4048"; g.font = "11px ui-monospace,Menlo,Consolas,monospace";
-      g.textAlign = "right"; g.textBaseline = "middle";
-      const ls = step * (step * pxPerM < 30 ? 5 : 1);
-      for (let d = Math.ceil(d0 / ls) * ls; d <= d1; d += ls) g.fillText(String(+d.toFixed(2)), t.x + t.w - 6, y(d));
-    }
-    if (t.kind === "curve") {
-      const c = D.curves[t.i], [lo, hi] = ranges[t.i];
-      const i0 = Math.max(0, Math.floor((d0 - D.depth0) / D.step) - 1);
-      const i1 = Math.min(D.rows - 1, Math.ceil((d1 - D.depth0) / D.step) + 1);
-      g.save(); g.beginPath(); g.rect(t.x, 0, t.w, h); g.clip();
-      g.strokeStyle = COLORS[t.i % COLORS.length]; g.lineWidth = 1.2; g.beginPath();
-      let pen = false;
-      for (let i = i0; i <= i1; i++) {
-        const v = c.values[i];
-        if (v == null) { pen = false; continue; }
-        const xx = t.x + 2 + (t.w - 4) * Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
-        const yy = y(D.depth0 + i * D.step);
-        if (pen) g.lineTo(xx, yy); else g.moveTo(xx, yy);
-        pen = true;
+  const firstTick = Math.ceil(d0 / step) * step;
+
+  g.save(); g.beginPath(); g.rect(0, RULER_H, vw, vh - RULER_H); g.clip();
+  for (const r of rows) {
+    const top = RULER_H + r.y - sc.scrollTop;
+    if (top + r.h < RULER_H || top > vh) continue;
+    g.fillStyle = "#fff"; g.fillRect(LABEL_W, top, pw, r.h);
+    g.save(); g.beginPath(); g.rect(LABEL_W, top, pw, r.h); g.clip();
+    if (r.kind === "curve" || r.kind === "combined") {
+      g.lineWidth = 1;
+      for (let d = firstTick; d <= d1; d += step) {
+        const x = Math.round(X(d)) + 0.5;
+        g.strokeStyle = "#eceef1"; g.beginPath(); g.moveTo(x, top); g.lineTo(x, top + r.h); g.stroke();
       }
-      g.stroke(); g.restore();
+      for (let q = 1; q < 4; q++) {
+        const y = Math.round(top + r.h * q / 4) + 0.5;
+        g.strokeStyle = "#f1f2f4"; g.beginPath(); g.moveTo(LABEL_W, y); g.lineTo(LABEL_W + pw, y); g.stroke();
+      }
+      if (r.kind === "curve") drawCurve(g, r.i, X, top, r.h, d0, d1, 1.2);
+      else D.curves.forEach((c, k) => drawCurve(g, k, X, top, r.h, d0, d1, 1.3));
     }
-    if (t.kind === "lith") {
+    if (r.kind === "lith") {
       for (const iv of D.lithology) {
         if (iv.base < d0 || iv.top > d1) continue;
         g.fillStyle = rockColor(iv.code);
-        g.fillRect(t.x + 3, y(iv.top), t.w - 6, Math.max(1, (iv.base - iv.top) * pxPerM));
+        g.fillRect(X(iv.top), top + 2, Math.max(1, (iv.base - iv.top) * pxPerM), r.h - 4);
       }
     }
-    if (t.kind === "print") {
+    if (r.kind === "print") {
+      // the stitched strip runs depth-down; turned a quarter left, depth runs across
       const ppmDev = pxPerM * dpr;
-      const wDev = t.stretched ? Math.round(t.w * dpr) : 0;
+      const wDev = r.stretched ? Math.round(r.h * dpr) : 0;
       const T = Math.max(1, Math.round(900 / pxPerM));      // metres per tile
-      const first = Math.floor((d0 - P.top) / T) * T + P.top;
-      for (let a = first; a < Math.min(d1, P.bottom); a += T) {
+      const start = Math.floor((Math.max(d0, P.top) - P.top) / T) * T + P.top;
+      for (let a = start; a < Math.min(d1, P.bottom); a += T) {
         const b = Math.min(a + T, P.bottom);
         const tl = tileFor(+a.toFixed(3), +b.toFixed(3), ppmDev, wDev);
-        if (tl.ok) g.drawImage(tl.img, t.x, y(a), t.w, (b - a) * pxPerM);
-        else { g.fillStyle = "#f6f7f8"; g.fillRect(t.x, y(a), t.w, (b - a) * pxPerM); }
+        if (!tl.ok) { g.fillStyle = "#f4f5f7"; g.fillRect(X(a), top, (b - a) * pxPerM, r.h); continue; }
+        g.save();
+        g.translate(X(a), top + r.h);
+        g.rotate(-Math.PI / 2);
+        g.drawImage(tl.img, 0, 0, r.h, (b - a) * pxPerM);
+        g.restore();
       }
     }
-    g.strokeStyle = "#e3e5e8"; g.beginPath(); g.moveTo(t.x + t.w - 0.5, 0); g.lineTo(t.x + t.w - 0.5, h); g.stroke();
+    g.restore();
+    g.strokeStyle = "#d2d6db"; g.lineWidth = 1;
+    g.strokeRect(LABEL_W + 0.5, top + 0.5, pw - 1, r.h - 1);
+    drawLabel(g, r, top);
   }
   if (hoverDepth != null && hoverDepth >= d0 && hoverDepth <= d1) {
-    g.strokeStyle = "rgba(163,22,49,.75)"; g.lineWidth = 1;
-    const yy = Math.round(y(hoverDepth)) + 0.5;
-    g.beginPath(); g.moveTo(0, yy); g.lineTo(width, yy); g.stroke();
+    const x = Math.round(X(hoverDepth)) + 0.5;
+    g.strokeStyle = "rgba(163,22,49,.8)"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, RULER_H); g.lineTo(x, vh); g.stroke();
   }
+  g.restore();
+
+  // the depth ruler, always at the top
+  g.fillStyle = "#fbfbfa"; g.fillRect(0, 0, vw, RULER_H);
+  g.strokeStyle = "#d2d6db"; g.beginPath(); g.moveTo(0, RULER_H - 0.5); g.lineTo(vw, RULER_H - 0.5); g.stroke();
+  g.fillStyle = "#697077"; g.font = `11px ${SANS}`; g.textAlign = "left"; g.textBaseline = "middle";
+  g.fillText(`Depth, m ${D.axis || ""}`, 12, RULER_H / 2);
+  g.save(); g.beginPath(); g.rect(LABEL_W - 30, 0, pw + 60, RULER_H); g.clip();
+  g.font = `11px ${MONO}`; g.textAlign = "center"; g.fillStyle = "#3a4048";
+  for (let d = firstTick; d <= d1 + 1e-9; d += step) {
+    const x = Math.round(X(d)) + 0.5;
+    g.strokeStyle = "#9aa1a9"; g.beginPath(); g.moveTo(x, RULER_H - 6); g.lineTo(x, RULER_H); g.stroke();
+    g.fillText(String(+d.toFixed(1)), x, RULER_H / 2 - 1);
+  }
+  if (hoverDepth != null && hoverDepth >= d0 && hoverDepth <= d1) {
+    const s = hoverDepth.toFixed(2), x = X(hoverDepth), w = g.measureText(s).width + 10;
+    g.fillStyle = "#a31631"; g.fillRect(x - w / 2, 4, w, RULER_H - 9);
+    g.fillStyle = "#fff"; g.fillText(s, x, RULER_H / 2 - 1);
+  }
+  g.restore();
 }
 
-function readout() {
-  const set = (id, s) => { const el = $(id); if (el) el.textContent = s; };
-  if (!D) return;
-  if (hoverDepth == null) {
-    set("ro-depth", ""); D.curves.forEach((c, i) => set("ro-" + i, "")); set("ro-lith", "");
-    return;
+function drawLabel(g, r, top) {
+  const L = 12, Rx = LABEL_W - 8;
+  g.textBaseline = "middle";
+  if (r.kind === "curve") {
+    const c = D.curves[r.i], [lo, hi] = ranges[r.i], col = COLORS[r.i % COLORS.length];
+    g.fillStyle = col; g.fillRect(L, top + 11, 12, 3);
+    g.fillStyle = "#14181d"; g.font = `600 12px ${SANS}`; g.textAlign = "left";
+    g.fillText(fitText(g, c.name, LABEL_W - L - 60), L + 17, top + 13);
+    g.fillStyle = "#697077"; g.font = `11px ${SANS}`;
+    g.fillText(fitText(g, c.unit || "", LABEL_W - L - 60), L, top + 30);
+    g.font = `10.5px ${MONO}`; g.textAlign = "right";
+    g.fillText(fmt(hi), Rx, top + 10);
+    g.fillText(fmt(lo), Rx, top + r.h - 9);
+    if (hoverDepth != null && r.h >= 52) {
+      g.fillStyle = col; g.font = `600 12px ${MONO}`; g.textAlign = "left";
+      g.fillText(fmt(valueAt(r.i)), L, top + 48);
+    }
   }
-  set("ro-depth", hoverDepth.toFixed(2));
-  const i = Math.round((hoverDepth - D.depth0) / D.step);
-  D.curves.forEach((c, k) => set("ro-" + k, i >= 0 && i < D.rows ? fmt(c.values[i]) : "–"));
-  const iv = D.lithology.find(v => hoverDepth >= v.top && hoverDepth < v.base);
-  set("ro-lith", iv ? iv.code : "");
+  if (r.kind === "combined") {
+    D.curves.forEach((c, k) => {
+      const y = top + 12 + k * 15;
+      if (y > top + r.h - 6) return;
+      const col = COLORS[k % COLORS.length];
+      g.fillStyle = col; g.fillRect(L, y - 1, 12, 3);
+      g.fillStyle = "#14181d"; g.font = `600 11.5px ${SANS}`; g.textAlign = "left";
+      g.fillText(fitText(g, c.name + (c.unit ? " " + c.unit : ""), LABEL_W - L - 70), L + 17, y);
+      if (hoverDepth != null) {
+        g.fillStyle = col; g.font = `600 11px ${MONO}`; g.textAlign = "right";
+        g.fillText(fmt(valueAt(k)), Rx, y);
+      }
+    });
+  }
+  if (r.kind === "lith") {
+    g.fillStyle = "#697077"; g.font = `11px ${SANS}`; g.textAlign = "left";
+    g.fillText("Lith", L, top + r.h / 2);
+    const iv = hoverDepth == null ? null
+      : D.lithology.find(v => hoverDepth >= v.top && hoverDepth < v.base);
+    if (iv) { g.fillStyle = "#14181d"; g.textAlign = "right"; g.font = `600 11px ${MONO}`; g.fillText(iv.code, Rx, top + r.h / 2); }
+  }
+  if (r.kind === "print") {
+    g.textAlign = "left";
+    g.fillStyle = "#14181d"; g.font = `600 12px ${SANS}`;
+    g.fillText("Printout", L, top + 13);
+    g.fillStyle = "#697077"; g.font = `11px ${SANS}`;
+    g.fillText("LogViewer, stitched", L, top + 30);
+    g.fillText(`${P.log_pages} pages`, L, top + 45);
+    g.fillText(r.stretched ? "stretched to fit" : "as printed", L, top + 60);
+  }
 }
 
 // ---- which log: the one the Lab has selected ----
@@ -322,8 +410,7 @@ async function load(id) {
     $("sub").textContent = String(e.message || e) + " — drop the file on the Lab again.";
     return;
   }
-  const sc = $("scroller");
-  const was = D ? D.top + (sc.scrollTop + sc.clientHeight / 2) / pxPerM : null;
+  const was = D ? midDepth() : null;
   const sameLog = id === ID && D;
   ID = id; D = out.payload; P = out.printout;
   try { history.replaceState(null, "", "?id=" + encodeURIComponent(ID)); } catch (e) { /* file: */ }
@@ -333,9 +420,11 @@ async function load(id) {
                           D.scale, D.licence && "licence " + D.licence].filter(Boolean).join(" · ");
   const note = $("note");
   note.hidden = false;
+  const keys = " ← → move along the log; ↑ ↓ step through the logs in the Lab.";
   if (!P) {
-    note.innerHTML = "No printout yet. In the Lab, <b>Print with LogViewer</b> (Windows), or "
-      + "<b>Add printout PDF</b>: File &gt; Print, Microsoft Print to PDF, All, Page Breaks off.";
+    note.innerHTML = "No printout yet. In the Lab, <b>Printouts folder…</b> names the folder that holds "
+      + "them, or <b>Add printout PDF</b> (LogViewer: File &gt; Print, Microsoft Print to PDF, All, "
+      + "Page Breaks off)." + keys;
     $("showprint").hidden = true; $("pdflink").hidden = true;
   } else {
     const c = P.check || {};
@@ -343,21 +432,33 @@ async function load(id) {
       + (c.labels ? `; ${c.labels} labels, median ${c.median_m} m from their depth` : "")
       + (P.gaps && P.gaps.length ? `; <b>gaps</b> at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
       + ". LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it."
-      + " ↑ ↓ step through the logs in the Lab.";
+      + keys;
     $("showprint").hidden = false;
     const a = $("pdflink"); a.hidden = false;
     a.href = "/api/wellsight-strip.pdf?id=" + encodeURIComponent(ID);
   }
+  sc.scrollTop = 0;
   if (fit) setPx(fitPxPerM(), (D.top + D.bottom) / 2);
-  else setPx(pxPerM, sameLog && was != null ? was : D.top + sc.clientHeight / 2 / pxPerM);
-  if (!sameLog && !fit) sc.scrollTop = 0;
+  else setPx(pxPerM, sameLog && was != null ? was : D.top + plotW() / 2 / pxPerM);
 }
 
 // ---- controls ----
-$("fit").addEventListener("click", () => {
-  fit = !fit;
-  if (fit && D) setPx(fitPxPerM(), (D.top + D.bottom) / 2);
+function setMode(m) {
+  mode = m;
+  try { localStorage.setItem("f2c.logstack.mode", m); } catch (e) { /* not kept */ }
+  sc.scrollTop = 0;
+  layout(); syncZoomUI();
+}
+$("mSep").addEventListener("click", () => setMode("separate"));
+$("mComb").addEventListener("click", () => setMode("combined"));
+function fitAll() {
+  fit = true;
+  if (D) setPx(fitPxPerM(), (D.top + D.bottom) / 2);
   syncZoomUI();
+}
+$("fit").addEventListener("click", () => {
+  if (fit) { fit = false; syncZoomUI(); return; }
+  fitAll();
 });
 $("zoom").addEventListener("input", () => {
   if (!D) return;
@@ -372,35 +473,63 @@ $("asprint").addEventListener("click", () => {
 });
 $("clip").addEventListener("click", () => { clip = !clip; $("clip").classList.toggle("on", clip); layout(); });
 $("showprint").addEventListener("click", () => { showPrint = !showPrint; $("showprint").classList.toggle("on", showPrint); layout(); });
-$("scroller").addEventListener("mousemove", e => {
-  if (!D) return;
-  const r = $("cv").getBoundingClientRect();
-  hoverDepth = D.top + ($("scroller").scrollTop + (e.clientY - r.top)) / pxPerM;
-  draw(); readout();
-});
-$("scroller").addEventListener("mouseleave", () => { hoverDepth = null; draw(); readout(); });
-$("scroller").addEventListener("wheel", e => {
-  if (!D || !(e.ctrlKey || e.metaKey)) return;
+
+// ---- mouse: hover reads, drag moves, Ctrl/⌘ + wheel zooms, double-click fits ----
+function depthAtX(clientX) {
+  const x = clientX - sc.getBoundingClientRect().left;
+  if (x < LABEL_W || x > sc.clientWidth - PAD_R) return null;
+  return D.top + (sc.scrollLeft + x - LABEL_W) / pxPerM;
+}
+let drag = null;
+sc.addEventListener("mousedown", e => {
+  if (e.button !== 0 || !D) return;
+  drag = { x: e.clientX, y: e.clientY, sl: sc.scrollLeft, st: sc.scrollTop };
+  sc.classList.add("drag");
   e.preventDefault();
-  const r = $("cv").getBoundingClientRect();
-  const at = D.top + ($("scroller").scrollTop + (e.clientY - r.top)) / pxPerM;
-  fit = false;
-  const k = Math.pow(1.0015, -e.deltaY);
-  const sc = $("scroller"), offset = e.clientY - r.top;
-  pxPerM = Math.max(minPxPerM(), Math.min(MAX_PX_PER_M, pxPerM * k));
-  layout();
-  sc.scrollTop = (at - D.top) * pxPerM - offset;
-  syncZoomUI();
+});
+window.addEventListener("mousemove", e => {
+  if (!D) return;
+  if (drag) {
+    sc.scrollLeft = drag.sl - (e.clientX - drag.x);
+    sc.scrollTop = drag.st - (e.clientY - drag.y);
+  }
+  const r = sc.getBoundingClientRect();
+  const inside = e.clientY >= r.top && e.clientY <= r.bottom;
+  const d = inside ? depthAtX(e.clientX) : null;
+  if (d !== hoverDepth) { hoverDepth = d; draw(); }
+});
+window.addEventListener("mouseup", () => { drag = null; sc.classList.remove("drag"); });
+sc.addEventListener("mouseleave", () => { if (!drag) { hoverDepth = null; draw(); } });
+sc.addEventListener("dblclick", () => fitAll());
+sc.addEventListener("scroll", draw);
+sc.addEventListener("wheel", e => {
+  if (!D) return;
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    const x = e.clientX - sc.getBoundingClientRect().left;
+    const at = D.top + (sc.scrollLeft + x - LABEL_W) / pxPerM;
+    fit = false;
+    pxPerM = clampPx(pxPerM * Math.pow(1.0015, -e.deltaY));
+    layout();
+    sc.scrollLeft = (at - D.top) * pxPerM - (x - LABEL_W);
+    syncZoomUI();
+    return;
+  }
+  // nothing to scroll up and down: the wheel moves along the log
+  if (sc.scrollHeight <= sc.clientHeight + 1 && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+    e.preventDefault();
+    sc.scrollLeft += e.deltaY;
+  }
 }, { passive: false });
 let resizeT = 0;
-window.addEventListener("resize", () => {
+new ResizeObserver(() => {
   clearTimeout(resizeT);
   resizeT = setTimeout(() => {
     if (!D) return;
     if (fit) setPx(fitPxPerM(), (D.top + D.bottom) / 2);
-    else { pxPerM = Math.max(minPxPerM(), pxPerM); layout(); syncZoomUI(); }
-  }, 80);
-});
+    else { const mid = midDepth(); pxPerM = clampPx(pxPerM); setPx(pxPerM, mid); }
+  }, 60);
+}).observe(sc);
 
 // ---- the Lab: it says which log to show; the arrow keys ask it for the next ----
 function lab() {
@@ -416,13 +545,20 @@ window.addEventListener("message", ev => {
   }
 });
 document.addEventListener("keydown", e => {
-  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) && e.target.type !== "range") return;
+  if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && D) {
+    e.preventDefault();
+    sc.scrollLeft += (e.key === "ArrowRight" ? 1 : -1) * plotW() * 0.25;
+    return;
+  }
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
   const o = lab();
   if (!o) return;
   e.preventDefault();
   o.postMessage({ type: "logstack:nav", dir: e.key === "ArrowDown" ? 1 : -1 }, location.origin);
 });
+syncZoomUI();
 load(ID).then(() => {
   const o = lab();
   if (o) o.postMessage({ type: "logstack:ready" }, location.origin);

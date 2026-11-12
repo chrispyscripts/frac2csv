@@ -125,6 +125,74 @@ def find(ix, log_name):
 DRIVE_LETTERS = None
 
 
+def _volume_label(root):
+    """A Windows drive's name ("CnC-2TB-ssd"), or ""."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(261)
+        ok = ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(root), buf, 261, None, None, None, None, 0)
+        return buf.value if ok else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _roots():
+    if sys.platform == "win32":
+        letters = DRIVE_LETTERS() if DRIVE_LETTERS else []
+        out = []
+        for d in letters:
+            if d in ("A", "B"):
+                continue
+            root = f"{d}:\\"
+            label = _volume_label(root)
+            out.append({"name": f"{d}:" + (f"  {label}" if label else ""), "path": root})
+        return out
+    out = []
+    if sys.platform == "darwin":
+        try:
+            out = [{"name": v, "path": os.path.join("/Volumes", v)}
+                   for v in sorted(os.listdir("/Volumes")) if not v.startswith(".")]
+        except OSError:
+            out = []
+    else:
+        out = [{"name": "/", "path": "/"}]
+    return out + [{"name": "Home", "path": os.path.expanduser("~")}]
+
+
+def folders(path):
+    """What the Lab's folder chooser shows: the drives (no path given), or
+    one folder's sub-folders and how many PDFs sit directly in it. The
+    chooser is the Lab's own, so picking the printouts folder never depends
+    on a Windows dialog that can open behind the browser or not at all."""
+    path = (path or "").strip()
+    suggest = default_folder()
+    if not path:
+        return {"path": "", "parent": None, "dirs": _roots(), "pdfs": 0, "suggest": suggest}
+    path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"{path} is not a folder on this computer"
+                                + (" (is the drive plugged in?)" if _on_removable(path) else ""))
+    dirs, pdfs = [], 0
+    with os.scandir(path) as it:
+        for e in it:
+            try:
+                if e.is_dir():
+                    if e.name.startswith((".", "$")) or e.name == "System Volume Information":
+                        continue
+                    dirs.append({"name": e.name, "path": e.path})
+                elif e.name.lower().endswith(".pdf") and not e.name.startswith("._"):
+                    pdfs += 1
+            except OSError:
+                continue
+    dirs.sort(key=lambda d: d["name"].lower())
+    parent = os.path.dirname(path)
+    if parent == path:              # a drive's top: up goes to the list of drives
+        parent = ""
+    return {"path": path, "parent": parent, "dirs": dirs[:3000], "pdfs": pdfs,
+            "suggest": suggest}
+
+
 def default_folder():
     """A SK-VIKING\\WellSight folder at the top of any drive, or None."""
     names = (os.path.join("SK-VIKING", "WellSight"), "WellSight")
