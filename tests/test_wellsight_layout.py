@@ -88,6 +88,18 @@ class Place(unittest.TestCase):
         self.assertFalse(slide["snapped"])
         self.assertAlmostEqual(slide["x1"], 216.0, delta=0.5)
 
+    def test_curves_kept_in_a_hidden_track(self):
+        # the curves' own track is not printed: the shown one as wide as the
+        # printout's curve compartment is the curve track
+        tracks = [T("Slides", 0.1), T("Curve Track 1", 2.3, cols=["Eng. Data"]), T("", None, None),
+                  T("Depth", 0.16, cols=["Depth", "Events"]), T("Porosity Type", 0.1, cols=["Porosity Type"]),
+                  T("Oil Shows", 0.1, cols=["Oil Shows"]), T("TG, C1-C5", 2.3, False, ["Eng. Data 2"])]
+        lines = [0.5, 8.0, 173.5, 185.0, 192.0, 199.0]
+        p = wl.place(tracks, lines, (8.0, 173.5), 199.0, "TG, C1-C5")
+        self.assertEqual(spans(p), [("Slides", 0.5, 8.0), ("Curve Track 1", 8.0, 173.5), ("Depth", 173.5, 185.0),
+                                    ("Porosity Type", 185.0, 192.0), ("Oil Shows", 192.0, 199.0)])
+        self.assertTrue(all(t["snapped"] for t in p))
+
     def test_nothing_without_a_curve_track(self):
         self.assertEqual(wl.place(STRIP, STRIP_LINES, None, 581.0, "Curve Track 1"), [])
 

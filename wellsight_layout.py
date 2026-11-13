@@ -17,7 +17,12 @@ A track whose record cannot be read whole (its title and width are not where
 they are in the others; two of the drive's samples have one each, the
 lithology track of a strip log and the cross-section of a horizontal log)
 is taken as shown, and its far edge is the line after which the next track
-of known width fits.
+of known width fits, or no room at all when that is what fits.
+
+The curve track is the one the log's curves are drawn in, unless that track
+is hidden: a log can keep its curves in a "TG, C1-C5" track it does not
+print, and then the curve track is the shown one as wide as the curves'
+compartment on the printout.
 
 Lab data sets are matched to tracks by the names of the columns the track
 holds, and by its title: the Oil shows set to the track holding the "Oil
@@ -124,29 +129,12 @@ def place(tracks, lines, curves_pt, width_pt, curve_title=None):
         return []
     lines = sorted(lines)
     c0, c1 = curves_pt
-    kc = None
-    if curve_title:
-        kc = next((i for i, t in enumerate(tracks) if t["title"] == curve_title), None)
-    if kc is None:                 # by width: the shown track as wide as the curve track
-        best = None
-        for i, t in enumerate(tracks):
-            if t["shown"] and t["width_in"]:
-                d = abs(t["width_in"] * 72 - (c1 - c0))
-                if d < 4 and (best is None or d < best[0]):
-                    best = (d, i)
-        kc = best[1] if best else None
-    if kc is None:
-        return []
-    ct = tracks[kc]
-    scale = (c1 - c0) / (ct["width_in"] * 72) if ct["width_in"] else 1.0
-    if not 0.8 < scale < 1.25:
-        scale = 1.0
 
     def snap(x):
         best = min(lines, key=lambda v: abs(v - x), default=None)
         return best if best is not None and abs(best - x) <= SNAP_PT else None
 
-    def walk(order, pos, d):
+    def walk(order, pos, d, scale):
         out = []
         for i, t in enumerate(order):
             if t["shown"] is False:
@@ -155,11 +143,24 @@ def place(tracks, lines, curves_pt, width_pt, curve_title=None):
                 tgt = pos + d * t["width_in"] * 72 * scale
                 hit = snap(tgt)
                 edge, ok = (hit, True) if hit is not None else (tgt, False)
+                if hit is None:
+                    # an overlay ("POLYLINES") has a width but takes no room:
+                    # it misses its line and the next track fits from here
+                    nxt = next((u for u in order[i + 1:] if u["shown"] and u["width_in"]), None)
+                    if nxt is not None and snap(pos + d * nxt["width_in"] * 72 * scale) is not None:
+                        edge, ok = pos, True
             else:
                 nxt = next((u for u in order[i + 1:] if u["shown"] and u["width_in"]), None)
                 edge, ok = None, False
                 ahead = [v for v in lines if (v - pos) * d > 6]
                 ahead.sort(key=lambda v: abs(v - pos))
+                # it may take no room at all (left off the print): first
+                # thing to try for a record with no columns of its own, the
+                # last for one with columns
+                if t["columns"]:
+                    ahead.append(pos)
+                else:
+                    ahead.insert(0, pos)
                 if nxt is not None:
                     for v in ahead:
                         if snap(v + d * nxt["width_in"] * 72 * scale) is not None:
@@ -172,22 +173,54 @@ def place(tracks, lines, curves_pt, width_pt, curve_title=None):
             pos = edge
         return out
 
-    after, before = tracks[kc + 1:], tracks[:kc][::-1]
+    # Which track the curve compartment is, and the print's scale. The
+    # curves' own track says, unless it is hidden or its record unreadable;
+    # and a printout can be shrunk to fit its page (a 1.44 in track printed
+    # 95 pt wide). So each shown track is tried as the curve track, at the
+    # scale its width gives the compartment (an unreadable one at the scales
+    # the others give), both ways across, and the layout with the most edges
+    # on lines is kept: the curves' own track first, then the scale nearest
+    # 1, when they tie.
+    span = c1 - c0
+    scales = {1.0}
+    for t in tracks:
+        if t["shown"] is not False and t["width_in"]:
+            s = span / (t["width_in"] * 72)
+            if 0.8 < s < 1.25:
+                scales.add(round(s, 4))
     best = None
-    for d in (1, -1):              # file order left to right, or turned the other way
-        placed = walk(after, c1 if d > 0 else c0, d) + walk(before, c0 if d > 0 else c1, -d)
-        score = sum(1 for p in placed if p[3] and -1 <= p[1] and p[2] <= width_pt + 1)
-        if best is None or score > best[0]:
-            best = (score, placed)
+    for kc, ct in enumerate(tracks):
+        if ct["shown"] is False:
+            continue
+        if ct["width_in"]:
+            mine = [round(span / (ct["width_in"] * 72), 4)]
+            if not 0.8 < mine[0] < 1.25:
+                continue
+        else:
+            mine = sorted(scales)
+        own = curve_title is not None and ct["title"] == curve_title
+        after, before = tracks[kc + 1:], tracks[:kc][::-1]
+        for scale in mine:
+            for d in (1, -1):          # file order left to right, or turned the other way
+                placed = walk(after, c1 if d > 0 else c0, d, scale) + walk(before, c0 if d > 0 else c1, -d, scale)
+                hits = sum(1 for p in placed if p[3] and -1 <= p[1] and p[2] <= width_pt + 1)
+                rank = (hits, own, ct["width_in"] is not None, -abs(scale - 1.0))
+                if best is None or rank > best[0]:
+                    best = (rank, kc, placed)
+    if best is None:
+        return []
+    kc, ct = best[1], tracks[best[1]]
+    best = (best[0], best[2])
     placed = [(ct, c0, c1, True)] + best[1]
     out = []
     for t, a, b, ok in placed:
         x0, x1 = max(0.0, a), min(width_pt, b)
         if x1 - x0 < 2:            # off the printed page
             continue
-        out.append({"title": _label(t), "x0": round(x0, 1), "x1": round(x1, 1),
-                    "columns": t["columns"], "keys": keys_of(t, ct["title"]) if t is not ct
-                    else sorted(set(keys_of(t, ct["title"]) + ["curves"])),
+        out.append({"title": _label(t) if t is not ct or ct["title"] else "Curve track",
+                    "x0": round(x0, 1), "x1": round(x1, 1),
+                    "columns": t["columns"], "keys": keys_of(t, ct["title"] or None) if t is not ct
+                    else sorted(set(keys_of(t, ct["title"] or None) + ["curves"])),
                     "snapped": bool(ok), "clipped": x0 > a + 1 or x1 < b - 1})
     out.sort(key=lambda r: r["x0"])
     return out
