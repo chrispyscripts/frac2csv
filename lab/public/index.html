@@ -318,6 +318,7 @@
   /* What the pointer is on. Its height is fixed and its text never wraps
      past it: a reading that grew the header moved the chart away from the
      pointer, which cleared the reading, which moved the chart back. */
+  .wsread .wswrap { color:var(--carmine); font-size:11px; margin-left:4px; }
   .wsread { margin:8px 18px 0; height:20px; line-height:20px; font-size:12px; color:var(--ink);
             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .wsread.two { height:40px; white-space:normal; display:-webkit-box;
@@ -1917,6 +1918,7 @@ function wsNotes() {
     if (P.library) out.push(`Printout from the printouts folder: ${P.library.path}`);
   }
   for (const w of p.warnings || []) out.push(w);
+  for (const n of wsWrapNotes(p)) out.push(n);
   const seen = new Set();
   for (const it of wsv.items || [])
     for (const n of wsAs(it, wsSetNotes)) if (!seen.has(n)) { seen.add(n); out.push(n); }
@@ -1935,6 +1937,28 @@ function wsNotes() {
     + "same name is taken too, and Printouts folder… names the folder to look in.";
 }
 
+// What the printed scales do to the printout's curves, one line a curve.
+function wsWrapNotes(p) {
+  const out = [];
+  for (const c of p.curves || []) {
+    const sc = c.scale || [];
+    if (sc.length > 1)
+      out.push(`${c.name}: printed on ${sc.map(s => `${wsNum(s[1])} to ${wsNum(s[2])}`
+        + (s[0] != null ? ` from ${wsNum(s[0])} m` : "")).join(", then ")} ${c.unit}.`);
+    const ws = c.wraps || [];
+    if (!ws.length) continue;
+    const m = ws.reduce((a, w) => a + (w.base - w.top), 0);
+    const twice = ws.filter(w => Math.abs(w.wraps) >= 2).length;
+    const peak = ws.reduce((a, w) => w.wraps > 0 ? Math.max(a, w.peak) : a, -Infinity);
+    out.push(`${c.name} runs past its printed scale in ${ws.length} place${ws.length > 1 ? "s" : ""}`
+      + ` (${wsNum(m)} m${isFinite(peak) ? `, up to ${wsNum(peak)} ${c.unit}` : ""}): the printout wraps those`
+      + ` readings back in from the other edge of the track, once, in a thin line (↻ in the readings, a band`
+      + ` along the top of the curve chart)` + (twice ? `; ${twice} run past twice the scale and print at the`
+      + ` edge, where they cannot be read off the printout` : "") + `. The readings here are the file's own.`);
+  }
+  return out;
+}
+
 // A card's key: what its colours mean. It does not change while the pointer
 // moves (the readings do, in lines of their own whose size is fixed).
 function wsKeyInto(Lg) {
@@ -1944,7 +1968,9 @@ function wsKeyInto(Lg) {
     const sp = document.createElement("span");
     const r = wsv.ranges[k];
     sp.title = `${c.name} — track ${c.track || "-"}, recorded every ${c.recorded_step} m; `
-      + `drawn on ${wsFmt(r[0])}..${wsFmt(r[1])} ${c.unit}`;
+      + `drawn here on ${wsFmt(r[0])}..${wsFmt(r[1])} ${c.unit}`
+      + (c.scale ? `; printed on ${c.scale.map(s => `${wsNum(s[1])} to ${wsNum(s[2])}`
+          + (c.scale.length > 1 && s[0] != null ? ` from ${wsNum(s[0])} m` : "")).join(", ")}` : "");
     sp.innerHTML = `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>`
       + `${escHtml(c.name)} <span style="color:var(--mut)">${escHtml(c.unit)}</span>`;
     Lg.appendChild(sp);
@@ -1977,8 +2003,29 @@ function wsCurvesRead(d) {
   const p = wsv.p, i = Math.round((d - p.depth0) / p.step);
   return p.curves.map((c, k) => {
     const v = i >= 0 && i < p.rows ? c.values[i] : null;
-    return `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>${escHtml(c.name)} <b>${wsFmt(v)}</b>`;
+    const w = v == null ? null : wsWrapAt(c, d);
+    return `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>${escHtml(c.name)} <b>${wsFmt(v)}</b>`
+      + (w ? `<span class="wswrap" title="${escHtml(wsWrapSays(w, v))}">↻ ${escHtml(wsWrapShort(w, v))}</span>` : "");
   });
+}
+// Where the printout wraps a curve (wellsight_scales): LogViewer draws a
+// reading past its printed scale back in from the other edge, once; past
+// twice the scale it stays at the edge. The readings here are the file's.
+// a scale's numbers as the printout writes them: 0, 74, 1000, 7.5
+function wsNum(v) { return v == null ? "–" : String(+(+v).toPrecision(6)); }
+function wsWrapAt(c, d) {
+  return (c.wraps || []).find(w => d >= w.top - 1e-9 && d < w.base) || null;
+}
+function wsWrapShort(w, v) {
+  const lo = Math.min(w.left, w.right), hi = Math.max(w.left, w.right), span = hi - lo;
+  if (Math.abs(w.wraps) >= 2) return `past ${wsNum(w.wraps > 0 ? hi + span : lo - span)}: printed at the edge`;
+  return `printed wrapped at ${wsNum(w.wraps > 0 ? v - span : v + span)}`;
+}
+function wsWrapSays(w, v) {
+  const sc = `${wsNum(w.left)} to ${wsNum(w.right)}`;
+  return Math.abs(w.wraps) >= 2
+    ? `This reading is more than twice the printed scale (${sc}); the printout draws it at the edge of the track, so it cannot be read off the printout. The value here is the file's.`
+    : `This reading is past the printed scale (${sc}); the printout wraps it back in from the other edge (the thin line), where it reads ${wsNum(w.wraps > 0 ? v - (Math.max(w.left, w.right) - Math.min(w.left, w.right)) : v + (Math.max(w.left, w.right) - Math.min(w.left, w.right)))}. The value here is the file's.`;
 }
 
 // ---- rock types, accessories, other symbols, descriptions: rows on the depth axis ----
@@ -2601,6 +2648,26 @@ function wsDrawCurves(cv) {
       pen = true;
     }
     g.stroke();
+  });
+  // where the printout wraps a curve: a band along the top in its colour
+  // (solid past twice the scale), and the printed scale's high end dashed
+  p.curves.forEach((c, k) => {
+    const col = WS_COLORS[k % WS_COLORS.length], [lo, hi] = wsv.ranges[k];
+    (c.scale || []).forEach((s, j) => {
+      const top = Math.max(d0, s[0] == null ? p.top : s[0]);
+      const base = Math.min(d1, j + 1 < c.scale.length ? c.scale[j + 1][0] : p.bottom);
+      const edge = Math.max(s[1], s[2]);
+      if (!(base > top) || edge <= lo || edge >= hi) return;
+      const y = Math.round(T + plotH * (1 - (edge - lo) / (hi - lo))) + 0.5;
+      g.save(); g.strokeStyle = col; g.globalAlpha = 0.55; g.setLineDash([4, 4]); g.lineWidth = 1;
+      g.beginPath(); g.moveTo(X(top), y); g.lineTo(X(base), y); g.stroke(); g.restore();
+    });
+    for (const w of c.wraps || []) {
+      if (w.base < d0 || w.top > d1) continue;
+      const a = Math.max(L, X(w.top)), b = Math.min(L + plotW, X(w.base));
+      g.save(); g.fillStyle = col; g.globalAlpha = Math.abs(w.wraps) >= 2 ? 0.95 : 0.5;
+      g.fillRect(a, T + 1 + k * 4, Math.max(2, b - a), 3); g.restore();
+    }
   });
   g.restore();
   // the scale of the first curves, at the left edge

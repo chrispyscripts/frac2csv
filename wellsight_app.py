@@ -41,6 +41,7 @@ import export_las as el       # noqa: E402
 import json                   # noqa: E402
 
 import wellsight_symbols as wsym   # noqa: E402
+import wellsight_scales as wscale   # noqa: E402
 import wellsight_descriptions as wdesc   # noqa: E402
 
 # The four the converter reads (StripLog / HorizontalLog, v5 and v6). The
@@ -139,12 +140,24 @@ def _payload(log, data, name, files):
     axis, basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
     curves = []
     exp = el.export_curves(log, STEP) if log["top"] is not None else None
+    # each curve's printed scale and where the printout wraps it
+    # (wellsight_scales): the readings are the file's, the printout's line
+    # can be a scale width away from them
+    try:
+        scales = wscale.scales(data, log["curves"])
+    except Exception:  # noqa: BLE001 -- the scales are extra; the curves stand without them
+        scales = {}
+    by_offset = {c["offset"]: i for i, c in enumerate(log["curves"])}
     if exp:
         (grid, step), cols, meta, _notes = exp
         for (mn, c), col in zip(meta, cols):
+            secs = scales.get(by_offset.get(c.get("offset")))
             curves.append({"mnemonic": mn, "name": c.get("name") or mn,
                            "unit": c.get("units") or "", "track": c.get("track") or "",
                            "recorded_step": c["step"],
+                           "scale": [[d, l, r] for d, l, r in secs] if secs else None,
+                           "wraps": [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in w.items()}
+                                     for w in wscale.wraps(c, secs)] if secs else [],
                            "values": [None if v is None else round(v, 4) for v in col]})
         depth0, nrows = grid[0], len(grid)
     else:
@@ -178,6 +191,10 @@ def _payload(log, data, name, files):
         files[name + ".descriptions.csv"] = wsym.csv_text(wdesc.rows_samples(described)).encode()
     if described["tops"]:
         files[name + ".formation-tops.csv"] = wsym.csv_text(wdesc.rows_tops(described)).encode()
+    if any(c["scale"] for c in curves):
+        files[name + ".printed-scales.csv"] = wsym.csv_text(wscale.rows_scales(curves)).encode()
+    if any(c["wraps"] for c in curves):
+        files[name + ".wraps.csv"] = wsym.csv_text(wscale.rows_wraps(curves)).encode()
     if rocks:
         files[name + ".rock-types.csv"] = wsym.csv_text(wsym.rows_rocks(rocks)).encode()
     if symbols:

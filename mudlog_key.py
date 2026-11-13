@@ -21,10 +21,13 @@ The key, schema "frac2csv/mudlog-key/1". A PDF reader writes the same fields
   header     {field: text}: fields as log_vocab.txt [header] names them
   tracks     [{title, keys, x0, x1, snapped}]: across the stitched strip
              (wellsight_print.stitch: depth down, top at y = 0), in points
-  curves     [{name, kind, units, unit, track, top, step, values}]: the
-             reading at top + i * step, None where there is none; kind and
-             unit are log_vocab's keys. LogViewer draws a reading half a
-             step shallower than its depth; score() allows for that.
+  curves     [{name, kind, units, unit, track, top, step, values, scale,
+              wraps}]: the reading at top + i * step, None where there is
+             none; kind and unit are log_vocab's keys; scale the printed
+             scale's sections [[from depth, left, right]] and wraps where
+             the printout wraps the curve (wellsight_scales: a reader must
+             unwrap those). LogViewer draws a reading half a step shallower
+             than its depth; score() allows for that.
   rocks      [{top, base, rock, code}]: rock is a wellsight_symbols term
   percent    {rocks, top, step, values} or None: the % lithology column
   symbols    [{depth, group, term, code}]
@@ -36,7 +39,9 @@ nothing for is None. What counts as right:
 
   header     the field's text, case, spaces and punctuation aside
   curves     each key curve against the reader's curve of the same kind:
-             coverage x (1 - mean error / 5 % of the curve's range)
+             coverage x (1 - mean error / 5 % of the curve's range); a
+             reading past twice its printed scale is left out (the printout
+             holds it at the edge of the track, so no reader can have it)
   rocks      the share of the logged depth given the right rock
   symbols    found within 0.5 m with the right term (F1)
   intervals  the share of each interval's length given the right term
@@ -57,6 +62,7 @@ import re
 import log_vocab as V
 import wellsight_app as wa          # sets up the vendored decoder
 import wellsight_layout as wl
+import wellsight_scales as wscale
 import wellsight_symbols as wsym
 
 SCHEMA = "frac2csv/mudlog-key/1"
@@ -90,15 +96,22 @@ def build(log_path, pdf_path, rel_log=None, rel_pdf=None):
     axis, _basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
 
     curves = []
-    for c in log.get("curves") or []:
+    try:
+        scales = wscale.scales(raw, log.get("curves") or [])
+    except Exception:  # noqa: BLE001 - a key without scales still marks the readings
+        scales = {}
+    for i, c in enumerate(log.get("curves") or []):
         if not c.get("nonnull"):
             continue
         vc = V.curve(c.get("name") or "")
         kind = vc["key"] or V.curve(c.get("source_mnemonic") or "")["key"]
+        secs = scales.get(i)
         curves.append({"name": c.get("name") or c.get("source_mnemonic") or "", "kind": kind,
                        "units": c.get("units") or "", "unit": V.unit(c.get("units"))["key"],
                        "track": c.get("track") or "", "top": _r(c["first_depth"], 3),
-                       "step": _r(c["step"], 4), "values": [_r(v) for v in c["values"]]})
+                       "step": _r(c["step"], 4), "values": [_r(v) for v in c["values"]],
+                       "scale": [[d, l, r] for d, l, r in secs] if secs else None,
+                       "wraps": wscale.wraps(c, secs) if secs and c.get("first_depth") is not None else []})
 
     lith = log.get("lithology") or {}
     _extra, ivs = cv.lith_curves(log, lith)
@@ -227,8 +240,19 @@ def _pct(sorted_vals, q):
     return sorted_vals[min(len(sorted_vals) - 1, max(0, int(round(q * (len(sorted_vals) - 1)))))]
 
 
+def _readable(k, d, v):
+    """can a printout show this reading? Not one past twice its printed
+    scale: LogViewer wraps once and then holds the line at the edge."""
+    if not k.get("scale"):
+        return True
+    left, right = wscale.scale_at([tuple(s) for s in k["scale"]], d)
+    p = wscale.printed(v, left, right)
+    return p is None or abs(p[1]) < 2
+
+
 def _compare_curve(k, c):
-    pts = [(k["top"] + i * k["step"], v) for i, v in enumerate(k["values"]) if v is not None]
+    pts = [(k["top"] + i * k["step"], v) for i, v in enumerate(k["values"])
+           if v is not None and _readable(k, k["top"] + i * k["step"], v)]
     if not pts:
         return None
     vs = sorted(v for _, v in pts)
