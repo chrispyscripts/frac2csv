@@ -15,6 +15,11 @@ own outputs, written only when the user saves:
   <file>.csv / .json         the same table, and everything else in the file
   <file>.lithology.csv, .survey.csv, .accessories.csv, .picture-N.png
                              where the log has them
+  <file>.rock-types.csv, .symbols.csv, .symbol-intervals.csv,
+  .show-zones.csv, .analysis.json
+                             the rock types, accessories and other symbols
+                             in one vocabulary, and what they add up to
+                             (wellsight_symbols.py)
 
 Standard library only, like the converter.
 """
@@ -32,6 +37,9 @@ if _VENDOR not in sys.path:
 import wellsight as ws        # noqa: E402
 import convert as cv          # noqa: E402
 import export_las as el       # noqa: E402
+import json                   # noqa: E402
+
+import wellsight_symbols as wsym   # noqa: E402
 
 # The four the converter reads (StripLog / HorizontalLog, v5 and v6). The
 # extension is only a hint: the 32-byte signature inside the body decides,
@@ -111,6 +119,33 @@ def read(data, filename):
     _extra, intervals = cv.lith_curves(log, lith)
     lith_iv = [{"top": iv["top_m"], "base": iv["base_m"], "code": iv["code"],
                 "rock": iv.get("name") or _rock(iv["code"])} for iv in intervals]
+
+    # rock types, accessories and other symbols, in one vocabulary
+    rocks = wsym.rocks_from(lith_iv)
+    symbols = wsym.symbols_from(log.get("accessories") or [])
+    sym_iv = wsym.columns_from(lith.get("symbol_columns") or [])
+    percent = None
+    pc = lith.get("percent")
+    if pc and log["top"] is not None:
+        lsyms = lith.get("_lith_symbols") or {}
+        terms = [wsym.rock_term(lsyms.get(r, (str(r), ""))[0])[0] for r in pc["rocks"]]
+        percent = {"rocks": terms, "codes": [lsyms.get(r, (str(r), ""))[0] for r in pc["rocks"]],
+                   "names": [wsym._NAMES.get(("rock", t), (t[4:] if t.startswith("raw:") else t,))[0]
+                             for t in terms],
+                   "colors": [wsym.rock_color(t) for t in terms],
+                   "depth0": log["top"], "step": pc["step_m"], "values": pc["values"]}
+    analysis = wsym.analyse(log["top"], log["bottom"], rocks, symbols, sym_iv, curves,
+                            depth0 if nrows else None, STEP, percent)
+    if rocks:
+        files[name + ".rock-types.csv"] = wsym.csv_text(wsym.rows_rocks(rocks)).encode()
+    if symbols:
+        files[name + ".symbols.csv"] = wsym.csv_text(wsym.rows_symbols(symbols)).encode()
+    if sym_iv:
+        files[name + ".symbol-intervals.csv"] = wsym.csv_text(wsym.rows_columns(sym_iv)).encode()
+    if analysis["show_zones"]:
+        files[name + ".show-zones.csv"] = wsym.csv_text(wsym.rows_zones(analysis)).encode()
+    if rocks or symbols or sym_iv:
+        files[name + ".analysis.json"] = json.dumps(analysis, indent=1).encode()
     payload = {
         "file": name,
         "sha1": hashlib.sha1(data).hexdigest(),
@@ -123,6 +158,9 @@ def read(data, filename):
         "axis": axis, "axis_basis": basis,
         "step": STEP, "depth0": depth0, "rows": nrows,
         "curves": curves, "lithology": lith_iv,
+        "rocks": rocks, "percent": percent,
+        "symbols": [{k: v for k, v in s_.items() if k != "category"} for s_ in symbols],
+        "symbolIntervals": sym_iv, "analysis": analysis,
         "warnings": list(log["warnings"]),
         "files": sorted(files),
     }

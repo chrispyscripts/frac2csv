@@ -60,6 +60,15 @@ class Read(unittest.TestCase):
                 self.assertIn(name + ".curves-0.2m.las", files)
                 self.assertEqual(len(p["curves"][0]["values"]), p["rows"])
             self.assertIn(p["axis"], ("MD", "TVD"))
+            # rock types, accessories and other symbols, read into one vocabulary
+            a = p["analysis"]
+            self.assertEqual(a["symbols"], len(p["symbols"]), name)
+            self.assertEqual(len(p["rocks"]) > 0, len(a["rocks"]) > 0, name)
+            if p["rocks"]:
+                self.assertIn(name + ".rock-types.csv", files)
+            if p["symbols"]:
+                self.assertIn(name + ".symbols.csv", files)
+                self.assertLessEqual(a["unknown_symbols"], 0.05 * a["symbols"], name)
 
 
 if __name__ == "__main__":
