@@ -574,7 +574,8 @@ ground_elevation      | Ground elevation             = Ground Elevation, Ground,
     Ground Elev., GR Elev, ELEVATIONS:Ground
 kb_elevation          | KB elevation                 = K.B. Elevation, KB Elevation, K.B., KB, KB Elev, K.B. Elev.,
     Kelly Bushing, KB Elev., ELEVATIONS:K.B.
-logged_interval       | Logged interval              = Logged Interval, Interval Logged, Logged Interval From
+logged_interval_top   | Logged interval, from        = Logged Interval, Interval Logged, Logged Interval From
+logged_interval_bottom | Logged interval, to         = Logged Interval To, LOGGED INTERVAL:To
 total_depth           | Total depth                  = Total Depth, TD, T.D., Total Depth MD
 formation             | Formation                    = Formation, Target Formation, Objective
 start_formation       | Start formation              = Start Formation, Lateral Section Start Formation

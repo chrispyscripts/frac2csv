@@ -67,6 +67,10 @@ class Header(unittest.TestCase):
         c = {"header": {"well_name": "MADE-UP  HZ 1-1", "licence": "00a000", "kb_elevation": "600.5m"}}
         self.assertAlmostEqual(mark(c, "header"), 1.0)
 
+    def test_a_unit_after_the_number_is_the_same_reading(self):
+        c = {"header": dict(KEY["header"], kb_elevation="600.5")}
+        self.assertAlmostEqual(mark(c, "header"), 1.0)
+
     def test_wrong_and_missing(self):
         s = mark({"header": {"well_name": "Another well", "licence": "00A000"}})["header"]
         self.assertAlmostEqual(s["score"], 1 / 3)

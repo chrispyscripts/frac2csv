@@ -183,7 +183,8 @@ def score_header(key, cand):
     ch = cand.get("header") or {}
     fields, total = {}, 0.0
     for k, v in kh.items():
-        a, b = _norm_text(v), _norm_text(ch.get(k))
+        # a unit after a number is the same reading: "564.4" and "564.4 m"
+        a, b = (re.sub(r"(?<=\d)(m|ft|hrs)$", "", _norm_text(x)) for x in (v, ch.get(k)))
         if a == b:
             s, why = 1.0, "same"
         elif b and difflib.SequenceMatcher(None, a, b).ratio() >= 0.9:
