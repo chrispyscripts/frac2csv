@@ -43,10 +43,20 @@
   .seg button.on { background:var(--carmine); color:#fff; }
   .note { font-size:12px; color:var(--mut); padding:6px 16px; border-bottom:1px solid var(--line); }
   .note b { color:var(--ink); font-weight:600; }
-  .scroller { flex:1 1 auto; overflow:auto; position:relative; cursor:grab; }
+  /* The canvas lies over the scroller instead of inside it. Inside, it was
+     part of what scrolls: at a Windows display scale (125%, 150%) it came out
+     a fraction of a pixel wider than the window, that put up scrollbars, the
+     scrollbars made the window narrower, the next draw made it fit again,
+     the scrollbars went away -- on every mouse move, and the fitted log
+     zoomed in and out with them. The spacer alone says how far to scroll,
+     and only when the log really is bigger than the window. The vertical
+     scrollbar keeps its room either way, so it never changes the width. */
+  .view { flex:1 1 auto; position:relative; min-height:0; }
+  .scroller { position:absolute; inset:0; overflow:auto; cursor:grab;
+              scrollbar-gutter:stable; }
   .scroller.drag { cursor:grabbing; }
-  .spacer { position:relative; }
-  canvas#cv { position:sticky; top:0; left:0; display:block; }
+  .spacer { width:0; height:0; }
+  canvas#cv { position:absolute; top:0; left:0; display:block; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -71,8 +81,9 @@
     </div>
   </div>
   <div class="note" id="note" hidden></div>
-  <div class="scroller" id="scroller">
-    <div class="spacer" id="spacer"><canvas id="cv"></canvas></div>
+  <div class="view">
+    <div class="scroller" id="scroller"><div class="spacer" id="spacer"></div></div>
+    <canvas id="cv"></canvas>
   </div>
 <script src="wstiles.js"></script>
 <script>
@@ -203,10 +214,13 @@ function layout() {
   const b = buildRows();
   rows = b.rows;
   const sp = $("spacer");
-  // rounded, not ceiled: at fit this is the window width exactly, and one
-  // pixel over would add a scrollbar that shrinks the window that sized it
-  sp.style.width = Math.round(Math.max(LABEL_W + (D.bottom - D.top) * pxPerM + PAD_R, sc.clientWidth)) + "px";
-  sp.style.height = Math.ceil(Math.max(RULER_H + b.height + PAD_B, sc.clientHeight)) + "px";
+  // Only a log a whole pixel bigger than the window scrolls. At fit the log
+  // is the window's width exactly, and a fraction over (the window's width is
+  // fractional at a Windows display scale) put up scrollbars that shrank the
+  // window the log had been fitted to.
+  const cw = LABEL_W + (D.bottom - D.top) * pxPerM + PAD_R, ch = RULER_H + b.height + PAD_B;
+  sp.style.width = (cw - sc.clientWidth >= 1 ? Math.floor(cw) : 0) + "px";
+  sp.style.height = (ch - sc.clientHeight >= 1 ? Math.ceil(ch) : 0) + "px";
   draw();
 }
 

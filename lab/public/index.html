@@ -313,7 +313,20 @@
   .wsctl .wszoom { display:flex; align-items:center; gap:6px; }
   .wsctl #wszoom { width:180px; }
   .wsctl #wspos { flex:1 1 200px; min-width:120px; }
-  .wsctl .wsrange { font-family:var(--mono); font-size:11.5px; color:var(--ink); }
+  .wsctl .wsrange { font-family:var(--mono); font-size:11.5px; color:var(--ink);
+                    min-width:24ch; font-variant-numeric:tabular-nums; }
+  /* What the pointer is on. Its height is fixed and its text never wraps
+     past it: a reading that grew the header moved the chart away from the
+     pointer, which cleared the reading, which moved the chart back. */
+  .wsread { margin:8px 18px 0; height:20px; line-height:20px; font-size:12px; color:var(--ink);
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .wsread.two { height:40px; white-space:normal; display:-webkit-box;
+                -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+  .wsread .hint, .wsread .m { color:var(--mut); }
+  .wsread b { font-family:var(--mono); font-weight:600; font-variant-numeric:tabular-nums; }
+  .wsread i { display:inline-block; width:13px; height:3px; border-radius:2px;
+              vertical-align:middle; margin-right:5px; }
+  .wsread .sep { color:var(--line); margin:0 8px; }
   .wsprinthead { display:flex; align-items:center; gap:8px; margin:4px 18px 0; }
   .wsprintlbl { font-size:12px; font-weight:600; flex:1; min-width:0;
                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -386,7 +399,8 @@
   .stagerow .seqno { font-family:var(--mono); font-size:10.5px; color:var(--mut);
                      flex-shrink:0; margin-left:10px; }
   /* preview */
-  .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto; }
+  .right { flex:1; display:flex; flex-direction:column; min-height:0; overflow:auto;
+           scrollbar-gutter:stable; }
   /* title on the left, curve toggles on the right — above the chart */
   .previewhead { padding:11px 18px; border-bottom:1px solid var(--line);
                  display:flex; align-items:flex-start; gap:16px;
@@ -1007,6 +1021,7 @@ mouse wheel zoom at the pointer; drag to move along the log."></label>
           <input type="range" id="wspos" min="0" max="1000" step="1" value="0"
                  title="Where along the log the window sits">
         </div>
+        <div class="wsread" id="ws-read"></div>
         <div class="canvaswrap" id="wsgraphwrap"><canvas id="wsgraph" width="1120" height="360"></canvas></div>
         <div class="wsprinthead">
           <span class="wsprintlbl" id="wsprintlbl">Printed log</span>
@@ -1785,26 +1800,47 @@ function wsNotes() {
 
 function wsLegend() {
   const Lg = $("ws-legend"); Lg.innerHTML = "";
-  if (wsv.set && wsv.set !== "curves") return wsSetLegend(Lg);
+  // the key does not change while the pointer moves; the reading line does,
+  // and it is two lines tall for the sets whose readings are sentences
+  $("ws-read").classList.toggle("two", wsv.set === "descriptions" || wsv.set === "rocks");
+  if (wsv.set && wsv.set !== "curves") { wsSetLegend(Lg); wsReadout(); return; }
   const p = wsv.p;
-  const i = wsv.hover == null ? -1 : Math.round((wsv.hover - p.depth0) / p.step);
   p.curves.forEach((c, k) => {
     const sp = document.createElement("span");
     const r = wsv.ranges[k];
-    const v = i >= 0 && i < p.rows ? c.values[i] : null;
     sp.title = `${c.name} — track ${c.track || "-"}, recorded every ${c.recorded_step} m; `
       + `drawn on ${wsFmt(r[0])}..${wsFmt(r[1])} ${c.unit}`;
     sp.innerHTML = `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>`
-      + `${escHtml(c.name)} <span style="color:var(--mut)">${escHtml(c.unit)}</span>`
-      + (wsv.hover != null ? ` <b>${wsFmt(v)}</b>` : "");
+      + `${escHtml(c.name)} <span style="color:var(--mut)">${escHtml(c.unit)}</span>`;
     Lg.appendChild(sp);
   });
-  if (wsv.hover != null) {
-    const sp = document.createElement("span");
-    const iv = p.lithology.find(x => wsv.hover >= x.top && wsv.hover < x.base);
-    sp.innerHTML = `<b>${wsv.hover.toFixed(2)} m</b>` + (iv ? ` <span style="color:var(--mut)">${escHtml(iv.code)}</span>` : "");
-    Lg.appendChild(sp);
+  wsReadout();
+}
+
+// What the pointer is on: the depth, then what the log says there. It is
+// rewritten on every move, so it lives in a line whose size is fixed (.wsread);
+// in the header it grew and wrapped, and the chart under it jumped.
+function wsReadout() {
+  const R = $("ws-read");
+  if (!wsv) { R.innerHTML = ""; return; }
+  const d = wsv.hover;
+  if (d == null) {
+    R.innerHTML = `<span class="hint">Point at the chart to read the log at that depth.</span>`;
+    return;
   }
+  const parts = [`<b>${d.toFixed(2)} m</b>`];
+  if (wsv.set && wsv.set !== "curves") parts.push(...wsSetRead(d));
+  else {
+    const p = wsv.p, i = Math.round((d - p.depth0) / p.step);
+    const iv = p.lithology.find(x => d >= x.top && d < x.base);
+    if (iv) parts.push(`<span class="m">${escHtml(iv.code)}</span>`);
+    p.curves.forEach((c, k) => {
+      const v = i >= 0 && i < p.rows ? c.values[i] : null;
+      parts.push(`<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>`
+        + `${escHtml(c.name)} <b>${wsFmt(v)}</b>`);
+    });
+  }
+  R.innerHTML = parts.join(`<span class="sep">|</span>`);
 }
 
 // ---- rock types, accessories, other symbols, descriptions: rows on the depth axis ----
@@ -1875,7 +1911,7 @@ function wsSetRows() {
     if (G === "samples") rows.push({ kind: "dmix", h: 46 }, { kind: "dpor", h: 40 }, { kind: "dshow", h: 46 });
     else if (G === "shows") {
       rows.push({ kind: "dshow", h: 56 });
-      if (g.show) rows.push({ kind: "show", group: "show", h: 56, label: "Show (sym.)" });
+      if (g.show) rows.push({ kind: "show", group: "show", h: 56, label: "Show (symbols)" });
     } else if (G === "tops") rows.push({ kind: "tops", h: 58 });
     else if (G === "events") rows.push({ kind: "events", h: 58 });
     if (p.curves.length) rows.push({ kind: "curves", h: 120 });
@@ -1890,6 +1926,18 @@ function wsSymbolsIn(group, a, b) {
   const out = [];
   for (let i = lo; i < L.length && L[i].depth <= b; i++) out.push(L[i]);
   return out;
+}
+// A row's name in the left margin, right-aligned to the chart. One that does
+// not fit goes onto two lines at its last space ("Show" over "(symbols)");
+// drawn whole on one line it ran off the left edge ("how (text)").
+function wsRowLabel(g, text, x, yMid, maxW) {
+  if (g.measureText(text).width <= maxW || text.lastIndexOf(" ") < 0) {
+    g.fillText(text, x, yMid);
+    return;
+  }
+  const k = text.lastIndexOf(" ");
+  g.fillText(text.slice(0, k), x, yMid - 6);
+  g.fillText(text.slice(k + 1), x, yMid + 6);
 }
 function wsDrawSet() {
   const p = wsv.p, { L, R } = WS_M, rows = wsSetRows(), AX = 30, GAP = 6;
@@ -1917,7 +1965,8 @@ function wsDrawSet() {
     g.strokeStyle = "#d2d6db"; g.lineWidth = 1; g.strokeRect(L + 0.5, y + 0.5, plotW - 1, r.h - 1);
     g.fillStyle = "#3a4048"; g.font = "600 10.5px -apple-system,'Segoe UI',system-ui,sans-serif";
     g.textAlign = "right"; g.textBaseline = "middle";
-    g.fillText(r.label || WS_SHORT[r.group || r.kind] || WS_SHORT[r.kind] || "", L - 6, y + Math.min(r.h / 2, 12));
+    wsRowLabel(g, r.label || WS_SHORT[r.group || r.kind] || WS_SHORT[r.kind] || "", L - 6,
+               y + Math.min(r.h / 2, 12), L - 8);
     y += r.h + GAP;
   }
   if (wsv.hover != null && wsv.hover >= d0 && wsv.hover <= d1) {
@@ -2065,39 +2114,14 @@ function wsSampleSummary(s) {
           s.show.name].filter(Boolean).join(" · ");
 }
 function wsSetLegend(Lg) {
-  const p = wsv.p, a = p.analysis || {}, d = wsv.hover;
+  const p = wsv.p, a = p.analysis || {};
   const chip = (html, title) => { const sp = document.createElement("span"); sp.innerHTML = html; if (title) sp.title = title; Lg.appendChild(sp); };
   const sw = c => `<i style="background:${c}"></i>`;
-  if (d != null) chip(`<b>${d.toFixed(2)} m</b>`);
   if (wsv.set === "rocks") {
-    if (d != null) {
-      const iv = (p.rocks || []).find(x => d >= x.top && d < x.base);
-      chip(iv ? `${sw(iv.color)}${escHtml(iv.name)}${iv.mods.length ? ", " + escHtml(iv.mods.join(", ")) : ""}`
-              + ` <span style="color:var(--mut)">${escHtml(iv.raw || "")}</span>` : "no rock described");
-      if (p.percent) {
-        const i = Math.floor((d - p.percent.depth0) / p.percent.step), row = p.percent.values[i];
-        if (row) chip(row.map((v, k) => v ? `${escHtml(p.percent.names[k])} <b>${v}%</b>` : "").filter(Boolean).join(" · "));
-      }
-      return;
-    }
     for (const r of (a.rocks || []).slice(0, 10)) chip(`${sw(r.color)}${escHtml(r.name)} <b>${r.pct != null ? r.pct + "%" : r.m + " m"}</b>`);
     return;
   }
   if (wsv.set === "descriptions") {
-    const D = p.descriptions || {};
-    if (d != null) {
-      if (wsv.group === "tops" || wsv.group === "events") {
-        const list = wsv.group === "tops" ? (D.tops || []) : (D.events || []);
-        const dep = t => wsv.group === "tops" ? wsTopDepth(t) : t.depth;
-        const near = list.filter(t => dep(t) != null).sort((x, y) => Math.abs(dep(x) - d) - Math.abs(dep(y) - d))[0];
-        if (near) chip(escHtml((near.name || near.what || "") + " — " + near.text).slice(0, 220), near.text);
-        return;
-      }
-      const s = wsSampleAt(d);
-      if (s) chip(`<b>${s.top}–${s.base}</b> ${escHtml(wsSampleSummary(s))}`, s.text);
-      if (s) chip(`<span style="color:var(--mut)">${escHtml(s.text.slice(0, 200))}${s.text.length > 200 ? "…" : ""}</span>`, s.text);
-      return;
-    }
     const da = a.descriptions || {};
     if (wsv.group === "samples") for (const r of (da.rocks || []).slice(0, 8)) chip(`${sw(r.color)}${escHtml(r.name)} <b>${r.pct}%</b>`);
     if (wsv.group === "samples" || wsv.group === "shows")
@@ -2107,19 +2131,6 @@ function wsSetLegend(Lg) {
     return;
   }
   const groups = wsv.group ? [wsv.group] : (wsv.set === "accessories" ? WS_ACC_GROUPS : WS_OTHER_GROUPS);
-  if (d != null) {
-    for (const k of groups) {
-      const names = wsAt(k, d);
-      if (names.length) chip(`${escHtml(WS_SHORT[k])}: <b>${escHtml(names.join(", "))}</b>`);
-    }
-    if (wsv.set === "other") {
-      const z = (a.show_zones || []).find(z => d >= z.top && d <= z.base);
-      if (z && (!wsv.group || wsv.group === "show")) chip(`show zone ${z.top}–${z.base} m: <b>${escHtml(z.strength)}</b>`);
-      for (const iv of (p.symbolIntervals || []).filter(x => d >= x.top && d < x.base && (!wsv.group || x.group === wsv.group)))
-        chip(`${escHtml(iv.name)}`);
-    }
-    return;
-  }
   for (const k of groups) {
     const G = wsGroup(k);
     if (!G) continue;
@@ -2127,6 +2138,50 @@ function wsSetLegend(Lg) {
     chip(`<span style="color:var(--mut)">${escHtml(WS_SHORT[k])}:</span> `
       + terms.map(t => `${sw(wsTermColor(k, t.term, t.rank))}${escHtml(t.name)}`).join(" "));
   }
+}
+// what the chosen set says at depth d, as pieces of the reading line
+function wsSetRead(d) {
+  const p = wsv.p, a = p.analysis || {}, out = [];
+  const sw = c => `<i style="background:${c}"></i>`;
+  if (wsv.set === "rocks") {
+    const iv = (p.rocks || []).find(x => d >= x.top && d < x.base);
+    out.push(iv ? `${sw(iv.color)}${escHtml(iv.name)}${iv.mods.length ? ", " + escHtml(iv.mods.join(", ")) : ""}`
+                  + ` <span class="m">${escHtml(iv.raw || "")}</span>`
+                : `<span class="m">no rock described</span>`);
+    if (p.percent) {
+      const i = Math.floor((d - p.percent.depth0) / p.percent.step), row = p.percent.values[i];
+      if (row) out.push(row.map((v, k) => v ? `${escHtml(p.percent.names[k])} <b>${v}%</b>` : "").filter(Boolean).join(" · "));
+    }
+    return out;
+  }
+  if (wsv.set === "descriptions") {
+    const D = p.descriptions || {};
+    if (wsv.group === "tops" || wsv.group === "events") {
+      const list = wsv.group === "tops" ? (D.tops || []) : (D.events || []);
+      const dep = t => wsv.group === "tops" ? wsTopDepth(t) : t.depth;
+      const near = list.filter(t => dep(t) != null).sort((x, y) => Math.abs(dep(x) - d) - Math.abs(dep(y) - d))[0];
+      out.push(near ? escHtml((near.name || near.what || "") + " — " + near.text)
+                    : `<span class="m">none in this log</span>`);
+      return out;
+    }
+    const s = wsSampleAt(d);
+    if (s) out.push(`<b>${s.top}–${s.base}</b> ${escHtml(wsSampleSummary(s))}`, `<span class="m">${escHtml(s.text)}</span>`);
+    else out.push(`<span class="m">no description here</span>`);
+    return out;
+  }
+  const groups = wsv.group ? [wsv.group] : (wsv.set === "accessories" ? WS_ACC_GROUPS : WS_OTHER_GROUPS);
+  for (const k of groups) {
+    const names = wsAt(k, d);
+    if (names.length) out.push(`${escHtml(WS_SHORT[k])}: <b>${escHtml(names.join(", "))}</b>`);
+  }
+  if (wsv.set === "other") {
+    const z = (a.show_zones || []).find(z => d >= z.top && d <= z.base);
+    if (z && (!wsv.group || wsv.group === "show")) out.push(`show zone ${z.top}–${z.base} m: <b>${escHtml(z.strength)}</b>`);
+    for (const iv of (p.symbolIntervals || []).filter(x => d >= x.top && d < x.base && (!wsv.group || x.group === wsv.group)))
+      out.push(escHtml(iv.name));
+  }
+  if (out.length === 0) out.push(`<span class="m">no symbol here</span>`);
+  return out;
 }
 function wsSetNotes() {
   const p = wsv.p, a = p.analysis;
@@ -2455,11 +2510,11 @@ function wsDrawPrint(plotW) {
       }
       const d = depthAt(cv, e.clientX);
       wsv.hover = d >= wsv.d0 && d <= wsv.d1 ? d : null;
-      wsLegend(); wsDraw();
+      wsReadout(); wsDraw();
     });
     cv.addEventListener("mouseleave", () => {
       if (!wsv || drag) return;
-      wsv.hover = null; wsLegend(); wsDraw();
+      wsv.hover = null; wsReadout(); wsDraw();
     });
     cv.addEventListener("mousedown", e => {
       if (!wsv || e.button !== 0) return;
