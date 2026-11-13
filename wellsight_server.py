@@ -12,6 +12,9 @@ GET  /api/wellsight-status                                    can LogViewer prin
 GET  /api/wellsight-view?id=                                  what the stacked view draws
 GET  /api/wellsight-strip?id=&d0=&d1=&ppm=                    PNG of the strip, by depth
 GET  /api/wellsight-strip.pdf?id=                             the stitched PDF
+GET  /api/wellsight-header?id=                                the log's header: fields, boxes, pages
+GET  /api/wellsight-header-page?id=&page=&w=                  PNG of a page of the printout
+GET  /api/wellsight-header-picture?id=&n=                     a picture header stored in the log
 """
 import base64
 import collections
@@ -62,6 +65,7 @@ def _stitch(rec, pdf_bytes, source):
     if p["top"] is None:
         raise wp.NoDepthScale("this log stores no depth range, so its printout cannot be placed")
     data, info = wp.stitch(pdf_bytes, p["top"], p["bottom"])
+    rec["printout_raw"], rec["printout_doc"] = pdf_bytes, None    # its header pages, for the header window
     info["source"] = source
     info["file"] = _strip_name(rec)
     # For now the views show the curve track alone: the printout's
@@ -97,7 +101,7 @@ def decode(req):
     name = os.path.basename(req.get("filename") or "log.sl6")
     out = wa.read(data, name)
     rec = {"id": uuid.uuid4().hex[:12], "payload": out["payload"], "files": out["files"],
-           "native": data, "strip": None, "strip_info": None}
+           "header": out.get("header") or {}, "native": data, "strip": None, "strip_info": None}
     resp = _public(rec)
     if req.get("printout"):
         try:
@@ -310,3 +314,102 @@ def strip_pdf(q):
         with _RENDER:
             return 200, wp.cut(rec["strip"], *acr)
     return 200, _curves_pdf(rec)
+
+
+# ---------------------------------------------------------------- the header window
+
+# the WellSight header page's fields, in its order, with its labels; the
+# template's lengths are in metres (its labels say so), a custom page's
+# values carry their own units
+_HEADER_FIELDS = [
+    ("well_name", "Well name", ""), ("well_id", "Well ID", ""), ("location", "Location", ""),
+    ("licence", "Licence", ""), ("region", "Region", ""), ("spud_date", "Spud date", ""),
+    ("completion_date", "Drilling completed", ""), ("surface_coordinates", "Surface coordinates", ""),
+    ("bottom_hole_coordinates", "Bottom hole coordinates", ""),
+    ("ground_elevation", "Ground elevation", "m"), ("kb_elevation", "K.B. elevation", "m"),
+    ("logged_interval", "Logged interval", "m"), ("total_depth", "Total depth", "m"),
+    ("formation", "Formation", ""), ("drilling_fluid", "Drilling fluid", ""),
+    ("operator", "Operator", ""), ("geologist_company", "Geologist's company", ""),
+]
+# what a box's fields are, by the box's kind
+_BOX_FIELDS = {2: ("Contact", "Company", "Address"), 3: ("Name", "Company", "Address")}
+
+
+def header(q):
+    rec = _get(q.get("id"))
+    if not rec:
+        return 404, {"error": "that log is no longer loaded; open it again in the Lab"}
+    p, hd = rec["payload"], rec.get("header") or {}
+    h = dict(p.get("header") or {})
+    template = hd.get("source") == "template"
+    top, bottom = h.pop("logged_interval_top", ""), h.pop("logged_interval_bottom", "")
+    if top or bottom:
+        h["logged_interval"] = "%s to %s" % (top or "?", bottom or "?")
+    # the operator and the geologist's company are in their boxes, in full
+    titles = {str(b.get("title") or "").strip().upper() for b in hd.get("boxes") or []}
+    if "OPERATOR" in titles:
+        h.pop("operator", None)
+    if "GEOLOGIST" in titles:
+        h.pop("geologist_company", None)
+    fields, seen = [], set()
+    for k, label, unit in _HEADER_FIELDS:
+        v = str(h.get(k) or "").strip()
+        seen.add(k)
+        if v:
+            fields.append({"label": label + (" (%s)" % unit if unit and template else ""), "value": v})
+    for k, v in h.items():               # anything else the header holds
+        if k not in seen and k != "well_id_label" and str(v or "").strip():
+            fields.append({"label": k.replace("_", " ").capitalize(), "value": str(v).strip()})
+    boxes = []
+    for b in hd.get("boxes") or []:
+        names = _BOX_FIELDS.get(b.get("kind"), ())
+        rows = [{"label": names[i] if i < len(names) else "", "value": f.strip()}
+                for i, f in enumerate(b.get("fields") or []) if str(f or "").strip()]
+        rows += [{"label": "", "value": ln.strip()} for ln in (b.get("text") or "").split("\n") if ln.strip()]
+        if rows:
+            boxes.append({"title": b.get("title") or "", "rows": rows})
+    info = rec.get("strip_info") or {}
+    pages = []
+    if rec.get("printout_raw"):
+        first_log = min((pl["page"] for pl in info.get("placed") or []), default=None)
+        pages = [n for n in info.get("left_out") or [] if first_log is None or n < first_log]
+    pics = sorted((n for n in rec.get("files") or {} if ".picture-" in n and n.endswith(".png")),
+                  key=lambda n: int(n.rsplit("-", 1)[1].split(".")[0]))
+    return 200, {"id": rec["id"], "file": p.get("file"), "well": p.get("well") or "",
+                 "source": hd.get("source") or "", "fields": fields, "boxes": boxes,
+                 "custom": [ln for ln in hd.get("custom") or []], "pages": pages,
+                 "printout": info.get("source") or "", "pictures": len(pics),
+                 "lookup": rec.get("lookup")}
+
+
+def header_page_png(q):
+    rec = _get(q.get("id"))
+    if not rec or not rec.get("printout_raw"):
+        return 404, None
+    import fitz
+    try:
+        n = int(q.get("page") or 1)
+        w = max(200, min(2400, int(float(q.get("w") or 1100))))
+    except ValueError:
+        return 400, None
+    with _RENDER:
+        if rec.get("printout_doc") is None:
+            rec["printout_doc"] = fitz.open(stream=rec["printout_raw"], filetype="pdf")
+        doc = rec["printout_doc"]
+        if not 1 <= n <= len(doc):
+            return 404, None
+        pg = doc[n - 1]
+        z = w / pg.rect.width
+        return 200, pg.get_pixmap(matrix=fitz.Matrix(z, z), alpha=False).tobytes("png")
+
+
+def header_picture_png(q):
+    rec = _get(q.get("id"))
+    if not rec:
+        return 404, None
+    pics = sorted((n for n in rec.get("files") or {} if ".picture-" in n and n.endswith(".png")),
+                  key=lambda n: int(n.rsplit("-", 1)[1].split(".")[0]))
+    try:
+        return 200, rec["files"][pics[int(q.get("n") or 1) - 1]]
+    except (ValueError, IndexError):
+        return 404, None

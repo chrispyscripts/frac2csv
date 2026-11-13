@@ -761,6 +761,12 @@ class Handler(BaseHTTPRequestHandler):
             self._bytes(*wss.strip_png(q), "image/png")
         elif p == "/api/wellsight-strip.pdf":
             self._bytes(*wss.strip_pdf(q), "application/pdf")
+        elif p == "/api/wellsight-header":
+            self._json(*wss.header(q))
+        elif p == "/api/wellsight-header-page":
+            self._bytes(*wss.header_page_png(q), "image/png")
+        elif p == "/api/wellsight-header-picture":
+            self._bytes(*wss.header_picture_png(q), "image/png")
         else:
             return False
         return True

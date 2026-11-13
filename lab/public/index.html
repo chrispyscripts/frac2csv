@@ -1018,6 +1018,9 @@ side-by-side comparison">Open PDF ↗</button>
             <div class="title" id="ws-title">&mdash;</div>
             <div class="sub" id="ws-sub"></div>
           </div>
+          <button type="button" class="btn" id="wsheadbtn"
+                  title="Open this log's header (its fields, boxes and the printout's header page)
+in a separate window that follows this one as you go through the logs">View header ↗</button>
           <button type="button" class="btn" id="wsprintbtn" hidden
                   title="Print this log to PDF with WellSight LogViewer, then stitch it">Print with LogViewer</button>
           <button type="button" class="btn" id="wspdfbtn"
@@ -1808,6 +1811,7 @@ function showWellsight(entry, items) {
   wsReadout();
   wsDrawNow();                 // now, not next frame: the cards take their heights before anything scrolls to one
   wsStackPost();
+  wsHeadPost();
 }
 
 // The drawing, key and table code reads the set it works on from wsv.set and
@@ -2915,8 +2919,28 @@ $("wsstackbtn").addEventListener("click", () => {
   wsStackWin = window.open("logstack.html?id=" + encodeURIComponent(wsv.id),
                            winName("logstack"));
 });
-// The arrow keys in the stacked window step through the logs here, so both
-// windows always show the same one.
+// ---- the header window: opened from here, follows this window ----
+// It shows the log this window shows; on a file that is not a WellSight log
+// it says to pick one.
+let wsHeadWin = null;
+function wsHeadAlive() { return !!(wsHeadWin && !wsHeadWin.closed); }
+function wsHeadPost(none) {
+  if (!wsHeadAlive()) return;
+  const msg = (wsv && !none)
+    ? { type: "logheader:show", id: wsv.id, rev: wsv.P ? (wsv.P.source || "") + (wsv.P.file || "") : "" }
+    : { type: "logheader:show", id: null };
+  try { wsHeadWin.postMessage(msg, location.origin); } catch (e) { /* closed meanwhile */ }
+}
+$("wsheadbtn").addEventListener("click", () => {
+  if (!wsv) return;
+  if (wsHeadAlive()) { wsHeadPost(); wsHeadWin.focus(); return; }
+  // a window of its own, not a tab, so it can sit beside the Lab
+  wsHeadWin = window.open("logheader.html?id=" + encodeURIComponent(wsv.id), winName("logheader"),
+                          "popup,width=820,height=960");
+});
+
+// The arrow keys in the stacked and header windows step through the logs
+// here, so all the windows always show the same one.
 function wsNavLogs(dir) {
   const list = navigableEntries().filter(e => e.ws);
   if (!list.length) return;
@@ -2931,6 +2955,8 @@ window.addEventListener("message", ev => {
   const d = ev.data || {};
   if (d.type === "logstack:ready") { wsStackWin = ev.source; wsStackPost(); }
   else if (d.type === "logstack:nav") wsNavLogs(d.dir > 0 ? 1 : -1);
+  else if (d.type === "logheader:ready") { wsHeadWin = ev.source; wsHeadPost(!current || !current.entry || !current.entry.ws); }
+  else if (d.type === "logheader:nav") wsNavLogs(d.dir > 0 ? 1 : -1);
 });
 
 function enqueue(files) {
@@ -3944,6 +3970,7 @@ function render(entry, fname, stages, tables, notes, summary) {
 // populate the middle column for one file, auto-select its first item
 function selectFile(entry) {
   if (entry && entry.ws) return selectWellsight(entry);   // a WellSight log
+  wsHeadPost(true);                                         // the header window: not a log
   scopeFile = (entry && entry.name) || "";   // before any correction is read
   if (fvAlive() && entry && entry.name !== fvFile) setTimeout(fvPush, 0);
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));

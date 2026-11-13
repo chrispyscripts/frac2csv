@@ -211,4 +211,11 @@ def _payload(log, data, name, files):
         "warnings": list(log["warnings"]),
         "files": sorted(files),
     }
-    return {"payload": payload, "files": files}
+    # the header page beyond its fields: the titled boxes (OPERATOR,
+    # GEOLOGIST, DRILLING ...) and a custom header page's lines, for the
+    # header window (wellsight_server.header)
+    head = {"source": log.get("header_source"),
+            "boxes": [{"title": b.get("title") or "", "kind": b.get("kind"), "fields": b.get("fields") or [],
+                       "text": b.get("text") or ""} for b in log.get("boxes") or []],
+            "custom": (log.get("custom_header") or {}).get("lines")}
+    return {"payload": payload, "files": files, "header": head}
