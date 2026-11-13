@@ -339,27 +339,16 @@ def stitch(pdf, top, bottom):
             "placed": placed, "gaps": gaps, "worst_seam_m": round(worst_seam, 3),
             "over_page_limit": height > PAGE_MAX}
     info["check"] = check(data, top, bottom, ppm)
-    ct = curve_track(fitz.open(stream=data, filetype="pdf")[0])
+    spg = fitz.open(stream=data, filetype="pdf")[0]
+    ct = curve_track(spg)
     info["curves_pt"] = [round(ct[0], 1), round(ct[1], 1)] if ct else None
+    info["lines_pt"] = track_lines(spg)
     return data, info
 
 
-def curve_track(pg):
-    """(x0, x1), in points across a stitched strip (depth running down),
-    of the track the curves are drawn in; None if there is none.
-
-    LogViewer prints each track between long dark lines that run the length
-    of the log, and grids it in grey. The curves (ROP, gas, gamma) are drawn
-    in colour, as many short strokes; borders, gridlines and text are black
-    or grey. So the curve track is the space between two neighbouring long
-    dark lines that holds the most coloured stroke. On a horizontal log the
-    well-bore cross-section has some colour too (its outlines), at most 0.6
-    of what the data-curves track has on 400 printouts of the drive.
-
-    A TVD gamma log draws its one curve in black. With no coloured curve
-    along the log, the track with the most slanting dark stroke is taken
-    instead: gridlines and borders run straight along or across, a curve
-    wanders."""
+def _strokes(pg):
+    """The long dark lines down a stitched strip (x, merged within 1 pt), and
+    its coloured and dark slanting strokes as (x, length)."""
     H = pg.rect.height
     runs = collections.defaultdict(float)        # x of a dark line down the log -> length
     curve, slant = [], []                        # (x, length): coloured, dark slanting strokes
@@ -387,6 +376,32 @@ def curve_track(pg):
     for x in sorted(x for x, n in runs.items() if n >= 0.3 * H):
         if not xs or x - xs[-1] > 1.0:
             xs.append(x)
+    return xs, curve, slant
+
+
+def track_lines(pg):
+    """x of the long dark lines a stitched strip draws its tracks between."""
+    return _strokes(pg)[0]
+
+
+def curve_track(pg):
+    """(x0, x1), in points across a stitched strip (depth running down),
+    of the track the curves are drawn in; None if there is none.
+
+    LogViewer prints each track between long dark lines that run the length
+    of the log, and grids it in grey. The curves (ROP, gas, gamma) are drawn
+    in colour, as many short strokes; borders, gridlines and text are black
+    or grey. So the curve track is the space between two neighbouring long
+    dark lines that holds the most coloured stroke. On a horizontal log the
+    well-bore cross-section has some colour too (its outlines), at most 0.6
+    of what the data-curves track has on 400 printouts of the drive.
+
+    A TVD gamma log draws its one curve in black. With no coloured curve
+    along the log, the track with the most slanting dark stroke is taken
+    instead: gridlines and borders run straight along or across, a curve
+    wanders."""
+    H = pg.rect.height
+    xs, curve, slant = _strokes(pg)
     def best_by(strokes):
         best = None
         for a, b in zip(xs, xs[1:]):

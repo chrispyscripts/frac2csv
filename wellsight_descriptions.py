@@ -533,11 +533,12 @@ def read(annotations, top=None, bottom=None):
             t = read_top(text)
             t["depth"] = depth
             t["text"] = " ".join(text.split())[:200]
+            t["column"] = a.get("column")
             tops.append(t)
         elif kind == "event":
             m = _EVENT.search(text)
             events.append({"depth": depth, "what": m.group(1).upper() if m else "",
-                           "text": " ".join(text.split())[:200]})
+                           "text": " ".join(text.split())[:200], "column": a.get("column")})
         elif kind == "mud":
             mud += 1
         else:

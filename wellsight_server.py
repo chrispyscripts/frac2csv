@@ -25,6 +25,7 @@ import wellsight_app as wa
 import wellsight_print as wp
 import wellsight_logviewer as lv
 import wellsight_library as lib
+import wellsight_layout as wl
 
 _KEEP = 24                      # logs held at once; the oldest goes first
 # A PyMuPDF document must not be drawn from two threads at once, and the
@@ -65,13 +66,22 @@ def _stitch(rec, pdf_bytes, source):
     info["file"] = _strip_name(rec)
     # For now the views show the curve track alone: the printout's
     # reference for the LAS curves. The whole strip is kept (and saved).
+    info["full_width_pt"] = info["width_pt"]
     if info.get("curves_pt"):
         x0, x1 = info["curves_pt"]
-        info["full_width_pt"] = info["width_pt"]
         info["width_pt"] = round(x1 - x0, 1)
         info["part"] = "curves"
     else:
         info["part"] = "all"
+    # Every track's place across the strip, from the log's own layout, so a
+    # view can show the column of the printout a data set is drawn in.
+    try:
+        info["tracks"] = wl.place(wl.read_tracks(rec["native"]), info.get("lines_pt") or [],
+                                  info.get("curves_pt"), info["full_width_pt"],
+                                  wl.curve_track_title(p.get("curves")))
+    except Exception:  # noqa: BLE001 -- the layout is extra; the curve track still shows
+        info["tracks"] = []
+    info.pop("lines_pt", None)
     with _RENDER:
         rec["strip"], rec["strip_info"] = data, info
         rec["strip_doc"] = rec["strip_dl"] = rec["strip_cut"] = None
@@ -240,9 +250,17 @@ def view(q):
 
 
 def _across(rec, q):
-    """the part of the strip a view shows: the curve track, unless
-    part=all asks for every track"""
+    """the part of the strip a view shows: x0..x1 (points across the strip)
+    when asked for, every track for part=all, else the curve track"""
     info = rec["strip_info"]
+    if q.get("x0") is not None and q.get("x1") is not None:
+        full = info.get("full_width_pt") or info["width_pt"]
+        try:
+            a, b = max(0.0, float(q["x0"])), min(full, float(q["x1"]))
+        except ValueError:
+            a = b = 0
+        if b - a >= 1:
+            return (a, b)
     if q.get("part") == "all" or not info.get("curves_pt"):
         return None
     return tuple(info["curves_pt"])
@@ -285,4 +303,10 @@ def strip_pdf(q):
     rec = _get(q.get("id"))
     if not rec or not rec.get("strip"):
         return 404, None
-    return 200, (rec["strip"] if _across(rec, q) is None else _curves_pdf(rec))
+    acr = _across(rec, q)
+    if acr is None:
+        return 200, rec["strip"]
+    if q.get("x0") is not None:                    # one column of the printout
+        with _RENDER:
+            return 200, wp.cut(rec["strip"], *acr)
+    return 200, _curves_pdf(rec)

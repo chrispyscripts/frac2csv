@@ -126,6 +126,14 @@ def _convert(data, name):
     return files
 
 
+def _most_common_column(items):
+    c = {}
+    for it in items:
+        if it.get("column"):
+            c[it["column"]] = c.get(it["column"], 0) + 1
+    return max(c, key=c.get) if c else None
+
+
 def _payload(log, data, name, files):
     h = log["header"] or {}
     axis, basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
@@ -196,7 +204,10 @@ def _payload(log, data, name, files):
         "symbols": [{k: v for k, v in s_.items() if k != "category"} for s_ in symbols],
         "symbolIntervals": sym_iv, "analysis": analysis,
         "descriptions": {"samples": [{k: v for k, v in sm.items() if k != "column"} for sm in described["samples"]],
-                         "tops": described["tops"], "events": described["events"]},
+                         "tops": [{k: v for k, v in t.items() if k != "column"} for t in described["tops"]],
+                         "events": [{k: v for k, v in e.items() if k != "column"} for e in described["events"]],
+                         # the column each kind of note is written in, to find it on the printout
+                         "columns": {k: _most_common_column(described[k]) for k in ("samples", "tops", "events")}},
         "warnings": list(log["warnings"]),
         "files": sorted(files),
     }

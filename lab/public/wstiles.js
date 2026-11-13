@@ -56,20 +56,27 @@ function WsTiles(onload) {
   // the scale a tile is fetched at: the next quarter-octave up
   function level(ppm) { return Math.pow(2, Math.ceil(Math.log2(Math.max(ppm, 0.05)) * 4 - 1e-9) / 4); }
 
-  // o: { id, P, d0, d1, X(depth) -> x, top, h, pxPerM, dpr, w }
+  // o: { id, P, d0, d1, X(depth) -> x, top, h, pxPerM, dpr, w, across }
   //   P is the printout info; the band runs depth across from X(d0) to X(d1)
   //   and is h tall; w is the band's height in device pixels when the
-  //   printout is stretched to it, else 0 (its own proportions).
+  //   printout is stretched to it, else 0 (its own proportions). across is
+  //   [x0, x1], the column of the printout to show (points across the
+  //   strip); without it, the curve track.
+  // One manager draws one band: a draw marks the tiles it needs and drops the
+  // rest from the queue, so two bands sharing one would undo each other.
   function draw(g, o) {
     const P = o.P, top = P.top, bot = P.bottom;
     for (const t of tiles.values()) t.want = false;
     const a0 = Math.max(o.d0, top), b0 = Math.min(o.d1, bot);
     if (!(b0 > a0) || !(o.pxPerM > 0)) { finish(); return; }
-    const base = `/api/wellsight-strip?id=${encodeURIComponent(o.id)}`;
-    const rev = (P.file || "") + ":" + P.height_pt;
-    // the whole printout, once: the long side at most OV_LEN pixels
+    const part = o.across ? `&x0=${o.across[0]}&x1=${o.across[1]}` : "";
+    const base = `/api/wellsight-strip?id=${encodeURIComponent(o.id)}${part}`;
+    const rev = (P.file || "") + ":" + P.height_pt + ":" + (o.across ? o.across.join("-") : "c");
+    // the whole printout, once: the long side at most OV_LEN pixels; a narrow
+    // column needs fewer across
+    const ovW = o.ovW || OV_W;
     const ovPpm = Math.min(400, OV_LEN / Math.max(1, bot - top));
-    const ov = get(`${o.id}:${rev}:ov`, `${base}&d0=${top}&d1=${bot}&ppm=${ovPpm.toFixed(4)}&w=${OV_W}`, true);
+    const ov = get(`${o.id}:${rev}:ov`, `${base}&d0=${top}&d1=${bot}&ppm=${ovPpm.toFixed(4)}&w=${ovW}`, true);
     // a picture covering depths a..b, turned a quarter left: depth runs across
     const blit = (img, a, b, sy0, sy1) => {
       g.save();
@@ -89,7 +96,7 @@ function WsTiles(onload) {
     const ppmDev = o.pxPerM * o.dpr;
     const acrossDev = o.w || o.h * o.dpr;
     // sharp enough already: no tiles
-    if (ov.ok && ppmDev <= ovPpm * 1.05 && acrossDev <= OV_W * 1.05) { finish(); return; }
+    if (ov.ok && ppmDev <= ovPpm * 1.05 && acrossDev <= ovW * 1.05) { finish(); return; }
     const L = level(ppmDev);
     const T = 1024 / L;                                   // metres per tile, ~1024 px long
     const wq = o.w ? `&w=${Math.round(o.w)}` : "";

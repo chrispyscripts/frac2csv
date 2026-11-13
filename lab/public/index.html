@@ -361,10 +361,43 @@
   .wsfoldfoot { display:flex; align-items:center; gap:6px; padding:6px 8px;
                 border-top:1px solid var(--line); }
   .wsfnote { flex:1; min-width:0; font-size:11.5px; color:var(--mut); }
-  #wsgraph, #wsprint { width:100%; display:block; background:var(--panel);
-                       border:1px solid var(--line); border-radius:8px; cursor:grab; }
-  #ws-legend b { font-family:var(--mono); font-weight:600; color:var(--ink); }
-  #wsgraph.drag, #wsprint.drag { cursor:grabbing; }
+  /* A WellSight log on the right: a card per data set switched on in the
+     middle column, its chart over the printout's own column for it. The
+     depth window's controls stay at the top while the cards scroll. */
+  .wssticky { position:sticky; top:0; z-index:6; background:var(--bg);
+              padding:0 0 8px; border-bottom:1px solid var(--line); }
+  #wspairs { scroll-margin-top:100px; }
+  .wspair { margin:12px 18px 0; border:1px solid var(--line); border-radius:10px;
+            background:var(--panel); padding:8px 10px 10px; scroll-margin:110px 0 12px; }
+  .wspairhead { display:flex; align-items:flex-start; gap:10px; min-height:24px; }
+  .wspairhead .wspt { font-size:13px; white-space:nowrap; line-height:24px; }
+  .wspairhead .wspt .fam { color:var(--mut); }
+  .wspairhead .legend { flex:1; justify-content:flex-end; min-width:0; }
+  .wspairhead .legend b { font-family:var(--mono); font-weight:600; color:var(--ink); }
+  .wspairhead .wsx { border:none; background:none; color:var(--mut); font-size:17px;
+                     line-height:24px; cursor:pointer; padding:0 2px; }
+  .wspairhead .wsx:hover { color:var(--carmine); }
+  .wspair .wsread { margin:4px 0 6px; }
+  .wspair canvas { width:100%; display:block; background:var(--panel);
+                   border:1px solid var(--line); border-radius:6px; cursor:grab; }
+  .wspair canvas.drag { cursor:grabbing; }
+  .wsrefhead { font-size:11.5px; color:var(--mut); font-weight:600; margin:8px 0 4px; }
+  .wsnone { margin:18px; padding:18px; border:1px dashed var(--line); border-radius:10px;
+            color:var(--mut); font-size:12.5px; }
+  .wstables h3.wstabhead { font-size:13px; font-weight:650; margin:20px 0 0; padding-top:10px;
+                           border-top:1px solid var(--line); }
+  .wsonbar { display:flex; align-items:center; gap:6px; padding:8px 14px 2px; font-size:11px;
+             color:var(--mut); }
+  .wsonbar span { flex:1; }
+  .wsonbar .clr { border:1px solid var(--line); background:none; color:var(--mut); font-size:10px;
+                  text-transform:uppercase; letter-spacing:.05em; font-weight:700; cursor:pointer;
+                  padding:2px 7px; border-radius:5px; }
+  .wsonbar .clr:hover { color:var(--carmine); border-color:var(--carmine); }
+  .stagerow .tog { width:11px; height:11px; border:1.5px solid #9aa1a9; border-radius:3px;
+                   margin-right:8px; flex:none; box-sizing:border-box; }
+  .stagerow.on { color:var(--ink); background:var(--panel2); }
+  .stagerow.on .tog { background:var(--carmine); border-color:var(--carmine);
+                      box-shadow:inset 0 0 0 1.5px var(--panel2); }
   .stagerow { display:flex; justify-content:space-between; align-items:center;
               padding:5px 14px 5px 26px; cursor:pointer; font-size:12px; color:var(--mut); }
   .stagerow:hover { background:var(--panel); color:var(--ink); }
@@ -448,10 +481,6 @@
   .stagerow.badtime-row .fixtime, .stagerow.edited-row .fixtime {
              visibility:visible; border-color:var(--carmine); color:var(--carmine); }
   .stagerow.badtime-row { background:rgba(163,22,49,0.06); }
-  .seg.dropmode { display:flex; width:100%; margin:0 0 6px; }
-  .seg.dropmode button { flex:1; padding:7px 0; font-size:12px; font-weight:600;
-    letter-spacing:.02em; }
-  .drop.csv { border-style:dashed; }
   .dropwrong { color:var(--bad); font-size:11px; margin:4px 0 0; }
   .dropnote { margin:6px 10px; padding:6px 9px; border-radius:7px;
               border:1px solid var(--carmine); color:var(--carmine);
@@ -825,18 +854,12 @@
         matched by name if the layout differs. Exports save into each PDF's own
         folder.</div>
       </div>
-      <!-- WHAT THIS DROP ZONE TAKES. Asked for as "a big toggle at the top of
-           the drop menu ... and only accept those": the two kinds are read by
-           completely different code, and a CSV landing in the PDF path is not
-           a useful accident, so the mode gates the drop rather than decorating
-           it. Big because it changes what the whole left column means. -->
-      <div class="seg dropmode" id="dropmode">
-        <button type="button" data-m="pdf" class="on">PDF reports</button>
-        <button type="button" data-m="csv">CSV files</button>
-      </div>
-      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs">
-        Drop PDFs, WellSight logs or a .txt file list here <b>or click</b>
-        <input type="file" id="file" accept=".pdf,.txt,.sl6,.slg,.hl6,.hlg,.sl8,.hl8,.ml6,.mlg,.ml8" hidden multiple>
+      <!-- One drop zone takes every kind the Lab reads, each sent to its own
+           reader by its extension. (A PDF reports / CSV files switch above it
+           gated the two; it went when the Lab took WellSight logs.) -->
+      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs, WellSight logs or CSV files">
+        Drop PDFs, WellSight logs, CSV files or a .txt file list here <b>or click</b>
+        <input type="file" id="file" accept=".pdf,.txt,.csv,.sl6,.slg,.hl6,.hlg,.sl8,.hl8,.ml6,.mlg,.ml8" hidden multiple>
       </div>
     </div>
 
@@ -1008,8 +1031,8 @@ and the stitched printout">Save LAS</button>
 picture of these panels and the reading's details">Flag Error</button>
           <input type="file" id="wspdfin" accept=".pdf" hidden>
           <span class="stackmsg" id="wsmsg" hidden></span>
-          <div class="legend" id="ws-legend"></div>
         </div>
+        <div class="wssticky">
         <div class="wsctl">
           <button type="button" class="btn" id="wswhole"
                   title="Show the whole log">Whole log</button>
@@ -1022,7 +1045,7 @@ mouse wheel zoom at the pointer; drag to move along the log."></label>
                  title="Where along the log the window sits">
         </div>
         <div class="wsread" id="ws-read"></div>
-        <div class="canvaswrap" id="wsgraphwrap"><canvas id="wsgraph" width="1120" height="360"></canvas></div>
+        </div>
         <div class="wsprinthead">
           <span class="wsprintlbl" id="wsprintlbl">Printed log</span>
           <button type="button" class="btn" id="wsstackbtn"
@@ -1035,8 +1058,8 @@ in a separate window that follows this one">Stacked ↗</button>
           <button type="button" class="btn" id="wsopenpdf" hidden
                   title="Open the stitched printout PDF">Open PDF ↗</button>
         </div>
-        <div class="canvaswrap" id="wsprintwrap"><canvas id="wsprint" width="1120" height="160"></canvas></div>
         <div class="wsnoprint" id="wsnoprint" hidden></div>
+        <div id="wspairs"></div>
         <div class="tablewrap wstables" id="wstable" hidden></div>
         <div class="notes" id="ws-notes"></div>
       </div>
@@ -1453,31 +1476,17 @@ function makeFileEntry(name) {
 }
 
 let busy = Promise.resolve();
-// ---- which kind of file this column takes ---------------------------------
+// ---- what the drop zone takes ----------------------------------------------
 //
-// Two completely separate readers sit behind this: a PDF goes to the server to
-// be extracted, a CSV is already data and is only parsed. Dropping one into
-// the other's path produces nothing useful, and silently ignoring the odd one
-// out is how a user ends up staring at an empty list wondering which of the
-// forty files failed. So the mode gates the drop, and anything it turns away
-// SAYS it was turned away and why.
-let dropMode = "pdf";                       // "pdf" | "csv"
-function setDropMode(m) {
-  dropMode = m === "csv" ? "csv" : "pdf";
-  const csv = dropMode === "csv";
-  $("trimbtn").addEventListener("click", keepTailToggle);
-for (const b of document.querySelectorAll("#dropmode button"))
-    b.classList.toggle("on", b.dataset.m === dropMode);
-  const d = $("drop"), inp = $("file");
-  d.classList.toggle("csv", csv);
-  d.innerHTML = (csv ? "Drop CSV files here <b>or click</b>"
-                     : "Drop PDFs, WellSight logs or a .txt file list here <b>or click</b>");
-  d.setAttribute("aria-label", csv ? "Upload CSV files"
-                                   : "Upload frac report PDFs");
-  inp.setAttribute("accept", csv ? ".csv" : ".pdf,.txt,.sl6,.slg,.hl6,.hlg,.sl8,.hl8,.ml6,.mlg,.ml8");
-  d.appendChild(inp);                       // innerHTML above dropped it
-  dropWrong([]);
-}
+// Separate readers sit behind it, chosen by extension: a PDF goes to the
+// server to be extracted, a WellSight log to the LAS reader, a CSV is already
+// data and is only parsed. Silently ignoring an odd file out is how a user
+// ends up staring at a list wondering which of forty files failed, so
+// anything it turns away SAYS it was turned away and why (dropWrong).
+
+// The end-trim button beside the chart (wired here once; it used to sit in
+// the drop-mode switch's handler, which added it again on every switch).
+$("trimbtn").addEventListener("click", keepTailToggle);
 function dropWrong(names) {
   let el = $("dropwrong");
   if (!el) {
@@ -1486,10 +1495,10 @@ function dropWrong(names) {
     $("drop").parentNode.insertBefore(el, $("drop").nextSibling);
   }
   if (!names.length) { el.textContent = ""; return; }
-  const want = dropMode === "csv" ? "CSV" : "PDF";
   el.textContent = names.length === 1
-    ? `${names[0]} is not a ${want} — this tab takes ${want} files only.`
-    : `${names.length} files were not ${want}s and were left out.`;
+    ? `${names[0]} was left out: the Lab reads PDF reports, WellSight logs, CSV files and .txt file lists.`
+    : `${names.length} files were left out: ${names.join(", ")}. The Lab reads PDF reports, WellSight logs, `
+      + "CSV files and .txt file lists.";
 }
 
 // A dropped CSV, parsed into the same {title, columns, rows} a parsed table
@@ -1548,13 +1557,6 @@ async function loadCsvFile(f) {
   } finally { workFinished(); }
 }
 
-// Wired here rather than beside the other input listeners: `dropMode` is a
-// `let` declared just above, and a call from further up the file lands in its
-// temporal dead zone — which throws during load and takes every global after
-// it with it. The page came up with no script at all.
-for (const b of document.querySelectorAll("#dropmode button"))
-  b.addEventListener("click", () => setDropMode(b.dataset.m));
-setDropMode("pdf");
 
 // ---------- WellSight logs (StripLog / HorizontalLog) -> LAS ----------
 // Desktop only: the local app decodes the file (wellsight_app.py), keeps it,
@@ -1677,6 +1679,10 @@ function wellsightLine(q, printoutError) {
 }
 
 // ---- a log selected: its data sets in the middle, the log on the right ----
+// Each data set in the middle column is switched on or off by a click, and
+// the right shows every one that is on, each over its own column of the
+// printout. The next log opens on the same sets.
+let wsLastOn = ["curves"];
 function selectWellsight(entry) {
   scopeFile = entry.name;
   document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
@@ -1685,6 +1691,14 @@ function selectWellsight(entry) {
   $("timewarn").hidden = true;
   $("dropnote").hidden = true;
   const list = $("stages"); list.innerHTML = "";
+  const bar = document.createElement("div");
+  bar.className = "wsonbar";
+  bar.innerHTML = `<span>Click to show or hide</span>`
+    + `<button type="button" class="clr" data-on="all" title="Show every data set">All</button>`
+    + `<button type="button" class="clr" data-on="none" title="Hide them all">None</button>`;
+  bar.querySelector('[data-on="all"]').addEventListener("click", () => wsSetOn(entry, entry.items.map(x => x.key)));
+  bar.querySelector('[data-on="none"]').addEventListener("click", () => wsSetOn(entry, []));
+  list.appendChild(bar);
   let fam = null;
   for (const it of entry.items) {
     if (it.family !== fam) {               // a heading per family
@@ -1695,16 +1709,45 @@ function selectWellsight(entry) {
     }
     const row = document.createElement("div");
     row.className = "stagerow";
-    const n = it.count || "";
-    row.innerHTML = `<span class="stg"><span class="nmtxt">${escHtml(it.label)}</span></span>`
-      + `<span class="ch">${escHtml(n)}</span>`;
-    row.addEventListener("click", () => { setNavList("stages"); selectItem(entry, null, it, row); });
+    row.title = "Click to show or hide it on the right";
+    row.innerHTML = `<span class="stg"><span class="tog"></span><span class="nmtxt">${escHtml(it.label)}</span></span>`
+      + `<span class="ch">${escHtml(it.count || "")}</span>`;
+    row.addEventListener("click", () => { setNavList("stages"); wsToggle(entry, it); });
     it._row = row;
     list.appendChild(row);
   }
-  const keep = current && current.entry === entry && entry.items.includes(current.item)
-    ? current.item : entry.items[0];
-  selectItem(entry, null, keep, keep._row);
+  if (!entry.wsOn) {
+    const keys = new Set(entry.items.map(x => x.key));
+    entry.wsOn = wsLastOn.filter(k => keys.has(k));
+    if (!entry.wsOn.length && entry.items.length) entry.wsOn = [entry.items[0].key];
+  }
+  wsShowActive(entry);
+}
+function wsSetOn(entry, keys) {
+  const on = new Set(keys);
+  entry.wsOn = entry.items.filter(x => on.has(x.key)).map(x => x.key);
+  wsLastOn = entry.wsOn.slice();
+  wsShowActive(entry);
+}
+function wsToggle(entry, it) {
+  const on = new Set(entry.wsOn || []);
+  const add = !on.has(it.key);
+  if (add) on.add(it.key); else on.delete(it.key);
+  wsSetOn(entry, [...on]);
+  if (add) {                          // bring the card just switched on into view
+    const el = [...$("wspairs").children].find(c => c.dataset.key === it.key);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+function wsShowActive(entry) {
+  const on = entry.wsOn || [];
+  for (const it of entry.items) if (it._row) it._row.classList.toggle("on", on.includes(it.key));
+  const items = entry.items.filter(x => on.includes(x.key));
+  scopeFile = entry.name;
+  current = { entry, well: null, item: items[0] || entry.items[0] };
+  $("empty").hidden = true;
+  $("previewpane").hidden = true;
+  showWellsight(entry, items);
 }
 
 // The view: one depth window [d0, d1] shared by the curve chart and the
@@ -1737,35 +1780,121 @@ function wsRange(vals) {
   return [lo, hi];
 }
 
-function showWellsight(entry, item) {
+function showWellsight(entry, items) {
   $("wspane").hidden = false;
   const p = entry.ws.payload;
   if (!wsv || wsv.id !== entry.ws.id) {
     wsv = { id: entry.ws.id, d0: p.top, d1: p.bottom, hover: null,
             ranges: p.curves.map(c => wsRange(c.values)) };
-  }
-  wsv.entry = entry; wsv.p = p; wsv.P = entry.ws.printout;
-  wsv.set = (item && (item.family || item.key)) || "curves";
-  wsv.group = (item && item.group) || null;
-  if (!wsv.byGroup) {
     wsv.byGroup = {};
     for (const sy of p.symbols || []) (wsv.byGroup[sy.group] = wsv.byGroup[sy.group] || []).push(sy);
     wsv.rockColors = {};
     for (const r of p.rocks || []) wsv.rockColors[r.rock] = r.color;
     for (const r of ((p.analysis || {}).descriptions || {}).rocks || []) wsv.rockColors[r.rock] = r.color;
   }
+  wsv.entry = entry; wsv.p = p; wsv.P = entry.ws.printout;
+  wsv.items = items || [];
+  wsv.set = "curves"; wsv.group = null;
   $("ws-title").textContent = p.well || p.file;
   $("ws-sub").textContent = [p.file, `${p.app} ${p.version}`,
     p.top != null ? `${p.top}–${p.bottom} m ${p.axis}` : "", p.scale,
     p.licence && "licence " + p.licence].filter(Boolean).join(" · ");
   wellsightStatus().then(st => { $("wsprintbtn").hidden = !st.available; });
   $("wsmsg").hidden = true;
-  wsLegend();
+  wsBuildPairs();
   wsNotes();
   wsTables();
   wsSyncSliders();
-  wsDraw();
+  wsReadout();
+  wsDrawNow();                 // now, not next frame: the cards take their heights before anything scrolls to one
   wsStackPost();
+}
+
+// The drawing, key and table code reads the set it works on from wsv.set and
+// wsv.group; with several sets on, each card sets them while it is drawn.
+function wsAs(it, fn) {
+  const s = wsv.set, g = wsv.group;
+  wsv.set = (it && it.family) || "curves"; wsv.group = (it && it.group) || null;
+  try { return fn(); } finally { wsv.set = s; wsv.group = g; }
+}
+
+// The printout's columns for a data set: the track its column is drawn in
+// (the server lays the log's own track layout on the stitched strip). Oil
+// shows over the Oil Shows column, the descriptions over the column they
+// are written in, the rock column over the lithology track.
+function wsRefFor(it) {
+  const P = wsv.P;
+  if (!P) return null;
+  const full = P.full_width_pt || P.width_pt;
+  if (it.family === "curves")
+    return { parts: [{ across: null, wPt: P.width_pt, label: P.part === "curves" ? "Curves" : "Printout" }],
+             label: P.part === "curves" ? "Printout · its curve track" : "Printout (no curve track was found on it)" };
+  const T = P.tracks || [];
+  const has = (t, k) => k.startsWith("col:") ? t.columns.includes(k.slice(4)) : t.keys.includes(k);
+  let want = [];
+  if (it.family === "rocks") want = [["rock"], ["pct"]];
+  else if (it.family === "accessories" || it.family === "other") {
+    const gs = it.group ? [it.group] : (it.family === "accessories" ? WS_ACC_GROUPS : WS_OTHER_GROUPS)
+      .filter(k => wsGroup(k) || (wsv.p.symbolIntervals || []).some(x => x.group === k));
+    want = gs.map(k => [k]);
+  } else if (it.family === "descriptions") {
+    const cols = (wsv.p.descriptions || {}).columns || {};
+    const col = cols[it.group === "tops" ? "tops" : it.group === "events" ? "events" : "samples"];
+    want = [col ? ["col:" + col, "descriptions"] : ["descriptions"]];
+  }
+  const hits = [];
+  for (const alts of want) {
+    let t = null;
+    for (const k of alts) { t = T.find(x => has(x, k)); if (t) break; }
+    if (t && !hits.includes(t)) hits.push(t);
+  }
+  if (!hits.length)
+    return { parts: [{ across: [0, full], wPt: full, label: "Printout" }],
+             label: "Printout · its whole width: the log's layout names no column of the printout for this" };
+  hits.sort((a, b) => a.x0 - b.x0);
+  return { parts: hits.map(t => ({ across: [t.x0, t.x1], wPt: t.x1 - t.x0, label: t.title })),
+           label: "Printout · " + hits.map(t => t.title).join(", ") + (hits.length > 1 ? " columns" : " column") };
+}
+
+// One card per data set switched on: its key, its reading at the pointer, its
+// chart, and the printout's column for it, all on the one depth window.
+const wsTileSets = new Map();        // card + column -> its own tile manager
+function wsTilesFor(k) {
+  let t = wsTileSets.get(k);
+  if (!t) { t = WsTiles(() => wsDraw()); wsTileSets.set(k, t); }
+  return t;
+}
+function wsBuildPairs() {
+  const box = $("wspairs");
+  box.innerHTML = "";
+  if (!wsv.items.length) {
+    box.innerHTML = `<div class="wsnone">Nothing is switched on. Click data sets in the middle column to show `
+      + `them here, each over its own column of the printout.</div>`;
+    return;
+  }
+  for (const it of wsv.items) {
+    const sec = document.createElement("section");
+    sec.className = "wspair";
+    sec.dataset.key = it.key;
+    const fam = WS_FAMILIES[it.family] || "";
+    sec.innerHTML = `<div class="wspairhead"><span class="wspt">`
+      + (it.family === "curves" ? `<b>${escHtml(it.label)}</b>`
+                                : `<span class="fam">${escHtml(fam)} ·</span> <b>${escHtml(it.label)}</b>`)
+      + `</span><div class="legend"></div>`
+      + `<button type="button" class="wsx" title="Hide it (as clicking it in the middle column does)">×</button></div>`
+      + `<div class="wsread wspread"></div><canvas class="wsdata"></canvas>`
+      + `<div class="wsrefhead"></div><canvas class="wsref"></canvas>`;
+    sec._it = it;
+    sec._ref = wsRefFor(it);
+    sec.querySelector(".wsx").addEventListener("click", () => wsToggle(wsv.entry, it));
+    sec.querySelector(".wspread").classList.toggle("two", it.family === "descriptions" || it.family === "rocks");
+    const rh = sec.querySelector(".wsrefhead"), rc = sec.querySelector(".wsref");
+    if (sec._ref) { rh.textContent = sec._ref.label; wsBindCanvas(rc); }
+    else { rh.hidden = true; rc.hidden = true; }
+    wsAs(it, () => wsKeyInto(sec.querySelector(".legend")));
+    wsBindCanvas(sec.querySelector(".wsdata"));
+    box.appendChild(sec);
+  }
 }
 
 function wsNotes() {
@@ -1777,19 +1906,23 @@ function wsNotes() {
       + (P.gaps && P.gaps.length ? `; gaps at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
       + ` (${P.source || "printout"}).`);
     out.push("LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.");
+    if ((P.tracks || []).length)
+      out.push("The printout's columns are found from the log's own layout: the tracks it shows, in order, at their "
+        + "printed widths, laid on the lines the printout draws between them"
+        + ((P.tracks || []).some(t => !t.snapped) ? " (some edges did not land on a line and are estimated)." : "."));
     if (P.library) out.push(`Printout from the printouts folder: ${P.library.path}`);
   }
   for (const w of p.warnings || []) out.push(w);
-  out.push(...wsSetNotes());
+  const seen = new Set();
+  for (const it of wsv.items || [])
+    for (const n of wsAs(it, wsSetNotes)) if (!seen.has(n)) { seen.add(n); out.push(n); }
   $("ws-notes").textContent = out.join("\n");
   const has = !!P;
-  $("wsprintwrap").hidden = !has;
   $("wsopenpdf").hidden = !has;
   $("wsnoprint").hidden = has;
   $("wsprintlbl").textContent = has
-    ? (P.part === "curves" ? "Printed curves (the printout's curve chart)" : "Printed log (LogViewer, stitched)")
-      + ` · ${P.log_pages} pages · ${P.pt_per_m} pt/m`
-    : "Printed log";
+    ? `Printout: LogViewer, stitched · ${P.log_pages} pages · ${P.pt_per_m} pt/m · each data set over its own column`
+    : "No printout";
   $("wsfindbtn").hidden = has;
   if (!has) $("wsnoprint").textContent = (wsv.entry.ws.lookup ? "Not in the printouts folder: "
       + wsv.entry.ws.lookup + ". " : "No printout yet. ")
@@ -1798,14 +1931,12 @@ function wsNotes() {
     + "same name is taken too, and Printouts folder… names the folder to look in.";
 }
 
-function wsLegend() {
-  const Lg = $("ws-legend"); Lg.innerHTML = "";
-  // the key does not change while the pointer moves; the reading line does,
-  // and it is two lines tall for the sets whose readings are sentences
-  $("ws-read").classList.toggle("two", wsv.set === "descriptions" || wsv.set === "rocks");
-  if (wsv.set && wsv.set !== "curves") { wsSetLegend(Lg); wsReadout(); return; }
-  const p = wsv.p;
-  p.curves.forEach((c, k) => {
+// A card's key: what its colours mean. It does not change while the pointer
+// moves (the readings do, in lines of their own whose size is fixed).
+function wsKeyInto(Lg) {
+  Lg.innerHTML = "";
+  if (wsv.set && wsv.set !== "curves") return wsSetLegend(Lg);
+  wsv.p.curves.forEach((c, k) => {
     const sp = document.createElement("span");
     const r = wsv.ranges[k];
     sp.title = `${c.name} — track ${c.track || "-"}, recorded every ${c.recorded_step} m; `
@@ -1814,33 +1945,36 @@ function wsLegend() {
       + `${escHtml(c.name)} <span style="color:var(--mut)">${escHtml(c.unit)}</span>`;
     Lg.appendChild(sp);
   });
-  wsReadout();
 }
 
-// What the pointer is on: the depth, then what the log says there. It is
-// rewritten on every move, so it lives in a line whose size is fixed (.wsread);
-// in the header it grew and wrapped, and the chart under it jumped.
+// What the pointer is on: the depth (and the rock code there) at the top,
+// and in each card what its data set says there. Every reading lives in a
+// line whose size is fixed: a reading that grew the header moved the chart
+// away from the pointer, which cleared the reading, which moved it back.
 function wsReadout() {
   const R = $("ws-read");
   if (!wsv) { R.innerHTML = ""; return; }
-  const d = wsv.hover;
-  if (d == null) {
-    R.innerHTML = `<span class="hint">Point at the chart to read the log at that depth.</span>`;
-    return;
-  }
-  const parts = [`<b>${d.toFixed(2)} m</b>`];
-  if (wsv.set && wsv.set !== "curves") parts.push(...wsSetRead(d));
+  const d = wsv.hover, p = wsv.p;
+  if (d == null) R.innerHTML = `<span class="hint">Point at a chart to read the log at that depth.</span>`;
   else {
-    const p = wsv.p, i = Math.round((d - p.depth0) / p.step);
     const iv = p.lithology.find(x => d >= x.top && d < x.base);
-    if (iv) parts.push(`<span class="m">${escHtml(iv.code)}</span>`);
-    p.curves.forEach((c, k) => {
-      const v = i >= 0 && i < p.rows ? c.values[i] : null;
-      parts.push(`<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>`
-        + `${escHtml(c.name)} <b>${wsFmt(v)}</b>`);
-    });
+    R.innerHTML = `<b>${d.toFixed(2)} m</b>`
+      + (iv ? `<span class="sep">|</span><span class="m">${escHtml(iv.code)}</span>` : "");
   }
-  R.innerHTML = parts.join(`<span class="sep">|</span>`);
+  for (const sec of $("wspairs").children) {
+    const it = sec._it, line = sec.querySelector(".wspread");
+    if (!it || !line) continue;
+    if (d == null) { line.innerHTML = `<span class="hint">–</span>`; continue; }
+    const parts = it.family === "curves" ? wsCurvesRead(d) : wsAs(it, () => wsSetRead(d));
+    line.innerHTML = parts.join(`<span class="sep">|</span>`);
+  }
+}
+function wsCurvesRead(d) {
+  const p = wsv.p, i = Math.round((d - p.depth0) / p.step);
+  return p.curves.map((c, k) => {
+    const v = i >= 0 && i < p.rows ? c.values[i] : null;
+    return `<i style="background:${WS_COLORS[k % WS_COLORS.length]}"></i>${escHtml(c.name)} <b>${wsFmt(v)}</b>`;
+  });
 }
 
 // ---- rock types, accessories, other symbols, descriptions: rows on the depth axis ----
@@ -1901,7 +2035,6 @@ function wsSetRows() {
   if (wsv.set === "rocks") {
     rows.push({ kind: "rock", h: 46 });
     if (p.percent) rows.push({ kind: "pct", h: 46 });
-    if (p.curves.length) rows.push({ kind: "curves", h: 150 });
   } else if (wsv.set === "accessories") {
     for (const k of (one ? [wsv.group] : WS_ACC_GROUPS)) rows.push(...symRows(k));
   } else if (wsv.set === "other") {
@@ -1914,7 +2047,6 @@ function wsSetRows() {
       if (g.show) rows.push({ kind: "show", group: "show", h: 56, label: "Show (symbols)" });
     } else if (G === "tops") rows.push({ kind: "tops", h: 58 });
     else if (G === "events") rows.push({ kind: "events", h: 58 });
-    if (p.curves.length) rows.push({ kind: "curves", h: 120 });
   }
   return rows;
 }
@@ -1931,19 +2063,21 @@ function wsSymbolsIn(group, a, b) {
 // not fit goes onto two lines at its last space ("Show" over "(symbols)");
 // drawn whole on one line it ran off the left edge ("how (text)").
 function wsRowLabel(g, text, x, yMid, maxW) {
-  if (g.measureText(text).width <= maxW || text.lastIndexOf(" ") < 0) {
-    g.fillText(text, x, yMid);
-    return;
-  }
-  const k = text.lastIndexOf(" ");
-  g.fillText(text.slice(0, k), x, yMid - 6);
-  g.fillText(text.slice(k + 1), x, yMid + 6);
+  const lines = g.measureText(text).width <= maxW || text.lastIndexOf(" ") < 0 ? [text]
+    : [text.slice(0, text.lastIndexOf(" ")), text.slice(text.lastIndexOf(" ") + 1)];
+  // a line still too wide ("Descriptions") is drawn smaller, not cut off
+  const widest = Math.max(...lines.map(l => g.measureText(l).width));
+  const font = g.font;
+  if (widest > maxW) g.font = font.replace(/([\d.]+)px/, (m, n) => Math.max(7, n * maxW / widest).toFixed(1) + "px");
+  if (lines.length === 1) g.fillText(text, x, yMid);
+  else { g.fillText(lines[0], x, yMid - 6); g.fillText(lines[1], x, yMid + 6); }
+  g.font = font;
 }
-function wsDrawSet() {
+function wsDrawSet(cv) {
   const p = wsv.p, { L, R } = WS_M, rows = wsSetRows(), AX = 30, GAP = 6;
-  if (($("wsgraph").getBoundingClientRect().width || 0) < L + R + 100) return null;
+  if ((cv.getBoundingClientRect().width || 0) < L + R + 100) return null;
   const H = rows.reduce((h, r) => h + r.h + GAP, 6) + AX;
-  const { g, w, h } = wsCanvas($("wsgraph"), Math.max(120, H));
+  const { g, w, h } = wsCanvas(cv, Math.max(90, H));
   const plotW = w - L - R, d0 = wsv.d0, d1 = wsv.d1, ppm = plotW / (d1 - d0);
   const X = d => L + (d - d0) * ppm;
   g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
@@ -2212,7 +2346,23 @@ function wsSetNotes() {
 }
 function wsTables() {
   const T = $("wstable");
-  if (!wsv.set || wsv.set === "curves" || !wsv.p.analysis) { T.hidden = true; T.innerHTML = ""; return; }
+  let h = "";
+  if (wsv.p.analysis) for (const it of wsv.items || []) {
+    if (it.family === "curves") continue;
+    const part = wsAs(it, wsTablesHtml);
+    if (part) h += `<h3 class="wstabhead">${escHtml(WS_FAMILIES[it.family] || "")} · ${escHtml(it.label)}</h3>` + part;
+  }
+  T.innerHTML = h;
+  T.hidden = !h;
+  T.querySelectorAll("tr.go").forEach(tr => tr.addEventListener("click", () => {
+    const x = Number(tr.dataset.a), y = Number(tr.dataset.b), pad = Math.max(5, 0.15 * (y - x));
+    if (!isFinite(x) || !isFinite(y)) return;
+    wsSetWindow(x - pad, y + pad);
+    $("wspairs").scrollIntoView({ block: "start", behavior: "smooth" });
+  }));
+}
+function wsTablesHtml() {
+  if (!wsv.set || wsv.set === "curves" || !wsv.p.analysis) return "";
   const p = wsv.p, a = p.analysis, e = escHtml, one = wsv.group;
   const sw = c => `<span class="sw" style="background:${c}"></span>`;
   const rng = (x, y) => `${wsFmt(x)}–${wsFmt(y)}`;
@@ -2322,19 +2472,13 @@ function wsTables() {
       h += "</table>";
     }
   }
-  T.innerHTML = h;
-  T.hidden = !h;
-  T.querySelectorAll("tr.go").forEach(tr => tr.addEventListener("click", () => {
-    const x = Number(tr.dataset.a), y = Number(tr.dataset.b), pad = Math.max(5, 0.15 * (y - x));
-    if (!isFinite(x) || !isFinite(y)) return;
-    wsSetWindow(x - pad, y + pad);
-    $("wsgraph").scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }));
+  return h;
 }
 
 // ---- zoom and position ----
 function wsPlotW() {
-  const w = $("wsgraph").getBoundingClientRect().width || 1000;
+  const cv = document.querySelector("#wspairs canvas.wsdata");
+  const w = (cv && cv.getBoundingClientRect().width) || 1000;
   return Math.max(100, w - WS_M.L - WS_M.R);
 }
 function wsMinLen() {
@@ -2396,14 +2540,28 @@ function wsGridStep(len, plotW) {
 }
 function wsDrawNow() {
   if (!wsv || $("wspane").hidden) return;
-  if (wsv.set && wsv.set !== "curves") {
-    const plotW = wsDrawSet();
-    if (plotW) wsDrawPrint(plotW);
-    return;
+  // every card is sized and drawn (so the page does not move as they come
+  // into view), but only those on screen ask for printout tiles
+  const right = $("wspane").closest(".right");
+  const view = right ? right.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+  for (const sec of $("wspairs").children) {
+    const it = sec._it;
+    if (!it) continue;
+    const dc = sec.querySelector(".wsdata");
+    const plotW = it.family === "curves" ? wsDrawCurves(dc) : wsAs(it, () => wsDrawSet(dc));
+    if (plotW && sec._ref) {
+      const r = sec.getBoundingClientRect();
+      wsDrawRef(sec.querySelector(".wsref"), plotW, sec._ref, it.key,
+                r.bottom > view.top - 100 && r.top < view.bottom + 100);
+    }
   }
+}
+
+// the LAS curves, each on its own scale as the printed curve track draws them
+function wsDrawCurves(cv) {
   const p = wsv.p, { L, R, T, B, LITH } = WS_M;
-  if (($("wsgraph").getBoundingClientRect().width || 0) < L + R + 100) return;  // laid out too narrow yet
-  const { g, w, h } = wsCanvas($("wsgraph"), 360);
+  if ((cv.getBoundingClientRect().width || 0) < L + R + 100) return null;  // laid out too narrow yet
+  const { g, w, h } = wsCanvas(cv, 300);
   const plotW = w - L - R, plotH = h - T - B - (p.lithology.length ? LITH + 4 : 0);
   const d0 = wsv.d0, d1 = wsv.d1, X = d => L + (d - d0) / (d1 - d0) * plotW;
   g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
@@ -2463,28 +2621,42 @@ function wsDrawNow() {
     const x = Math.round(X(wsv.hover)) + 0.5;
     g.strokeStyle = "rgba(163,22,49,.8)"; g.beginPath(); g.moveTo(x, T); g.lineTo(x, h - B); g.stroke();
   }
-  wsDrawPrint(plotW);
+  return plotW;
 }
 
-const wsPrintTiles = WsTiles(() => wsDraw());
+// The printout's column(s) for a card, depth across on the card's window. A
+// column at its own proportions is a sliver when the log is zoomed out (an
+// oil-show column is 8 pt wide), so each is stretched to a height that shows
+// it, and squeezed when zoomed in so far it would stand taller than 520 px.
 const WS_PRINT_MIN = 160;
-function wsDrawPrint(plotW) {
-  const P = wsv.P;
-  if (!P) return;
-  const { L } = WS_M, d0 = wsv.d0, d1 = wsv.d1;
+function wsDrawRef(cv, plotW, ref, key, onScreen) {
+  const P = wsv.P, { L } = WS_M, d0 = wsv.d0, d1 = wsv.d1, GAP = 4;
   const pxPerM = plotW / (d1 - d0);
-  if (!(pxPerM > 0) || !isFinite(pxPerM)) return;
-  // at its own proportions, zoomed out, the curve chart is a sliver: it is
-  // stretched to at least WS_PRINT_MIN tall
-  const own = Math.round(P.width_pt * pxPerM / P.pt_per_m);
-  const bandH = Math.max(WS_PRINT_MIN, own);
-  const { g, w, h, dpr } = wsCanvas($("wsprint"), bandH);
+  if (!P || !(pxPerM > 0) || !isFinite(pxPerM)) return;
+  const bands = ref.parts.map(pt => {
+    const own = Math.round(pt.wPt * pxPerM / P.pt_per_m);
+    const minH = pt.wPt < 20 ? 44 : pt.wPt < 60 ? 90 : WS_PRINT_MIN;
+    return { pt, own, h: Math.max(minH, Math.min(520, own)) };
+  });
+  const H = bands.reduce((a, b) => a + b.h, 0) + GAP * (bands.length - 1);
+  const { g, w, h, dpr } = wsCanvas(cv, H);
   g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
   const X = d => L + (d - d0) * pxPerM;
-  g.save(); g.beginPath(); g.rect(L, 0, plotW, h); g.clip();
-  wsPrintTiles.draw(g, { id: wsv.id, P, d0, d1, X, top: 0, h, pxPerM, dpr,
-                         w: own < WS_PRINT_MIN ? Math.round(h * dpr) : 0 });
-  g.restore();
+  let y = 0;
+  bands.forEach((b, i) => {
+    g.save(); g.beginPath(); g.rect(L, y, plotW, b.h); g.clip();
+    if (onScreen)
+      wsTilesFor(key + "#" + i).draw(g, { id: wsv.id, P, d0, d1, X, top: y, h: b.h, pxPerM, dpr,
+        w: b.own === b.h ? 0 : Math.round(b.h * dpr), across: b.pt.across,
+        ovW: b.pt.wPt < 20 ? 96 : b.pt.wPt < 60 ? 200 : 480 });
+    else { g.fillStyle = "#f4f5f7"; g.fillRect(L, y, plotW, b.h); }
+    g.restore();
+    g.strokeStyle = "#d2d6db"; g.lineWidth = 1; g.strokeRect(L + 0.5, y + 0.5, plotW - 1, b.h - 1);
+    g.fillStyle = "#3a4048"; g.font = "600 10.5px -apple-system,'Segoe UI',system-ui,sans-serif";
+    g.textAlign = "right"; g.textBaseline = "middle";
+    wsRowLabel(g, b.pt.label, L - 6, y + Math.min(b.h / 2, 14), L - 8);
+    y += b.h + GAP;
+  });
   if (wsv.hover != null && wsv.hover >= d0 && wsv.hover <= d1) {
     const x = Math.round(X(wsv.hover)) + 0.5;
     g.strokeStyle = "rgba(163,22,49,.8)"; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
@@ -2492,53 +2664,57 @@ function wsDrawPrint(plotW) {
 }
 
 // ---- mouse: hover reads, drag moves, Ctrl/⌘ + wheel zooms ----
+// Every card's canvases answer alike; the cards come and go with the sets
+// switched on, so each canvas is wired as it is made.
+let wsDrag = null;
+function wsDepthAt(cv, clientX) {
+  const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
+  return wsv.d0 + (clientX - r.left - WS_M.L) / plotW * (wsv.d1 - wsv.d0);
+}
+function wsBindCanvas(cv) {
+  cv.addEventListener("mousemove", e => {
+    if (!wsv) return;
+    if (wsDrag) {
+      const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
+      const dd = (e.clientX - wsDrag.x) / plotW * (wsDrag.d1 - wsDrag.d0);
+      wsSetWindow(wsDrag.d0 - dd, wsDrag.d1 - dd);
+      return;
+    }
+    const d = wsDepthAt(cv, e.clientX);
+    wsv.hover = d >= wsv.d0 && d <= wsv.d1 ? d : null;
+    wsReadout(); wsDraw();
+  });
+  cv.addEventListener("mouseleave", () => {
+    if (!wsv || wsDrag) return;
+    wsv.hover = null; wsReadout(); wsDraw();
+  });
+  cv.addEventListener("mousedown", e => {
+    if (!wsv || e.button !== 0) return;
+    wsDrag = { x: e.clientX, d0: wsv.d0, d1: wsv.d1 };
+    cv.classList.add("drag"); e.preventDefault();
+  });
+  cv.addEventListener("dblclick", () => { if (wsv) wsSetWindow(wsv.p.top, wsv.p.bottom); });
+  cv.addEventListener("wheel", e => {
+    if (!wsv) return;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      wsZoomAt(wsDepthAt(cv, e.clientX), Math.pow(1.0015, e.deltaY));
+    } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      e.preventDefault();
+      wsPan((e.deltaX || e.deltaY) / 800);
+    }
+  }, { passive: false });
+}
 (function wsMouse() {
-  const depthAt = (cv, clientX) => {
-    const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
-    return wsv.d0 + (clientX - r.left - WS_M.L) / plotW * (wsv.d1 - wsv.d0);
-  };
-  let drag = null;
-  for (const id of ["wsgraph", "wsprint"]) {
-    const cv = $(id);
-    cv.addEventListener("mousemove", e => {
-      if (!wsv) return;
-      if (drag) {
-        const r = cv.getBoundingClientRect(), plotW = r.width - WS_M.L - WS_M.R;
-        const dd = (e.clientX - drag.x) / plotW * (drag.d1 - drag.d0);
-        wsSetWindow(drag.d0 - dd, drag.d1 - dd);
-        return;
-      }
-      const d = depthAt(cv, e.clientX);
-      wsv.hover = d >= wsv.d0 && d <= wsv.d1 ? d : null;
-      wsReadout(); wsDraw();
-    });
-    cv.addEventListener("mouseleave", () => {
-      if (!wsv || drag) return;
-      wsv.hover = null; wsReadout(); wsDraw();
-    });
-    cv.addEventListener("mousedown", e => {
-      if (!wsv || e.button !== 0) return;
-      drag = { x: e.clientX, d0: wsv.d0, d1: wsv.d1 };
-      cv.classList.add("drag"); e.preventDefault();
-    });
-    cv.addEventListener("dblclick", () => { if (wsv) wsSetWindow(wsv.p.top, wsv.p.bottom); });
-    cv.addEventListener("wheel", e => {
-      if (!wsv) return;
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        wsZoomAt(depthAt(cv, e.clientX), Math.pow(1.0015, e.deltaY));
-      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        e.preventDefault();
-        wsPan((e.deltaX || e.deltaY) / 800);
-      }
-    }, { passive: false });
-  }
   window.addEventListener("mouseup", () => {
-    if (!drag) return;
-    drag = null;
-    for (const id of ["wsgraph", "wsprint"]) $(id).classList.remove("drag");
+    if (!wsDrag) return;
+    wsDrag = null;
+    document.querySelectorAll("#wspairs canvas.drag").forEach(c => c.classList.remove("drag"));
   });
   window.addEventListener("resize", () => { if (wsv && !$("wspane").hidden) { wsSyncSliders(); wsDraw(); } });
+  // a card scrolled into view fetches its printout column
+  const right = $("wspane").closest(".right");
+  if (right) right.addEventListener("scroll", () => { if (wsv && !$("wspane").hidden) wsDraw(); }, { passive: true });
   $("wszoom").addEventListener("input", () => {
     const full = wsv.p.bottom - wsv.p.top, mn = wsMinLen();
     const len = full * Math.pow(mn / full, Number($("wszoom").value) / 1000);
@@ -2562,7 +2738,7 @@ function wsMsg(t, bad) {
 function wsPrintoutChanged(entry, printout) {
   entry.ws.printout = printout;
   wellsightLine(entry);
-  if (current && current.entry === entry) showWellsight(entry, current.item);
+  if (current && current.entry === entry) wsShowActive(entry);
 }
 $("wsprintbtn").addEventListener("click", async () => {
   const entry = current && current.entry;
@@ -2765,27 +2941,22 @@ function enqueue(files) {
   const fixes = {};
   for (const f of files) {
     const n = f.name.toLowerCase();
-    if (dropMode !== "csv" && n.endsWith(".fix.txt")) fixes[n.slice(0, -8)] = f;
+    if (n.endsWith(".fix.txt")) fixes[n.slice(0, -8)] = f;
   }
   // A WellSight log (StripLog / HorizontalLog) goes to the LAS reader, and a
   // PDF dropped WITH it under the same name is its LogViewer printout, not a
   // frac report: "0005--LAT.hl6" + "0005--LAT.pdf" is one log and its print.
   const logs = {}, printouts = new Set();
-  if (dropMode !== "csv")
-    for (const f of files)
-      if (isWellsightName(f.name)) logs[stemOf(f.name)] = f;
+  for (const f of files)
+    if (isWellsightName(f.name)) logs[stemOf(f.name)] = f;
   for (const f of files) {
     const n = f.name.toLowerCase();
-    if (dropMode !== "csv" && n.endsWith(".pdf") && logs[stemOf(f.name)])
+    if (n.endsWith(".pdf") && logs[stemOf(f.name)])
       printouts.add(f);
   }
   for (const f of files) {
     const n = f.name.toLowerCase();
-    if (dropMode === "csv") {
-      if (n.endsWith(".csv")) loadCsvFile(f);
-      else refused.push(f.name);
-      continue;
-    }
+    if (n.endsWith(".csv")) { loadCsvFile(f); continue; }     // already data: parsed, not extracted
     if (printouts.has(f)) continue;                 // travels with its log
     if (isWellsightName(f.name)) {
       if (!isLocal()) {
@@ -3981,16 +4152,12 @@ $("viewtoggle").addEventListener("click", e => {
 });
 
 function selectItem(entry, well, item, rowEl) {
+  if (item && item.type === "wsset") return wsShowActive(entry);   // its sets are switched on, not selected
   document.querySelectorAll(".stagerow.sel").forEach(r => r.classList.remove("sel"));
   if (rowEl) rowEl.classList.add("sel");
   scopeFile = (entry && entry.name) || "";
   current = { entry, well, item };
   $("empty").hidden = true;
-  if (item.type === "wsset") {               // a WellSight log's data set
-    $("previewpane").hidden = true;
-    showWellsight(entry, item);
-    return;
-  }
   $("wspane").hidden = true;
   $("previewpane").hidden = false;
   if (item.type === "stage") showStage(entry, well, item);
@@ -9557,6 +9724,9 @@ function navStage(dir) {
     const e = dir > 0 ? list[0] : list[list.length - 1];
     selectFile(e);                      // lands on its first item
     if (dir < 0) showLast(e);
+  } else if (current.item && current.item.type === "wsset") {
+    navFile(dir);                       // a log's sets are switched on, not stepped through
+    return;
   } else {
     const entry = current.entry;
     const i = entry.items.indexOf(current.item);
@@ -9709,15 +9879,15 @@ const FLAG_ENDPOINT = (location.hostname === "127.0.0.1" ||
 function flagSnapshot() {
   // a WellSight log has its own panel: its curve chart and printout band
   const ws = !!(current && current.item && current.item.type === "wsset");
-  const parts = (ws ? [$("wsgraph"), $("wsprint")] : [$("graph"), $("origgraph")]).filter(
-    c => c && c.width && !c.closest(".canvaswrap").hidden);
+  const parts = (ws ? [...document.querySelectorAll("#wspairs canvas")] : [$("graph"), $("origgraph")]).filter(
+    c => c && c.width && !c.hidden && !(c.closest(".canvaswrap") || {}).hidden);
   if (!parts.length) return null;
   const W = Math.max(...parts.map(c => c.width));
   const title = $(ws ? "ws-title" : "pv-title").textContent.trim();
   const sub = $(ws ? "ws-sub" : "pv-sub").textContent.trim();
   // ">" matters: each chip nests a span for the value, and matching both
   // repeats every reading twice in the header.
-  const legend = [...document.querySelectorAll(ws ? "#ws-legend > span" : "#pv-legend > span")]
+  const legend = [...document.querySelectorAll(ws ? "#wspairs .wspairhead .legend > span" : "#pv-legend > span")]
     .map(e => e.textContent.replace(/\s+/g, " ").trim()).filter(Boolean);
   const notes = ($(ws ? "ws-notes" : "pv-notes").textContent || "").split("\n")
     .map(t => t.trim()).filter(Boolean).slice(0, 4);
@@ -9820,7 +9990,8 @@ function flagDiagnostics() {
       version: (localInfo && localInfo.version) || "web",
       build: localInfo && localInfo.local ? "desktop" : "web",
       provider: "WellSight " + p.app + " " + p.version, file: e.name, path: "",
-      chart: it.label, well: p.well, licence: p.licence, uwi: p.uwi,
+      chart: wsv && wsv.items ? wsv.items.map(x => x.label).join(", ") : it.label,
+      well: p.well, licence: p.licence, uwi: p.uwi,
       depth: `${p.top}-${p.bottom} m ${p.axis} (${p.axis_basis})`, scale: p.scale,
       view: wsv ? `${wsv.d0.toFixed(2)}-${wsv.d1.toFixed(2)} m` : "",
       // the flag server prints flat fields and a channels table, so the
@@ -9829,7 +10000,8 @@ function flagDiagnostics() {
         axis: `track ${c.track || "-"}, recorded every ${c.recorded_step} m`,
         peak: wsv && wsv.ranges[k] ? `drawn ${wsFmt(wsv.ranges[k][0])}..${wsFmt(wsv.ranges[k][1])}` : "" })),
       lithologyIntervals: p.lithology.length,
-      dataSet: it.key || "curves",
+      dataSet: wsv && wsv.items ? wsv.items.map(x => x.key).join(", ") : it.key || "curves",
+      printoutColumns: P && P.tracks ? P.tracks.map(t => `${t.title} ${t.x0}-${t.x1}${t.snapped ? "" : "?"}`).join("; ") : "",
       symbols: p.analysis ? `${p.analysis.symbols} symbols, ${p.analysis.unknown_symbols} not in the vocabulary; `
         + `${(p.analysis.show_zones || []).length} show zones; ${(p.symbolIntervals || []).length} column intervals; `
         + `rocks ${(p.analysis.rocks || []).map(r => r.name + " " + r.m + " m").join(", ")}` : "",
