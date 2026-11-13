@@ -27,28 +27,14 @@ Standard library only.
 """
 import re
 
+import log_vocab as V
 import wellsight_symbols as W
 
 # ---------------------------------------------------------------- vocabulary
 
 # rock words a description segment starts with -> wellsight_symbols rock term
-_ROCKS = {
-    "sandstone": "SS|SST|SDST|SNDST|SAND|SANDSTONE|SANDSTONES",
-    "siltstone": "SLTST|SLST|SILTSTONE|SILTSTONES|SLTSTN",
-    "shale": "SH|SHL|SHALE|SHALES",
-    "claystone": "CLYST|CLAYSTONE|CLAY",
-    "mudstone": "MDST|MUDSTONE",
-    "limestone": "LS|LST|LMST|LIMESTONE|LIME|LMSTN",
-    "dolomite": "DOL|DOLO|DOLOMITE|DOLOSTONE|DOLST",
-    "anhydrite": "ANHY|ANHYD|ANHYDRITE",
-    "chert": "CHT|CHERT",
-    "coal": "COAL",
-    "marlstone": "MRLST|MARLSTONE|MARL",
-    "salt": "SALT|HALITE",
-    "gypsum": "GYP|GYPSUM",
-    "conglomerate": "CGL|CONGL|CONGLOMERATE",
-    "cement": "CEMENT|CMT",
-}
+# (log_vocab.txt [rock word])
+_ROCKS = {e.key: "|".join(e.spellings) for e in V.entries("rock word")}
 _ROCK_OF = {}
 for _t, _ws in _ROCKS.items():
     for _w in _ws.split("|"):

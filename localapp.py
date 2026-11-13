@@ -204,7 +204,8 @@ _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "logs_from_las.py", "pad_inputs_from_bcer.py",
                  # WellSight logs have their own path and no cached analyses
                  "wellsight_app.py", "wellsight_print.py", "wellsight_logviewer.py",
-                 "wellsight_server.py", "wellsight_library.py"}
+                 "wellsight_server.py", "wellsight_library.py", "wellsight_symbols.py",
+                 "wellsight_descriptions.py", "wellsight_layout.py", "log_vocab.py"}
 
 
 def code_stamp():

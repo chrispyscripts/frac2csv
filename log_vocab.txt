@@ -1,0 +1,638 @@
+# frac2csv log vocabulary: what the names on well logs mean.
+#
+# One list for every reader of well logs: the WellSight log files now, PDF
+# printouts next. Each line names a thing by its key, then the spellings that
+# mean it:
+#
+#     key | Name | extra = spelling, spelling, ...
+#
+# "| Name" and "| extra" may be left out; what extra means is said at the top
+# of each section. A line that starts with spaces carries on the line above.
+# Case, spaces and punctuation are ignored when a name is looked up (units
+# keep their punctuation). A spelling with a comma in it goes in double quotes.
+# Lines starting with # are notes.
+#
+# A spelling may mean only one thing in a section. Check the file with
+#     python3 -m unittest tests.test_log_vocab
+# and list the spellings a folder of converted logs uses that are not here yet
+# with
+#     python3 -I validation-tools/log_vocab_harvest.py FOLDER
+#
+# Names only: never a well's name, location or licence, nor a person's name.
+# The repository is public.
+
+# ====================================================================== symbols
+#
+# A WellSight log's symbols: the rock column, the accessories (minerals,
+# fossils, stringers, textures) and the other symbols (porosity type,
+# sorting, rounding, oil shows, intervals, events, slide / rotate). Each file
+# carries its own symbol library, so one thing has many codes; these are the
+# codes the 8,954 logs of the WellSight drive use. A printout's legend prints
+# the same codes beside each pattern.
+
+# A symbol category as files name it -> the group it belongs to.
+[category]
+rock                   = LITHOLOGY, LOGLITH
+mineral                = MINERAL, ACCESSORYMINERALS, LITHOLOGYRJM
+fossil                 = FOSSIL, FOSSILROCKBUILDER
+stringer               = STRINGER
+texture                = TEXTURE, DUNHAM, CRYSTALLINITY, CARBONATECLASSIFICATION, FABRIC
+porosity               = POROSITY, POROSITYTYPE
+sorting                = SORTING
+rounding               = ROUNDING, SPHERICITY
+show                   = OILSHOW, OILSHOWS, OILGASSHOW
+interval               = INTERVAL, INTERVALS, CORETESTS, CORETEST
+quality                = RESERVOIRQUALITY
+event                  = EVENT, EVENTS, DRILLINGEVENTS
+directional            = DIRECTIONAL, ACTION, SLIDE, ORIENTSLIDE, SLIDEROTATE
+perm                   = PERMSNEIDERCLASTICS, ARCHIECLASSCARBS
+photo                  = PHOTOS
+misc                   = FLOATING, OTHER, SEDSTRUCTURES, STRUCTURAL
+
+# A symbol filed under one group that belongs to another:
+# the group it belongs to = group:code, ...
+[refile]
+show                   = mineral:OILSTAIN, mineral:BITUMEN
+directional            = event:SLIDE, event:ROTATE
+misc                   = misc:UNCON, texture:UNCON
+
+# One section per group: term | name | rank = codes. Rank is the place on the
+# group's scale where it has one: show strength 0 dead .. 4 strong, sorting
+# 1 poor .. 3 well, rounding 1 angular .. 4 rounded, reservoir quality 0 none
+# .. 5 excellent.
+[rock]
+sandstone             | Sandstone                    = SS, SANDSTONE, SNDST, SAND, SST, SDST, SSSLTST
+siltstone             | Siltstone                    = SLTST, SILTSTONE, SILT, SLST, SLT, SLTARG
+    DOLCSLTST2, SLTSDY3
+shale                 | Shale                        = SHALE, SH, SHL, SHGY, SHCOL, GYSH, REDSH, SHALEGREY, SHGREY,
+    SHALEGRAY, BLKSH, SHBLK, LTGYSH, DKGYSH, SLTSH, REDBEDS
+    COLSH, GNSH, SHRED, SHGRN, RDBED
+mudstone              | Mudstone                     = MUDSTONE, MDST, MUDST
+claystone             | Claystone                    = CLYST, CLAYSTONE, CLAY
+limestone             | Limestone                    = LMST, LS, LIMESTONE, LIME, LST, LMS, GRLMS, LMSBUFF,
+    CALCARENITE
+dolomite              | Dolomite                     = DOL, DOLO, DOLOMITE, DOL2, DOLST, CALCDOL
+anhydrite             | Anhydrite                    = ANHY, ANHYDRITE, ANH
+gypsum                | Gypsum                       = GYP, GYPSUM
+salt                  | Salt                         = SALT, HALITE
+carnallite            | Carnallite                   = CARNALLITE, CARNAL1
+sylvite               | Sylvite (potash)             = SYLVITE, SYLLG520, SYLHG20
+coal                  | Coal                         = COAL
+chert                 | Chert                        = CHT, CHERT, DKCHT
+conglomerate          | Conglomerate                 = CONGL, CGL, CONGLOMERATE
+breccia               | Breccia                      = BREC, BRECCIA
+marlstone             | Marlstone                    = MRLST, MRST, MARL, MARLSTONE
+bentonite             | Bentonite                    = BENT, BENTONITE
+till                  | Till                         = TILL
+igneous               | Igneous                      = IGNE, IGNEOUS
+metamorphic           | Metamorphic                  = META, METAMORPHIC
+cement                | Cement                       = CEMENT, CMT
+blank                 | No sample                    = BLANK, NONE, NOSAMPLE, MISSEDSAMPLE
+    MISSEDSMPL
+
+[mineral]
+pyrite                | Pyrite                       = PYR, PYRITE, PYRITIC
+dolomitic             | Dolomitic                    = DOL, DOLOMITE, DOLOMITIC, DOLSMALL, DOLSUCROSIC, DOLC, DOL2
+argillaceous          | Argillaceous                 = ARG, ARGILLACEOUS, ARGILLITEGRAIN, CLAY, CLAYEY
+argillaceous_grains   | Argillaceous grains          = ARGGRN
+calcareous            | Calcareous                   = CALC, CALCAREOUS, CALCITE, CALCSMALL
+anhydritic            | Anhydritic                   = ANHY, ANHYDRITIC, ANHYSMALL, ANHYDRITE
+sandy                 | Sandy                        = SANDY, ARENACEOUS, SAND, SDY
+silty                 | Silty                        = SILT, SILTY, SILTREDBED, SLTCOL
+siliceous             | Siliceous                    = SIL, SILICEOUS, SILICA
+quartz                | Quartz grains                = QTZ, QRTZ, QRTZGRN, QTZGRS, QTZGRN, QUARTZ
+carbonaceous          | Carbonaceous                 = CARB, CARBONACEOUS, ORGANICS
+illite                | Illite                       = ILLITE, ILITE
+hematite              | Hematite                     = HEMATITE
+stylolites            | Stylolites                   = STYLOLITE, STYLOLITES
+carnallite            | Carnallite                   = CARNALLITE
+lithics_dark          | Dark lithics                 = LITHDRK, DRKLITH
+glauconite            | Glauconite                   = GLAU, GLAU2, GLAUC, GLAUCONITE, GLAUCONITIC
+chert_light           | Chert, light                 = CHTLT, CHERTLIGHT
+chert_dark            | Chert, dark                  = CHTDK, CHERTDARK, CHTGY
+chert                 | Chert                        = CHT, CHERT
+heavy_minerals        | Heavy minerals               = HVYMIN, HEAVYMINERAL, HEAVYMINERALS
+ferruginous           | Ferruginous                  = FERR, FERRUGINOUS, FERRPEL, FERRUGINOUSPELOIDS
+bitumen               | Bitumen                      = BIT, BITUMINOUS, BITUMEN
+kaolinite             | Kaolinite                    = KAOL, KAOLINITE, KAOLINITIC
+marly                 | Marly                        = MARL, MARLY
+bentonitic            | Bentonitic                   = BENT, BENTONITIC
+sideritic             | Sideritic                    = SID, SIDERITE, SIDERITIC
+phosphatic            | Phosphatic                   = PHOS, PHOSPHATIC
+feldspar              | Feldspar                     = FELDSPAR, FELD, FELDSP
+mica                  | Mica                         = MICA, MICACEOUS, MMICA, MICMICA
+    MICROMICA
+chlorite              | Chlorite                     = CHLORITE, CHLOR
+nodules               | Nodules                      = NODULE, NODULES
+salt                  | Salt                         = SALT
+sulphur               | Sulphur                      = SULPHUR, SULFUR
+tuff                  | Tuff                         = TUFF
+crystals              | Mineral crystals             = MINXL, MINERALCRYSTALS
+breccia_fragments     | Breccia fragments            = BRECFRAG, BRECCIATEDFRAG
+plant_remains         | Plant remains                = PLANTREMAINS
+gypsum                | Gypsum                       = GYP, GYPSUM
+exposure              | Subaerial exposure           = MSSPEXPOSURE
+
+[fossil]
+oolites               | Oolites                      = OOLITE, OOLITES, OOL
+bioclasts             | Bioclasts                    = BIOCLST, BIOCLAST, BIOCLASTIC, BIOCLASTS
+fossils               | Fossils (undifferentiated)   = FOSSIL, FOSSILS, FOSSILUNDIFF
+algae                 | Algae                        = ALGAE, ALGAL
+pellets               | Pellets                      = PELLET, PELLETS
+crinoids              | Crinoids                     = CRIN, CRINOID, CRINOIDS
+pelecypods            | Pelecypods                   = PELEC, PELECYPOD, PELECYPODS
+fish_remains          | Fish remains                 = FISH, FISHREMAINS
+pisolites             | Pisolites                    = PISOLITE, PISOLITES
+brachiopods           | Brachiopods                  = BRACH, BRACHIOPOD, BRACHIOPODS
+forams                | Foraminifera                 = FORAM, FORAMS, FORAMINIFERA
+plant_remains         | Plant remains                = PLANT, PLANTREMAINS
+corals                | Corals                       = CORAL, CORALS
+gastropods            | Gastropods                   = GASTRO, GASTROPOD, GASTROPODS
+stromatoporoids       | Stromatoporoids              = STROM, STROMATOPOROID
+ostracods             | Ostracods                    = OSTRA, OSTRACOD, OSTRACODS
+echinoids             | Echinoids                    = ECHIN, ECHINOID, ECHINOIDS
+spicules              | Spicules                     = SPICULES, SPIC
+belemnites            | Belemnites                   = BELM, BELEMNITE, BELEMNITES
+inoceramus            | Inoceramus                   = INOCERAMOUS, INOCERAMUS, INOCERAM
+bryozoa               | Bryozoa                      = BRYOZOA
+amphipora             | Amphipora                    = AMPH, AMPHIPORA
+cephalopods           | Cephalopods                  = CEPHAL, CEPHALOPOD
+
+[stringer]
+argillaceous          | Shale / argillaceous         = ARG, ARGILLACEOUS, ARGILLITE, SHALE, SHL, SH, ARGLTGY, ARGDRK
+sandstone             | Sandstone                    = SSSTRG, SS, SANDSTONE
+siltstone             | Siltstone                    = SLTSTRG, SLTST, SILTSTONE, SLTARGSTRNG
+    SLTSTSDY
+claystone             | Claystone                    = CLAYSTONE, CLYST
+dolomite              | Dolomite                     = DOL, DOLOMITE
+chert                 | Chert                        = CHT, CHERT, CHERTLAM
+siderite              | Siderite                     = SIDERITE, SID
+limestone             | Limestone                    = LS, LIMESTONE, LMST
+anhydrite             | Anhydrite                    = ANHY, ANHYDRITE
+marlstone             | Marlstone                    = MRST, MRLST, MARLSTONE
+coal                  | Coal                         = COAL
+bentonite             | Bentonite                    = BENT, BENTONITE
+gypsum                | Gypsum                       = GYP, GYPSUM
+
+[texture]
+mudstone              | Mudstone                     = MUDST, MUDSTONE
+wackestone            | Wackestone                   = WACKEST, WACKESTONE
+packstone             | Packstone                    = PACKST, PACKSTONE
+grainstone            | Grainstone                   = GRAINST, GRAINSTONE
+boundstone            | Boundstone                   = BOUNDST, BOUNDSTONE
+chalky                | Chalky                       = CHALKY
+earthy                | Earthy                       = EARTHY
+cryptocrystalline     | Cryptocrystalline            = CRYXLN, CRPXL, CRYPTOXLN, CRYPTOCRYSTALLINE
+microcrystalline      | Microcrystalline             = MICROXLN, MICROXL, MICROCRYSTALLINE
+finely_crystalline    | Finely crystalline           = FINEXLN, FINEXL, VERYFINECRYXLN
+crystalline           | Crystalline                  = CRYSTALLINE, XLN
+lithographic          | Lithographic                 = LITHOGR, LITHOGRAPHIC
+micritic              | Micritic                     = MICRITIC
+sucrosic              | Sucrosic                     = SUCROSIC
+oolitic               | Oolitic                      = OOLITE
+
+[porosity]
+intergranular         | Intergranular                = INTER, INTERGRANULAR, INTGRANULAR, INTERGRAN, INTGRAN,
+    GRANULAR, INTERGRANXL
+intercrystalline      | Intercrystalline             = INTXL, INTXLN, INTERXLN, INTERXL, INTERCRYSTALLINE
+interparticle         | Interparticle                = INTERPARTICLE
+interfragmental       | Interfragmental              = INTERFRAGMENTAL, INTFRAG
+vuggy                 | Vuggy                        = VUGGY, VUG, VUGS
+pinpoint              | Pinpoint                     = PINPOINT, PINPT
+moldic                | Moldic                       = MOLDIC, MOULDIC
+fracture              | Fracture                     = FRACTURE, FRACTURED, FRAC
+earthy                | Earthy                       = EARTHY
+fenestral             | Fenestral                    = FENEST, FENESTRAL
+organic               | Organic                      = ORGANIC
+intraoolitic          | Intra-oolitic                = INTOOL, INTRAOOLITIC
+questionable          | Questionable                 = QUESTIONABLE, QUES
+
+[sorting]
+poor                  | Poorly sorted               | 1 = POOR, POORLYSORTED, POORLY
+moderate              | Moderately sorted           | 2 = MODERATE, MODERATELYSORTED, MOD
+moderately_well       | Moderately well sorted      | 2.5 = MODLYWELL, MODWELL, MODERATELYWELLSORTED, MODERATELYWELL
+well                  | Well sorted                 | 3 = WELL, WELLSORTED
+
+[rounding]
+angular               | Angular                     | 1 = ANGULAR, ANG
+subangular            | Subangular                  | 2 = SUBANG, SUBANGULAR, SBANG
+subangular_subrounded | Subangular to subrounded    | 2.5 = SBANGSBRND, SUBANGSUBRND
+subrounded            | Subrounded                  | 3 = SUBRND, SUBROUNDED, SBRND
+rounded               | Rounded                     | 4 = ROUNDED, RND
+
+[show]
+dead                  | Dead oil                    | 0 = DEAD, DEADOIL
+bitumen               | Bitumen                     | 0 = BITUMEN, BIT
+questionable          | Questionable                | 1 = QUES, QUESTIONABLE, QUEST, TRACE
+weak                  | Weak                        | 2 = WEAK, SLOWWEAK, WEAKFLOR, POOR
+spotted               | Spotted stain               | 2 = SPOTTED, SPOT, SPOTTY, PATCHY, SPOTTYPATCHY, VSPOTTY
+stain                 | Oil stain                   | 2 = OILSTAIN, STAIN, STAINED
+fluorescence          | Fluorescence                | 2 = VISFLOR, VISIBLEFLUORESCENCE, FLUORESCENCE, FLOR, FLUOR,
+    MINERLFL, VISFL, VISIBLEFLORESENCE, FLORESENCE, SCATFLR, FLR, FL
+cut                   | Cut                         | 2 = CUT, VISIBLECUT, MILKYCUT, LIGHTBLUECUT, YELLGOLDCUT,
+    BWHITEBCUT, BWCUT, DULLBWCUT
+moderate              | Moderate                    | 3 = MODERATE, MODERATEMODERATE, MOD, FAIR
+even                  | Even stain                  | 3 = EVEN, OILSAT
+strong                | Strong                      | 4 = STRONG, FASTSTRONG, STRGFLOR, GOOD, EXCELLENT
+none                  | Nothing                      = NONE, BLANK
+
+[interval]
+core                  | Core                         = CORE, CORED
+dst                   | Drill stem test              = DST
+slide                 | Slide                        = SLIDE, SLIDES, SLIDEHZ, ORIENTSLIDE, ORIENT
+rotate                | Rotate                       = ROTATE
+none                  | Nothing                      = NONE, BLANK, NIL, NILL
+
+[quality]
+none                  | None                        | 0 = NONE, NON, NIL, BLANK
+very_poor             | Very poor                   | 1 = VERYPOOR
+poor                  | Poor                        | 2 = POOR
+marginal              | Marginal                    | 2.5 = MARGINAL
+fair                  | Fair                        | 3 = FAIR
+good                  | Good                        | 4 = GOOD
+excellent             | Excellent                   | 5 = EXCELLENT
+
+[event]
+connection_gas        | Connection gas               = CONNECTION, CONNECTIONGAS, CONGAS
+casing                | Casing point                 = CASING, CASINGHOR, CASING2, CSGSHOE, CASINGSHOE, ICP
+rft                   | RFT                          = RFT
+sidewall              | Sidewall core                = SIDEWALL
+trip                  | Trip                         = TRIP
+bit                   | Bit change                   = BIT, BIT4, PDCBIT, BUTTONBIT, BITCHANGE
+motor                 | Motor change                 = MOTOR
+survey                | Survey                       = SURVEYSYMBOL, SURVEY
+gas_detector_failure  | Gas detector failure         = GASDETFAILURE
+formation_gas         | Formation gas                = FORMATIONGAS
+burst_port            | Burst port                   = FIRSTBURSTPORT
+photo                 | Photo                        = PHOTO
+top                   | Top (drilling)               = TOPDRILLING
+none                  | Nothing                      = NONE, NILL, NIL, BLANK
+
+[directional]
+slide                 | Slide                        = SLIDE, SLIDES, SLIDEHZ, ORIENTSLIDE
+rotate                | Rotate                       = ROTATE
+none                  | Nothing                      = NONE, BLANK
+
+# The words some logs add to a rock's code ("SS ARG", "SLTST SDY"):
+# modifier = codes
+[rock modifier]
+argillaceous           = ARG
+sandy                  = SDY
+silty                  = SLTY, SILTY
+calcareous             = CALC
+dolomitic              = DOL
+grey                   = GY, GREY, GRAY
+red                    = RED, REDBED
+shaly                  = SH, SHY
+carbonaceous           = CARB
+glauconitic            = GLAU
+anhydritic             = ANHY
+
+# The rock words a written description starts a segment with ("SH (90%): gy ..."):
+# rock = words
+[rock word]
+sandstone              = SS, SST, SDST, SNDST, SAND, SANDSTONE, SANDSTONES
+siltstone              = SLTST, SLST, SILTSTONE, SILTSTONES, SLTSTN
+shale                  = SH, SHL, SHALE, SHALES
+claystone              = CLYST, CLAYSTONE, CLAY
+mudstone               = MDST, MUDSTONE
+limestone              = LS, LST, LMST, LIMESTONE, LIME, LMSTN
+dolomite               = DOL, DOLO, DOLOMITE, DOLOSTONE, DOLST
+anhydrite              = ANHY, ANHYD, ANHYDRITE
+chert                  = CHT, CHERT
+coal                   = COAL
+marlstone              = MRLST, MARLSTONE, MARL
+salt                   = SALT, HALITE
+gypsum                 = GYP, GYPSUM
+conglomerate           = CGL, CONGL, CONGLOMERATE
+cement                 = CEMENT, CMT
+
+# The columns and tracks that hold each group, by their titles:
+# group = titles
+[column]
+mineral                = Mineral
+fossil                 = Fossil
+stringer               = Stringer
+texture                = Texture
+    Fabric
+porosity               = Porosity Type
+show                   = Oil Shows, Oil Show, Shows, Show
+    Oil/Gas Shows
+sorting                = Sorting
+rounding               = Rounding
+    Sphericity
+interval               = Intervals, Interval
+event                  = Events, Event
+directional            = Slide, Slide/Rotate, Slide / Rotate, Rotate
+    Slides
+photo                  = Photos, Photo
+quality                = Reservoir Quality, Quality
+grain                  = Grain Size
+eng                    = Eng. Data, Engineering Data
+    Eng. Data 2, Eng Data, Eng Data/Comments, Eng. Data/Comments, Eng / Mud Data, Eng. and Mud Data, ENG DATA (Black), Drilling Notes, Gas Comments, Gas Data
+descriptions           = Geol. Descrs., Geological Descriptions, Descriptions
+    Geol. Descrs. and Formation Tops, Descr. - Tops
+
+# ====================================================================== curves
+#
+# What a curve is, from the name printed over its scale or stored in a log
+# file. key | name | the unit it is usually in = spellings
+#
+# A name not listed whole is taken apart before it is looked up again (see
+# log_vocab.curve): a well location in it ("1A1-1 GR REC") is taken out and
+# noted, so are a leg, run or sidetrack number, the company that ran it
+# ([curve source]), words saying which version it is ([curve qualifier]), a
+# unit in brackets and a trailing number. What is left must then be listed
+# here whole; nothing is guessed from part of a name.
+
+[curve]
+gamma                 | Gamma ray                    | API     = Gamma, GR, Gamma Ray, Gama, Gamm, Gam, GM, GammaRay,
+    GRGM, GRGC, GRC, GRCA, GRP, GR1AX, GR1AFX, GR2AFM, GRAFM, GRSG, GSGR, G-GR, GR_CAL
+rop                   | Drill time (rate of penetration) | min/m = ROP, ROPA, Drill Time, Drilling Time, Penetration Rate,
+    Rate of Penetration, Drill Rate, Drilling Rate
+total_gas             | Total gas                    | units   = Total Gas, TG, TGas, TotalGas, Gas, Gas Analyzer, Gas Readings,
+    Gas Units, Mud Gas, Gas Total
+    GT
+methane               | Methane (C1)                 | units   = Methane, C1, Meth, C1-Methane, Methane C1, Methane Gas, C1 Methane
+    MG
+ethane                | Ethane (C2)                  | units   = Ethane, C2, C2-Ethane, Ethane C2, C2 Ethane
+# "C2-Propane" is propane: on the logs that use it, it reads 0.41 of methane,
+# as "Propane (C3)" does (0.39); the "C2" is the second gas channel
+propane               | Propane (C3)                 | units   = Propane, C3, Prop, C3-Propane, Propane C3, C2-Propane, C3 Propane
+butane                | Butane (C4)                  | units   = Butane, C4, iC4, nC4, Butane C4, C4-Butane, C4 Butane
+pentane               | Pentane (C5)                 | units   = Pentane, C5, iC5, nC5, Pentane C5, C5-Pentane, C5 Pentane
+heavy_gas             | Heavy gas (C2+)              | units   = Heavy Gas, Heavies, Heaviest, Heavy Gases
+co2                   | Carbon dioxide               | %       = CO2, Carbon Dioxide
+h2s                   | Hydrogen sulphide            | ppm     = H2S, Hydrogen Sulphide, Hydrogen Sulfide
+gas_ratio             | Gas ratio                    |         = Ratio, Gas Ratio, C1/C3, C1/C3 B Ratio, C3/(C1+C3)*100,
+    C3/(C1+C3)*100 W Ratio, B Ratio, W Ratio, Wetness Ratio, Balance Ratio
+mud_weight            | Mud weight                   | kg/m3   = Mud Weight, Mud Wt, MW, Mud Density, MudDensity
+wob                   | Weight on bit                | daN     = WOB, Weight on Bit, Wt on Bit, Wt. on Bit, WT ON BIT., Bit Weight
+torque                | Torque                       |         = Torque
+rpm                   | Rotary speed                 | rpm     = RPM, Rotary, Rotary Speed
+spp                   | Standpipe pressure           | kPa     = SPP, Standpipe Pressure, Pump Pressure
+diff_pressure         | Differential pressure        | kPa     = Diff Pres, Diff Press, Differential Pressure
+neutron_porosity      | Neutron porosity             | %       = NPHI, Neutron Porosity, Neutron Por, Neut Por, NPOR, NPSS, NPRL, NPDL,
+    PHIN, PHINSS, NPOR_SAN, Thermal Neutron Porosity, CNLS, CNSS, Neut. Por.
+density_porosity      | Density porosity             | %       = DPHI, Density Porosity, Density Por, Den Por, Dens Por, Dens. Por.,
+    DPOR, DPSS, DPRL, DPDL
+    PORLSS
+bulk_density          | Bulk density                 | kg/m3   = RHOB, Bulk Density, Density, DEN, LDEN, ZDEN
+density_correction    | Density correction           | kg/m3   = DRHO, Density Correction, Density Corr, DCOR
+    LCOR
+pe                    | Photoelectric factor         | b/e     = PE, PEF, P.E, P.E., Pe, Formation Pe, Photoelectric, Photoelectric Factor
+    PDPE, PECL
+sp                    | Spontaneous potential        | mV      = SP, Spontaneous Potential, Spotaneous Potential, Self Potential
+    SPU
+caliper               | Caliper                      | mm      = CALI, Caliper, CAL, CAL2, CALX, CALY, Caliper X, Caliper Y, X Caliper,
+    Y Caliper, YCAL, XCAL
+    CLLDMM, CLCNMM
+sonic                 | Sonic (delta-t)              | us/m    = Sonic, DT, Delta-T, Delta T, Interval Transit Time
+    CDTM
+deep_resistivity      | Deep resistivity             | ohm.m   = Deep, Deep Resistivity, Deep Res., Res. Deep, Rt Deep, Deep Ind.,
+    Deep Induction, ILD, RILD, ILD Deep Induction, Deep Ind
+    DDLL, DVR2, DVC2, RACLX, RACLM, RPCLM, Deep STI
+medium_resistivity    | Medium resistivity           | ohm.m   = Med, Medium, Medium Resistivity, Med Res., Res. Med, Med Induction,
+    Medium Induction, Med. Ind., Med Ind, ILM, RILM, ILM Medium Induction
+    MVR2, Medium STI
+shallow_resistivity   | Shallow resistivity          | ohm.m   = Shallow, Shallow Resistivity, Shallow Res., Res. Shallow, Shallow Induction,
+    SFL, SFL Resistivity, SFL Shallow Focused Res, LL3, MSFL
+    DSLL, DISFL, SFLR, RPCHX, RPCHM
+# resistivity whose depth of reading the name does not say in words
+resistivity           | Resistivity                  | ohm.m   = Resistivity, Res, AT10, AT20, AT30, AT60, AT90, AIT-H, RDPH, RSPH, RDAH,
+    RSAH, Array Induction Resistivity, Invaded Formation Resistivity
+    SFLAEC
+md                    | Measured depth               | m       = MD, DEPT, Depth, Measured Depth
+tvd                   | True vertical depth          | m       = TVD, True Vertical Depth
+
+# Words that say which version of a curve it is. They are kept with the curve
+# (its qualifiers), not used to find it. key | name = spellings
+[curve qualifier]
+realtime              | Real time                    = RT, Real Time, Realtime, Real-Time
+memory                | Memory / recorded            = REC, Recorded, MEM, Memory
+mwd                   | MWD                          = MWD, EM
+wireline              | Wireline                     = Wireline, WL, Wireline Log
+tvd                   | Against TVD                  = TVD
+md                    | Against MD                   = MD
+uptrack               | Up track                     = Uptrack, Up Track, U/T, UPTrack
+downtrack             | Down track                   = Downtrack, Down Track, D/T
+up                    | Up (azimuthal)               = Up, Top, HS, High Side
+down                  | Down (azimuthal)             = Down, Bottom, Bot, Low Side
+azimuthal             | Azimuthal                    = AZ, AZI, Azimuthal
+average               | Average                      = Average, Avg
+relog                 | Re-logged                    = Relog, Re-log, Relogged, Re-logged
+scaled                | Scaled                       = Scaled, Reduced Scale Factor
+original              | Original                     = Original, Old
+new                   | New                          = New
+actual                | Actual                       = Actual
+imported              | Imported                     = Import, Imported
+corrected             | Depth corrected              = Depth Corrected, Depth Adj, Depth Adjusted, Corrected
+offset                | Offset well                  = Offset
+build                 | Build section                = Build
+lateral               | Lateral section              = Lateral
+matrix_limestone      | Limestone matrix             = LS, Lime, Limestone, for Lime, Ls
+matrix_sandstone      | Sandstone matrix             = SS, Sandstone, Sand, for Sand, SST
+matrix_dolomite       | Dolomite matrix              = Dolomite, Dol, for Dolomite
+detector_ir           | Infrared detector            = IR
+detector_filament     | Filament / hot-wire detector = Filament, Hot Wire, Hotwire, Catalytic
+frequency_400khz      | 400 kHz                      = 400 kHz, 400 KHz
+frequency_2mhz        | 2 MHz                        = 2 MHz, 2 Mhz
+frequency_20khz       | 20 kHz                       = 20K, 20 kHz
+# words that say nothing about the curve: dropped
+noise                 | (ignored)                    = Curve, Log, Line, Logging, for
+
+# Companies and services whose name heads a curve's ("Pason Gas", "Weatherford
+# Gamma"). key | name = spellings
+[curve source]
+pason                 | Pason                        = Pason
+continental           | Continental Laboratories     = Continental Labs, Continental Laboratories, Continental
+totco                 | Totco                        = Totco
+pacesetter            | Pacesetter                   = Pacesetter
+weatherford           | Weatherford                  = Weatherford, WF
+ryan                  | Ryan                         = Ryan
+cathedral             | Cathedral                    = Cathedral
+tucker                | Tucker                       = Tucker
+enseco                | Enseco                       = Enseco
+baker                 | Baker Hughes                 = Baker, Baker Hughes
+schlumberger          | Schlumberger                 = Schlumberger, SLB
+ensign                | Ensign                       = Ensign
+halliburton           | Halliburton                  = Halliburton
+
+# ====================================================================== units
+#
+# key | name = spellings. Case and spaces are ignored. A sample spacing written
+# after the unit ("AAPI/0.1m", "min/0.5 m", "%/0.2m") and a scale written
+# after it ("units/10000") are taken off first: on the 8,954 logs, drill time
+# in "min/0.5 m" reads as "min/m" does (median 1.1 to 1.4 against 1.5), so it
+# is the spacing, not minutes per half metre.
+
+[unit]
+API                   | API units                    = API, Api, GAPI, AAPI, APPI, AP!, AAP!, API units
+cps                   | Counts per second            = cps, counts/s, counts per second
+min/m                 | Minutes per metre            = min/m, min/meter, min/metre, mins/m, min
+    min/fifth m
+m/h                   | Metres per hour              = m/h, m/hr, m/hour
+ft/h                  | Feet per hour                = ft/h, ft/hr, fph
+m/min                 | Metres per minute            = m/min
+# gas units are not turned into %: how many units make 1 % depends on the
+# detector (on these logs total gas in units runs about 45 times total gas in %)
+units                 | Gas units                    = units, unit, gas units
+    un
+%                     | Percent                      = %, percent, per cent, pct, pu, p.u.
+    percentage, percent %
+ppm                   | Parts per million            = ppm
+v/v                   | Fraction                     = v/v, frac, dec, m3/m3
+kg/m3                 | Kilograms per cubic metre    = kg/m3, kg/m^3
+    kg/m³, k/m³, k/m3
+g/cm3                 | Grams per cubic centimetre   = g/cm3, g/cc, gm/cc, g/c3
+daN                   | Decanewtons                  = daN
+kdaN                  | Kilodecanewtons              = kdaN
+    Da*N x 000's
+kN                    | Kilonewtons                  = kN
+kN.m                  | Kilonewton-metres            = kN.m, kNm, kN-m
+ft.lbf                | Foot-pounds                  = ft.lbf, ft-lbs, ft-lb, ft.lbs
+kPa                   | Kilopascals                  = kPa
+MPa                   | Megapascals                  = MPa
+psi                   | Pounds per square inch       = psi
+# "Ohms" on these logs labels resistivity curves, which are in ohm-metres
+ohm.m                 | Ohm-metres                   = ohm.m, ohm-m, ohmm, ohm m, ohmmeters, ohm-meters, ohms, ohm
+    ohm/m, omh-m
+mV                    | Millivolts                   = mV
+    millivolts
+us/m                  | Microseconds per metre       = us/m, usec/m
+    microsec/m, microseconds/m
+us/ft                 | Microseconds per foot        = us/ft, usec/ft
+b/e                   | Barns per electron           = b/e
+mm                    | Millimetres                  = mm
+    millimeters, millimetres
+in                    | Inches                       = in, inch, inches
+m                     | Metres                       = m, metre, metres, meter, meters
+ft                    | Feet                         = ft, feet
+rpm                   | Revolutions per minute       = rpm, rev/min
+m3                    | Cubic metres                 = m3, m³
+
+# from = to, formula (x is the value in the "from" unit)
+[convert]
+m/h                   = min/m, 60 / x
+ft/h                  = min/m, 196.85 / x
+m/min                 = min/m, 1 / x
+ft                    = m, x * 0.3048
+g/cm3                 = kg/m3, x * 1000
+kdaN                  = daN, x * 1000
+kN                    = daN, x * 100
+MPa                   = kPa, x * 1000
+psi                   = kPa, x * 6.894757
+ft.lbf                = kN.m, x * 0.0013558
+v/v                   = %, x * 100
+us/ft                 = us/m, x * 3.28084
+in                    = mm, x * 25.4
+
+# ====================================================================== tracks and columns
+#
+# Titles of tracks that hold curves, as logs and their printouts name them.
+[curve track]
+curves                | Curve track                  = Data Curves, Data Curve, Curve Track, Curve Track 1, Data Records,
+    Drilling Track, Drilling Data, Drilling, Drill Data, Data, Pason Data, Pason Data Curves, Drilling Curves,
+    Drilling Traces, ROP Data Curves, Drilling Data and Curves, LAS Data, Eng Data and Gamma, ROP/GAS/GR,
+    ROP-Gas-GR, ROP/Gas, ROP / Gas / Gamma, ROP/GAS/GAMMA/SP, Total Gas and ROP, Drilling Time & Total Gas,
+    Drilling Progress, Progress, Penetration Rate, Gamma Ray, Gamma, MWD GR, TVD Gamma, Gamma TVD Log, GR vs TVD,
+    Offset Gamma, Actual Gamma, "SP, Gamma Ray", Pason Gas Analyzer, "TG, C1-C5", TG C1-C5, "MUD LOGS (TG, C1-C5)",
+    Total Gas, Gas, Resistivity, Resistivity (Ohm-m), Resistivity (ohm m), Resistivity Curves, Resistivity Log,
+    Resistivity Logs, TVD Resistivity, Triple Induction, Induction, Neutron-Density, Neutron / Density,
+    Neutron / Density Porosity, Netron Density Porosity, Neutron Porosity, Porosity Log, Porosity Logs, AZ GM Curve
+    ROP, PE, Gas Readings
+
+# The depth column's title. key | name = spellings
+[depth column]
+md                    | Measured depth               = Depth, DEPT, Measured Depth, MD, DEPTHM, Curve.DEPT, Curve.DEPTH,
+    Log.DEPT, MD Depth, Depth (m)
+tvd                   | True vertical depth          = TVD, MTVD, MTTVD, TVD_Depth, Curve.TVD, TVD Depth, True Vertical Depth
+
+# ====================================================================== header
+#
+# The labels of a log's header page. key | name = spellings. A label that
+# means different things in different boxes is written BOX:Label ("Company"
+# in the OPERATOR box is the operator, in the GEOLOGIST box the geologist's
+# company); log_vocab.header tries the box's first. The keys are the field
+# names wellsight-convert writes in its JSON "header".
+[header]
+well_name             | Well name                    = Well Name
+well_id               | Well ID                      = Well Id, Well ID
+uwi                   | UWI                          = UWI, Unique Well Identifier, Unique Well ID
+location              | Surface location             = Location, Surface Location, Surface Loc, Surface Loc.
+bottom_hole_location  | Bottom hole location         = Bottom Hole Location, BH Location, BHL
+licence               | Licence                      = License Number, Licence Number, Well Licence No., Well License No.,
+    Licence No., License No., Licence, License, Licence #, License #, Well Licence, Well License
+region                | Region / field               = Region, Field, Area, Field Area, Field/Area
+spud_date             | Spud date                    = Spud Date, Spud, Date Spudded
+completion_date       | Drilling completed           = Drilling Completed, Rig Release, Rig Release Date, Rig Released,
+    Date Completed, Completion Date, TD Date
+surface_coordinates   | Surface coordinates          = Surface Coordinates
+bottom_hole_coordinates | Bottom hole coordinates    = Bottom Hole Coordinates, BH Coordinates, Bottom Hole
+    Toe Coordinates
+ground_elevation      | Ground elevation             = Ground Elevation, Ground, GL, G.L., Grd Elev, Grd. Elev., Ground Elev,
+    Ground Elev., GR Elev, ELEVATIONS:Ground
+kb_elevation          | KB elevation                 = K.B. Elevation, KB Elevation, K.B., KB, KB Elev, K.B. Elev.,
+    Kelly Bushing, KB Elev., ELEVATIONS:K.B.
+logged_interval       | Logged interval              = Logged Interval, Interval Logged, Logged Interval From
+total_depth           | Total depth                  = Total Depth, TD, T.D., Total Depth MD
+formation             | Formation                    = Formation, Target Formation, Objective
+start_formation       | Start formation              = Start Formation, Lateral Section Start Formation
+terminating_formation | Terminating formation        = Terminating Formation, Treminating Formation, TD Formation,
+    Lateral Section Terminating Formation, Latearal Section Terminating Formation
+drilling_fluid        | Drilling fluid               = Type of Drilling Fluid, Drilling Fluid, Mud Type, Mud System, Fluid Type
+operator              | Operator                     = Operator, Licensee, OPERATOR:Company
+geologist             | Geologist                    = Geologist, Wellsite Geologist, Wellsite Geologists,
+    Wellsite Consultants / Geologists, Wellsite Consultants/Geologists, Wellsite Geologist / Consultant,
+    Wellsite Geologist/Consultant, GEOLOGIST:Name
+geologist_company     | Geologist's company          = Geological Consultant, GEOLOGIST:Company
+drilling_contractor   | Drilling contractor          = Drilling Contractor, Contractor, Rig Contractor, DRILLING:Contractor,
+    DRILLING:Company
+rig                   | Rig                          = Rig No., Rig No, Rig #, Rig Number, Rig, DRILLING:Rig
+afe                   | AFE                          = AFE, AFE No., AFE #, AFE Number
+kick_off_depth        | Kick-off depth               = Kick Off Depth, Kick-off Depth, KOP, Kick Off Point, Kick-off Point
+    KOP Depth
+landing_depth         | Landing depth                = Landing Depth, Landing Point Depth, Heel Landing Depth,
+    Build Section Landing Depth, Landing Point
+landing_coordinates   | Landing point coordinates    = Landing Depth Coordinates, Landing Point Depth Coordinates,
+    Landing Point Coordinates, Heel Coordinates
+start_depth           | Start depth                  = Start Depth
+start_coordinates     | Start coordinates            = Start Coordinates
+start_date            | Start date                   = Start Date
+lateral_length        | Lateral length               = Lateral Length, Lateral Section Length
+max_inclination       | Maximum inclination          = Maximum Inclination, Max Inclination, Maximum Deviation,
+    Max Deviation, Max. Inclination
+vertical_section_plane | Vertical section plane      = Vertical Section Plane, Plane of Vertical Section,
+    Vertcal Section Plane, VS Plane, Lateral Section Vertical Section Plane
+vertical_section      | Vertical section             = Vertical Section, Total Vertical Section
+drilling_supervisor   | Drilling supervisor          = Drilling Supervisor, Drilling Supervision, Wellsite Supervisor,
+    Company Man
+rig_manager           | Rig manager                  = Rig Manager, Toolpush, Toolpusher
+directional_company   | Directional company          = Directional Company, Directional Drillers, Directional Services,
+    DIRECTIONAL:Company
+mwd_company           | MWD company                  = MWD Company, MWD Operators, MWD Operator, MWD Services
+company_contact       | Company contact              = Company Contact
+
+# The titled boxes a header page is laid out in. key | name = spellings
+[header box]
+well_info             | Well information             = Well Info, Well Information, Well Data
+operator              | Operator                     = Operator
+geologist             | Geologist                    = Geologist, Wellsite Geologist, Geology
+drilling              | Drilling                     = Drilling, Drilling Contractor, Rig
+    Rig Info, Rig Information, Contractors
+directional           | Directional                  = Directional, Directional Services, Directional Drilling
+    Directonal, Directioanl, Direction
+comments              | Comments                     = Comments, Remarks, Notes
+logs                  | Logs                         = Logs, Logs Run, Logging
+    Logs / Misc., Logs/Misc
+casing                | Casing                       = Casing, Casing Program
+cores                 | Cores                        = Core, Cores, Coring
+samples               | Samples                      = Samples, Sample Description
+eng_data              | Engineering data             = Eng. Data, Engineering Data, Eng Data
+hole_info             | Hole information             = Hole Info, Hole Information
+mwd                   | MWD                          = MWD, MWD Info
+personnel             | Personnel                    = Personnel
+dst                   | Drill stem tests             = DSTs, DST, Drill Stem Tests
+summary               | Summary                      = Summary
+legend                | Legend                       = Rock Constituents, Constituents, Carbonates Classification,
+    Carbonates, Modifiers, Legend

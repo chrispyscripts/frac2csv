@@ -34,18 +34,11 @@ if _VENDOR not in sys.path:
 
 import wellsight as ws        # noqa: E402
 
-# A data set's group -> the column names (lower case) that hold it.
-GROUP_COLUMNS = {
-    "mineral": ("mineral",), "fossil": ("fossil",), "stringer": ("stringer",),
-    "texture": ("texture",), "porosity": ("porosity type",),
-    "show": ("oil shows", "oil show", "shows", "show"),
-    "sorting": ("sorting",), "rounding": ("rounding",),
-    "interval": ("intervals", "interval"), "event": ("events", "event"),
-    "directional": ("slide", "slide/rotate", "slide / rotate", "rotate"),
-    "photo": ("photos", "photo"), "quality": ("reservoir quality", "quality"),
-    "grain": ("grain size",), "eng": ("eng. data", "engineering data"),
-    "descriptions": ("geol. descrs.", "geological descriptions", "descriptions"),
-}
+import log_vocab as V         # noqa: E402
+
+# A data set's group -> the column names (lower case) that hold it
+# (log_vocab.txt [column]).
+GROUP_COLUMNS = {e.key: tuple(s.strip().lower() for s in e.spellings) for e in V.entries("column")}
 _ACCESSORY = ("mineral", "fossil", "stringer", "texture")
 SNAP_PT = 2.0                   # how far a track's edge may land from a line
 

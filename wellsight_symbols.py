@@ -32,6 +32,8 @@ import math
 import re
 import statistics
 
+import log_vocab as V
+
 # ---------------------------------------------------------------- groups
 
 # group -> (label, data set). The data sets are the printout legend's three
@@ -58,8 +60,8 @@ GROUPS = {
 # photo's caption): kept as they are, not counted as unknown
 PASSTHROUGH = {"perm", "photo", "misc"}
 # a symbol filed under one group that belongs to another: (group, code) -> group
-_REFILE = {("mineral", "OILSTAIN"): "show", ("mineral", "BITUMEN"): "show", ("event", "SLIDE"): "directional",
-           ("event", "ROTATE"): "directional", ("misc", "UNCON"): "misc", ("texture", "UNCON"): "misc"}
+_REFILE = {(g, V.norm(c)): e.key for e in V.entries("refile")
+           for g, c in (s.split(":", 1) for s in e.spellings)}
 DATASETS = {
     "rocks": "Rock Types",
     "accessories": "Accessories",
@@ -72,27 +74,8 @@ def _key(s):
     return re.sub(r"[^A-Z0-9]+", "", str(s or "").upper())
 
 
-# a category as files name it -> group
-_CATEGORY = {
-    "LITHOLOGY": "rock", "LOGLITH": "rock",
-    "MINERAL": "mineral", "ACCESSORYMINERALS": "mineral", "LITHOLOGYRJM": "mineral",
-    "FOSSIL": "fossil", "FOSSILROCKBUILDER": "fossil",
-    "STRINGER": "stringer",
-    "TEXTURE": "texture", "DUNHAM": "texture", "CRYSTALLINITY": "texture",
-    "CARBONATECLASSIFICATION": "texture", "FABRIC": "texture",
-    "POROSITY": "porosity", "POROSITYTYPE": "porosity",
-    "SORTING": "sorting",
-    "ROUNDING": "rounding", "SPHERICITY": "rounding",
-    "OILSHOW": "show", "OILSHOWS": "show", "OILGASSHOW": "show",
-    "INTERVAL": "interval", "INTERVALS": "interval", "CORETESTS": "interval",
-    "CORETEST": "interval",
-    "RESERVOIRQUALITY": "quality",
-    "EVENT": "event", "EVENTS": "event", "DRILLINGEVENTS": "event",
-    "DIRECTIONAL": "directional", "ACTION": "directional", "SLIDE": "directional",
-    "ORIENTSLIDE": "directional", "SLIDEROTATE": "directional",
-    "PERMSNEIDERCLASTICS": "perm", "ARCHIECLASSCARBS": "perm",
-    "PHOTOS": "photo",
-}
+# a category as files name it -> group (log_vocab.txt [category])
+_CATEGORY = {V.norm(s): e.key for e in V.entries("category") for s in e.spellings}
 
 
 def group_of(category):
@@ -101,225 +84,14 @@ def group_of(category):
 
 # ---------------------------------------------------------------- terms
 
-# group -> [(term, name, rank or None, [raw codes as _key gives them])]
-# Rank is the place on the group's scale where it has one: show strength
-# 0 dead .. 4 strong, sorting 1 poor .. 3 well, rounding 1 angular ..
-# 4 rounded, reservoir quality 0 none .. 5 excellent.
-_TERMS = {
-    "rock": [
-        ("sandstone", "Sandstone", None, ["SS", "SANDSTONE", "SNDST", "SAND", "SST", "SDST", "SSSLTST"]),
-        ("siltstone", "Siltstone", None, ["SLTST", "SILTSTONE", "SILT", "SLST", "SLT", "SLTARG"]),
-        ("shale", "Shale", None, ["SHALE", "SH", "SHL", "SHGY", "SHCOL", "GYSH", "REDSH", "SHALEGREY",
-                                 "SHGREY", "SHALEGRAY", "BLKSH", "SHBLK", "LTGYSH", "DKGYSH", "SLTSH",
-                                 "REDBEDS"]),
-        ("mudstone", "Mudstone", None, ["MUDSTONE", "MDST", "MUDST"]),
-        ("claystone", "Claystone", None, ["CLYST", "CLAYSTONE", "CLAY"]),
-        ("limestone", "Limestone", None, ["LMST", "LS", "LIMESTONE", "LIME", "LST", "LMS", "GRLMS",
-                                         "LMSBUFF", "CALCARENITE"]),
-        ("dolomite", "Dolomite", None, ["DOL", "DOLO", "DOLOMITE", "DOL2", "DOLST", "CALCDOL"]),
-        ("anhydrite", "Anhydrite", None, ["ANHY", "ANHYDRITE", "ANH"]),
-        ("gypsum", "Gypsum", None, ["GYP", "GYPSUM"]),
-        ("salt", "Salt", None, ["SALT", "HALITE"]),
-        ("coal", "Coal", None, ["COAL"]),
-        ("chert", "Chert", None, ["CHT", "CHERT", "DKCHT"]),
-        ("conglomerate", "Conglomerate", None, ["CONGL", "CGL", "CONGLOMERATE"]),
-        ("breccia", "Breccia", None, ["BREC", "BRECCIA"]),
-        ("marlstone", "Marlstone", None, ["MRLST", "MRST", "MARL", "MARLSTONE"]),
-        ("bentonite", "Bentonite", None, ["BENT", "BENTONITE"]),
-        ("till", "Till", None, ["TILL"]),
-        ("igneous", "Igneous", None, ["IGNE", "IGNEOUS"]),
-        ("metamorphic", "Metamorphic", None, ["META", "METAMORPHIC"]),
-        ("cement", "Cement", None, ["CEMENT", "CMT"]),
-        ("blank", "No sample", None, ["BLANK", "NONE", "NOSAMPLE", "MISSEDSAMPLE"]),
-    ],
-    "mineral": [
-        ("pyrite", "Pyrite", None, ["PYR", "PYRITE", "PYRITIC"]),
-        ("dolomitic", "Dolomitic", None, ["DOL", "DOLOMITE", "DOLOMITIC", "DOLSMALL", "DOLSUCROSIC", "DOLC",
-                                         "DOL2"]),
-        ("argillaceous", "Argillaceous", None, ["ARG", "ARGILLACEOUS", "ARGILLITEGRAIN", "CLAY", "CLAYEY"]),
-        ("argillaceous_grains", "Argillaceous grains", None, ["ARGGRN"]),
-        ("calcareous", "Calcareous", None, ["CALC", "CALCAREOUS", "CALCITE", "CALCSMALL"]),
-        ("anhydritic", "Anhydritic", None, ["ANHY", "ANHYDRITIC", "ANHYSMALL", "ANHYDRITE"]),
-        ("sandy", "Sandy", None, ["SANDY", "ARENACEOUS", "SAND", "SDY"]),
-        ("silty", "Silty", None, ["SILT", "SILTY", "SILTREDBED", "SLTCOL"]),
-        ("siliceous", "Siliceous", None, ["SIL", "SILICEOUS", "SILICA"]),
-        ("quartz", "Quartz grains", None, ["QTZ", "QRTZ", "QRTZGRN", "QTZGRS", "QTZGRN", "QUARTZ"]),
-        ("carbonaceous", "Carbonaceous", None, ["CARB", "CARBONACEOUS", "ORGANICS"]),
-        ("illite", "Illite", None, ["ILLITE", "ILITE"]),
-        ("hematite", "Hematite", None, ["HEMATITE"]),
-        ("stylolites", "Stylolites", None, ["STYLOLITE", "STYLOLITES"]),
-        ("carnallite", "Carnallite", None, ["CARNALLITE"]),
-        ("lithics_dark", "Dark lithics", None, ["LITHDRK", "DRKLITH"]),
-        ("glauconite", "Glauconite", None, ["GLAU", "GLAU2", "GLAUC", "GLAUCONITE", "GLAUCONITIC"]),
-        ("chert_light", "Chert, light", None, ["CHTLT", "CHERTLIGHT"]),
-        ("chert_dark", "Chert, dark", None, ["CHTDK", "CHERTDARK", "CHTGY"]),
-        ("chert", "Chert", None, ["CHT", "CHERT"]),
-        ("heavy_minerals", "Heavy minerals", None, ["HVYMIN", "HEAVYMINERAL", "HEAVYMINERALS"]),
-        ("ferruginous", "Ferruginous", None, ["FERR", "FERRUGINOUS", "FERRPEL", "FERRUGINOUSPELOIDS"]),
-        ("bitumen", "Bitumen", None, ["BIT", "BITUMINOUS", "BITUMEN"]),
-        ("kaolinite", "Kaolinite", None, ["KAOL", "KAOLINITE", "KAOLINITIC"]),
-        ("marly", "Marly", None, ["MARL", "MARLY"]),
-        ("bentonitic", "Bentonitic", None, ["BENT", "BENTONITIC"]),
-        ("sideritic", "Sideritic", None, ["SID", "SIDERITE", "SIDERITIC"]),
-        ("phosphatic", "Phosphatic", None, ["PHOS", "PHOSPHATIC"]),
-        ("feldspar", "Feldspar", None, ["FELDSPAR", "FELD", "FELDSP"]),
-        ("mica", "Mica", None, ["MICA", "MICACEOUS", "MMICA", "MICMICA"]),
-        ("nodules", "Nodules", None, ["NODULE", "NODULES"]),
-        ("salt", "Salt", None, ["SALT"]),
-        ("sulphur", "Sulphur", None, ["SULPHUR", "SULFUR"]),
-        ("tuff", "Tuff", None, ["TUFF"]),
-        ("crystals", "Mineral crystals", None, ["MINXL", "MINERALCRYSTALS"]),
-        ("breccia_fragments", "Breccia fragments", None, ["BRECFRAG", "BRECCIATEDFRAG"]),
-        ("plant_remains", "Plant remains", None, ["PLANTREMAINS"]),
-        ("gypsum", "Gypsum", None, ["GYP", "GYPSUM"]),
-        ("exposure", "Subaerial exposure", None, ["MSSPEXPOSURE"]),
-    ],
-    "fossil": [
-        ("oolites", "Oolites", None, ["OOLITE", "OOLITES", "OOL"]),
-        ("bioclasts", "Bioclasts", None, ["BIOCLST", "BIOCLAST", "BIOCLASTIC", "BIOCLASTS"]),
-        ("fossils", "Fossils (undifferentiated)", None, ["FOSSIL", "FOSSILS", "FOSSILUNDIFF"]),
-        ("algae", "Algae", None, ["ALGAE", "ALGAL"]),
-        ("pellets", "Pellets", None, ["PELLET", "PELLETS"]),
-        ("crinoids", "Crinoids", None, ["CRIN", "CRINOID", "CRINOIDS"]),
-        ("pelecypods", "Pelecypods", None, ["PELEC", "PELECYPOD", "PELECYPODS"]),
-        ("fish_remains", "Fish remains", None, ["FISH", "FISHREMAINS"]),
-        ("pisolites", "Pisolites", None, ["PISOLITE", "PISOLITES"]),
-        ("brachiopods", "Brachiopods", None, ["BRACH", "BRACHIOPOD", "BRACHIOPODS"]),
-        ("forams", "Foraminifera", None, ["FORAM", "FORAMS", "FORAMINIFERA"]),
-        ("plant_remains", "Plant remains", None, ["PLANT", "PLANTREMAINS"]),
-        ("corals", "Corals", None, ["CORAL", "CORALS"]),
-        ("gastropods", "Gastropods", None, ["GASTRO", "GASTROPOD", "GASTROPODS"]),
-        ("stromatoporoids", "Stromatoporoids", None, ["STROM", "STROMATOPOROID"]),
-        ("ostracods", "Ostracods", None, ["OSTRA", "OSTRACOD", "OSTRACODS"]),
-        ("echinoids", "Echinoids", None, ["ECHIN", "ECHINOID", "ECHINOIDS"]),
-        ("spicules", "Spicules", None, ["SPICULES", "SPIC"]),
-        ("belemnites", "Belemnites", None, ["BELM", "BELEMNITE", "BELEMNITES"]),
-        ("inoceramus", "Inoceramus", None, ["INOCERAMOUS", "INOCERAMUS", "INOCERAM"]),
-        ("bryozoa", "Bryozoa", None, ["BRYOZOA"]),
-        ("amphipora", "Amphipora", None, ["AMPH", "AMPHIPORA"]),
-        ("cephalopods", "Cephalopods", None, ["CEPHAL", "CEPHALOPOD"]),
-    ],
-    "stringer": [
-        ("argillaceous", "Shale / argillaceous", None, ["ARG", "ARGILLACEOUS", "ARGILLITE", "SHALE", "SHL",
-                                                       "SH", "ARGLTGY", "ARGDRK"]),
-        ("sandstone", "Sandstone", None, ["SSSTRG", "SS", "SANDSTONE"]),
-        ("siltstone", "Siltstone", None, ["SLTSTRG", "SLTST", "SILTSTONE", "SLTARGSTRNG"]),
-        ("dolomite", "Dolomite", None, ["DOL", "DOLOMITE"]),
-        ("chert", "Chert", None, ["CHT", "CHERT", "CHERTLAM"]),
-        ("siderite", "Siderite", None, ["SIDERITE", "SID"]),
-        ("limestone", "Limestone", None, ["LS", "LIMESTONE", "LMST"]),
-        ("anhydrite", "Anhydrite", None, ["ANHY", "ANHYDRITE"]),
-        ("marlstone", "Marlstone", None, ["MRST", "MRLST", "MARLSTONE"]),
-        ("coal", "Coal", None, ["COAL"]),
-        ("bentonite", "Bentonite", None, ["BENT", "BENTONITE"]),
-        ("gypsum", "Gypsum", None, ["GYP", "GYPSUM"]),
-    ],
-    "texture": [
-        ("mudstone", "Mudstone", None, ["MUDST", "MUDSTONE"]),
-        ("wackestone", "Wackestone", None, ["WACKEST", "WACKESTONE"]),
-        ("packstone", "Packstone", None, ["PACKST", "PACKSTONE"]),
-        ("grainstone", "Grainstone", None, ["GRAINST", "GRAINSTONE"]),
-        ("boundstone", "Boundstone", None, ["BOUNDST", "BOUNDSTONE"]),
-        ("chalky", "Chalky", None, ["CHALKY"]),
-        ("earthy", "Earthy", None, ["EARTHY"]),
-        ("cryptocrystalline", "Cryptocrystalline", None, ["CRYXLN", "CRPXL", "CRYPTOXLN",
-                                                         "CRYPTOCRYSTALLINE"]),
-        ("microcrystalline", "Microcrystalline", None, ["MICROXLN", "MICROXL", "MICROCRYSTALLINE"]),
-        ("finely_crystalline", "Finely crystalline", None, ["FINEXLN", "FINEXL", "VERYFINECRYXLN"]),
-        ("crystalline", "Crystalline", None, ["CRYSTALLINE", "XLN"]),
-        ("lithographic", "Lithographic", None, ["LITHOGR", "LITHOGRAPHIC"]),
-        ("micritic", "Micritic", None, ["MICRITIC"]),
-        ("sucrosic", "Sucrosic", None, ["SUCROSIC"]),
-        ("oolitic", "Oolitic", None, ["OOLITE"]),
-    ],
-    "porosity": [
-        ("intergranular", "Intergranular", None, ["INTER", "INTERGRANULAR", "INTGRANULAR", "INTERGRAN",
-                                                 "INTGRAN", "GRANULAR", "INTERGRANXL"]),
-        ("intercrystalline", "Intercrystalline", None, ["INTXL", "INTXLN", "INTERXLN", "INTERXL",
-                                                       "INTERCRYSTALLINE"]),
-        ("interparticle", "Interparticle", None, ["INTERPARTICLE"]),
-        ("interfragmental", "Interfragmental", None, ["INTERFRAGMENTAL", "INTFRAG"]),
-        ("vuggy", "Vuggy", None, ["VUGGY", "VUG", "VUGS"]),
-        ("pinpoint", "Pinpoint", None, ["PINPOINT", "PINPT"]),
-        ("moldic", "Moldic", None, ["MOLDIC", "MOULDIC"]),
-        ("fracture", "Fracture", None, ["FRACTURE", "FRACTURED", "FRAC"]),
-        ("earthy", "Earthy", None, ["EARTHY"]),
-        ("fenestral", "Fenestral", None, ["FENEST", "FENESTRAL"]),
-        ("organic", "Organic", None, ["ORGANIC"]),
-        ("intraoolitic", "Intra-oolitic", None, ["INTOOL", "INTRAOOLITIC"]),
-        ("questionable", "Questionable", None, ["QUESTIONABLE", "QUES"]),
-    ],
-    "sorting": [
-        ("poor", "Poorly sorted", 1, ["POOR", "POORLYSORTED", "POORLY"]),
-        ("moderate", "Moderately sorted", 2, ["MODERATE", "MODERATELYSORTED", "MOD"]),
-        ("moderately_well", "Moderately well sorted", 2.5, ["MODLYWELL", "MODWELL", "MODERATELYWELLSORTED",
-                                                           "MODERATELYWELL"]),
-        ("well", "Well sorted", 3, ["WELL", "WELLSORTED"]),
-    ],
-    "rounding": [
-        ("angular", "Angular", 1, ["ANGULAR", "ANG"]),
-        ("subangular", "Subangular", 2, ["SUBANG", "SUBANGULAR", "SBANG"]),
-        ("subangular_subrounded", "Subangular to subrounded", 2.5, ["SBANGSBRND", "SUBANGSUBRND"]),
-        ("subrounded", "Subrounded", 3, ["SUBRND", "SUBROUNDED", "SBRND"]),
-        ("rounded", "Rounded", 4, ["ROUNDED", "RND"]),
-    ],
-    "show": [
-        # strength, as a show is graded; stain distribution and the two
-        # tests are attributes of the show (see SHOW_KIND)
-        ("dead", "Dead oil", 0, ["DEAD", "DEADOIL"]),
-        ("bitumen", "Bitumen", 0, ["BITUMEN", "BIT"]),
-        ("questionable", "Questionable", 1, ["QUES", "QUESTIONABLE", "QUEST", "TRACE"]),
-        ("weak", "Weak", 2, ["WEAK", "SLOWWEAK", "WEAKFLOR", "POOR"]),
-        ("spotted", "Spotted stain", 2, ["SPOTTED", "SPOT", "SPOTTY", "PATCHY", "SPOTTYPATCHY", "VSPOTTY"]),
-        ("stain", "Oil stain", 2, ["OILSTAIN", "STAIN", "STAINED"]),
-        ("fluorescence", "Fluorescence", 2, ["VISFLOR", "VISIBLEFLUORESCENCE", "FLUORESCENCE", "FLOR",
-                                            "FLUOR", "MINERLFL", "VISFL", "VISIBLEFLORESENCE", "FLORESENCE",
-                                            "SCATFLR", "FLR", "FL"]),
-        ("cut", "Cut", 2, ["CUT", "VISIBLECUT", "MILKYCUT", "LIGHTBLUECUT", "YELLGOLDCUT", "BWHITEBCUT",
-                          "BWCUT", "DULLBWCUT"]),
-        ("moderate", "Moderate", 3, ["MODERATE", "MODERATEMODERATE", "MOD", "FAIR"]),
-        ("even", "Even stain", 3, ["EVEN", "OILSAT"]),
-        ("strong", "Strong", 4, ["STRONG", "FASTSTRONG", "STRGFLOR", "GOOD", "EXCELLENT"]),
-        ("none", "Nothing", None, ["NONE", "BLANK"]),
-    ],
-    "interval": [
-        ("core", "Core", None, ["CORE", "CORED"]),
-        ("dst", "Drill stem test", None, ["DST"]),
-        ("slide", "Slide", None, ["SLIDE", "SLIDES", "SLIDEHZ", "ORIENTSLIDE", "ORIENT"]),
-        ("rotate", "Rotate", None, ["ROTATE"]),
-        ("none", "Nothing", None, ["NONE", "BLANK", "NIL", "NILL"]),
-    ],
-    "quality": [
-        ("none", "None", 0, ["NONE", "NON", "NIL", "BLANK"]),
-        ("very_poor", "Very poor", 1, ["VERYPOOR"]),
-        ("poor", "Poor", 2, ["POOR"]),
-        ("marginal", "Marginal", 2.5, ["MARGINAL"]),
-        ("fair", "Fair", 3, ["FAIR"]),
-        ("good", "Good", 4, ["GOOD"]),
-        ("excellent", "Excellent", 5, ["EXCELLENT"]),
-    ],
-    "event": [
-        ("connection_gas", "Connection gas", None, ["CONNECTION", "CONNECTIONGAS", "CONGAS"]),
-        ("casing", "Casing point", None, ["CASING", "CASINGHOR", "CASING2", "CSGSHOE", "CASINGSHOE", "ICP"]),
-        ("rft", "RFT", None, ["RFT"]),
-        ("sidewall", "Sidewall core", None, ["SIDEWALL"]),
-        ("trip", "Trip", None, ["TRIP"]),
-        ("bit", "Bit change", None, ["BIT", "BIT4", "PDCBIT", "BUTTONBIT", "BITCHANGE"]),
-        ("motor", "Motor change", None, ["MOTOR"]),
-        ("survey", "Survey", None, ["SURVEYSYMBOL", "SURVEY"]),
-        ("gas_detector_failure", "Gas detector failure", None, ["GASDETFAILURE"]),
-        ("formation_gas", "Formation gas", None, ["FORMATIONGAS"]),
-        ("burst_port", "Burst port", None, ["FIRSTBURSTPORT"]),
-        ("photo", "Photo", None, ["PHOTO"]),
-        ("top", "Top (drilling)", None, ["TOPDRILLING"]),
-        ("none", "Nothing", None, ["NONE", "NILL", "NIL", "BLANK"]),
-    ],
-    "directional": [
-        ("slide", "Slide", None, ["SLIDE", "SLIDES", "SLIDEHZ", "ORIENTSLIDE"]),
-        ("rotate", "Rotate", None, ["ROTATE"]),
-        ("none", "Nothing", None, ["NONE", "BLANK"]),
-    ],
-}
+# group -> [(term, name, rank or None, [raw codes as _key gives them])],
+# from log_vocab.txt, one section per group. Rank is the place on the
+# group's scale where it has one: show strength 0 dead .. 4 strong, sorting
+# 1 poor .. 3 well, rounding 1 angular .. 4 rounded, reservoir quality
+# 0 none .. 5 excellent.
+_TERMS = {g: [(e.key, e.name, V.rank(e.extra), list(e.spellings)) for e in V.entries(g)]
+          for g in V.SYMBOL_GROUPS}
+
 # show symbols: what each says beyond its strength
 SHOW_KIND = {"even": "stain", "spotted": "stain", "stain": "stain", "dead": "stain", "bitumen": "stain",
              "fluorescence": "fluorescence", "cut": "cut"}
@@ -342,9 +114,7 @@ for _g, _terms in _TERMS.items():
 # looked up in its own group first
 
 # the rock modifiers some logs fold into a rock's code ("SS ARG", "SLTST SDY")
-_ROCK_MODS = {"ARG": "argillaceous", "SDY": "sandy", "SLTY": "silty", "SILTY": "silty", "CALC": "calcareous",
-              "DOL": "dolomitic", "GY": "grey", "GREY": "grey", "GRAY": "grey", "RED": "red", "REDBED": "red",
-              "SH": "shaly", "SHY": "shaly", "CARB": "carbonaceous", "GLAU": "glauconitic", "ANHY": "anhydritic"}
+_ROCK_MODS = {c: e.key for e in V.entries("rock modifier") for c in e.spellings}
 _ROCK_COLORS = {
     "sandstone": "#f2d14b", "siltstone": "#c9a46b", "shale": "#8a9a7b", "claystone": "#a8b39b",
     "limestone": "#6fa8dc", "dolomite": "#b48ad8", "anhydrite": "#f4b6c2", "gypsum": "#f0c8d8",
