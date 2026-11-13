@@ -320,9 +320,18 @@ def stitch(pdf, top, bottom):
             clip = fitz.Rect(k0, lo_c, k1, hi_c)
             rot = -90 if aa > 0 else 90
         op.show_pdf_page(tgt, doc, p, clip=clip, rotate=rot, keep_proportion=False)
+        # where the page's points land on the strip: depth = a * c + b with c
+        # the page's x (depth across the page) or y (down it); a strip x is
+        # sign * (the page's other coordinate - origin)
+        if axis == 2:
+            across = {"coord": "x", "origin": round(lo_c if rot == 0 else hi_c, 3), "sign": 1 if rot == 0 else -1}
+        else:
+            across = {"coord": "y", "origin": round(hi_c if rot == -90 else lo_c, 3), "sign": -1 if rot == -90 else 1}
         placed.append({"page": p + 1, "from": round(d0, 3), "to": round(d1, 3),
                        "labels": len(found[p][3]) if p in found else 0,
-                       "inferred": p in inferred})
+                       "inferred": p in inferred,
+                       "depth": {"coord": "x" if axis == 1 else "y", "a": aa, "b": bb},
+                       "across": across})
         done_to = d1
     if bottom - done_to > 0.1:
         gaps.append((round(done_to, 2), round(bottom, 2)))
