@@ -1571,24 +1571,53 @@ async function postJson(url, body) {
 }
 
 // The data sets a log offers in the middle column, where a report lists its
-// stages: the curve track, and the printout legend's three families of
-// symbols (rock types, accessories, other symbols) where the log has them.
-// What the symbols mean and add up to is worked out by wellsight_symbols.py.
+// stages: the curve track, then the printout legend's three families of
+// symbols (rock types, accessories, other symbols) and the geologist's
+// written descriptions, each family under its own heading with an entry per
+// category. What the symbols and the descriptions say is worked out by
+// wellsight_symbols.py and wellsight_descriptions.py.
 const WS_ACC_GROUPS = ["mineral", "fossil", "stringer", "texture"];
-const WS_OTHER_GROUPS = ["show", "porosity", "sorting", "rounding", "quality", "event", "directional",
-                         "perm", "photo", "misc"];
+const WS_OTHER_GROUPS = ["show", "porosity", "sorting", "rounding", "interval", "quality", "event",
+                         "directional", "perm", "photo", "misc"];
+const WS_FAMILIES = { curves: "Curves", rocks: "Rock Types", accessories: "Accessories",
+                      other: "Other Symbols", descriptions: "Descriptions" };
+const WS_GROUP_LABEL = { mineral: "Mineral", fossil: "Fossil", stringer: "Stringer", texture: "Texture",
+  show: "Oil shows", porosity: "Porosity type", sorting: "Sorting", rounding: "Rounding",
+  interval: "Cores & tests", quality: "Reservoir quality", event: "Events", directional: "Slide / rotate",
+  perm: "Rock class", photo: "Photos", misc: "Other" };
 function wsSets(p) {
-  const a = p.analysis || {}, g = a.groups || {};
+  const a = p.analysis || {}, g = a.groups || {}, D = p.descriptions || {}, da = a.descriptions || {};
   const pl = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
-  const sets = [{ key: "curves", label: "Curve Track", count: pl(p.curves.length, "curve") }];
+  const out = [{ family: "curves", key: "curves", label: "Curve Track", count: pl(p.curves.length, "curve") }];
   const rocks = (a.rocks || []).filter(r => r.rock !== "blank");
-  if (rocks.length) sets.push({ key: "rocks", label: "Rock Types", count: pl(rocks.length, "rock") });
-  const acc = WS_ACC_GROUPS.reduce((n, k) => n + (g[k] ? g[k].n : 0), 0);
-  if (acc) sets.push({ key: "accessories", label: "Accessories", count: pl(acc, "symbol") });
-  const oth = WS_OTHER_GROUPS.reduce((n, k) => n + (g[k] ? g[k].n : 0), 0) + (p.symbolIntervals || []).length;
-  const z = (a.show_zones || []).length;
-  if (oth) sets.push({ key: "other", label: "Other Symbols", count: z ? pl(z, "show zone") : pl(oth, "symbol") });
-  return sets;
+  if (rocks.length) out.push({ family: "rocks", key: "rocks", label: "Rock column", count: pl(rocks.length, "rock") });
+  const ivN = k => (p.symbolIntervals || []).filter(x => x.group === k).length;
+  const fam = (family, groups) => {
+    const items = [];
+    for (const k of groups) {
+      const n = g[k] ? g[k].n : 0, m = ivN(k);
+      if (!n && !m) continue;
+      const z = k === "show" ? (a.show_zones || []).length : 0;
+      items.push({ family, key: family + ":" + k, group: k, label: WS_GROUP_LABEL[k] || k,
+                   count: z ? pl(z, "zone") : n ? pl(n, "symbol") : pl(m, "interval") });
+    }
+    if (items.length > 1) items.unshift({ family, key: family + ":all", group: null, label: "All", count: "" });
+    out.push(...items);
+  };
+  fam("accessories", WS_ACC_GROUPS);
+  fam("other", WS_OTHER_GROUPS);
+  if ((D.samples || []).length) {
+    out.push({ family: "descriptions", key: "desc:samples", group: "samples", label: "Samples",
+               count: pl(D.samples.length, "sample") });
+    const tz = (da.show_zones || []).length;
+    if (tz) out.push({ family: "descriptions", key: "desc:shows", group: "shows", label: "Shows in text",
+                       count: pl(tz, "zone") });
+  }
+  if ((D.tops || []).length)
+    out.push({ family: "descriptions", key: "desc:tops", group: "tops", label: "Formation tops", count: pl(D.tops.length, "top") });
+  if ((D.events || []).length)
+    out.push({ family: "descriptions", key: "desc:events", group: "events", label: "Events", count: pl(D.events.length, "event") });
+  return out;
 }
 
 async function handleWellsight(f, q, printoutFile) {
@@ -1604,7 +1633,7 @@ async function handleWellsight(f, q, printoutFile) {
     q.ws = { id: out.id, payload: out.payload, printout: out.printout || null,
              lookup: out.printoutLookup || "" };
     q.provider = "WellSight";
-    q.items = wsSets(out.payload).map(s => ({ type: "wsset", key: s.key, label: s.label, count: s.count }));
+    q.items = wsSets(out.payload).map(s => ({ type: "wsset", ...s }));
     const nm = q.head.querySelector(".nm");
     if (nm && out.payload.well) nm.title = out.payload.well;
     wellsightLine(q, out.printoutError);
@@ -1641,11 +1670,14 @@ function selectWellsight(entry) {
   $("timewarn").hidden = true;
   $("dropnote").hidden = true;
   const list = $("stages"); list.innerHTML = "";
-  const h = document.createElement("div");
-  h.className = "grouphdr"; h.textContent = "Data sets";
-  list.appendChild(h);
-  const p = entry.ws.payload;
+  let fam = null;
   for (const it of entry.items) {
+    if (it.family !== fam) {               // a heading per family
+      fam = it.family;
+      const h = document.createElement("div");
+      h.className = "grouphdr"; h.textContent = WS_FAMILIES[fam] || "Data sets";
+      list.appendChild(h);
+    }
     const row = document.createElement("div");
     row.className = "stagerow";
     const n = it.count || "";
@@ -1698,10 +1730,14 @@ function showWellsight(entry, item) {
             ranges: p.curves.map(c => wsRange(c.values)) };
   }
   wsv.entry = entry; wsv.p = p; wsv.P = entry.ws.printout;
-  wsv.set = (item && item.key) || "curves";
+  wsv.set = (item && (item.family || item.key)) || "curves";
+  wsv.group = (item && item.group) || null;
   if (!wsv.byGroup) {
     wsv.byGroup = {};
     for (const sy of p.symbols || []) (wsv.byGroup[sy.group] = wsv.byGroup[sy.group] || []).push(sy);
+    wsv.rockColors = {};
+    for (const r of p.rocks || []) wsv.rockColors[r.rock] = r.color;
+    for (const r of ((p.analysis || {}).descriptions || {}).rocks || []) wsv.rockColors[r.rock] = r.color;
   }
   $("ws-title").textContent = p.well || p.file;
   $("ws-sub").textContent = [p.file, `${p.app} ${p.version}`,
@@ -1771,20 +1807,22 @@ function wsLegend() {
   }
 }
 
-// ---- rock types, accessories, other symbols: rows on the same depth axis ----
-// Each group of symbols gets a row: a lane per term (its most common terms
-// first), or a bar whose height is the term's place on its scale (show
-// strength, sorting, rounding). Intervals (core, DST, slide, reservoir
-// quality) are drawn as spans; the rock column as coloured blocks.
+// ---- rock types, accessories, other symbols, descriptions: rows on the depth axis ----
+// Each category gets a row: a lane per term (its most common terms first),
+// or a bar whose height is the term's place on its scale (show strength,
+// sorting, rounding, porosity grade). Intervals (core, DST, slide, reservoir
+// quality) are spans; the rock column and the described samples are blocks.
 const WS_TERM_COLORS = ["#1d5bd8", "#b02e2e", "#1e7a34", "#b0731f", "#7a3b9b", "#0f7d7d",
                         "#c2185b", "#5a5f6e"];
 const WS_RANKED = { show: 4, sorting: 3, rounding: 4, quality: 5 };
 const WS_SHORT = { rock: "Rock", pct: "% mix", curves: "Curves", mineral: "Mineral", fossil: "Fossil",
   stringer: "Stringer", texture: "Texture", porosity: "Porosity", show: "Oil show", sorting: "Sorting",
   rounding: "Rounding", quality: "Quality", event: "Events", directional: "Slide/rot.", perm: "Class",
-  photo: "Photos", misc: "Other", interval: "Intervals" };
+  photo: "Photos", misc: "Other", interval: "Intervals", dmix: "Rock (text)", dpor: "Porosity",
+  dshow: "Show (text)", tops: "Tops", events: "Events" };
 const WS_IV_COLORS = { core: "#1d5bd8", dst: "#b02e2e", slide: "#5a5f6e", rotate: "#b9bec5" };
 const WS_LANES = 8;
+const WS_SHOW_NAMES = ["No show", "Trace", "Weak", "Moderate", "Strong"];
 
 function wsGroup(g) { const a = wsv.p.analysis; return a && a.groups ? a.groups[g] : null; }
 function wsRankColor(group, r) {
@@ -1800,27 +1838,47 @@ function wsTermColor(group, term, rank) {
   const G = wsGroup(group), k = G ? G.terms.findIndex(t => t.term === term) : -1;
   return k >= 0 && k < WS_TERM_COLORS.length ? WS_TERM_COLORS[k] : "#9aa1a9";
 }
+function wsRockColor(rock) { return (wsv.rockColors && wsv.rockColors[rock]) || "#9aa1a9"; }
 function wsLane(group, term) {
   const G = wsGroup(group), k = G ? G.terms.findIndex(t => t.term === term) : 0;
   return Math.max(0, Math.min(WS_LANES - 1, k));
 }
+function wsTopDepth(t) {
+  const v = wsv.p.axis === "TVD" ? t.tvd : t.md;
+  return v != null ? v : t.depth;
+}
 function wsSetRows() {
-  const p = wsv.p, g = (p.analysis && p.analysis.groups) || {}, rows = [];
-  const lanes = k => Math.max(1, Math.min(WS_LANES, g[k] ? g[k].terms.length : 1));
+  const p = wsv.p, g = (p.analysis && p.analysis.groups) || {}, rows = [], one = !!wsv.group;
+  const lane = one ? 16 : 12;
+  const lanesH = k => 8 + lane * Math.max(1, Math.min(WS_LANES, g[k] ? g[k].terms.length : 1));
+  const ivg = new Set((p.symbolIntervals || []).map(x => x.group));
+  const symRows = k => {
+    const r = [];
+    if (k === "show") { if (g.show) r.push({ kind: "show", group: k, h: one ? 90 : 64 }); }
+    else if (k === "sorting" || k === "rounding") { if (g[k]) r.push({ kind: "rank", group: k, h: one ? 60 : 40 }); }
+    else {
+      if (ivg.has(k)) r.push({ kind: "iv", group: k, h: one ? 30 : 22 });
+      if (g[k]) r.push({ kind: "lanes", group: k, h: lanesH(k), lane });
+    }
+    return r;
+  };
   if (wsv.set === "rocks") {
     rows.push({ kind: "rock", h: 46 });
     if (p.percent) rows.push({ kind: "pct", h: 46 });
     if (p.curves.length) rows.push({ kind: "curves", h: 150 });
   } else if (wsv.set === "accessories") {
-    for (const k of WS_ACC_GROUPS) if (g[k]) rows.push({ kind: "lanes", group: k, h: 8 + 12 * lanes(k) });
-  } else {
-    if (g.show) rows.push({ kind: "show", group: "show", h: 64 });
-    for (const k of ["porosity"]) if (g[k]) rows.push({ kind: "lanes", group: k, h: 8 + 12 * lanes(k) });
-    for (const k of ["sorting", "rounding"]) if (g[k]) rows.push({ kind: "rank", group: k, h: 40 });
-    const ivg = new Set((p.symbolIntervals || []).map(x => x.group));
-    for (const k of ["interval", "quality", "directional"]) if (ivg.has(k)) rows.push({ kind: "iv", group: k, h: 22 });
-    for (const k of ["event", "directional", "quality", "perm", "photo", "misc"])
-      if (g[k]) rows.push({ kind: "lanes", group: k, h: 8 + 12 * lanes(k) });
+    for (const k of (one ? [wsv.group] : WS_ACC_GROUPS)) rows.push(...symRows(k));
+  } else if (wsv.set === "other") {
+    for (const k of (one ? [wsv.group] : WS_OTHER_GROUPS)) rows.push(...symRows(k));
+  } else if (wsv.set === "descriptions") {
+    const G = wsv.group;
+    if (G === "samples") rows.push({ kind: "dmix", h: 46 }, { kind: "dpor", h: 40 }, { kind: "dshow", h: 46 });
+    else if (G === "shows") {
+      rows.push({ kind: "dshow", h: 56 });
+      if (g.show) rows.push({ kind: "show", group: "show", h: 56, label: "Show (sym.)" });
+    } else if (G === "tops") rows.push({ kind: "tops", h: 58 });
+    else if (G === "events") rows.push({ kind: "events", h: 58 });
+    if (p.curves.length) rows.push({ kind: "curves", h: 120 });
   }
   return rows;
 }
@@ -1859,7 +1917,7 @@ function wsDrawSet() {
     g.strokeStyle = "#d2d6db"; g.lineWidth = 1; g.strokeRect(L + 0.5, y + 0.5, plotW - 1, r.h - 1);
     g.fillStyle = "#3a4048"; g.font = "600 10.5px -apple-system,'Segoe UI',system-ui,sans-serif";
     g.textAlign = "right"; g.textBaseline = "middle";
-    g.fillText(WS_SHORT[r.group || r.kind] || "", L - 6, y + Math.min(r.h / 2, 12));
+    g.fillText(r.label || WS_SHORT[r.group || r.kind] || WS_SHORT[r.kind] || "", L - 6, y + Math.min(r.h / 2, 12));
     y += r.h + GAP;
   }
   if (wsv.hover != null && wsv.hover >= d0 && wsv.hover <= d1) {
@@ -1920,9 +1978,10 @@ function wsDrawRow(g, r, X, y, ppm, d0, d1) {
       g.stroke();
     });
   } else if (r.kind === "lanes") {
+    const ln = r.lane || 12;
     for (const s of wsSymbolsIn(r.group, d0 - sp, d1)) {
       g.fillStyle = wsTermColor(r.group, s.term, s.rank);
-      g.fillRect(X(s.depth), y + 4 + 12 * wsLane(r.group, s.term), markW, 9);
+      g.fillRect(X(s.depth), y + 4 + ln * wsLane(r.group, s.term), markW, ln - 3);
     }
   } else if (r.kind === "show") {
     g.fillStyle = "rgba(67,160,71,.13)";
@@ -1945,6 +2004,47 @@ function wsDrawRow(g, r, X, y, ppm, d0, d1) {
       g.fillStyle = col; g.fillRect(x0, y + 3, wd, r.h - 6);
       if (wd > 40) { g.fillStyle = wsInk(col); g.fillText(iv.name.slice(0, Math.floor(wd / 6)), x0 + 3, y + r.h / 2); }
     }
+  } else if (r.kind === "dmix" || r.kind === "dpor" || r.kind === "dshow") {
+    const da = a.descriptions || {};
+    if (r.kind === "dshow") {
+      g.fillStyle = "rgba(67,160,71,.13)";
+      for (const z of da.show_zones || []) if (z.base >= d0 && z.top <= d1) g.fillRect(X(z.top), y + 1, (z.base - z.top) * ppm, r.h - 2);
+    }
+    for (const s of (p.descriptions && p.descriptions.samples) || []) {
+      if (s.base < d0 || s.top > d1) continue;
+      const x0 = X(s.top), wd = Math.max(1, (s.base - s.top) * ppm);
+      if (r.kind === "dmix") {
+        let yy = y + r.h - 3;
+        for (const c of s.rocks) {
+          const hh = (r.h - 6) * (c.pct || 0) / 100;
+          g.fillStyle = wsRockColor(c.rock); g.fillRect(x0, yy - hh, wd, hh); yy -= hh;
+        }
+      } else if (r.kind === "dpor") {
+        const gr = s.porosity.grade;
+        if (gr == null) continue;
+        const hh = Math.max(2, (r.h - 8) * gr / 5);
+        g.fillStyle = wsRankColor("quality", gr); g.fillRect(x0, y + r.h - 4 - hh, wd, hh);
+      } else {
+        const lv = s.show.level;
+        if (lv == null) continue;
+        const hh = lv === 0 ? 2 : (r.h - 8) * (lv + 1) / 5;
+        g.fillStyle = lv === 0 ? "#c9cdd2" : wsRankColor("show", lv); g.fillRect(x0, y + r.h - 4 - hh, wd, hh);
+      }
+      if (wd > 4) { g.fillStyle = "#fff"; g.fillRect(x0 + wd - 1, y + 2, 1, r.h - 4); }   // between samples
+    }
+  } else if (r.kind === "tops" || r.kind === "events") {
+    const D = p.descriptions || {}, list = r.kind === "tops" ? (D.tops || []) : (D.events || []);
+    const col = r.kind === "tops" ? "#a31631" : "#5a5f6e";
+    g.font = "10px -apple-system,'Segoe UI',system-ui,sans-serif";
+    let k = 0;
+    for (const t of list) {
+      const d = r.kind === "tops" ? wsTopDepth(t) : t.depth;
+      if (d == null || d < d0 || d > d1) continue;
+      const x = Math.round(X(d)) + 0.5;
+      g.strokeStyle = col; g.beginPath(); g.moveTo(x, y + 2); g.lineTo(x, y + r.h - 2); g.stroke();
+      g.fillStyle = "#14181d";
+      g.fillText((r.kind === "tops" ? t.name : (t.what || t.text)).slice(0, 26), x + 3, y + 10 + 12 * (k++ % 4));
+    }
   }
 }
 // what is described at a depth: the nearest sample's symbols, per group
@@ -1954,6 +2054,15 @@ function wsAt(group, d) {
   if (!near.length) return [];
   const best = near.reduce((a, s) => Math.abs(s.depth - d) < Math.abs(a.depth - d) ? s : a);
   return [...new Set(near.filter(s => Math.abs(s.depth - best.depth) < 0.01).map(s => s.name))];
+}
+function wsSampleAt(d) {
+  const S = (wsv.p.descriptions && wsv.p.descriptions.samples) || [];
+  return S.find(s => d >= s.top && d < s.base) || null;
+}
+function wsSampleSummary(s) {
+  return [s.rocks.map(c => `${c.name} ${c.pct}%`).join(", "),
+          s.porosity.grade_name && `${s.porosity.grade_name}${s.porosity.types.length ? " " + s.porosity.types.join("/") : ""} porosity`,
+          s.show.name].filter(Boolean).join(" · ");
 }
 function wsSetLegend(Lg) {
   const p = wsv.p, a = p.analysis || {}, d = wsv.hover;
@@ -1974,7 +2083,30 @@ function wsSetLegend(Lg) {
     for (const r of (a.rocks || []).slice(0, 10)) chip(`${sw(r.color)}${escHtml(r.name)} <b>${r.pct != null ? r.pct + "%" : r.m + " m"}</b>`);
     return;
   }
-  const groups = wsv.set === "accessories" ? WS_ACC_GROUPS : WS_OTHER_GROUPS;
+  if (wsv.set === "descriptions") {
+    const D = p.descriptions || {};
+    if (d != null) {
+      if (wsv.group === "tops" || wsv.group === "events") {
+        const list = wsv.group === "tops" ? (D.tops || []) : (D.events || []);
+        const dep = t => wsv.group === "tops" ? wsTopDepth(t) : t.depth;
+        const near = list.filter(t => dep(t) != null).sort((x, y) => Math.abs(dep(x) - d) - Math.abs(dep(y) - d))[0];
+        if (near) chip(escHtml((near.name || near.what || "") + " — " + near.text).slice(0, 220), near.text);
+        return;
+      }
+      const s = wsSampleAt(d);
+      if (s) chip(`<b>${s.top}–${s.base}</b> ${escHtml(wsSampleSummary(s))}`, s.text);
+      if (s) chip(`<span style="color:var(--mut)">${escHtml(s.text.slice(0, 200))}${s.text.length > 200 ? "…" : ""}</span>`, s.text);
+      return;
+    }
+    const da = a.descriptions || {};
+    if (wsv.group === "samples") for (const r of (da.rocks || []).slice(0, 8)) chip(`${sw(r.color)}${escHtml(r.name)} <b>${r.pct}%</b>`);
+    if (wsv.group === "samples" || wsv.group === "shows")
+      chip(`<span style="color:var(--mut)">Show:</span> ` + [1, 2, 3, 4].map(l => `${sw(wsRankColor("show", l))}${WS_SHOW_NAMES[l]}`).join(" "));
+    if (wsv.group === "samples")
+      chip(`<span style="color:var(--mut)">Porosity:</span> ` + [0.5, 2, 3, 4, 5].map(l => `${sw(wsRankColor("quality", l))}${["", "Tight", "Poor", "Fair", "Good", "V. good"][Math.ceil(l)]}`).join(" "));
+    return;
+  }
+  const groups = wsv.group ? [wsv.group] : (wsv.set === "accessories" ? WS_ACC_GROUPS : WS_OTHER_GROUPS);
   if (d != null) {
     for (const k of groups) {
       const names = wsAt(k, d);
@@ -1982,8 +2114,9 @@ function wsSetLegend(Lg) {
     }
     if (wsv.set === "other") {
       const z = (a.show_zones || []).find(z => d >= z.top && d <= z.base);
-      if (z) chip(`show zone ${z.top}–${z.base} m: <b>${escHtml(z.strength)}</b>`);
-      for (const iv of (p.symbolIntervals || []).filter(x => d >= x.top && d < x.base)) chip(`${escHtml(iv.name)}`);
+      if (z && (!wsv.group || wsv.group === "show")) chip(`show zone ${z.top}–${z.base} m: <b>${escHtml(z.strength)}</b>`);
+      for (const iv of (p.symbolIntervals || []).filter(x => d >= x.top && d < x.base && (!wsv.group || x.group === wsv.group)))
+        chip(`${escHtml(iv.name)}`);
     }
     return;
   }
@@ -2005,10 +2138,17 @@ function wsSetNotes() {
     const own = (a.rocks || []).filter(r => r.rock.startsWith("raw:")).map(r => r.name);
     if (own.length) out.push("Kept as the log names them: " + own.join(", ") + ".");
     if (p.curves.length) out.push("Curve values per rock type: the mean, with the 10th to 90th percentile, of every sample inside that rock's intervals.");
+  } else if (wsv.set === "descriptions") {
+    const da = a.descriptions || {}, ag = da.rock_column_agrees;
+    out.push(`${(da.samples || 0).toLocaleString()} described samples over ${da.described_m} m`
+      + (ag && ag.samples ? `; the main rock described is the rock column's in ${ag.pct}% of them (${ag.samples})` : "")
+      + (da.symbol_zones_described != null ? `; ${da.symbol_zones_described} of ${(a.show_zones || []).length} symbol show zones are also described as shows` : "") + ".");
+    out.push("Read from the geologist's shorthand: each rock and its share, porosity graded tight < very poor < poor < fair < good < very good "
+      + "(from the words, or else the per cent quoted), and the show from stain, fluorescence, cut, odour and free oil, 1 trace to 4 strong.");
   } else {
     out.push(`${a.symbols.toLocaleString()} symbols read into one vocabulary`
       + (a.unknown_symbols ? `; ${a.unknown_symbols} kept under the log's own names` : "") + ".");
-    if (wsv.set === "other" && (a.show_zones || []).length)
+    if (wsv.set === "other" && (!wsv.group || wsv.group === "show") && (a.show_zones || []).length)
       out.push(`Show zones: oil-show symbols grouped while the next one is within 1.5 times their usual spacing (${a.sample_spacing_m} m); `
         + (a.gas_background != null ? `gas compared with the log's median gas, ${wsFmt(a.gas_background)}. ` : "")
         + "Score orders them: strength first, then gas over background, porosity described and thickness.");
@@ -2018,7 +2158,7 @@ function wsSetNotes() {
 function wsTables() {
   const T = $("wstable");
   if (!wsv.set || wsv.set === "curves" || !wsv.p.analysis) { T.hidden = true; T.innerHTML = ""; return; }
-  const p = wsv.p, a = p.analysis, e = escHtml;
+  const p = wsv.p, a = p.analysis, e = escHtml, one = wsv.group;
   const sw = c => `<span class="sw" style="background:${c}"></span>`;
   const rng = (x, y) => `${wsFmt(x)}–${wsFmt(y)}`;
   let h = "";
@@ -2030,6 +2170,33 @@ function wsTables() {
     for (const tm of G.terms) t += `<tr><td>${sw(wsTermColor(k, tm.term, tm.rank))}${e(tm.name)}</td>`
       + `<td class=n>${tm.n.toLocaleString()}</td><td class=n>${(100 * tm.n / G.n).toFixed(1)}%</td>`
       + `<td>${rng(tm.first, tm.last)}</td><td class=raw>${e(tm.raw.join(", "))}</td></tr>`;
+    return t + "</table>";
+  };
+  const zonesTable = () => {
+    const zs = a.show_zones || [];
+    if (!zs.length) return "";
+    const best = new Set([...zs].sort((x, y) => y.score - x.score).slice(0, 3));
+    let t = `<h4>Show zones <span>${zs.length} · click one to go to it; the three highest scores are marked</span></h4>`
+      + "<table><tr><th>Top – base (m)</th><th class=n>m</th><th>Strength</th><th>Stain · fluor · cut</th><th class=n>Shows</th>"
+      + "<th>Rock</th><th>Porosity</th><th>Sorting · rounding</th><th class=n>Gas (× bg)</th><th class=n>ROP</th><th>Text says</th><th class=n>Score</th></tr>";
+    for (const z of zs) {
+      t += `<tr class="go${best.has(z) ? " best" : ""}" data-a="${z.top}" data-b="${z.base}">`
+        + `<td>${rng(z.top, z.base)}</td><td class=n>${z.m}</td>`
+        + `<td>${sw(wsRankColor("show", z.level))}${e(z.strength)}</td><td>${e(z.kinds.join(" · ") || "–")}</td>`
+        + `<td class=n>${z.symbols}</td><td>${e(z.rocks.join(", ") || "–")}</td><td>${e(z.porosity.join(", ") || "–")}</td>`
+        + `<td>${e([z.sorting, z.rounding].filter(Boolean).join(" · ") || "–")}</td>`
+        + `<td class=n>${z.gas ? wsFmt(z.gas.mean) + (z.gas.x_background != null ? ` (${z.gas.x_background}×)` : "") : "–"}</td>`
+        + `<td class=n>${z.rop ? wsFmt(z.rop.mean) : "–"}</td><td>${e(z.described || "–")}</td><td class=n>${z.score}</td></tr>`;
+    }
+    return t + "</table>";
+  };
+  const ivTable = k => {
+    const list = (a.intervals || []).filter(iv => !k || iv.group === k);
+    if (!list.length) return "";
+    let t = "<h4>Intervals <span>from the log's interval columns</span></h4>"
+      + "<table><tr><th>Kind</th><th>What</th><th class=n>Intervals</th><th class=n>m</th><th>First – last (m)</th></tr>";
+    for (const iv of list) t += `<tr class=go data-a="${iv.first}" data-b="${iv.last}"><td>${e(WS_GROUP_LABEL[iv.group] || iv.group)}</td>`
+      + `<td>${sw(wsTermColor(iv.group, iv.term, iv.rank))}${e(iv.name)}</td><td class=n>${iv.n}</td><td class=n>${iv.m}</td><td>${rng(iv.first, iv.last)}</td></tr>`;
     return t + "</table>";
   };
   if (wsv.set === "rocks") {
@@ -2048,38 +2215,63 @@ function wsTables() {
       h += "<h4>% lithology column <span>the average mix where samples were described</span></h4><table><tr><th>Rock</th><th class=n>Average</th></tr>"
         + a.percent_mix.map(m => `<tr><td>${sw(m.color)}${e(m.name)}</td><td class=n>${m.pct}%</td></tr>`).join("") + "</table>";
   } else if (wsv.set === "accessories") {
-    for (const k of WS_ACC_GROUPS) h += termTable(k);
-  } else {
-    const zs = a.show_zones || [];
-    if (zs.length) {
-      const best = new Set([...zs].sort((x, y) => y.score - x.score).slice(0, 3));
-      h += `<h4>Show zones <span>${zs.length} · click one to go to it; the three highest scores are marked</span></h4>`
-        + "<table><tr><th>Top – base (m)</th><th class=n>m</th><th>Strength</th><th>Stain · fluor · cut</th><th class=n>Shows</th>"
-        + "<th>Rock</th><th>Porosity</th><th>Sorting · rounding</th><th class=n>Gas (× bg)</th><th class=n>ROP</th><th class=n>Score</th></tr>";
-      for (const z of zs) {
-        h += `<tr class="go${best.has(z) ? " best" : ""}" data-a="${z.top}" data-b="${z.base}">`
-          + `<td>${rng(z.top, z.base)}</td><td class=n>${z.m}</td>`
-          + `<td>${sw(wsRankColor("show", z.level))}${e(z.strength)}</td><td>${e(z.kinds.join(" · ") || "–")}</td>`
-          + `<td class=n>${z.symbols}</td><td>${e(z.rocks.join(", ") || "–")}</td><td>${e(z.porosity.join(", ") || "–")}</td>`
-          + `<td>${e([z.sorting, z.rounding].filter(Boolean).join(" · ") || "–")}</td>`
-          + `<td class=n>${z.gas ? wsFmt(z.gas.mean) + (z.gas.x_background != null ? ` (${z.gas.x_background}×)` : "") : "–"}</td>`
-          + `<td class=n>${z.rop ? wsFmt(z.rop.mean) : "–"}</td><td class=n>${z.score}</td></tr>`;
+    for (const k of (one ? [one] : WS_ACC_GROUPS)) h += termTable(k);
+  } else if (wsv.set === "other") {
+    if (!one) { h += zonesTable() + ivTable(null); for (const k of WS_OTHER_GROUPS) h += termTable(k); }
+    else if (one === "show") h += zonesTable() + termTable("show");
+    else h += ivTable(one) + termTable(one);
+  } else if (wsv.set === "descriptions") {
+    const D = p.descriptions || {}, da = a.descriptions || {};
+    if (one === "samples") {
+      h += `<h4>Rocks described <span>${da.samples} samples · ${da.described_m} m · weighted by each rock's share</span></h4>`
+        + "<table><tr><th>Rock</th><th class=n>m</th><th class=n>Share</th></tr>"
+        + (da.rocks || []).map(r => `<tr><td>${sw(r.color)}${e(r.name)}</td><td class=n>${r.m}</td><td class=n>${r.pct}%</td></tr>`).join("") + "</table>";
+      if ((da.porosity || []).length)
+        h += "<h4>Porosity described <span>metres by grade</span></h4><table><tr><th>Grade</th><th class=n>m</th></tr>"
+          + da.porosity.map(x => `<tr><td>${sw(wsRankColor("quality", x.grade))}${e(x.name)}</td><td class=n>${x.m}</td></tr>`).join("") + "</table>"
+          + ((da.porosity_types || []).length ? "<table style='margin-top:6px'><tr><th>Porosity type</th><th class=n>Samples</th></tr>"
+            + da.porosity_types.map(x => `<tr><td>${e(x.name)}</td><td class=n>${x.samples}</td></tr>`).join("") + "</table>" : "");
+      h += `<h4>Descriptions <span>click one to go to it</span></h4>`
+        + "<table><tr><th>Top – base (m)</th><th>Rocks</th><th>Porosity</th><th>Show</th><th>Description</th></tr>";
+      for (const s of D.samples || []) {
+        h += `<tr class=go data-a="${s.top}" data-b="${s.base}"><td>${rng(s.top, s.base)}</td>`
+          + `<td>${e(s.rocks.map(c => `${c.name} ${c.pct}%`).join(", ") || "–")}</td>`
+          + `<td>${s.porosity.grade_name ? sw(wsRankColor("quality", s.porosity.grade)) + e(s.porosity.grade_name) + (s.porosity.types.length ? " · " + e(s.porosity.types.join(", ")) : "") : "–"}</td>`
+          + `<td>${s.show.level != null ? sw(s.show.level ? wsRankColor("show", s.show.level) : "#c9cdd2") + e(s.show.name) : "–"}</td>`
+          + `<td class=raw title="${e(s.text)}">${e(s.text.length > 120 ? s.text.slice(0, 120) + "…" : s.text)}</td></tr>`;
       }
       h += "</table>";
-    }
-    if ((a.intervals || []).length) {
-      h += "<h4>Intervals <span>cores, tests, slides and reservoir quality from the log's interval columns</span></h4>"
-        + "<table><tr><th>Kind</th><th>What</th><th class=n>Intervals</th><th class=n>m</th><th>First – last (m)</th></tr>";
-      for (const iv of a.intervals) h += `<tr class=go data-a="${iv.first}" data-b="${iv.last}"><td>${e(WS_SHORT[iv.group] || iv.group)}</td>`
-        + `<td>${sw(wsTermColor(iv.group, iv.term, iv.rank))}${e(iv.name)}</td><td class=n>${iv.n}</td><td class=n>${iv.m}</td><td>${rng(iv.first, iv.last)}</td></tr>`;
+    } else if (one === "shows") {
+      const zs = da.show_zones || [];
+      h += `<h4>Shows in the text <span>described samples with a show of weak or better, grouped where they run on`
+        + (da.symbol_zones_described != null ? ` · ${da.symbol_zones_described} of ${(a.show_zones || []).length} symbol show zones are described as shows too` : "") + "</span></h4>"
+        + "<table><tr><th>Top – base (m)</th><th class=n>m</th><th>Strength</th><th>What the text says</th><th>Best porosity</th><th class=n>Samples</th></tr>";
+      for (const z of zs) h += `<tr class=go data-a="${z.top}" data-b="${z.base}"><td>${rng(z.top, z.base)}</td><td class=n>${z.m}</td>`
+        + `<td>${sw(wsRankColor("show", z.level))}${e(z.strength)}</td><td>${e(z.said.join(", ") || "–")}</td>`
+        + `<td>${e(z.porosity || "–")}</td><td class=n>${z.samples}</td></tr>`;
+      h += "</table>";
+    } else if (one === "tops") {
+      h += "<h4>Formation tops <span>as written on the log; click one to go to it</span></h4>"
+        + "<table><tr><th>Formation</th><th class=n>MD (m)</th><th class=n>TVD (m)</th><th class=n>SS (m)</th><th>As written</th></tr>";
+      for (const t of D.tops || []) {
+        const d = wsTopDepth(t);
+        h += `<tr class=go data-a="${d}" data-b="${d}"><td>${e(t.name)}</td><td class=n>${t.md != null ? t.md : "–"}</td>`
+          + `<td class=n>${t.tvd != null ? t.tvd : "–"}</td><td class=n>${t.ss != null ? t.ss : "–"}</td><td class=raw>${e(t.text)}</td></tr>`;
+      }
+      h += "</table>";
+    } else if (one === "events") {
+      h += "<h4>Events <span>casing points, TD, bit trips and other notes on the log</span></h4>"
+        + "<table><tr><th class=n>Depth (m)</th><th>What</th><th>Note</th></tr>";
+      for (const ev of D.events || []) h += `<tr class=go data-a="${ev.depth}" data-b="${ev.depth}"><td class=n>${wsFmt(ev.depth)}</td>`
+        + `<td>${e(ev.what)}</td><td class=raw>${e(ev.text)}</td></tr>`;
       h += "</table>";
     }
-    for (const k of WS_OTHER_GROUPS) h += termTable(k);
   }
   T.innerHTML = h;
   T.hidden = !h;
   T.querySelectorAll("tr.go").forEach(tr => tr.addEventListener("click", () => {
     const x = Number(tr.dataset.a), y = Number(tr.dataset.b), pad = Math.max(5, 0.15 * (y - x));
+    if (!isFinite(x) || !isFinite(y)) return;
     wsSetWindow(x - pad, y + pad);
     $("wsgraph").scrollIntoView({ block: "nearest", behavior: "smooth" });
   }));
@@ -9586,6 +9778,8 @@ function flagDiagnostics() {
       symbols: p.analysis ? `${p.analysis.symbols} symbols, ${p.analysis.unknown_symbols} not in the vocabulary; `
         + `${(p.analysis.show_zones || []).length} show zones; ${(p.symbolIntervals || []).length} column intervals; `
         + `rocks ${(p.analysis.rocks || []).map(r => r.name + " " + r.m + " m").join(", ")}` : "",
+      descriptions: p.descriptions ? `${p.descriptions.samples.length} described samples, ${p.descriptions.tops.length} tops, `
+        + `${p.descriptions.events.length} events; group ${(it.group || "-")}` : "",
       printout: P ? `${P.source || "printout"}: ${P.log_pages} of ${P.pages} pages placed`
         + `, left out ${(P.left_out || []).join(",") || "none"}`
         + `, placed from a neighbour ${(P.inferred || []).join(",") || "none"}`

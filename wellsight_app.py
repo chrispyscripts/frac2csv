@@ -28,6 +28,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _VENDOR = os.path.join(_HERE, "wellsight_convert")
@@ -40,6 +41,7 @@ import export_las as el       # noqa: E402
 import json                   # noqa: E402
 
 import wellsight_symbols as wsym   # noqa: E402
+import wellsight_descriptions as wdesc   # noqa: E402
 
 # The four the converter reads (StripLog / HorizontalLog, v5 and v6). The
 # extension is only a hint: the 32-byte signature inside the body decides,
@@ -67,6 +69,14 @@ class NotWellSight(Exception):
     pass
 
 
+# The converter and the LAS exporter each decode the file again from its
+# bytes. Decoding a long lateral takes seconds (its symbol library is found by
+# scanning the whole body), so while they run they are handed the log this
+# module has already decoded. Neither changes it: the decoded log hashes the
+# same before and after both, on logs of every kind on the WellSight drive.
+_DECODE_LOCK = threading.Lock()
+
+
 def _rock(code):
     return ws.ROCK_NAMES.get((code or "").upper(), code or "")
 
@@ -75,10 +85,23 @@ def read(data, filename):
     """Decode one dropped file. Raises NotWellSight with a sentence the user
     can act on when the file is not one the converter reads."""
     name = os.path.basename(filename or "log.sl6")
+    data = bytes(data)
     try:
-        log = ws.read_log(bytes(data))
+        log = ws.read_log(data)
     except ws.NotReadable as ex:
         raise NotWellSight(f"{name} is not a WellSight log this reader knows ({ex}).")
+    with _DECODE_LOCK:
+        real = ws.read_log
+        ws.read_log = lambda raw: log if raw == data else real(raw)
+        try:
+            files = _convert(data, name)
+        finally:
+            ws.read_log = real
+    return _payload(log, data, name, files)
+
+
+def _convert(data, name):
+    """the converter's own outputs and the 0.2 m curve LAS, by file name"""
     tmp = tempfile.mkdtemp(prefix="f2c-ws-")
     try:
         src = os.path.join(tmp, "src")
@@ -100,7 +123,10 @@ def read(data, filename):
                 files[name + ".curves-%gm.las" % STEP] = f.read()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    return files
 
+
+def _payload(log, data, name, files):
     h = log["header"] or {}
     axis, basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
     curves = []
@@ -136,6 +162,14 @@ def read(data, filename):
                    "depth0": log["top"], "step": pc["step_m"], "values": pc["values"]}
     analysis = wsym.analyse(log["top"], log["bottom"], rocks, symbols, sym_iv, curves,
                             depth0 if nrows else None, STEP, percent)
+    # the geologist's written descriptions, formation tops and events
+    described = wdesc.read(log.get("annotations") or [], log["top"], log["bottom"])
+    desc_an = wdesc.analyse(described, rocks, symbols, analysis["show_zones"])
+    analysis["descriptions"] = desc_an
+    if described["samples"]:
+        files[name + ".descriptions.csv"] = wsym.csv_text(wdesc.rows_samples(described)).encode()
+    if described["tops"]:
+        files[name + ".formation-tops.csv"] = wsym.csv_text(wdesc.rows_tops(described)).encode()
     if rocks:
         files[name + ".rock-types.csv"] = wsym.csv_text(wsym.rows_rocks(rocks)).encode()
     if symbols:
@@ -144,7 +178,7 @@ def read(data, filename):
         files[name + ".symbol-intervals.csv"] = wsym.csv_text(wsym.rows_columns(sym_iv)).encode()
     if analysis["show_zones"]:
         files[name + ".show-zones.csv"] = wsym.csv_text(wsym.rows_zones(analysis)).encode()
-    if rocks or symbols or sym_iv:
+    if rocks or symbols or sym_iv or described["samples"]:
         files[name + ".analysis.json"] = json.dumps(analysis, indent=1).encode()
     payload = {
         "file": name,
@@ -161,6 +195,8 @@ def read(data, filename):
         "rocks": rocks, "percent": percent,
         "symbols": [{k: v for k, v in s_.items() if k != "category"} for s_ in symbols],
         "symbolIntervals": sym_iv, "analysis": analysis,
+        "descriptions": {"samples": [{k: v for k, v in sm.items() if k != "column"} for sm in described["samples"]],
+                         "tops": described["tops"], "events": described["events"]},
         "warnings": list(log["warnings"]),
         "files": sorted(files),
     }
