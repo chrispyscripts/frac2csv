@@ -62,14 +62,53 @@ def _one(args):
     return row
 
 
+def _refresh_one(args):
+    root, path = args
+    import mudlog_key as K
+    try:
+        key = K.load(path)
+        K.refresh_curves(key, os.path.join(root, key["log"]["file"]))
+        K.save(key, path)
+        return "ok", sum(1 for c in key["curves"] if c.get("scale")), len(key["curves"]), \
+            sum(1 for c in key["curves"] if c.get("wraps"))
+    except Exception as e:  # noqa: BLE001 - one bad key must not stop the run
+        return "%s: %s" % (type(e).__name__, e), 0, 0, 0
+
+
+def refresh(root, out, jobs, limit=None):
+    paths = []
+    for dp, _dirs, files in os.walk(out):
+        paths += [os.path.join(dp, f) for f in files if f.endswith(".key.json.gz")]
+    paths.sort()
+    if limit:
+        paths = paths[:limit]
+    print("%d keys to refresh" % len(paths), flush=True)
+    done, scaled, curves, wrapped, errs = 0, 0, 0, 0, []
+    with ProcessPoolExecutor(jobs) as ex:
+        for st, s, n, w in ex.map(_refresh_one, [(root, p) for p in paths], chunksize=8):
+            done += 1
+            scaled, curves, wrapped = scaled + s, curves + n, wrapped + w
+            if st != "ok":
+                errs.append(st)
+            if done % 1000 == 0:
+                print("%d / %d" % (done, len(paths)), flush=True)
+    print(json.dumps({"keys": done, "curves": curves, "with_printed_scale": scaled, "wrapped_somewhere": wrapped,
+                      "errors": len(errs), "first_errors": errs[:5]}, indent=1))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("folder")
     ap.add_argument("out")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--limit", type=int, help="stop after this many logs (a trial run)")
+    ap.add_argument("--refresh-curves", action="store_true",
+                    help="write the curves of the keys already in OUT again from their logs (printed "
+                         "scales and wraps), without stitching the printouts again")
     a = ap.parse_args(argv)
     root, out = os.path.abspath(os.path.expanduser(a.folder)), os.path.abspath(os.path.expanduser(a.out))
+    if a.refresh_curves:
+        return refresh(root, out, a.jobs, a.limit)
     os.makedirs(out, exist_ok=True)
     jl = os.path.join(out, "index.jsonl")
     done = set()

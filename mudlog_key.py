@@ -79,22 +79,9 @@ def _r(v, nd=4):
 
 # ---------------------------------------------------------------- build
 
-def build(log_path, pdf_path, rel_log=None, rel_pdf=None):
-    """-> key. Raises Skip when the log cannot be read or has no curves and
-    no rocks to check a reader against."""
-    import wellsight_print as wp
-    with open(log_path, "rb") as f:
-        raw = f.read()
-    name = os.path.basename(log_path)
-    try:
-        log = ws.read_log(raw)
-    except ws.NotReadable as e:
-        raise Skip("not_readable", str(e))
-    if log.get("top") is None or log.get("bottom") is None:
-        raise Skip("no_depth", "the log's depth range was not found")
-    top, bottom = float(log["top"]), float(log["bottom"])
-    axis, _basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
-
+def _curves(raw, log):
+    """the key's curves for a decoded log: readings, kind, unit, printed
+    scale and wraps"""
     curves = []
     try:
         scales = wscale.scales(raw, log.get("curves") or [])
@@ -112,6 +99,35 @@ def build(log_path, pdf_path, rel_log=None, rel_pdf=None):
                        "step": _r(c["step"], 4), "values": [_r(v) for v in c["values"]],
                        "scale": [[d, l, r] for d, l, r in secs] if secs else None,
                        "wraps": wscale.wraps(c, secs) if secs and c.get("first_depth") is not None else []})
+    return curves
+
+
+def refresh_curves(key, log_path):
+    """a key's curves written again from its log (a key written before the
+    printed scales were read gets them); the printout is not stitched again"""
+    with open(log_path, "rb") as f:
+        raw = f.read()
+    key["curves"] = _curves(raw, ws.read_log(raw))
+    return key
+
+
+def build(log_path, pdf_path, rel_log=None, rel_pdf=None):
+    """-> key. Raises Skip when the log cannot be read or has no curves and
+    no rocks to check a reader against."""
+    import wellsight_print as wp
+    with open(log_path, "rb") as f:
+        raw = f.read()
+    name = os.path.basename(log_path)
+    try:
+        log = ws.read_log(raw)
+    except ws.NotReadable as e:
+        raise Skip("not_readable", str(e))
+    if log.get("top") is None or log.get("bottom") is None:
+        raise Skip("no_depth", "the log's depth range was not found")
+    top, bottom = float(log["top"]), float(log["bottom"])
+    axis, _basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
+
+    curves = _curves(raw, log)
 
     lith = log.get("lithology") or {}
     _extra, ivs = cv.lith_curves(log, lith)
