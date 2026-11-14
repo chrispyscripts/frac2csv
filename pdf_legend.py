@@ -368,7 +368,10 @@ def _caption_name(text):
     t = text.strip()
     m = _UNIT.match(t)
     name, unit = (m.group(1), m.group(2)) if m else (t, "")
-    if not name or NUMBER.match(name) or _NOTE.search(name) or re.search(r"\d\s*-\s*\d", unit or ""):
+    if _NOTE.search(name or "") and unit and re.fullmatch(r"[A-Za-z][A-Za-z .]*?\s+\d{2,3}", name.strip()) \
+            and V.curve(re.sub(r"\s+\d+$", "", name.strip()))["key"]:
+        pass                    # a known curve with a number in its name and a unit: "Gamma 180 (API)"
+    elif not name or NUMBER.match(name) or _NOTE.search(name) or re.search(r"\d\s*-\s*\d", unit or ""):
         return None             # a note: a reading or range in the name, or a range for a unit
     vc = V.curve(t)
     if not vc["key"]:

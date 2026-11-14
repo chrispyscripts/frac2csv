@@ -99,7 +99,7 @@ class OneLine(unittest.TestCase):
         pn = (M.NULL - 0) / 10000.0
         line = [(100.0, 0.14, 100.4, 0.14), (100.4, 0.14, 100.5, pn), (100.5, pn, 100.6, 0.3),
                 (100.4, 1.14, 100.5, pn + 1), (100.5, pn + 1, 100.6, 1.3)]
-        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 10000.0), {5})
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 10000.0), set(range(2, 9)))   # 0.3 m either side
         self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 150.0), set())     # far off: no dip drawn
         # the copy of the dip, then the line and its copy back up from it
         series = [[0.14]] * 4 + [[0.125, 1.127], [0.915], [0.065, 1.067], [0.3, 1.3], [0.32]]

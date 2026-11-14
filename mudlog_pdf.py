@@ -791,7 +791,11 @@ def _null_dips(line, top, step, left, right):
     for da, pa, db, pb in line:
         for d, p in ((da, pa), (db, pb)):
             if any(abs(p - q) < 0.004 for q in at):
-                out.add(int(round((d - top) / step)))
+                j = int(round((d - top) / step))
+                # past the track nothing else is drawn there: the line on its
+                # way down to it and back up is no reading either; its copy
+                # inside the track can meet the line's own corner by chance
+                out.update(range(j - 3, j + 4) if not 0 <= p <= 1 else (j,))
     return out
 
 
@@ -904,7 +908,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
         if k == -1:
             under_since = i - 1 if under_since is None else under_since
             top_ps = [q for ps_ in series[under_since:i] for q in ps_ or () if q >= 0.5]
-            if not under and i - under_since > 10 and top_ps and max(top_ps) - min(top_ps) > 0.03:
+            drawn = sum(1 for ps_ in series[under_since:i] if any(q >= 0.5 for q in ps_ or ()))
+            if not under and i - under_since > 10 and top_ps and max(top_ps) - min(top_ps) > 0.03 \
+                    and drawn >= 0.7 * (i - under_since):    # (a line drawn all along, not junk's bits)
                 k, under_since = 0, None         # junk under a scale from nothing sits flat: a line
                 if last is not None:             # in from the top that moves for 1 m is the reading
                     last += 1
