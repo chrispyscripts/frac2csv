@@ -18,6 +18,9 @@ Cases are chosen by kind of log, from logs the PDF reader was not tuned on
   long           20 or more pages of log
   control        any log, at random
 
+--exclude names an earlier batch's cases.csv, so a new batch (another
+--seed) is logs no batch has seen.
+
 For each case: wellsight_server.decode + save writes OUT/las/source/<name>.las,
 decode_pdf + save writes OUT/las/pdf/<name>.from-printout.las, and
 las_compare.compare marks one against the other, each difference as a
@@ -82,9 +85,9 @@ def category_test(cat, f):
             "control": True}[cat]
 
 
-def choose(keys, per, seed, jobs):
+def choose(keys, per, seed, jobs, exclude=()):
     import mudlog_pdf_read as R
-    dev = {rel for _p, rel in R.keys_under(keys, every=28)}
+    dev = {rel for _p, rel in R.keys_under(keys, every=28)} | set(exclude)
     todo = [(p, rel) for p, rel in R.keys_under(keys) if rel not in dev]
     feats = []
     with ProcessPoolExecutor(jobs) as ex:
@@ -166,11 +169,17 @@ def main(argv=None):
     ap.add_argument("--per", type=int, default=12, help="cases per category")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--jobs", type=int, default=6)
+    ap.add_argument("--exclude", action="append", default=[],
+                    help="a cases.csv of an earlier batch: its logs are not chosen again (repeatable)")
     a = ap.parse_args(argv)
     keys, root, out = (os.path.expanduser(x) for x in (a.keys, a.root, a.out))
     os.makedirs(out, exist_ok=True)
     t0 = time.time()
-    cases, pool = choose(keys, a.per, a.seed, a.jobs)
+    exclude = set()
+    for path in a.exclude:
+        with open(os.path.expanduser(path), newline="", encoding="utf-8") as f:
+            exclude |= {r["log"] for r in csv.DictReader(f)}
+    cases, pool = choose(keys, a.per, a.seed, a.jobs, exclude)
     with open(os.path.join(out, "cases.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(cases[0]))
         w.writeheader()

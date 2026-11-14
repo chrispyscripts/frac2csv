@@ -356,8 +356,8 @@ def _caption_name(text):
     t = text.strip()
     m = _UNIT.match(t)
     name, unit = (m.group(1), m.group(2)) if m else (t, "")
-    if not name or NUMBER.match(name) or _NOTE.search(name):
-        return None
+    if not name or NUMBER.match(name) or _NOTE.search(name) or re.search(r"\d\s*-\s*\d", unit or ""):
+        return None             # a note: a reading or range in the name, or a range for a unit
     vc = V.curve(t)
     if not vc["key"]:
         vc = V.curve(name)

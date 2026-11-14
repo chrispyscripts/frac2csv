@@ -468,6 +468,57 @@ def intervals_from_tiles(tiles, join_m=0.05):
 
 # ---------------------------------------------------------------- curves
 
+def _widen(segs, lines_pt, x0, x1):
+    """a curve's track widened past a line of the log while the curve's own
+    line runs on across it: it crosses the line again and again, and much of
+    it lies beyond (at a real edge the line only pokes past it where a
+    reading runs off the scale). segs: the curve's strokes, across in
+    points. -> (x0, x1)"""
+    def length(sg):
+        return max(abs(sg[2] - sg[0]), 0.01)
+
+    def inside(lo, hi):
+        return sum(length(sg) for sg in segs if lo - 0.5 <= min(sg[1], sg[3]) and max(sg[1], sg[3]) <= hi + 0.5)
+
+    lines = sorted(lines_pt)
+    most = 1.5 * (x1 - x0)                     # a band is not much wider than its caption block's column
+    for side in (0, 1):
+        while True:
+            edge = x0 if side == 0 else x1
+            if edge not in lines:
+                break
+            i = lines.index(edge)
+            j = i - 1 if side == 0 else i + 1
+            if not 0 <= j < len(lines):
+                break
+            nxt = lines[j]
+            if (x1 - nxt if side == 0 else nxt - x0) > most:
+                break
+            lo, hi = (nxt, edge) if side == 0 else (edge, nxt)
+            beyond = inside(lo, hi)
+            cross = sum(1 for sg in segs if min(sg[1], sg[3]) < edge - 0.5 and max(sg[1], sg[3]) > edge + 0.5)
+            # the curve is in one place at a depth: past the line where it is
+            # not in the track. Another column's drawing of the colour sits
+            # there at the same depths as the curve
+            here, there = set(), set()
+            for sg in segs:
+                a = (sg[1] + sg[3]) / 2
+                bins = range(int(sg[0] // 0.25), int(sg[2] // 0.25) + 1)
+                if x0 + 0.5 < a < x1 - 0.5:
+                    here.update(bins)
+                elif lo + 0.5 < a < hi - 0.5:
+                    there.update(bins)
+            alone = len(there - here) >= 3 * len(there & here) and len(there - here) >= 0.05 * len(here)
+            if cross >= 10 and beyond >= 0.05 * inside(x0, x1) and alone:
+                if side == 0:
+                    x0 = nxt
+                else:
+                    x1 = nxt
+            else:
+                break
+    return x0, x1
+
+
 def _track_edges(lines_pt, a_left, a_right):
     """the long lines either side of a caption's two numbers"""
     lo = [x for x in lines_pt if x <= a_left + 1.0]
@@ -770,19 +821,20 @@ def read_one_line(series, left, right, moves=None):
 
 
 def _recorded_step(segs):
-    """the step a curve was recorded at, from its drawn line: the spacing
-    down the log of the line's corners (most of its strokes run from one
-    reading to the next; a dashed line's dashes are left out), in 0.05 m;
-    None when no spacing stands out"""
-    c = collections.Counter()
-    for da, _pa, db, _pb in segs:
-        L = abs(db - da)
-        if 0.08 <= L <= 2.05:                   # shorter is a dashed line's dash
-            c[round(L / 0.05) * 0.05] += 1
-    if not c:
+    """the step a curve was recorded at, from its drawn line: most of its
+    strokes run from one reading to the next, so their length down the log
+    is the step. Corners where the line is cut off at the track's edge split
+    some strokes shorter, and a dashed line's dashes are shorter still (left
+    out), so of 1, 0.5, 0.2 and 0.1 m the step is the largest that one
+    stroke in seven matches (within a tenth of it: a sideways page's depth
+    scale can be a little off); None when none does"""
+    lens = [abs(db - da) for da, _pa, db, _pb in segs if abs(db - da) >= 0.08]
+    if len(lens) < 20:
         return None
-    best, n = c.most_common(1)[0]
-    return round(best, 2) if n >= 0.3 * sum(c.values()) else None
+    for S in (1.0, 0.5, 0.2, 0.1):
+        if sum(1 for L in lens if abs(L - S) <= max(0.012, 0.1 * S)) >= 0.15 * len(lens):
+            return S
+    return None
 
 
 def _shift(values, k, blend=True):
@@ -881,8 +933,32 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
         (k, v) for k, v in curves.items() if not any(o[0] == k[0] and clipped(k[2], o[2]) for o in curves))
     strokes = strokes or Strokes(doc, pages)
     n = int(round((bottom - top) / step)) + 1
+    # the curves captioned in one block share a track: where one curve's
+    # line shows the track runs on past a line (_widen), so do the others'
+    band = {}
+    for (colour, e, _name) in curves:
+        ws = strokes.of(colour)
+        if not ws:
+            continue
+        wm = max(ws, key=lambda w: (_inside(_relative(ws[w], *e)), w))
+        w0, w1 = _widen(ws[wm], lines_pt, *e)
+        b0, b1 = band.get(e, e)
+        band[e] = (min(b0, w0), max(b1, w1))
+    # a block inside a wider one that shares an edge with it is the same
+    # band (its numbers stacked at another height fell between other lines)
+    # where the wider block captions a real curve (a known name and a unit,
+    # not a note like "WOB")
+    real = {e for (colour, e, _name), seen in curves.items()
+            if len(seen) >= 2 and any(c.kind and c.unit for _d, c in seen)}
+    for e1 in list(band):
+        for e2 in real:
+            if (e2 != e1 and e2[0] <= e1[0] and e2[1] >= e1[1] and (e2[0] == e1[0] or e2[1] == e1[1])
+                    and e2[1] - e2[0] <= 1.5 * (e1[1] - e1[0])):
+                a, b = band[e1], band.get(e2, e2)
+                band[e1] = (min(a[0], b[0]), max(a[1], b[1]))
     out = []
     for (colour, (x0, x1), _name), seen in curves.items():
+        x0, x1 = band.get((x0, x1), (x0, x1))
         # a scale one caption alone gives, between two that agree, is a
         # misread number, not a change of scale
         seen = [t for i, t in enumerate(seen)
