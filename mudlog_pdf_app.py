@@ -4,7 +4,7 @@ mudlog_pdf.py and handed to the Lab the way a WellSight log is
 stitched beside it as its printout.
 
   looks_like_mudlog(pdf) -> (bool, why)
-  read(pdf, filename, library=None) -> {"payload", "files", "header", "reading"}
+  read(pdf, filename, library=None) -> {"payload", "files", "header", "reading", "las"}
 
 looks_like_mudlog decides whether a dropped PDF goes here or to the frac
 readers, from its first pages only, so a frac report is not held up: it
@@ -185,7 +185,7 @@ def _las(name, reading, curves, header):
 
 
 def read(pdf, filename, library=None):
-    """-> {"payload", "files", "header", "reading"}, as wellsight_app.read,
+    """-> {"payload", "files", "header", "reading", "las"}, as wellsight_app.read,
     from the printout alone. Raises ValueError with a sentence for the user
     when nothing could be read."""
     name = os.path.basename(filename or "printout.pdf")
@@ -232,7 +232,8 @@ def read(pdf, filename, library=None):
     described = wdesc.read(notes, top, bottom)
     analysis["descriptions"] = wdesc.analyse(described, rocks, symbols, analysis["show_zones"])
 
-    files = {stem + ".las": _las(name, r, curves, h),
+    las = _las(name, r, curves, h)
+    files = {stem + ".las": las,
              stem + ".reading.json": json.dumps(r, indent=1).encode()}
     if h:
         files[stem + ".header.csv"] = wsym.csv_text([["field", "value"]] + [[k, v] for k, v in h.items()]).encode()
@@ -275,4 +276,4 @@ def read(pdf, filename, library=None):
         "files": sorted(files),
     }
     head = {"source": "pdf", "boxes": [], "custom": None}
-    return {"payload": payload, "files": files, "header": head, "reading": r}
+    return {"payload": payload, "files": files, "header": head, "reading": r, "las": las}

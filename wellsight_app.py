@@ -11,7 +11,9 @@ the 0.2 m export grid, and the lithology intervals. files are the converter's
 own outputs, written only when the user saves:
 
   <file>.las                 LAS 2.0, every curve at its recorded step
-  <file>.curves-0.2m.las     curve-track data on a regular 0.2 m step
+  <file>.curve-track.las     the curve track only, on one regular step: the
+                             finest any of its curves is recorded at, so no
+                             reading is thinned out (what Save LAS writes)
   <file>.csv / .json         the same table, and everything else in the file
   <file>.lithology.csv, .survey.csv, .accessories.csv, .picture-N.png
                              where the log has them
@@ -95,14 +97,25 @@ def read(data, filename):
         real = ws.read_log
         ws.read_log = lambda raw: log if raw == data else real(raw)
         try:
-            files = _convert(data, name)
+            files = _convert(data, name, las_step(log))
         finally:
             ws.read_log = real
     return _payload(log, data, name, files)
 
 
-def _convert(data, name):
-    """the converter's own outputs and the 0.2 m curve LAS, by file name"""
+CURVE_LAS = ".curve-track.las"
+
+
+def las_step(log):
+    """the step the curve-track LAS is written on: the finest any curve in
+    the curve track is recorded at (coarser curves repeat their nearest
+    reading, as the converter writes them; none is thinned)"""
+    steps = [c["step"] for c in el.curve_track_curves(log) if c.get("step")]
+    return round(min(steps), 6) if steps else STEP
+
+
+def _convert(data, name, las_step=STEP):
+    """the converter's own outputs and the curve-track LAS, by file name"""
     tmp = tempfile.mkdtemp(prefix="f2c-ws-")
     try:
         src = os.path.join(tmp, "src")
@@ -113,7 +126,7 @@ def _convert(data, name):
         row = cv.convert_one((src, out, name))
         if row.get("status") not in ("ok", "no_curves"):
             raise NotWellSight(f"{name}: {row.get('reason') or row.get('status')}")
-        erow = el.export_one((src, os.path.join(tmp, "x"), name, "curves", STEP))
+        erow = el.export_one((src, os.path.join(tmp, "x"), name, "curves", las_step))
         files = {}
         for fn in sorted(os.listdir(out)):
             with open(os.path.join(out, fn), "rb") as f:
@@ -121,7 +134,7 @@ def _convert(data, name):
         x = os.path.join(tmp, "x", name + ".las")
         if erow.get("status") == "ok" and os.path.exists(x):
             with open(x, "rb") as f:
-                files[name + ".curves-%gm.las" % STEP] = f.read()
+                files[name + CURVE_LAS] = f.read()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return files

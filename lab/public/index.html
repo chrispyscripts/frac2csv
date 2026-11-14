@@ -1028,8 +1028,7 @@ in a separate window that follows this one as you go through the logs">View head
                   title="Stitch a printout PDF of this log (LogViewer: File > Print,
 Microsoft Print to PDF, All, Page Breaks off)">Add printout PDF</button>
           <button type="button" class="btn" id="wssavebtn"
-                  title="Write the LAS, CSV and JSON, the rock types, symbols and show zones as tables,
-and the stitched printout">Save LAS</button>
+                  title="Write the curve track as one LAS file, on the finest step its curves are recorded at">Save LAS</button>
           <button type="button" class="btn" id="wsflagbtn"
                   title="Report a problem with this log — sends your notes plus a
 picture of these panels and the reading's details">Flag Error</button>
@@ -2856,7 +2855,7 @@ $("wssavebtn").addEventListener("click", async () => {
   try {
     const out = await postJson("/api/wellsight-save", { id: entry.ws.id,
       folder: folderFor(entry), destFolder: settings.destFolder });
-    wsMsg(`${out.written.length} files saved to ${out.folder}`);
+    wsMsg(`Saved ${out.written.join(", ")} to ${out.folder}`);
   } catch (e) { wsMsg("Save: " + e.message, true); }
 });
 $("wsflagbtn").addEventListener("click", () => openFlag());

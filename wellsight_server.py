@@ -5,7 +5,7 @@ the Lab and the stacked view (logstack.html).
 POST /api/wellsight            {filename, data, printout?}  decode (+ stitch)
 POST /api/wellsight-printout   {id, data}                    stitch a dropped printout
 POST /api/wellsight-logviewer  {id}                          print with LogViewer, stitch
-POST /api/wellsight-save       {id, folder, destFolder}      write LAS, CSV, JSON, strip
+POST /api/wellsight-save       {id, folder, destFolder}      write the curve track as one LAS
 POST /api/wellsight-library    {folder, refresh?}            index a printouts folder
 POST /api/wellsight-find       {id, folder}                  stitch the log's printout from it
 GET  /api/wellsight-status                                    can LogViewer print here?
@@ -98,12 +98,23 @@ def _public(rec):
     return {"id": rec["id"], "payload": rec["payload"], "printout": rec.get("strip_info")}
 
 
+def _las_file(name, data, suffix):
+    """(file name, bytes) of the one LAS Save writes, named after the log
+    ("0229--LOG.slg" -> "0229--LOG.las"; one read off a printout PDF ->
+    "0229--LOG.from-printout.las", so it never overwrites the log's own);
+    None when there is nothing to write"""
+    if not data:
+        return None
+    return os.path.splitext(os.path.basename(name))[0] + suffix, data
+
+
 def decode(req):
     data = base64.b64decode(req["data"])
     name = os.path.basename(req.get("filename") or "log.sl6")
     out = wa.read(data, name)
     rec = {"id": uuid.uuid4().hex[:12], "payload": out["payload"], "files": out["files"],
-           "header": out.get("header") or {}, "native": data, "strip": None, "strip_info": None}
+           "header": out.get("header") or {}, "native": data, "strip": None, "strip_info": None,
+           "las": _las_file(name, out["files"].get(name + wa.CURVE_LAS), ".las")}
     resp = _public(rec)
     if req.get("printout"):
         try:
@@ -134,7 +145,8 @@ def decode_pdf(data, name):
                        "snapped": True, "clipped": False})
     rec = {"id": uuid.uuid4().hex[:12], "payload": out["payload"], "files": out["files"],
            "header": out.get("header") or {}, "native": None, "strip": None, "strip_info": None,
-           "tracks": tracks}
+           "tracks": tracks, "las": _las_file(name, out["las"] if out["payload"]["curves"] else None,
+                                             ".from-printout.las")}
     resp = _public(rec)
     try:
         _stitch(rec, bytes(data), name)
@@ -251,14 +263,10 @@ def save(req, export_folder):
     folder = req.get("folder") or os.path.join(os.path.expanduser("~"), "Downloads")
     folder, skipped = export_folder(folder, req.get("destFolder", ""))
     written = []
-    files = dict(rec["files"])
-    if rec.get("strip"):
-        files[_strip_name(rec)] = rec["strip"]
-        cut = _curves_pdf(rec)
-        if cut is not rec["strip"]:
-            files[rec["payload"]["file"] + ".printout-curves.pdf"] = cut
-    if rec.get("printout_raw"):
-        files[rec["payload"]["file"] + ".printout.pdf"] = rec["printout_raw"]
+    las = rec.get("las")
+    if not las:
+        return 422, {"error": "this log has no curves in its curve track to write"}
+    files = dict([las])
     for name, data in files.items():
         dest = os.path.join(folder, os.path.basename(name))
         with open(dest, "wb") as f:

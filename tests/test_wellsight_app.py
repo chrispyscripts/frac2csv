@@ -57,7 +57,7 @@ class Read(unittest.TestCase):
             self.assertTrue(files[name + ".las"].startswith(b"~V"), name)
             self.assertIn(name + ".json", files)
             if p["curves"]:
-                self.assertIn(name + ".curves-0.2m.las", files)
+                self.assertIn(name + wa.CURVE_LAS, files)
                 self.assertEqual(len(p["curves"][0]["values"]), p["rows"])
             self.assertIn(p["axis"], ("MD", "TVD"))
             # rock types, accessories and other symbols, read into one vocabulary
