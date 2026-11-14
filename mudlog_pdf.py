@@ -756,6 +756,15 @@ def read_one_line(series, left, right, moves=None):
                 return any(abs(q - p) < 0.25 for q in inside)
         return False
 
+    def comes_back(i):
+        """the line in the track is back near the top within 3 m below
+        depth i: a short wrap ends when the reading falls back under the
+        scale's end; a real drop to the background stays down"""
+        for ps in series[i + 1:i + 31]:
+            if any(0.6 <= q <= 1 + e for q in ps or ()):
+                return True
+        return False
+
     for i, ps in enumerate(series):
         pts = sorted(ps or ())
         # two lines one on each edge (a frame, or a line pinned at both
@@ -822,7 +831,7 @@ def read_one_line(series, left, right, moves=None):
                     -e <= a0 and a1 <= 1 + e and a0 <= min(p, prev) + 0.05 and a1 >= max(p, prev) - 0.05
                     for a0, a1 in moves[i]):
                 pass                                 # drawn across the track: the reading moved
-            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25 and i - leapt > 20:
+            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25 and i - leapt > 20 and comes_back(i):
                 k = 1                            # off the top, in from the low end: wrapped (a line that
                 #                                  leapt up just before is a spike coming back down)
             elif last is not None and k == 1 and p - prev > 0.3:
