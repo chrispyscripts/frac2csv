@@ -193,11 +193,19 @@ class OneLine(unittest.TestCase):
         # the page): down to -0.25, back up from -0.37 within 0.5 m
         line = [(100.0, 0.26, 100.3, 0.26), (100.3, 0.18, 100.4, -0.25), (100.6, -0.37, 100.7, 0.0),
                 (100.7, 0.0, 100.8, 0.26)]
-        got = M._null_dips(line, 100.0, 0.1, 0.0, 1000.0)
+        got = M._junk_dives(line, 100.0, 0.1, 0.0, 1000.0)
         self.assertTrue({4, 5, 6} <= got and 0 not in got, got)
         # a wrapped line run out of the low end goes on down: no dip
         line = [(100.0, 0.1, 100.3, 0.05), (100.3, 0.05, 100.4, -0.25)]
-        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 1000.0), set())
+        self.assertEqual(M._junk_dives(line, 100.0, 0.1, 0.0, 1000.0), set())
+        # read as junk only where the reading was in the scale
+        series = [[0.26]] * 4 + [[0.7], [0.35], [0.6], [0.036, 1.033], [0.26], [0.26]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, dives={4, 5, 6, 7})]
+        self.assertAlmostEqual(got[-1], 260, delta=1)
+        series = [[0.9], [0.95], [0.99], [0.03, 1.03], [0.04, 1.04], [0.94, -0.06], [0.8, -0.2], [0.9, -0.1],
+                  [0.06, 1.06], [0.1]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 500.0, dives={4, 5, 6, 7, 8})]
+        self.assertAlmostEqual(got[-1], 550, delta=1)                       # wrapped before: still read
 
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no

@@ -775,6 +775,25 @@ def _moves(segs, top, n, step):
 NULL = -999.25
 
 
+def _junk_dives(line, top, step, left, right):
+    """the readings where junk under a scale from nothing (-368 on gas
+    0 - 1000) is drawn: the line dives well under the track and back up
+    within 0.5 m, its bottom cut off the page. A wrapped line dips the
+    same way where the reading falls under the scale's top for a moment:
+    read_one_line takes these as junk only where the reading was in the
+    scale. -> {index}"""
+    out = set()
+    if left != 0 or right == left:
+        return out
+    down = sorted(db for da, pa, db, pb in line if pb < -0.15 and pa > pb + 0.15)
+    up = sorted(da for da, pa, db, pb in line if pa < -0.15 and pb > pa + 0.15)
+    for d1 in down:
+        d2 = next((u for u in up if 0 < u - d1 <= 0.5), None)
+        if d2 is not None:
+            out.update(range(int(round((d1 - top) / step)) - 3, int(round((d2 - top) / step)) + 4))
+    return out
+
+
 def _null_dips(line, top, step, left, right):
     """the readings where LogViewer drew the log's null (-999.25, no
     reading) as if it were one: on a wide scale its place is just past the
@@ -783,18 +802,6 @@ def _null_dips(line, top, step, left, right):
     if right == left:
         return set()
     out = set()
-    if left == 0:
-        # junk under a scale from nothing (-368 on gas 0 - 1000): the line
-        # dives well under the track to a point and straight back up; a
-        # wrapped line run out of the low end goes on down instead
-        # (the bottom of the dive can be cut off the page: a stroke down to
-        # well under the track, and one back up from there within 0.5 m)
-        down = sorted(db for da, pa, db, pb in line if pb < -0.15 and pa > pb + 0.15)
-        up = sorted(da for da, pa, db, pb in line if pa < -0.15 and pb > pa + 0.15)
-        for d1 in down:
-            d2 = next((u for u in up if 0 <= u - d1 <= 0.5), None)
-            if d2 is not None:
-                out.update(range(int(round((d1 - top) / step)) - 3, int(round((d2 - top) / step)) + 4))
     pn = (NULL - left) / (right - left)
     if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
         return out
@@ -811,7 +818,7 @@ def _null_dips(line, top, step, left, right):
     return out
 
 
-def read_one_line(series, left, right, moves=None, under=False, nulls=()):
+def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=()):
     """a curve's readings where LogViewer drew it with one line only, down
     the log: series[i], where its line crosses depth i as a share of the
     track, unclipped (the PDF keeps the line past the track's edge, cut off
@@ -914,7 +921,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                 return True
         return False
 
-    last_i, seen, under_since, before_gap = None, [], None, None
+    last_i, seen, under_since, before_gap, dive_junk = None, [], None, None, False
     for i, ps in enumerate(series):
         if out and out[-1] is not None:
             last_i = i - 1
@@ -936,7 +943,10 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             #                                      (unless it went off past the top: it comes back wrapped)
         if ps:
             seen = list(ps)
-        if i in nulls:
+        if i in dives and i - 1 not in dives:
+            dive_junk = k == 0                   # a dive from the reading in the scale is junk; from a
+        #                                          wrapped one it is the reading under the top for a moment
+        if i in nulls or (i in dives and dive_junk):
             out.append(None)
             last, k = None, 0
             continue
@@ -1250,7 +1260,12 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
     out = []
     for (colour, (x0, x1), _name), seen in curves.items():
         x0, x1 = band.get((x0, x1), (x0, x1))
-        x0, x1 = _grid_edges(grid, lines_pt, x0, x1)
+        g0, g1 = _grid_edges(grid, lines_pt, x0, x1)
+        # a track run off the page (no line at its edge) with no grid to
+        # say where it ends, on a logarithmic scale (no even grid either):
+        # where the line is on it cannot be told
+        off_page = (x0 not in lines_pt and g0 == x0) or (x1 not in lines_pt and g1 == x1)
+        x0, x1 = g0, g1
         # a scale one caption alone gives, between two that agree, is a
         # misread number, not a change of scale
         seen = [t for i, t in enumerate(seen)
@@ -1317,7 +1332,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 # can be run under: the line wraps in from the top there
                 under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
                 got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], under=under,
-                                    nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1})
+                                    nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
+                                    dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1})
             for k, r in enumerate(got):
                 if r is None:
                     continue
@@ -1351,6 +1367,10 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # 10 - 1000 is not
         logs = []
         resist = "resistivity" in (first.kind or V.curve(first.name)["key"] or "")
+        if off_page and any(l_ > 0 and r_ > 0 and max(l_, r_) / min(l_, r_) >= (100 if resist else 1000)
+                            for _d, l_, r_ in secs):
+            dropped.append((first.name, "its logarithmic scale runs off the page"))
+            continue
         for j, (d_from, left, right) in enumerate(secs):
             if left > 0 and right > 0 and max(left, right) / min(left, right) >= (100 if resist else 1000):
                 d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
