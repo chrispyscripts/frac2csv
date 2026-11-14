@@ -541,6 +541,7 @@ class Strokes:
 
     def __init__(self, doc, pages):
         self.by = collections.defaultdict(lambda: collections.defaultdict(list))
+        self.flats = collections.defaultdict(lambda: collections.defaultdict(list))
         for P in pages:
             for dr in doc[P.page - 1].get_drawings():
                 c = dr.get("color")
@@ -557,14 +558,19 @@ class Strokes:
                     else:
                         continue
                     da, db = P.depth(p.x, p.y), P.depth(q.x, q.y)
-                    if abs(da - db) < 1e-4 or not (P.on(da, 0.01) or P.on(db, 0.01)):
+                    if not (P.on(da, 0.01) or P.on(db, 0.01)):
                         continue
                     aa, ab = P.across(p.x, p.y), P.across(q.x, q.y)
+                    if abs(da - db) < 1e-4:
+                        # straight across at one depth: kept apart (a step's
+                        # flat, which says a reading moved and did not wrap)
+                        self.flats[key][w].append((da, min(aa, ab), da, max(aa, ab)))
+                        continue
                     out.append((da, aa, db, ab) if da < db else (db, ab, da, aa))
 
-    def of(self, colour):
+    def of(self, colour, flats=False):
         want = L.rgb(colour)
-        for key, groups in self.by.items():
+        for key, groups in (self.flats if flats else self.by).items():
             if max(abs(a - b) for a, b in zip(key, want)) <= 0.02:
                 return groups
         return {}
@@ -773,7 +779,8 @@ def read_one_line(series, left, right, moves=None):
         inside = [p for p in pts if -e <= p <= 1 + e]
         out_lo = [p for p in pts if p < -e]
         out_hi = [p for p in pts if p > 1 + e]
-        if k == 1 and out_lo and inside:
+        if k == 1 and inside and (out_lo or (moves and any(
+                a1 - a0 > 0.02 and a0 < -e for a0, a1 in moves[i]))):
             k = 0                                # the wrapped line runs out of the low end: back in the scale
         elif k == 0 and out_hi and last is not None:
             r = min(out_hi, key=lambda p: abs(p - last))
@@ -1002,7 +1009,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         crossing = [sg for sg in line if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
         whole = [ms + [p for p in ps if p < -e or p > 1 + e]
                  for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
-        moves = _moves(line, top, n, step)
+        flat = [sg for sg in _relative(strokes.of(colour, flats=True).get(wmain, []), x0, x1)
+                if -0.5 < sg[1] < 1.5 and -0.5 < sg[3] < 1.5]
+        moves = _moves(line + flat, top, n, step)
         wrap = [[] for _ in range(n)]
         for w, sg in groups.items():
             if w == wmain:
@@ -1067,7 +1076,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     "scale": [[round(d, 3), l, r] for d, l, r in secs], "colour": "#%06x" % colour,
                     "track_pt": [round(x0, 1), round(x1, 1)], "past_scale": unsure,
                     "recorded_step": rec, "shifted_m": round(half, 3) if half >= step / 4 else 0.0,
-                    "log_scale_from": logs})
+                    "log_scale_from": logs, "lines": 2 if two_lines else 1})
     return out
 
 
