@@ -621,7 +621,30 @@ def read_line(main, wrap, left, right):
     return out
 
 
-def read_one_line(series, left, right):
+def _moves(segs, top, n, step):
+    """for each depth i, the stretches across the track the line covers
+    between depth i - 1 and i: [(lo, hi)] (a step drawn flat across the
+    track between two readings shows here, missed by the crossings)"""
+    out = [[] for _ in range(n)]
+    for da, pa, db, pb in segs:
+        if db < da:
+            da, pa, db, pb = db, pb, da, pa
+        i0 = max(1, int(math.floor((da - top) / step + 1e-9)) + 1)
+        i1 = min(n - 1, int(math.ceil((db - top) / step - 1e-9)))
+        for i in range(i0, i1 + 1):
+            a, b = top + (i - 1) * step, top + i * step
+            u, v = max(da, a), min(db, b)
+            if v < u - 1e-9:
+                continue
+            if db - da < 1e-9:
+                xs = (pa, pb)
+            else:
+                xs = tuple(pa + (pb - pa) * (d - da) / (db - da) for d in (u, v))
+            out[i].append((min(xs), max(xs)))
+    return out
+
+
+def read_one_line(series, left, right, moves=None):
     """a curve's readings where LogViewer drew it with one line only, down
     the log: series[i], where its line crosses depth i as a share of the
     track, unclipped (the PDF keeps the line past the track's edge, cut off
@@ -633,9 +656,17 @@ def read_one_line(series, left, right):
     track width apart) the one past the end is the reading and says the
     line has wrapped; the one in the track with one below the low end is
     the reading in the scale (or, where the line is already below the low
-    end, the one below it). Between, the line in the track is the reading, one
-    scale width on while wrapped; a jump of over half the track with no
-    pair drawn is taken as a wrap too (wellsight_scales.read_drawn's rule)."""
+    end, the one below it). The wrapped line running out of the low end,
+    or the line running out of the high end and carrying on lower, says the
+    same with no pair drawn. Between, the line in the track is the reading,
+    one scale width on while wrapped. With nothing drawn to say so, a jump
+    from the top quarter of the track to the bottom quarter is a wrap, and a
+    jump of the wrapped line back up ends it, unless the line is drawn
+    across the track between the two readings (moves[i], from _moves: a
+    step drawn flat): then the reading really moved. A wrong wrap would
+    misread everything until the next jump, a missed one only the readings
+    past the scale, so a jump is taken for a wrap only where it plainly is
+    one."""
     lo, hi = min(left, right), max(left, right)
     e = wscale.EDGE
     out, k, last = [], 0, None                   # k: scale widths the line in the track is off the reading
@@ -677,6 +708,17 @@ def read_one_line(series, left, right):
             last = r
             continue
         inside = [p for p in pts if -e <= p <= 1 + e]
+        out_lo = [p for p in pts if p < -e]
+        out_hi = [p for p in pts if p > 1 + e]
+        if k == 1 and out_lo and inside:
+            k = 0                                # the wrapped line runs out of the low end: back in the scale
+        elif k == 0 and out_hi and last is not None:
+            r = min(out_hi, key=lambda p: abs(p - last))
+            if abs(r - last) < 0.5 and carries_on(i, r - 1):
+                k = 1                            # out of the high end, on one width lower
+                out.append((val(r), True))
+                last = r
+                continue
         if not inside:
             past = [p for p in pts if p < -e or p > 1 + e]
             if past and last is not None:
@@ -691,11 +733,17 @@ def read_one_line(series, left, right):
         mid = [p for p in inside if e < p < 1 - e]
         if mid:
             p = min(mid, key=lambda m: abs(m + k - last)) if last is not None else mid[0]
-            if last is not None and abs(p + k - last) > 0.5:
-                if p + k < last:
-                    k = min(1, k + 1)            # in from the low end: wrapped (or back from below it)
-                else:
-                    k = max(0, k - 1)            # back out of the low end (below the scale only where drawn so)
+            prev = last - k if last is not None else None       # where the line was in the track
+            if last is not None and abs(p + k - last) > 0.5 and moves and any(
+                    -e <= a0 and a1 <= 1 + e and a0 <= min(p, prev) + 0.05 and a1 >= max(p, prev) - 0.05
+                    for a0, a1 in moves[i]):
+                pass                                 # drawn across the track: the reading moved
+            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25:
+                k = 1                            # off the top, in from the low end: wrapped
+            elif last is not None and k == 1 and p - prev > 0.3:
+                k = 0                            # the wrapped line jumps back up: the reading is back in the scale
+            elif last is not None and k == -1 and prev - p > 0.3:
+                k = 0
             out.append((val(p + k), True))
             last = p + k
         elif any(p >= 1 - e for p in inside):
@@ -776,9 +824,15 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
         # strokes with one end inside it (other marks of the colour beyond
         # the track, another column's lines, are not the curve)
         e = wscale.EDGE
-        crossing = [sg for sg in groups[wmain] if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
+        # for a curve drawn with one line: the line without straight runs
+        # along the track's edges (a box's sides; a pinned line says nothing
+        # the reader can write), and where it runs out of the track
+        line = [sg for sg in groups[wmain] if not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 0.3
+                                                  and (abs(sg[1]) < 0.003 or abs(sg[1] - 1) < 0.003))]
+        crossing = [sg for sg in line if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
         whole = [ms + [p for p in ps if p < -e or p > 1 + e]
-                 for ms, ps in zip(main, _series(crossing, top, n, step))]
+                 for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
+        moves = _moves(line, top, n, step)
         wrap = [[] for _ in range(n)]
         for w, sg in groups.items():
             if w == wmain:
@@ -801,7 +855,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
             if two_lines:
                 got = read_line(main[i0:i1], wrap[i0:i1], left, right)
             else:
-                got = read_one_line(whole[i0:i1], left, right)
+                got = read_one_line(whole[i0:i1], left, right, moves[i0:i1])
             for k, r in enumerate(got):
                 if r is None:
                     continue
