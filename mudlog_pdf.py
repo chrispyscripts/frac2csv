@@ -210,12 +210,17 @@ def _labelled(words, box):
     Energy Ltd.: Attn ...", "Location: Surface: 01-02-3-4W5")"""
     out, label, start, field = [], None, 0, None
     # "WELL LICENCE No. 99X003": a label ending in "No." or "#" with no
-    # colon, its value straight after it, at the start of the run
-    if words and not any(":" in w[4] for w in words):
-        for n in range(min(6, len(words) - 1), 0, -1):
-            t = " ".join(w[4] for w in words[:n])
-            if re.search(r"(?i)(\bno\.?|#)$", t) and V.header(t, box)["key"]:
-                return [(t, words[n:])]
+    # colon, its value straight after it, at the start of the run (also
+    # "NO.99X001" in one word, and "NO," with a comma)
+    split = []
+    for w in words:
+        m = re.match(r"(?i)^(no[.,]|#)(\w.*)$", w[4])
+        split += [w[:4] + (m.group(1),) + w[5:], w[:4] + (m.group(2),) + w[5:]] if m else [w]
+    if split and not any(":" in w[4] for w in split):
+        for n in range(min(6, len(split) - 1), 0, -1):
+            t = " ".join(w[4] for w in split[:n])
+            if re.search(r"(?i)(\bno[.,]?|#)$", t) and V.header(t, box)["key"]:
+                return [(t, split[n:])]
     for j, w in enumerate(words):
         if not w[4].endswith(":") or len(w[4]) < 2:
             continue
@@ -930,7 +935,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
         return a.lower() != b.lower() and i > 0 and b[i - 1].isalnum()
 
     curves = collections.OrderedDict(
-        (k, v) for k, v in curves.items() if not any(o[0] == k[0] and clipped(k[2], o[2]) for o in curves))
+        (k, v) for k, v in curves.items()
+        if not any(o[0] == k[0] and clipped(k[2], o[2]) and len(curves[o]) >= len(v) for o in curves))
     strokes = strokes or Strokes(doc, pages)
     n = int(round((bottom - top) / step)) + 1
     # the curves captioned in one block share a track: where one curve's
