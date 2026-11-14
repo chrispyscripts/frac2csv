@@ -602,6 +602,9 @@
         <div class="exfoot" id="exfoot"></div>
       </div>
     </div>
+    <button type="button" class="btn" id="lasbtn"
+            title="Open the LAS viewer in a window of its own: open or drop .las files to plot their
+curves and see their header, checks and text, with a printout PDF beside them">LAS viewer ↗</button>
     <button type="button" class="btn gear" id="settingsbtn" title="Settings">⚙ Settings</button>
   </div>
 
@@ -3017,6 +3020,15 @@ $("wsheadbtn").addEventListener("click", () => {
   // a window of its own, not a tab, so it can sit beside the Lab
   wsHeadWin = window.open("logheader.html?id=" + encodeURIComponent(wsv.id), winName("logheader"),
                           "popup,width=820,height=960");
+});
+
+// The LAS viewer (lasviewer.html, from wellsight-convert): a window of its
+// own for .las files, opened from the top bar; it reads only the files the
+// user opens or drops on it.
+let lasWin = null;
+$("lasbtn").addEventListener("click", () => {
+  if (lasWin && !lasWin.closed) { lasWin.focus(); return; }
+  lasWin = window.open("lasviewer.html", winName("lasviewer"), "popup,width=1400,height=900");
 });
 
 // The arrow keys in the stacked and header windows step through the logs

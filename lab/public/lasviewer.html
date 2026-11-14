@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LAS Viewer</title>
+<!-- The LAS viewer of wellsight-convert (las_viewer.html, 2026-11-13), opened
+     from the Lab's top bar in a window of its own (lasviewer.html). Here it
+     runs on files the user opens or drops: the well list and the export /
+     full-conversion sets are wellsight-convert's own server (view_las.py),
+     which the Lab does not have. Changed for the Lab: an "Open files…"
+     button beside the drop box, and a dropped PDF is always shown as a PDF. -->
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --ink: #1c2230; --muted: #667085; --line: #e2e5ea;
+  --grid: #e6e9ee; --grid-minor: #f2f3f6; --accent: #2563eb; --accent-soft: #e7eeff;
+  --ok: #15803d; --bad: #c0261a; --info: #667085; --hover: #eef2f8; --track: #ffffff; --head: #f9fafb;
+  --band: rgba(234, 88, 12, .32);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317; --panel: #171b21; --ink: #e6e9ef; --muted: #98a2b3; --line: #29303a;
+    --grid: #262c35; --grid-minor: #1c2128; --accent: #6ea0ff; --accent-soft: #1d2942;
+    --ok: #4ade80; --bad: #f97066; --info: #98a2b3; --hover: #1f252d; --track: #14181d; --head: #1a1f26;
+    --band: rgba(251, 146, 60, .38);
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+button, select, input { font: inherit; color: inherit; }
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* sidebar */
+#side { width: 300px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+#side .top { padding: 12px 12px 8px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+#side h1 { font-size: 15px; margin: 0; letter-spacing: .01em; }
+#side h1 span { color: var(--muted); font-weight: 400; }
+#q, #filter { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+#count { color: var(--muted); font-size: 12px; }
+#list { flex: 1; overflow-y: auto; }
+.item { padding: 7px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item:hover { background: var(--hover); }
+.item.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.item .w { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .m { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { display: inline-block; padding: 0 5px; border-radius: 4px; font-size: 11px; font-weight: 600; line-height: 16px; background: var(--hover); color: var(--muted); }
+.badge.tvd { background: #fde7c7; color: #8a4b08; }
+@media (prefers-color-scheme: dark) { .badge.tvd { background: #4a3210; color: #fdcf8b; } }
+#drop { margin: 10px; padding: 14px; border: 1.5px dashed var(--line); border-radius: 8px; color: var(--muted); text-align: center; font-size: 12px; }
+#drop.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+/* main */
+#main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#bar { padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+#title { min-width: 0; flex: 1 1 320px; }
+#title h2 { font-size: 15px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#title .sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); padding: 4px 10px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+.seg button:disabled { opacity: .4; cursor: default; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+select.sm { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+label.chk { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; white-space: nowrap; }
+#tabs { display: flex; gap: 2px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+#tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; }
+#tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+#tabs .n { font-weight: 600; }
+#tabs .n.bad { color: var(--bad); } #tabs .n.ok { color: var(--ok); }
+#views { flex: 1; min-height: 0; position: relative; }
+.view { position: absolute; inset: 0; overflow: auto; display: none; }
+.view.on { display: block; }
+#plotView.on { display: flex; flex-direction: column; overflow: hidden; }
+#plotArea { flex: 1; min-height: 0; position: relative; background: var(--track); }
+#plotArea canvas { position: absolute; left: 0; top: 0; }
+#scroller { position: absolute; inset: 0; overflow: auto; }
+#spacer { width: 1px; }
+#readout { flex: none; padding: 5px 12px; border-top: 1px solid var(--line); background: var(--panel); font-variant-numeric: tabular-nums; color: var(--muted); min-height: 27px; max-height: 64px; overflow: hidden; }
+#readout b { color: var(--ink); font-weight: 600; }
+.empty { padding: 40px; color: var(--muted); text-align: center; }
+.doc { padding: 16px 18px 40px; max-width: 1100px; }
+.doc h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 22px 0 8px; }
+.doc h3:first-child { margin-top: 0; }
+table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; background: var(--head); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.mn { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+pre { margin: 0; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; overflow: auto; }
+.check { display: grid; grid-template-columns: 22px 1fr; gap: 2px 6px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line); border-top: 0; }
+.check:first-of-type { border-top: 1px solid var(--line); }
+.check .i { font-weight: 700; }
+.check .i.ok { color: var(--ok); } .check .i.bad { color: var(--bad); } .check .i.info { color: var(--info); }
+.check .d { grid-column: 2; color: var(--muted); font-size: 12px; }
+.summary { padding: 10px 12px; border-radius: 8px; margin-bottom: 14px; font-weight: 600; }
+.summary.ok { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.summary.bad { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+
+/* printout */
+#divider { width: 6px; flex: none; cursor: col-resize; background: var(--line); }
+#divider:hover { background: var(--accent); }
+#pdfPane { flex: none; width: 42%; min-width: 220px; display: flex; flex-direction: column; background: var(--panel); }
+#pdfPane .h { padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+#pdfPane .h b { white-space: nowrap; }
+#pdfPane .h a { color: var(--accent); text-decoration: none; font-size: 12px; white-space: nowrap; }
+#pdfPane iframe { flex: 1; border: 0; width: 100%; background: #fff; }
+#pdfPane .none { padding: 30px; color: var(--muted); text-align: center; }
+.hide { display: none !important; }
+@media (max-width: 900px) { #side { width: 230px; } #pdfPane, #divider { display: none !important; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="top">
+      <h1>LAS Viewer <span id="modeNote"></span></h1>
+      <input id="q" type="search" placeholder="Search well, licence or file" autocomplete="off">
+      <select id="filter">
+        <option value="">All logs</option>
+        <option value="HLG/">Horizontal logs (HLG)</option>
+        <option value="SLG/">Strip logs (SLG)</option>
+        <option value="TVD">TVD depth axis</option>
+        <option value="MD">MD depth axis</option>
+        <option value="printout">With a printout</option>
+        <option value="noprintout">Without a printout</option>
+      </select>
+      <div id="count"></div>
+    </div>
+    <div id="list"></div>
+    <div id="drop">Drop .las files here to view them<br>(and a printout .pdf to show beside)
+      <div style="margin-top:8px"><button type="button" class="btn" id="openFiles">Open files…</button>
+      <input type="file" id="fileIn" accept=".las,.LAS,.pdf,.PDF" multiple hidden></div></div>
+  </aside>
+
+  <main id="main">
+    <div id="bar">
+      <div id="title"><h2>Pick a well</h2><div class="sub">Choose a log on the left, or drop a .las file.</div></div>
+      <div class="controls">
+        <span class="seg"><button id="prev" title="Previous log (P)">‹ Prev</button><button id="next" title="Next log (N)">Next ›</button></span>
+        <span class="seg" id="setSeg"><button data-set="export">Export</button><button data-set="converted">Full conversion</button></span>
+        <select id="scale" class="sm" title="Vertical scale">
+          <option value="100">1:100</option>
+          <option value="240">1:240</option>
+          <option value="500">1:500</option>
+          <option value="1000">1:1000</option>
+          <option value="2000">1:2000</option>
+          <option value="fit">Whole log</option>
+        </select>
+        <label class="chk" title="Show the other version of this log (the regular-step export or the full conversion) next to this one">Compare
+          <select id="compare" class="sm"><option value="off">Off</option><option value="overlay">Overlay</option><option value="side">Side by side</option></select></label>
+        <label class="chk" title="Scale each track to the middle 99% of its values so one spike doesn't flatten the curve"><input type="checkbox" id="clip"> Clip spikes</label>
+        <label class="chk"><input type="checkbox" id="showPdf" checked> Printout</label>
+      </div>
+    </div>
+    <div id="tabs">
+      <button data-tab="plot" class="on">Plot</button>
+      <button data-tab="checks">Checks <span class="n" id="checkCount"></span></button>
+      <button data-tab="header">Header</button>
+      <button data-tab="text">File text</button>
+    </div>
+    <div id="views">
+      <section class="view on" id="plotView">
+        <div id="plotArea">
+          <canvas id="cv"></canvas><canvas id="cvh"></canvas>
+          <div id="scroller"><div id="spacer"></div></div>
+          <div class="empty" id="plotEmpty">No file open.</div>
+        </div>
+        <div id="readout">Move the pointer over the plot to read values.</div>
+      </section>
+      <section class="view" id="checksView"><div class="doc" id="checksDoc"></div></section>
+      <section class="view" id="headerView"><div class="doc" id="headerDoc"></div></section>
+      <section class="view" id="textView"><div class="doc" id="textDoc"></div></section>
+    </div>
+  </main>
+
+  <div id="divider"></div>
+  <section id="pdfPane">
+    <div class="h"><b>Original printout</b><a id="pdfLink" href="#" target="_blank" rel="noopener" class="hide">Open in new tab ↗</a></div>
+    <div class="none" id="pdfNone">The LogViewer printout of the log shows here, when there is one.</div>
+    <iframe id="pdfFrame" class="hide" title="Original printout"></iframe>
+  </section>
+</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('lasviewer.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('lasviewer.' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
+};
+const COLORS = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#65a30d', '#b45309', '#4f46e5'];
+const SET_NAME = { export: 'export', converted: 'full conversion' };
+// The export's step (0.5 m, 0.2 m, ...) comes from its summary.json via /api/list.
+function setExportStep(step) {
+  S.exportStep = step || null;
+  SET_NAME.export = step ? fmt(step) + ' m export' : 'export';
+  const b = document.querySelector('#setSeg button[data-set=export]');
+  if (b) b.textContent = step ? fmt(step) + ' m export' : 'Export';
+}
+const HEAD_H = 60, PAD_T = 14;
+
+const S = {
+  mode: 'server', rows: [], shown: [], sel: null, set: store.get('set', 'export'),
+  files: {}, las: null, other: null, tab: 'plot', scale: store.get('scale', '500'),
+  compare: store.get('compare', 'off'), clip: store.get('clip', true), showPdf: store.get('showPdf', true),
+  tracks: [], top: 0, bottom: 1, ppm: 1, hoverY: null, token: 0, local: [], localPdf: null,
+};
+
+/* ---------------- LAS parsing ---------------- */
+function parseHeaderLine(line) {
+  const dot = line.indexOf('.');
+  if (dot < 0) return null;
+  const mnem = line.slice(0, dot).trim();
+  const rest = line.slice(dot + 1);
+  const sp = rest.search(/\s/);
+  const unit = sp < 0 ? rest : rest.slice(0, sp);
+  const after = sp < 0 ? '' : rest.slice(sp);
+  const colon = after.lastIndexOf(':');
+  return { mnem, unit: unit.replace(/:$/, ''), value: (colon < 0 ? after : after.slice(0, colon)).trim(), desc: colon < 0 ? '' : after.slice(colon + 1).trim() };
+}
+
+function parseLAS(text, label) {
+  const L = { label, text, version: {}, well: {}, params: {}, curves: [], other: [], badRows: 0, badRowFirst: '', nonNumeric: 0 };
+  const lines = text.split(/\r?\n/);
+  let sec = null, ncol = 0;
+  const rows = [];
+  for (const line of lines) {
+    if (line.charAt(0) === '~') { sec = line.charAt(1).toUpperCase(); if (sec === 'A') ncol = L.curves.length; continue; }
+    if (!sec) continue;
+    if (sec === 'O') { L.other.push(line.replace(/^ /, '')); continue; }
+    const t = line.trim();
+    if (!t || t.charAt(0) === '#') continue;
+    if (sec === 'A') {
+      const parts = t.split(/\s+/);
+      if (parts.length !== ncol) { L.badRows++; if (!L.badRowFirst) L.badRowFirst = t.slice(0, 140); }
+      const row = new Float64Array(ncol);
+      for (let k = 0; k < ncol; k++) {
+        const s = parts[k];
+        const v = s === undefined ? NaN : Number(s);
+        if (s !== undefined && Number.isNaN(v)) L.nonNumeric++;
+        row[k] = v;
+      }
+      rows.push(row);
+      continue;
+    }
+    const it = parseHeaderLine(line);
+    if (!it) continue;
+    if (sec === 'V') L.version[it.mnem] = it;
+    else if (sec === 'W') L.well[it.mnem] = it;
+    else if (sec === 'P') L.params[it.mnem] = it;
+    else if (sec === 'C') L.curves.push({ mnem: it.mnem, unit: it.unit, desc: it.desc });
+  }
+  while (L.other.length && !L.other[L.other.length - 1].trim()) L.other.pop();
+  const nullV = L.well.NULL ? Number(L.well.NULL.value) : -999.25;
+  L.nullV = nullV;
+  const n = rows.length;
+  L.cols = L.curves.map((c, k) => {
+    const a = new Float64Array(n);
+    for (let i = 0; i < n; i++) { const v = rows[i][k]; a[i] = (Math.abs(v - nullV) < 1e-6) ? NaN : v; }
+    return a;
+  });
+  L.depth = L.cols[0] || new Float64Array(0);
+  L.rows = n;
+  L.byMnem = {};
+  const otherText = L.other.join('\n');
+  // lithology code table and depth axis from ~Other
+  L.lithCodes = {};
+  const lm = otherText.match(/LITH codes:([^\n]*)/);
+  if (lm) for (const m of lm[1].matchAll(/(\d+)=([^;]+)/g)) L.lithCodes[m[1]] = m[2].trim();
+  const am = otherText.match(/Depth axis:\s*([^\n]*)/);
+  L.axisNote = am ? am[1].trim() : '';
+  const dd = (L.curves[0] && L.curves[0].desc || '').toUpperCase();
+  L.axis = /VERTICAL/.test(dd) ? 'TVD' : /MEASURED/.test(dd) ? 'MD' : '';
+  L.lithIdx = null; L.pct = []; L.slideIdx = null;
+  L.curves.forEach((c, k) => {
+    L.byMnem[c.mnem] = k;
+    c.kind = k === 0 ? 'depth' : c.mnem === 'LITH' ? 'lith' : /^PCT_/.test(c.mnem) ? 'pct' : c.mnem === 'SLIDE' ? 'slide' : 'line';
+    if (k > 0) c.stats = curveStats(L.depth, L.cols[k]);
+    if (c.kind === 'lith') L.lithIdx = k;
+    if (c.kind === 'slide') L.slideIdx = k;
+    if (c.kind === 'pct') {
+      L.pct.push(k);
+      const pm = c.desc.match(/PERCENT\s+(\S+)\s*\(([^)]*)\)/i);
+      c.rock = pm ? pm[1] + ' ' + pm[2] : c.mnem.slice(4);
+    }
+  });
+  if (L.lithIdx !== null) L.lith = runsOf(L.depth, [L.lithIdx], L.cols);
+  if (L.pct.length) L.pctRuns = runsOf(L.depth, L.pct, L.cols);
+  if (L.slideIdx !== null) L.slide = runsOf(L.depth, [L.slideIdx], L.cols);
+  return L;
+}
+
+function curveStats(D, V) {
+  let n = 0, min = Infinity, max = -Infinity, first = null, last = null, prev = null;
+  const gaps = [], vals = [];
+  for (let i = 0; i < V.length; i++) {
+    const v = V[i];
+    if (Number.isNaN(v)) continue;
+    n++; vals.push(v);
+    if (v < min) min = v; if (v > max) max = v;
+    if (first === null) first = D[i];
+    last = D[i];
+    if (prev !== null && gaps.length < 4000) gaps.push(D[i] - prev);
+    prev = D[i];
+  }
+  gaps.sort((a, b) => a - b);
+  vals.sort((a, b) => a - b);
+  const q = p => vals.length ? vals[Math.min(vals.length - 1, Math.max(0, Math.round(p * (vals.length - 1))))] : NaN;
+  return { n, min, max, first, last, spacing: gaps.length ? gaps[gaps.length >> 1] : 1, lo: q(0.005), hi: q(0.995) };
+}
+
+// Intervals for step-held curves (LITH, PCT_, SLIDE): each sampled row holds until the next sampled row.
+function runsOf(D, idxs, cols) {
+  const at = [];
+  for (let i = 0; i < D.length; i++) if (idxs.some(k => !Number.isNaN(cols[k][i]))) at.push(i);
+  const gaps = [];
+  for (let j = 1; j < at.length && j < 4000; j++) gaps.push(D[at[j]] - D[at[j - 1]]);
+  gaps.sort((a, b) => a - b);
+  const step = gaps.length ? gaps[gaps.length >> 1] : 1;
+  return at.map((i, j) => ({ d0: D[i], d1: j + 1 < at.length ? D[at[j + 1]] : D[i] + step, i }));
+}
+
+/* ---------------- helpers ---------------- */
+function lowerBound(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
+function fmt(v, d) {
+  if (v === null || v === undefined || Number.isNaN(v)) return '–';
+  if (!Number.isFinite(v)) return String(v);
+  const a = Math.abs(v);
+  if (d !== undefined) return v.toFixed(d);
+  if (a !== 0 && (a >= 1e6 || a < 1e-3)) return v.toExponential(3);
+  return String(Math.round(v * 1e4) / 1e4);
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function hashHue(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; }
+const ROCKS = [
+  [/BLANK|NO SAMPLE/i, null], [/SLTST|SILT/i, '#d8c690'], [/^SS\b|^SST|SANDSTONE|\bSAND\b/i, '#f2d45a'],
+  [/^SH\b|SHALE/i, '#8f9e70'], [/LMST|^LS\b|LIME/i, '#7fb1e3'], [/DOL/i, '#c19ae4'], [/ANHY/i, '#f0a6c2'],
+  [/SALT|HALITE/i, '#dde2f4'], [/GYP/i, '#f6cde0'], [/COAL/i, '#2f2f2f'], [/CHERT/i, '#efa866'],
+  [/CLAY|BENT/i, '#a9c6a1'], [/CONG/i, '#e6b36a'], [/MARL/i, '#9fc8c0'],
+];
+function rockColor(name) {
+  for (const [re, c] of ROCKS) if (re.test(name)) return c;
+  return 'hsl(' + hashHue(name) + ',45%,68%)';
+}
+function lithName(L, id) { return L.lithCodes[String(id)] || ('symbol ' + id); }
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+/* ---------------- list ---------------- */
+async function loadList() {
+  try {
+    const r = await fetch('api/list');
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    S.rows = j.rows;
+    $('#modeNote').textContent = '· ' + j.rows.length.toLocaleString() + ' logs';
+    S.drive = j.drive || (j.printouts ? 'ok' : 'missing');
+    setExportStep(j.export_step);
+  } catch (e) {
+    S.mode = 'local';
+    S.rows = [];
+    $('#modeNote').textContent = '· drop files';
+    $('#setSeg').classList.add('hide');
+    $('#compare').closest('label').classList.add('hide');
+  }
+  filterList();
+}
+
+function filterList() {
+  const words = $('#q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const f = $('#filter').value;
+  const all = S.local.concat(S.rows);
+  S.shown = all.filter(r => {
+    if (f === 'TVD' || f === 'MD') { if (r.axis !== f) return false; }
+    else if (f === 'printout') { if (!r.printout) return false; }
+    else if (f === 'noprintout') { if (r.printout) return false; }
+    else if (f && !r.file.startsWith(f)) return false;
+    if (!words.length) return true;
+    const hay = (r.well + ' ' + r.licence + ' ' + r.file).toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+  const max = 400;
+  const html = S.shown.slice(0, max).map((r, i) => {
+    const name = r.file.split('/').pop();
+    return '<div class="item' + (S.sel === r ? ' sel' : '') + '" data-i="' + i + '">' +
+      '<div class="w">' + esc(r.well || name) + '</div>' +
+      '<div class="m">' + (r.axis ? '<span class="badge' + (r.axis === 'TVD' ? ' tvd' : '') + '">' + r.axis + '</span> ' : '') +
+      esc((r.licence ? r.licence + ' · ' : '') + name) + '</div></div>';
+  }).join('');
+  $('#list').innerHTML = html || '<div class="empty">' + (S.mode === 'local' ? 'No files yet.' : 'No matches.') + '</div>';
+  const total = S.shown.length;
+  $('#count').textContent = total > max ? 'Showing ' + max + ' of ' + total.toLocaleString() + ' matches' : total.toLocaleString() + (total === 1 ? ' log' : ' logs');
+}
+
+$('#list').addEventListener('click', e => {
+  const it = e.target.closest('.item');
+  if (it) selectRow(S.shown[+it.dataset.i]);
+});
+$('#q').addEventListener('input', filterList);
+$('#filter').addEventListener('change', filterList);
+
+function step(dir) {
+  if (!S.shown.length) return;
+  let i = S.shown.indexOf(S.sel);
+  i = i < 0 ? 0 : Math.max(0, Math.min(S.shown.length - 1, i + dir));
+  selectRow(S.shown[i]);
+}
+$('#prev').onclick = () => step(-1);
+$('#next').onclick = () => step(1);
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'n' || e.key === 'N') step(1);
+  else if (e.key === 'p' || e.key === 'P') step(-1);
+});
+
+/* ---------------- selecting a log ---------------- */
+async function selectRow(row) {
+  if (!row) return;
+  S.sel = row;
+  const tok = ++S.token;
+  document.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel'));
+  const i = S.shown.indexOf(row);
+  const el = document.querySelector('.item[data-i="' + i + '"]');
+  if (el) { el.classList.add('sel'); el.scrollIntoView({ block: 'nearest' }); }
+  if (!row.local) { try { history.replaceState(null, '', '#' + encodeURIComponent(row.file)); } catch (e) { /* ignore */ } }
+  const name = row.file.split('/').pop();
+  $('#title').innerHTML = '<h2>' + esc(row.well || name) + '</h2><div class="sub">Loading…</div>';
+  let files = {};
+  if (row.local) files = { local: row.las };
+  else {
+    const sets = row.sets.slice();
+    const texts = await Promise.all(sets.map(s =>
+      fetch('las?set=' + s + '&file=' + encodeURIComponent(row.file)).then(r => r.ok ? r.text() : null).catch(() => null)));
+    if (tok !== S.token) return;
+    sets.forEach((s, k) => { if (texts[k]) files[s] = parseLAS(texts[k], SET_NAME[s]); });
+  }
+  S.files = files;
+  pickSet();
+  showPrintout(row);
+}
+
+function pickSet() {
+  const f = S.files;
+  if (f.local) { S.las = f.local; S.other = null; }
+  else {
+    if (!f[S.set]) S.set = f.export ? 'export' : 'converted';
+    S.las = f[S.set] || null;
+    S.other = f[S.set === 'export' ? 'converted' : 'export'] || null;
+  }
+  document.querySelectorAll('#setSeg button').forEach(b => {
+    b.classList.toggle('on', b.dataset.set === S.set);
+    b.disabled = !f[b.dataset.set];
+  });
+  const otherName = S.set === 'export' ? 'full conversion' : SET_NAME.export;
+  $('#compare option[value=overlay]').textContent = 'Overlay ' + otherName;
+  $('#compare option[value=side]').textContent = 'Side by side with ' + otherName;
+  $('#compare').disabled = !S.other;
+  renderTitle();
+  buildTracks(true);
+  renderChecks();
+  renderHeader();
+  renderText();
+}
+
+document.querySelectorAll('#setSeg button').forEach(b => b.onclick = () => {
+  if (b.disabled || S.set === b.dataset.set) return;
+  S.set = b.dataset.set; store.set('set', S.set); pickSet();
+});
+
+function renderTitle() {
+  const L = S.las, row = S.sel;
+  if (!L) { $('#title').innerHTML = '<h2>' + esc(row ? row.well || row.file : 'No file') + '</h2><div class="sub">Could not read this LAS file.</div>'; return; }
+  const W = L.well;
+  const name = row.file.split('/').pop();
+  const axis = L.axis || row.axis || '';
+  const bits = [];
+  if (W.LIC && W.LIC.value) bits.push('Licence ' + W.LIC.value);
+  if (axis) bits.push('<span class="badge' + (axis === 'TVD' ? ' tvd' : '') + '" title="' + esc(L.axisNote) + '">' + axis + '</span> ' + (axis === 'TVD' ? 'true vertical depth' : 'measured depth'));
+  bits.push(fmt(L.depth[0]) + '–' + fmt(L.depth[L.rows - 1]) + ' m');
+  if (L.params.SCAL && L.params.SCAL.value) bits.push('printed at ' + esc(L.params.SCAL.value.split(' ')[0]));
+  bits.push(esc(name));
+  $('#title').innerHTML = '<h2 title="' + esc(W.WELL ? W.WELL.value : name) + '">' + esc((W.WELL && W.WELL.value) || row.well || name) + '</h2><div class="sub">' + bits.join(' · ') + '</div>';
+}
+
+/* ---------------- printout ---------------- */
+function showPrintout(row) {
+  const frame = $('#pdfFrame'), none = $('#pdfNone'), link = $('#pdfLink');
+  let url = null;
+  if (row.local) url = S.localPdf;
+  else if (row.printout) url = 'printout?file=' + encodeURIComponent(row.file) + '#navpanes=0&view=FitH';
+  if (url) {
+    if (frame.dataset.src !== url) { frame.src = url; frame.dataset.src = url; }
+    frame.classList.remove('hide'); none.classList.add('hide');
+    link.href = url; link.classList.remove('hide');
+  } else {
+    frame.classList.add('hide'); frame.removeAttribute('src'); frame.dataset.src = '';
+    none.classList.remove('hide'); link.classList.add('hide');
+    none.textContent = row.local ? 'Drop the printout .pdf here to show it beside the plot.'
+      : S.drive === 'blocked' ? 'macOS is blocking this app from reading the WellSight drive. Allow it under System Settings › Privacy & Security › Files and Folders (Removable Volumes), then restart the viewer.'
+      : S.drive === 'missing' ? 'The WellSight drive is not connected, so the printout can’t be shown.'
+      : 'This log has no printout on the drive.';
+  }
+}
+function applyPdfVisible() {
+  $('#pdfPane').classList.toggle('hide', !S.showPdf);
+  $('#divider').classList.toggle('hide', !S.showPdf);
+  $('#showPdf').checked = S.showPdf;
+  requestAnimationFrame(() => buildTracks(false));
+}
+$('#showPdf').onchange = e => { S.showPdf = e.target.checked; store.set('showPdf', S.showPdf); applyPdfVisible(); };
+(() => {
+  const div = $('#divider'), pane = $('#pdfPane');
+  const w = store.get('pdfWidth', null);
+  if (w) pane.style.width = w + 'px';
+  div.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const frame = $('#pdfFrame');
+    frame.style.pointerEvents = 'none';
+    const move = ev => { pane.style.width = Math.max(220, Math.min(window.innerWidth - 520, window.innerWidth - ev.clientX)) + 'px'; buildTracks(false); };
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); frame.style.pointerEvents = ''; store.set('pdfWidth', pane.offsetWidth); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  });
+})();
+
+/* ---------------- plot ---------------- */
+const cv = $('#cv'), cvh = $('#cvh'), scroller = $('#scroller'), spacer = $('#spacer');
+
+function buildTracks(reset) {
+  const L = S.las;
+  const area = $('#plotArea');
+  $('#plotEmpty').classList.toggle('hide', !!L);
+  if (!L) { S.tracks = []; draw(); return; }
+  const O = S.compare !== 'off' && S.other ? S.other : null;
+  const tracks = [];
+  let ci = 0;
+  L.curves.forEach((c, k) => {
+    if (c.kind !== 'line') return;
+    const color = COLORS[ci++ % COLORS.length];
+    const ok = O && O.byMnem[c.mnem] !== undefined && O.curves[O.byMnem[c.mnem]].kind === 'line' ? O.byMnem[c.mnem] : null;
+    const ss = [c.stats].concat(ok !== null ? [O.curves[ok].stats] : []).filter(s => s.n);
+    let lo = 0, hi = 1;
+    if (ss.length) {
+      lo = Math.min(...ss.map(s => S.clip ? s.lo : s.min));
+      hi = Math.max(...ss.map(s => S.clip ? s.hi : s.max));
+    }
+    if (!(hi > lo)) { lo -= 1; hi += 1; }
+    if (S.compare === 'side' && ok !== null) {
+      tracks.push({ kind: 'line', L, k, c, color, lo, hi, tag: L.label });
+      tracks.push({ kind: 'line', L: O, k: ok, c: O.curves[ok], color, lo, hi, tag: O.label, second: true });
+    } else {
+      const t = { kind: 'line', L, k, c, color, lo, hi };
+      if (S.compare === 'overlay' && ok !== null) { t.O = O; t.ok = ok; }
+      tracks.push(t);
+    }
+  });
+  const lsrc = L.lithIdx !== null ? L : (O && O.lithIdx !== null ? O : null);
+  if (lsrc) tracks.push({ kind: 'lith', L: lsrc, k: lsrc.lithIdx, from: lsrc !== L });
+  const psrc = L.pct.length ? L : (O && O.pct.length ? O : null);
+  if (psrc) tracks.push({ kind: 'pct', L: psrc, from: psrc !== L });
+  const ssrc = L.slideIdx !== null ? L : (O && O.slideIdx !== null ? O : null);
+  if (ssrc) tracks.push({ kind: 'slide', L: ssrc, k: ssrc.slideIdx, from: ssrc !== L });
+  // extent
+  let top = L.depth[0], bottom = L.depth[L.rows - 1];
+  for (const X of [O, lsrc, psrc, ssrc]) if (X && X.rows) { top = Math.min(top, X.depth[0]); bottom = Math.max(bottom, X.depth[X.rows - 1]); }
+  if (lsrc && lsrc.lith.length) bottom = Math.max(bottom, lsrc.lith[lsrc.lith.length - 1].d1);
+  if (!(bottom > top)) bottom = top + 1;
+  // widths
+  const W = area.clientWidth, H = area.clientHeight;
+  const depthW = 62, lithW = 52, pctW = 92, slideW = 52;
+  const nLine = tracks.filter(t => t.kind === 'line').length;
+  const fixed = depthW + (lsrc ? lithW : 0) + (psrc ? pctW : 0) + (ssrc ? slideW : 0);
+  const lineW = nLine ? Math.max(96, Math.min(260, Math.floor((W - fixed - 12) / nLine))) : 0;
+  let x = depthW;
+  for (const t of tracks) { t.w = t.kind === 'line' ? lineW : t.kind === 'lith' ? lithW : t.kind === 'slide' ? slideW : pctW; t.x = x; x += t.w; }
+  S.contentW = x + 8;
+  // scale
+  const center = reset ? null : S.top + (scroller.scrollTop + (H - HEAD_H) / 2 - PAD_T) / S.ppm;
+  S.top = top; S.bottom = bottom; S.tracks = tracks; S.depthW = depthW;
+  const avail = Math.max(50, H - HEAD_H - PAD_T - 16);
+  S.ppm = S.scale === 'fit' ? avail / (bottom - top) : (1000 / +S.scale) * (96 / 25.4);
+  spacer.style.height = Math.ceil(HEAD_H + PAD_T + (bottom - top) * S.ppm + 16) + 'px';
+  spacer.style.width = Math.max(1, S.contentW) + 'px';
+  if (reset) scroller.scrollTop = 0;
+  else if (center !== null && Number.isFinite(center)) scroller.scrollTop = Math.max(0, (center - top) * S.ppm + PAD_T - (H - HEAD_H) / 2);
+  draw();
+}
+
+function sizeCanvas(c, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    c.style.width = w + 'px'; c.style.height = h + 'px';
+  }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function niceStep(ppm) {
+  for (const s of [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]) if (s * ppm >= 46) return s;
+  return 2000;
+}
+
+function draw() {
+  const area = $('#plotArea');
+  const W = area.clientWidth, H = area.clientHeight;
+  const ctx = sizeCanvas(cv, W, H);
+  sizeCanvas(cvh, W, H);
+  ctx.clearRect(0, 0, W, H);
+  drawHover();
+  if (!S.las || !S.tracks) return;
+  const font = getComputedStyle(document.body).fontFamily;
+  const ink = css('--ink'), muted = css('--muted'), grid = css('--grid'), gridMinor = css('--grid-minor'), line = css('--line'), head = css('--head'), band = css('--band');
+  const sx = scroller.scrollLeft, sy = scroller.scrollTop;
+  const ppm = S.ppm;
+  const d0 = S.top + (sy - PAD_T) / ppm - 1, d1 = S.top + (sy + H - HEAD_H) / ppm + 1;
+  const yOf = d => HEAD_H + PAD_T + (d - S.top) * ppm - sy;
+  const tx = t => t.x - sx;
+
+  // grid
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, HEAD_H, W, H - HEAD_H); ctx.clip();
+  const st = niceStep(ppm), minor = st / 5;
+  const right = Math.min(W, S.contentW - sx);
+  if (minor * ppm >= 7) {
+    ctx.strokeStyle = gridMinor; ctx.lineWidth = 1; ctx.beginPath();
+    for (let d = Math.ceil(d0 / minor) * minor; d <= d1; d += minor) { const y = Math.round(yOf(d)) + .5; ctx.moveTo(S.depthW, y); ctx.lineTo(right, y); }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = grid; ctx.beginPath();
+  for (let d = Math.ceil(d0 / st) * st; d <= d1; d += st) { const y = Math.round(yOf(d)) + .5; ctx.moveTo(S.depthW, y); ctx.lineTo(right, y); }
+  ctx.stroke();
+
+  // tracks
+  for (const t of S.tracks) {
+    const x0 = tx(t);
+    if (x0 + t.w < S.depthW || x0 > W) continue;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(Math.max(x0, S.depthW), HEAD_H, t.w, H - HEAD_H); ctx.clip();
+    if (t.kind === 'line') {
+      if (t.O) drawCurve(ctx, t, t.O, t.ok, x0, d0, d1, yOf, band, 6, []);
+      drawCurve(ctx, t, t.L, t.k, x0, d0, d1, yOf, t.color, 1.4, []);
+    } else if (t.kind === 'lith') drawLith(ctx, t, x0, d0, d1, yOf);
+    else if (t.kind === 'slide') drawSlide(ctx, t, x0, d0, d1, yOf, ink, muted);
+    else drawPct(ctx, t, x0, d0, d1, yOf);
+    ctx.restore();
+  }
+  // track borders
+  ctx.strokeStyle = line; ctx.lineWidth = 1; ctx.beginPath();
+  for (const t of S.tracks) { const x = Math.round(tx(t) + t.w) + .5; if (x > S.depthW) { ctx.moveTo(x, HEAD_H); ctx.lineTo(x, H); } }
+  ctx.stroke();
+  ctx.restore();
+
+  // depth track (fixed)
+  ctx.fillStyle = css('--track'); ctx.fillRect(0, HEAD_H, S.depthW, H - HEAD_H);
+  ctx.fillStyle = ink; ctx.font = '11px ' + font; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.save(); ctx.beginPath(); ctx.rect(0, HEAD_H, S.depthW, H - HEAD_H); ctx.clip();
+  const dec = st < 1 ? 1 : 0;
+  for (let d = Math.ceil(d0 / st) * st; d <= d1; d += st) {
+    const y = yOf(d);
+    ctx.fillText(d.toFixed(dec), S.depthW - 10, y);
+    ctx.fillRect(S.depthW - 6, Math.round(y), 6, 1);
+  }
+  ctx.restore();
+  ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(S.depthW + .5, HEAD_H); ctx.lineTo(S.depthW + .5, H); ctx.stroke();
+
+  // headers
+  ctx.fillStyle = head; ctx.fillRect(0, 0, W, HEAD_H);
+  ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(0, HEAD_H - .5); ctx.lineTo(W, HEAD_H - .5); ctx.stroke();
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = ink; ctx.font = '600 12px ' + font; ctx.textAlign = 'center';
+  ctx.fillText(S.las.axis || 'Depth', S.depthW / 2, 22);
+  ctx.fillStyle = muted; ctx.font = '11px ' + font;
+  ctx.fillText('m', S.depthW / 2, 38);
+  ctx.save(); ctx.beginPath(); ctx.rect(S.depthW, 0, W - S.depthW, HEAD_H); ctx.clip();
+  for (const t of S.tracks) {
+    const x0 = tx(t), cx = x0 + t.w / 2;
+    if (x0 + t.w < S.depthW || x0 > W) continue;
+    ctx.textAlign = 'center';
+    if (t.kind === 'line') {
+      ctx.fillStyle = t.color; ctx.font = '600 12px ' + font;
+      ctx.fillText(clipText(ctx, t.c.mnem + (t.c.unit ? ' (' + t.c.unit + ')' : ''), t.w - 10), cx, 17);
+      ctx.fillStyle = muted; ctx.font = '11px ' + font;
+      const how = t.tag ? t.tag : t.O ? 'band: ' + t.O.label : recordedNote(t.c);
+      ctx.fillText(clipText(ctx, how, t.w - 10), cx, 31);
+      ctx.strokeStyle = t.color; ctx.lineWidth = 1.6; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0 + 6, 39.5); ctx.lineTo(x0 + t.w - 6, 39.5); ctx.stroke();
+      if (t.O) { ctx.strokeStyle = band; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(x0 + 6, 39.5); ctx.lineTo(x0 + t.w - 6, 39.5); ctx.stroke(); ctx.strokeStyle = t.color; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.moveTo(x0 + 6, 39.5); ctx.lineTo(x0 + t.w - 6, 39.5); ctx.stroke(); }
+      ctx.fillStyle = ink; ctx.font = '11px ' + font;
+      ctx.textAlign = 'left'; ctx.fillText(fmt(t.lo), x0 + 6, 55);
+      ctx.textAlign = 'right'; ctx.fillText(fmt(t.hi), x0 + t.w - 6, 55);
+    } else {
+      ctx.fillStyle = ink; ctx.font = '600 12px ' + font;
+      ctx.fillText(t.kind === 'lith' ? 'LITH' : t.kind === 'slide' ? 'SLIDE' : '% LITH', cx, 17);
+      ctx.fillStyle = muted; ctx.font = '11px ' + font;
+      ctx.fillText(clipText(ctx, t.kind === 'lith' ? 'rock type' : t.kind === 'slide' ? 'solid = sliding' : 'rock mix 0–100 %', t.w - 8), cx, 31);
+      if (t.from) ctx.fillText(clipText(ctx, 'from full conversion', t.w - 8), cx, 45);
+    }
+  }
+  ctx.restore();
+  ctx.strokeStyle = line; ctx.beginPath();
+  for (const t of S.tracks) { const x = Math.round(tx(t) + t.w) + .5; if (x > S.depthW) { ctx.moveTo(x, 0); ctx.lineTo(x, HEAD_H); } }
+  ctx.stroke();
+}
+
+function recordedNote(c) {
+  const m = c.desc.match(/recorded every ([\d.]+) m/) || c.desc.match(/step ([\d.]+) m/);
+  return m ? 'recorded every ' + m[1] + ' m' : (c.desc.match(/^[^(]*/)[0] || '').trim();
+}
+function clipText(ctx, s, w) {
+  if (ctx.measureText(s).width <= w) return s;
+  while (s.length > 1 && ctx.measureText(s + '…').width > w) s = s.slice(0, -1);
+  return s + '…';
+}
+
+function drawCurve(ctx, t, L, k, x0, d0, d1, yOf, color, width, dash) {
+  const D = L.depth, V = L.cols[k], c = L.curves[k];
+  const maxGap = c.stats.spacing * 1.6 + 1e-6;
+  let i = Math.max(0, lowerBound(D, d0 - maxGap) - 1);
+  const iEnd = Math.min(D.length, lowerBound(D, d1 + maxGap) + 1);
+  const span = t.hi - t.lo, pad = 6, w = t.w - 2 * pad;
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash); ctx.lineJoin = 'round';
+  ctx.beginPath();
+  let pd = null, single = null;
+  for (; i < iEnd; i++) {
+    const v = V[i];
+    if (Number.isNaN(v)) continue;
+    const d = D[i];
+    let f = (v - t.lo) / span;
+    if (f < 0) f = 0; else if (f > 1) f = 1;
+    const x = x0 + pad + f * w, y = yOf(d);
+    if (pd === null || d - pd > maxGap) {
+      if (single) ctx.rect(single[0] - 1, single[1] - 1, 2, 2);
+      ctx.moveTo(x, y); single = [x, y];
+    } else { ctx.lineTo(x, y); single = null; }
+    pd = d;
+  }
+  if (single) ctx.rect(single[0] - 1, single[1] - 1, 2, 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function visibleRuns(runs, d0, d1) {
+  let lo = 0, hi = runs.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (runs[m].d1 < d0) lo = m + 1; else hi = m; }
+  const out = [];
+  for (let j = lo; j < runs.length && runs[j].d0 <= d1; j++) out.push(runs[j]);
+  return out;
+}
+
+function drawLith(ctx, t, x0, d0, d1, yOf) {
+  const L = t.L, V = L.cols[t.k];
+  for (const r of visibleRuns(L.lith, d0, d1)) {
+    const v = V[r.i];
+    if (Number.isNaN(v)) continue;
+    const col = rockColor(lithName(L, v));
+    if (!col) continue;
+    const y0 = yOf(r.d0), y1 = yOf(r.d1);
+    ctx.fillStyle = col;
+    ctx.fillRect(x0 + 6, y0, t.w - 12, Math.max(1, y1 - y0));
+  }
+}
+
+// SLIDE: a solid block where the driller was sliding, a thin line where rotating, nothing where unmarked.
+function drawSlide(ctx, t, x0, d0, d1, yOf, ink, muted) {
+  const L = t.L, V = L.cols[t.k];
+  const paint = (v, a, b) => {           // one rectangle per stretch of equal marks, so no seams between samples
+    const y0 = Math.round(yOf(a)), y1 = Math.max(y0 + 1, Math.round(yOf(b)));
+    if (v >= 0.5) { ctx.fillStyle = ink; ctx.fillRect(x0 + 10, y0, t.w - 20, y1 - y0); }
+    else { ctx.fillStyle = muted; ctx.fillRect(Math.round(x0 + t.w / 2) - 1, y0, 2, y1 - y0); }
+  };
+  let cur = null, a = 0, b = 0;
+  for (const r of visibleRuns(L.slide, d0, d1)) {
+    const v = V[r.i];
+    if (Number.isNaN(v)) { if (cur !== null) paint(cur, a, b); cur = null; continue; }
+    if (cur !== null && v === cur && Math.abs(r.d0 - b) < 1e-6) { b = r.d1; continue; }
+    if (cur !== null) paint(cur, a, b);
+    cur = v; a = r.d0; b = r.d1;
+  }
+  if (cur !== null) paint(cur, a, b);
+}
+
+function drawPct(ctx, t, x0, d0, d1, yOf) {
+  const L = t.L, pad = 6, w = t.w - 2 * pad;
+  for (const r of visibleRuns(L.pctRuns, d0, d1)) {
+    const y0 = yOf(r.d0), h = Math.max(1, yOf(r.d1) - y0);
+    let x = x0 + pad;
+    for (const k of L.pct) {
+      const v = L.cols[k][r.i];
+      if (Number.isNaN(v) || v <= 0) continue;
+      const col = rockColor(L.curves[k].rock);
+      const ww = w * v / 100;
+      if (col) { ctx.fillStyle = col; ctx.fillRect(x, y0, ww, h); }
+      x += ww;
+    }
+  }
+}
+
+/* hover readout */
+function valueAt(L, k, d) {
+  const D = L.depth, V = L.cols[k], tol = L.curves[k].stats.spacing / 2 + 1e-6;
+  const i = lowerBound(D, d);
+  let best = null, bd = Infinity;
+  for (let j = i; j < D.length && D[j] - d <= tol; j++) if (!Number.isNaN(V[j])) { const dd = Math.abs(D[j] - d); if (dd < bd) { bd = dd; best = V[j]; } break; }
+  for (let j = i - 1; j >= 0 && d - D[j] <= tol; j--) if (!Number.isNaN(V[j])) { const dd = Math.abs(D[j] - d); if (dd < bd) { bd = dd; best = V[j]; } break; }
+  return best;
+}
+function runAt(runs, d) {
+  let lo = 0, hi = runs.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (runs[m].d0 <= d) lo = m + 1; else hi = m; }
+  const r = runs[lo - 1];
+  return r && d < r.d1 ? r : null;
+}
+function drawHover() {
+  const W = cvh.clientWidth || cv.clientWidth, H = cvh.clientHeight || cv.clientHeight;
+  const ctx = cvh.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  if (S.hoverY === null || !S.las || S.hoverY < HEAD_H) return;
+  ctx.strokeStyle = css('--accent'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, Math.round(S.hoverY) + .5); ctx.lineTo(Math.min(W, S.contentW - scroller.scrollLeft), Math.round(S.hoverY) + .5); ctx.stroke();
+}
+function updateReadout() {
+  const r = $('#readout');
+  if (S.hoverY === null || !S.las || S.hoverY < HEAD_H) { r.innerHTML = 'Move the pointer over the plot to read values.'; return; }
+  const d = S.top + (S.hoverY - HEAD_H - PAD_T + scroller.scrollTop) / S.ppm;
+  const parts = ['<b>' + (S.las.axis || 'Depth') + ' ' + d.toFixed(2) + ' m</b>'];
+  for (const t of S.tracks) {
+    if (t.kind === 'line') {
+      const short = X => X.label === SET_NAME.export ? SET_NAME.export.replace(' export', '') : X.label === 'full conversion' ? 'full' : '';
+      let s = esc(t.c.mnem) + (t.tag || t.O ? ' ' + short(t.L) : '') + ' <b>' + fmt(valueAt(t.L, t.k, d)) + '</b>';
+      if (t.O) s += ' · ' + short(t.O) + ' <b>' + fmt(valueAt(t.O, t.ok, d)) + '</b>';
+      parts.push(s);
+    } else if (t.kind === 'lith') {
+      const run = runAt(t.L.lith, d);
+      const v = run ? t.L.cols[t.k][run.i] : NaN;
+      parts.push('LITH <b>' + (Number.isNaN(v) ? '–' : esc(lithName(t.L, v))) + '</b>');
+    } else if (t.kind === 'slide') {
+      const run = runAt(t.L.slide, d);
+      const v = run ? t.L.cols[t.k][run.i] : NaN;
+      parts.push('Drilling <b>' + (Number.isNaN(v) ? '–' : v >= 0.5 ? 'sliding' : 'rotating') + '</b>');
+    } else {
+      const run = runAt(t.L.pctRuns, d);
+      if (run) {
+        const mix = t.L.pct.map(k => [t.L.curves[k].rock.split(' ')[0], t.L.cols[k][run.i]]).filter(p => p[1] > 0);
+        parts.push('Mix <b>' + esc(mix.map(p => p[1] + '% ' + p[0]).join(', ') || '–') + '</b>');
+      }
+    }
+  }
+  r.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+}
+scroller.addEventListener('scroll', () => { draw(); updateReadout(); });
+scroller.addEventListener('mousemove', e => { const rc = scroller.getBoundingClientRect(); S.hoverY = e.clientY - rc.top; drawHover(); updateReadout(); });
+scroller.addEventListener('mouseleave', () => { S.hoverY = null; drawHover(); updateReadout(); });
+new ResizeObserver(() => buildTracks(false)).observe($('#plotArea'));
+
+$('#scale').value = S.scale;
+$('#scale').onchange = e => { S.scale = e.target.value; store.set('scale', S.scale); buildTracks(false); };
+$('#compare').value = S.compare;
+$('#compare').onchange = e => { S.compare = e.target.value; store.set('compare', S.compare); buildTracks(false); updateReadout(); };
+$('#clip').checked = S.clip;
+$('#clip').onchange = e => { S.clip = e.target.checked; store.set('clip', S.clip); buildTracks(false); };
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  S.tab = b.dataset.tab;
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === S.tab + 'View'));
+  if (S.tab === 'plot') buildTracks(false);
+});
+
+/* ---------------- checks ---------------- */
+function fileChecks(L) {
+  const out = [];
+  const add = (ok, title, detail) => out.push({ ok, title, detail });
+  const V = L.version;
+  const vers = V.VERS ? V.VERS.value : '', wrap = V.WRAP ? V.WRAP.value : '';
+  add(vers === '2.0' && wrap.toUpperCase() === 'NO', 'LAS 2.0, one line per depth', 'VERS ' + (vers || 'missing') + ', WRAP ' + (wrap || 'missing'));
+  const D = L.depth, n = L.rows;
+  add(n > 0, 'Has data', n.toLocaleString() + ' depth rows, ' + (L.curves.length - 1) + ' curves');
+  if (!n) return out;
+  add(L.badRows === 0, 'Every row has a value for every curve',
+    L.badRows ? L.badRows + ' rows have the wrong number of values, e.g. “' + L.badRowFirst + '”' : 'each row has ' + L.curves.length + ' values');
+  add(L.nonNumeric === 0, 'All values are numbers', L.nonNumeric ? L.nonNumeric + ' values are not numbers' : 'no text in the data');
+  let notInc = 0;
+  for (let i = 1; i < n; i++) if (!(D[i] > D[i - 1])) notInc++;
+  add(notInc === 0, 'Depths go down the hole in order', notInc ? notInc + ' rows are out of order or repeated' : fmt(D[0]) + ' m to ' + fmt(D[n - 1]) + ' m');
+  const strt = L.well.STRT ? Number(L.well.STRT.value) : NaN, stop = L.well.STOP ? Number(L.well.STOP.value) : NaN, stp = L.well.STEP ? Number(L.well.STEP.value) : NaN;
+  add(Math.abs(strt - D[0]) < 1e-6 && Math.abs(stop - D[n - 1]) < 1e-6, 'Header start and stop match the data',
+    'STRT ' + fmt(strt) + ' / first row ' + fmt(D[0]) + ', STOP ' + fmt(stop) + ' / last row ' + fmt(D[n - 1]));
+  if (stp > 0) {
+    let off = 0, firstOff = null;
+    for (let i = 1; i < n; i++) if (Math.abs(D[i] - D[i - 1] - stp) > 1e-4) { off++; if (firstOff === null) firstOff = D[i]; }
+    add(off === 0, 'Rows are evenly spaced every ' + fmt(stp) + ' m', off ? off + ' gaps differ from STEP, first at ' + fmt(firstOff) + ' m' : 'all ' + (n - 1).toLocaleString() + ' gaps are ' + fmt(stp) + ' m');
+  } else {
+    add(null, 'STEP is 0: rows are not evenly spaced', 'Allowed in LAS 2.0. Curves recorded at different steps share one depth list, so each curve has blanks between its own readings.');
+  }
+  add(L.well.NULL !== undefined, 'Blank value is declared', 'NULL ' + (L.well.NULL ? L.well.NULL.value : 'missing'));
+  const empty = L.curves.slice(1).filter(c => !c.stats.n).map(c => c.mnem);
+  add(empty.length === 0, 'Every curve has readings', empty.length ? 'no readings in ' + empty.join(', ') : 'all ' + (L.curves.length - 1) + ' curves have readings');
+  const units = (L.curves[0] && L.curves[0].unit || '').toUpperCase();
+  add(units === 'M' || units === 'FT' || units === 'F', 'Depth unit is set', 'DEPT unit ' + (units || 'missing'));
+  if (L.axisNote) add(null, 'Depth axis: ' + (L.axis || '?'), L.axisNote);
+  if (L.lithIdx !== null) {
+    const ids = new Set();
+    for (const r of L.lith) { const v = L.cols[L.lithIdx][r.i]; if (!Number.isNaN(v)) ids.add(String(v)); }
+    const unknown = [...ids].filter(id => !L.lithCodes[id]);
+    add(unknown.length === 0, 'Every LITH value has a rock name in ~Other', unknown.length ? 'no name for ' + unknown.join(', ') : ids.size + ' rock types, ' + L.lith.length.toLocaleString() + ' intervals');
+  }
+  if (L.slideIdx !== null) {
+    const V = L.cols[L.slideIdx];
+    let other = 0, on = 0, n = 0;
+    for (const r of L.slide) { const v = V[r.i]; if (Number.isNaN(v)) continue; n++; if (v === 1) on += r.d1 - r.d0; else if (v !== 0) other++; }
+    add(other === 0, 'SLIDE is only 1 (sliding) or 0 (rotating)', other ? other + ' values are something else' : fmt(on, 1) + ' m of sliding marked');
+  }
+  return out;
+}
+
+// The regular-step export should take every value from the full conversion: the nearest recorded reading.
+function compareSets(E, C) {
+  const res = [];
+  for (const c of E.curves) {
+    if (c.kind === 'slide') {
+      if (C.slideIdx === null) { res.push({ mnem: c.mnem, missing: true }); continue; }
+      // Some full conversions repeat 0.5 m marks on 0.2 m rows, which moves an edge up to half that step,
+      // so a mark may match within half the full conversion's SLIDE step, like the curves.
+      const EV = E.cols[E.byMnem[c.mnem]], CV = C.cols[C.slideIdx], half = C.curves[C.slideIdx].stats.spacing / 2;
+      const markAt = d => { const run = runAt(C.slide, d + 1e-6); return run ? CV[run.i] : NaN; };
+      let match = 0, bad = 0, firstBad = null, total = 0;
+      for (let i = 0; i < E.depth.length; i++) {
+        const v = EV[i];
+        if (Number.isNaN(v)) continue;
+        total++;
+        const d = E.depth[i];
+        if (markAt(d) === v || markAt(d - half) === v || markAt(d + half) === v) match++;
+        else { bad++; if (!firstBad) firstBad = fmt(d) + ' m: export ' + fmt(v); }
+      }
+      res.push({ mnem: c.mnem, total, match, bad, firstBad, spacing: C.curves[C.slideIdx].stats.spacing, held: true });
+      continue;
+    }
+    if (c.kind !== 'line') continue;
+    const k = C.byMnem[c.mnem];
+    if (k === undefined) { res.push({ mnem: c.mnem, missing: true }); continue; }
+    const CD = C.depth, CV = C.cols[k], half = C.curves[k].stats.spacing / 2 + 1e-6;
+    const EV = E.cols[E.byMnem[c.mnem]], ED = E.depth;
+    let match = 0, bad = 0, firstBad = null, total = 0;
+    for (let i = 0; i < ED.length; i++) {
+      const v = EV[i];
+      if (Number.isNaN(v)) continue;
+      total++;
+      const d = ED[i];
+      let ok = false;
+      const j = lowerBound(CD, d - half);
+      for (let m = j; m < CD.length && CD[m] <= d + half; m++) {
+        const w = CV[m];
+        if (!Number.isNaN(w) && Math.abs(w - v) <= 1e-6 * Math.max(1, Math.abs(v))) { ok = true; break; }
+      }
+      if (ok) match++; else { bad++; if (!firstBad) firstBad = fmt(d) + ' m: export ' + fmt(v); }
+    }
+    res.push({ mnem: c.mnem, total, match, bad, firstBad, spacing: C.curves[k].stats.spacing });
+  }
+  return res;
+}
+
+function renderChecks() {
+  const L = S.las, doc = $('#checksDoc'), badge = $('#checkCount');
+  if (!L) { doc.innerHTML = '<div class="empty">No file open.</div>'; badge.textContent = ''; return; }
+  const list = fileChecks(L);
+  let cmp = null;
+  const E = S.files.export, C = S.files.converted;
+  if (E && C) cmp = compareSets(E, C);
+  const fails = list.filter(c => c.ok === false).length + (cmp ? cmp.filter(r => r.missing || r.bad).length : 0);
+  badge.textContent = fails ? '(' + fails + ')' : '✓';
+  badge.className = 'n ' + (fails ? 'bad' : 'ok');
+  let html = '<div class="summary ' + (fails ? 'bad' : 'ok') + '">' +
+    (fails ? fails + ' check' + (fails > 1 ? 's' : '') + ' failed for the ' + esc(L.label || 'file') + '.' : 'All checks pass for the ' + esc(L.label || 'file') + '.') + '</div>';
+  html += '<h3>File structure</h3>' + list.map(c =>
+    '<div class="check"><span class="i ' + (c.ok === null ? 'info' : c.ok ? 'ok' : 'bad') + '">' + (c.ok === null ? 'i' : c.ok ? '✓' : '✗') + '</span><span>' + esc(c.title) + '</span><span class="d">' + esc(c.detail) + '</span></div>').join('');
+  if (cmp) {
+    const en = esc(SET_NAME.export);
+    html += '<h3>' + en.charAt(0).toUpperCase() + en.slice(1) + ' against the full conversion</h3><p style="color:var(--muted);margin:0 0 8px">Each exported value should be the nearest reading the log recorded, so it must equal a value in the full conversion within half that curve’s recorded step. SLIDE must equal the full conversion’s mark at that depth, within half its step.</p>';
+    html += cmp.length ? cmp.map(r => {
+      if (r.missing) return '<div class="check"><span class="i bad">✗</span><span>' + esc(r.mnem) + ' is not in the full conversion</span></div>';
+      return '<div class="check"><span class="i ' + (r.bad ? 'bad' : 'ok') + '">' + (r.bad ? '✗' : '✓') + '</span><span>' + esc(r.mnem) + ': ' + r.match.toLocaleString() + ' of ' + r.total.toLocaleString() + ' values match</span><span class="d">' +
+        (r.bad ? r.bad + ' differ, first at ' + esc(r.firstBad) : (r.held ? 'marked every ' : 'recorded every ') + fmt(r.spacing) + ' m' + (r.held ? ', each depth takes the mark of its interval' : '')) + '</span></div>';
+    }).join('') : '<div class="check"><span class="i info">i</span><span>No curves to compare</span></div>';
+  }
+  html += '<h3>Curves</h3><table><tr><th>Curve</th><th>Unit</th><th>Description</th><th class="num">Readings</th><th class="num">Min</th><th class="num">Max</th><th class="num">From</th><th class="num">To</th></tr>' +
+    L.curves.slice(1).map(c => '<tr><td class="mn">' + esc(c.mnem) + '</td><td>' + esc(c.unit) + '</td><td>' + esc(c.desc) + '</td><td class="num">' + c.stats.n.toLocaleString() +
+      '</td><td class="num">' + fmt(c.stats.min) + '</td><td class="num">' + fmt(c.stats.max) + '</td><td class="num">' + fmt(c.stats.first) + '</td><td class="num">' + fmt(c.stats.last) + '</td></tr>').join('') + '</table>';
+  doc.innerHTML = html;
+}
+
+/* ---------------- header + text ---------------- */
+function table(obj, cols) {
+  const rows = Object.values(obj);
+  if (!rows.length) return '<p style="color:var(--muted)">None.</p>';
+  return '<table><tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>' + rows.map(r =>
+    '<tr><td class="mn">' + esc(r.mnem) + '</td><td>' + esc(r.value) + (r.unit ? ' <span style="color:var(--muted)">' + esc(r.unit) + '</span>' : '') + '</td><td>' + esc(r.desc) + '</td></tr>').join('') + '</table>';
+}
+function renderHeader() {
+  const L = S.las, doc = $('#headerDoc');
+  if (!L) { doc.innerHTML = '<div class="empty">No file open.</div>'; return; }
+  doc.innerHTML = '<h3>Well (~W)</h3>' + table(L.well, ['Code', 'Value', 'Meaning']) +
+    '<h3>Parameters (~P)</h3>' + table(L.params, ['Code', 'Value', 'Meaning']) +
+    '<h3>Curves (~C)</h3><table><tr><th>Code</th><th>Unit</th><th>Description</th></tr>' + L.curves.map(c => '<tr><td class="mn">' + esc(c.mnem) + '</td><td>' + esc(c.unit) + '</td><td>' + esc(c.desc) + '</td></tr>').join('') + '</table>' +
+    '<h3>Notes (~O)</h3><pre>' + esc(L.other.join('\n') || '(none)') + '</pre>';
+}
+function renderText() {
+  const L = S.las, doc = $('#textDoc');
+  if (!L) { doc.innerHTML = '<div class="empty">No file open.</div>'; return; }
+  const lines = L.text.split(/\r?\n/);
+  const a = lines.findIndex(l => /^~A/i.test(l));
+  const head = a < 0 ? lines : lines.slice(0, a + 201);
+  const more = a < 0 ? 0 : Math.max(0, lines.length - head.length - 1);
+  doc.innerHTML = '<p style="color:var(--muted);margin:0 0 8px">The file exactly as written' + (more ? ', header plus the first 200 data rows (' + more.toLocaleString() + ' more rows not shown)' : '') + '.</p><pre>' + esc(head.join('\n')) + '</pre>';
+}
+
+/* ---------------- drag and drop ---------------- */
+(() => {
+  const zone = $('#drop');
+  let depth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); depth++; zone.classList.add('on'); });
+  window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; zone.classList.remove('on'); } });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', async e => {
+    e.preventDefault(); depth = 0; zone.classList.remove('on');
+    await openFiles([...(e.dataTransfer.files || [])]);
+  });
+  $('#openFiles').onclick = () => $('#fileIn').click();
+  $('#fileIn').onchange = async () => { await openFiles([...$('#fileIn').files]); $('#fileIn').value = ''; };
+  async function openFiles(files) {
+    let first = null;
+    for (const f of files) {
+      if (/\.pdf$/i.test(f.name)) {
+        if (S.localPdf) URL.revokeObjectURL(S.localPdf);
+        S.localPdf = URL.createObjectURL(f.type === 'application/pdf' ? f : new Blob([f], { type: 'application/pdf' }));
+        if (S.sel && S.sel.local) showPrintout(S.sel);
+      } else if (/\.las$/i.test(f.name)) {
+        const L = parseLAS(await f.text(), 'dropped file');
+        const W = L.well;
+        const row = { local: true, file: 'Dropped/' + f.name, well: (W.WELL && W.WELL.value) || f.name, licence: (W.LIC && W.LIC.value) || '', axis: L.axis, las: L, sets: [] };
+        S.local = S.local.filter(r => r.file !== row.file);
+        S.local.unshift(row);
+        if (!first) first = row;
+      }
+    }
+    filterList();
+    if (first) selectRow(first);
+  }
+})();
+
+/* ---------------- start ---------------- */
+function fromHash() {
+  const want = decodeURIComponent(location.hash.slice(1));
+  const row = want && S.rows.find(r => r.file === want);
+  if (row && row !== S.sel) selectRow(row);
+}
+applyPdfVisible();
+loadList().then(fromHash);
+window.addEventListener('hashchange', fromHash);
+</script>
+</body>
+</html>
