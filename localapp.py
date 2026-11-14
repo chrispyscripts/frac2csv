@@ -581,8 +581,10 @@ def _mudlog_pdf(data, filename):
         out = wss.decode_pdf(data, os.path.basename(filename))
     except Exception:  # noqa: BLE001 -- not a printout it can read: the frac answer stands
         return None
+    # a log: a curve the vocabulary knows (gamma, ROP, gas ...), or rocks or
+    # symbols named by a legend; a form's "Ground Elevation  0 ... 10" is not
     p = out.get("payload") or {}
-    if not (p.get("curves") or p.get("rocks") or p.get("symbols")):
+    if not (any(c.get("kind") for c in p.get("curves") or []) or p.get("rocks") or p.get("symbols")):
         return None
     return out
 
