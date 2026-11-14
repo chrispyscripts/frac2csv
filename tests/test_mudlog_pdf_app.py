@@ -207,6 +207,14 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 500.0, dives={4, 5, 6, 7, 8})]
         self.assertAlmostEqual(got[-1], 550, delta=1)                       # wrapped before: still read
 
+    def test_a_curve_read_from_under_its_scale(self):
+        # gamma 50 - 150 starting at 35 (under): only the copy in from the
+        # top is drawn, then up past 50, the main line in from the low end
+        series = [[0.85], [0.86], [0.9], [0.95], [0.99, -0.01], [0.04, 1.04], [0.1], [0.3], [0.32]]
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True, k0=-1)]
+        self.assertAlmostEqual(got[0], 35, delta=0.5)
+        self.assertAlmostEqual(got[-1], 82, delta=0.5)
+
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
         # wrap is read across the gap

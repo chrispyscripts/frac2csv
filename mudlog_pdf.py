@@ -79,6 +79,18 @@ def _depth_range(doc):
         return None
     gaps = sorted(b - a for a, b in zip(ds, ds[1:]) if b > a)
     step = gaps[len(gaps) // 2] if gaps else 0.0
+    # a page whose best row of numbers is some other (three stray numbers
+    # can span more depth than its labels): its depth labels are a row of
+    # the log's scale whose numbers step by the log's label step
+    if step > 0:
+        more = set()
+        for pg in doc:
+            for _axis, _key, a, _b, on in wp.page_lines(pg, 1, 99999):
+                vs = sorted(d for _c, d in on)
+                if len(vs) >= 4 and abs(abs(a) - scale) <= 0.02 * scale \
+                        and all(abs(v / step - round(v / step)) < 0.01 for v in vs):
+                    more.update(vs)
+        ds = sorted(set(ds) | more)
     return ds[0] - step, ds[-1] + step, scale
 
 
@@ -818,7 +830,7 @@ def _null_dips(line, top, step, left, right):
     return out
 
 
-def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=()):
+def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=(), k0=0):
     """a curve's readings where LogViewer drew it with one line only, down
     the log: series[i], where its line crosses depth i as a share of the
     track, unclipped (the PDF keeps the line past the track's edge, cut off
@@ -847,7 +859,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
     line starts afresh after it."""
     lo, hi = min(left, right), max(left, right)
     e = wscale.EDGE
-    out, k, last = [], 0, None                   # k: scale widths the line in the track is off the reading
+    out, k, last = [], k0, None                  # k: scale widths the line in the track is off the reading
     leapt = -10 ** 9                             # where the line last leapt up over half the track
 
     def val(p):
@@ -1179,8 +1191,28 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             # .. 1240 at 1241 m) is no caption: scales end on round numbers
             if any(abs(v - d) < 5 and v % 50 for v in (c.left, c.right)):
                 continue
+            # nor one that took a reading from the text (79.1): a scale's
+            # ends of ten and more are whole numbers
+            if any(abs(v) >= 10 and abs(v - round(v)) > 1e-6 for v in (c.left, c.right)):
+                continue
             if P.on(d, 0.5):
-                caps.append((d, c))
+                caps.append((d, c, P))
+    # a number two captions both took (one curve's end, the other with no
+    # number of its own on that side) belongs to the one in its track: no
+    # line of the log between that one's name and the number
+    def across_name(c, P):
+        x0, y0, x1, y1 = c.bbox
+        return sorted((P.across(x0, y0), P.across(x1, y1)))
+    used = collections.defaultdict(list)
+    for d, c, P in caps:
+        used[(P.page, c.colour, round(c.left_at, 1), c.left)].append(c)
+        used[(P.page, c.colour, round(c.right_at, 1), c.right)].append(c)
+    shared = {id(c) for cs in used.values() if len({x.name for x in cs}) > 1 for c in cs}
+
+    def apart(c, P):
+        n0, n1 = across_name(c, P)
+        return any(c.left_at + 1 < l < n0 - 1 or n1 + 1 < l < c.right_at - 1 for l in lines_pt)
+    caps = [(d, c) for d, c, P in caps if not (id(c) in shared and apart(c, P))]
     # one curve per colour and name in a column: a curve captioned again
     # lower down, in full or cut short ("Gamma Ray", "Gam"), is the same
     # curve, named by its fullest caption; its scale from each caption down
@@ -1331,9 +1363,24 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 # a linear scale that starts above nothing (gamma 50 - 150)
                 # can be run under: the line wraps in from the top there
                 under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
-                got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], under=under,
-                                    nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
-                                    dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1})
+                args = dict(under=under,
+                            nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
+                            dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1})
+                got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], **args)
+                # a curve is in its scale most of the way (it is printed on it):
+                # one read past it for most of the log started a width off (a
+                # reading under the scale at the top, drawn in from the top)
+                lo_, hi_ = min(left, right), max(left, right)
+                tol = 0.02 * (hi_ - lo_)
+
+                def past(g):
+                    rs = [r[0] for r in g if r is not None and r[1]]
+                    return sum(1 for v in rs if v < lo_ - tol or v > hi_ + tol) / len(rs) if rs else 0.0
+                if past(got) > 0.5:
+                    for k0 in ((-1, 1) if under else (1,)):
+                        alt = read_one_line(whole[i0:i1], left, right, moves[i0:i1], k0=k0, **args)
+                        if past(alt) < 0.5 * past(got):
+                            got = alt
             for k, r in enumerate(got):
                 if r is None:
                     continue
