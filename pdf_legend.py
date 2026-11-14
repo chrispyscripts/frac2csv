@@ -345,18 +345,26 @@ class Caption:
 _UNIT = re.compile(r"^(.*?)\s*\(([^()]*)\)\s*$")
 
 
+# a note printed by a curve, not its caption: a reading or range in its
+# name ("Den:1130", "MW 1070", "ROP 0-10", "1924.5 TVD", "BIT # 3"); a
+# curve's own name holds at most a one-digit number ("C1", "Leg 2")
+_NOTE = re.compile(r"\d{2,}|\d+\.\d+|\d\s*-\s*\d|:\s*\d|#")
+
+
 def _caption_name(text):
     """(name, unit text, curve kind) for a caption's name, or None"""
     t = text.strip()
     m = _UNIT.match(t)
     name, unit = (m.group(1), m.group(2)) if m else (t, "")
-    if not name or NUMBER.match(name):
+    if not name or NUMBER.match(name) or _NOTE.search(name):
         return None
     vc = V.curve(t)
     if not vc["key"]:
         vc = V.curve(name)
     if not vc["key"] and not unit:
         return None
+    if vc["key"] in ("md", "tvd") or name.strip().upper() in ("VD", "TV", "SS"):
+        return None             # a depth scale's label (a cross-section's TVD), not a curve
     return name.strip(), unit.strip(), vc["key"]
 
 

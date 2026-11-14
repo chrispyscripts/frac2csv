@@ -112,17 +112,20 @@ def pair_curves(src, pdf):
     s_names = [(mn, _name(d, mn)) for mn, _u, d in src["curves"]]
     p_names = [(mn, _name(d, mn)) for mn, _u, d in pdf["curves"]]
     left = dict(p_names)
-    out = []
-    for mn, nm in s_names:
+    hits = {}
+    for mn, nm in s_names:                      # the same name first, for every curve
         hit = next((p for p, pn in left.items() if _norm(pn) == _norm(nm)), None)
-        if hit is None:
-            k = _kind(nm)
-            same = [p for p, pn in left.items() if k and _kind(pn) == k]
-            hit = same[0] if len(same) == 1 else None
         if hit is not None:
-            left.pop(hit)
-        out.append((mn, hit))
-    return out, list(left)
+            hits[mn] = left.pop(hit) and hit
+    for mn, nm in s_names:                      # then the one curve left of the same kind
+        if mn in hits:
+            continue
+        k = _kind(nm)
+        same = [p for p, pn in left.items() if k and _kind(pn) == k]
+        if len(same) == 1:
+            hits[mn] = same[0]
+            left.pop(same[0])
+    return [(mn, hits.get(mn)) for mn, _nm in s_names], list(left)
 
 
 def _at(las, mn, d):

@@ -209,6 +209,13 @@ def _labelled(words, box):
     or a label straight after the label, is part of the value ("Acme
     Energy Ltd.: Attn ...", "Location: Surface: 01-02-3-4W5")"""
     out, label, start, field = [], None, 0, None
+    # "WELL LICENCE No. 99X003": a label ending in "No." or "#" with no
+    # colon, its value straight after it, at the start of the run
+    if words and not any(":" in w[4] for w in words):
+        for n in range(min(6, len(words) - 1), 0, -1):
+            t = " ".join(w[4] for w in words[:n])
+            if re.search(r"(?i)(\bno\.?|#)$", t) and V.header(t, box)["key"]:
+                return [(t, words[n:])]
     for j, w in enumerate(words):
         if not w[4].endswith(":") or len(w[4]) < 2:
             continue
@@ -720,13 +727,20 @@ def read_one_line(series, left, right, moves=None):
                 last = r
                 continue
         if not inside:
+            # the line just past an edge: read where it is drawn, but a line
+            # grazing the edge says nothing about a wrap
             past = [p for p in pts if p < -e or p > 1 + e]
             if past and last is not None:
-                r = min(past, key=lambda p: abs(p - last))
-                if abs(r - last) < 0.5:
-                    k = 1 if r > 1 else -1
-                    out.append((val(r), True))
-                    last = r
+                r = min(past, key=lambda p: abs(p - last - (1 if k == 1 and p < 0 else 0)))
+                if r > 1:
+                    v = r                        # the line past the top is the reading itself
+                    if k == 1:
+                        k = 0                    # ... and it is back: the wrapped line has ended
+                else:
+                    v = r + max(k, 0)            # the wrapped line just below the low edge
+                if abs(v - last) < 0.5:
+                    out.append((val(v), True))
+                    last = v
                     continue
             out.append(None)
             continue
@@ -791,23 +805,57 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
             d = min(P.depth(x0, y0), P.depth(x1, y1)) - CAPTION_M
             if P.on(d, 0.5):
                 caps.append((d, c))
-    # one curve per name and colour; its scale from each caption down the log
+    # one curve per colour and name in a column: a curve captioned again
+    # lower down, in full or cut short ("Gamma Ray", "Gam"), is the same
+    # curve, named by its fullest caption; its scale from each caption down
+    # the log
     curves = collections.OrderedDict()
+
+    def same(a, b):          # one name the other cut short ("Gam", "mma Ray" in "Gamma Ray")
+        a, b = re.sub(r"[^a-z0-9]", "", a.lower()), re.sub(r"[^a-z0-9]", "", b.lower())
+        return bool(a and b) and (a in b or b in a)
+
     for d, c in sorted(caps, key=lambda t: t[0]):
-        curves.setdefault((c.name, c.unit, c.colour), []).append((d, c))
+        e = _track_edges(lines_pt, c.left_at, c.right_at)
+        if not e:
+            continue
+        # the same name (its scale may change down the log), or a name cut
+        # short with the same scale: two scales at once are two curves
+        key = next((k for k in curves if k[0] == c.colour and k[1] == e and (
+            k[2] == c.name or (same(k[2], c.name) and any((x.left, x.right) == (c.left, c.right)
+                                                          for _d, x in curves[k])))), None)
+        if key is None:
+            key = (c.colour, e, c.name)
+        curves.setdefault(key, []).append((d, c))
+    # a caption that took another column's number (a depth label) lands in
+    # a column of its own: of the curves of one colour and name, one with
+    # a handful of captions beside one with many is that
+    most = collections.Counter()
+    for (colour, e, name), seen in curves.items():
+        most[(colour, name)] = max(most[(colour, name)], len(seen))
+    curves = collections.OrderedDict((k, v) for k, v in curves.items()
+                                     if len(v) >= 3 or len(v) * 3 >= most[(k[0], k[2])])
+    # a caption cut short by its column ("mma Ray") whose whole name is
+    # another curve of its colour is that curve again, read in the wrong place
+    def clipped(a, b):       # a starts inside one of b's words: "mma Ray" in "Gamma Ray"
+        i = b.lower().find(a.lower())
+        return a.lower() != b.lower() and i > 0 and b[i - 1].isalnum()
+
+    curves = collections.OrderedDict(
+        (k, v) for k, v in curves.items() if not any(o[0] == k[0] and clipped(k[2], o[2]) for o in curves))
     strokes = strokes or Strokes(doc, pages)
     n = int(round((bottom - top) / step)) + 1
     out = []
-    for (_name, _unit, colour), seen in curves.items():
-        first = seen[0][1]
-        edges = collections.Counter()
-        for _d, c in seen:
-            e = _track_edges(lines_pt, c.left_at, c.right_at)
-            if e:
-                edges[e] += 1
-        if not edges:
-            continue
-        x0, x1 = edges.most_common(1)[0][0]
+    for (colour, (x0, x1), _name), seen in curves.items():
+        # a scale one caption alone gives, between two that agree, is a
+        # misread number, not a change of scale
+        seen = [t for i, t in enumerate(seen)
+                if not (0 < i < len(seen) - 1
+                        and (seen[i - 1][1].left, seen[i - 1][1].right) == (seen[i + 1][1].left, seen[i + 1][1].right)
+                        != (t[1].left, t[1].right))]
+        names = collections.Counter((c.name, c.unit, c.kind) for _d, c in seen)
+        best = max(names, key=lambda k: (k[2] is not None, names[k], len(k[0]) + len(k[1] or "")))
+        first = next(c for _d, c in seen if (c.name, c.unit, c.kind) == best)
         secs = []
         for d, c in seen:
             if not secs or (c.left, c.right) != secs[-1][1:]:

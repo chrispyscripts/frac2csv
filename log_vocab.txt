@@ -562,7 +562,8 @@ uwi                   | UWI                          = UWI, Unique Well Identifi
 location              | Surface location             = Location, Surface Location, Surface Loc, Surface Loc.
 bottom_hole_location  | Bottom hole location         = Bottom Hole Location, BH Location, BHL
 licence               | Licence                      = License Number, Licence Number, Well Licence No., Well License No.,
-    Licence No., License No., Licence, License, Licence #, License #, Well Licence, Well License
+    Licence No., License No., Licence, License, Licence #, License #, Well Licence, Well License,
+    Well Auth. / Licence No., Well Auth. / License No., Well Authorization / Licence No.
 region                | Region / field               = Region, Field, Area, Field Area, Field/Area
 spud_date             | Spud date                    = Spud Date, Spud, Date Spudded
 completion_date       | Drilling completed           = Drilling Completed, Rig Release, Rig Release Date, Rig Released,
