@@ -702,7 +702,8 @@ def read_line(main, wrap, left, right):
     span = hi - lo
     tol = wscale.EDGE * span
     agree = 0.01 * span
-    out, last = [], None
+    together = 0.025 * span                        # (two lines drawn in different widths cross a
+    out, last = [], None                           #  depth a little apart)
 
     def val(p):
         return left + p * (right - left)
@@ -724,15 +725,18 @@ def read_line(main, wrap, left, right):
                 sure.append(up)
             elif at_lo and down <= lo + tol:
                 sure.append(down)
-            elif any(abs(m - u) < agree for m in vm):
-                either += [u, up, down]
+            elif any(abs(m - u) < together for m in vm):
+                # together: the main line folded back in on the thin one,
+                # one width off the reading (past the high end, or past the
+                # low end where the reading already is)
+                either.append(down if last is not None and last < lo else up)
             elif not vm and last is not None:
                 sure += [c for c in (up, down) if abs(c - last) < span / 4]
         r = None
         if sure:
             r = (near(sure), True)
         elif either:
-            r = (near(either) if last is not None else min(either, key=lambda c: abs(c - (lo + hi) / 2)), True)
+            r = (near(either), True)
         elif mid:
             r = (near(mid), True)
         elif at_hi:

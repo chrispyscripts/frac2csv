@@ -299,8 +299,9 @@ class Lines(unittest.TestCase):
         # 95, then 130: the main line drawn back in at 30, the thin line at 30 too
         got = M.read_line([[0.95], [0.3]], [[-0.05], [0.3]], 0, 100)
         self.assertAlmostEqual(got[1][0], 130.0)
-        # with nothing above to go by, the reading inside the scale
-        self.assertAlmostEqual(M.read_line([[0.3]], [[0.3]], 0, 100)[0][0], 30.0)
+        # with nothing above to go by too: the thin line is always one
+        # width off the reading, so the two lie together only folded
+        self.assertAlmostEqual(M.read_line([[0.3]], [[0.3]], 0, 100)[0][0], 130.0)
 
     def test_past_twice_the_scale(self):
         got = M.read_line([[1.0]], [[1.7]], 0, 100)
@@ -319,12 +320,16 @@ class Lines(unittest.TestCase):
         got = M.read_line([[0.0]], [[0.7]], 0, 100)
         self.assertAlmostEqual(got[0][0], -30.0)
 
-    def test_lines_together_carry_on_from_above(self):
+    def test_lines_together_are_folded(self):
         # 95, then the two lines together at 0.05: 105 (folded in), not 5
         got = M.read_line([[0.95], [0.05]], [[-0.05], [0.05]], 0, 100)
         self.assertAlmostEqual(got[1][0], 105.0)
-        got = M.read_line([[0.10], [0.05]], [[-0.9], [0.05]], 0, 100)
-        self.assertAlmostEqual(got[1][0], 5.0)
+        # a little apart (drawn in different widths) is still together
+        got = M.read_line([[0.95], [0.073]], [[-0.05], [0.062]], 0, 100)
+        self.assertAlmostEqual(got[1][0], 106.2, delta=0.1)
+        # below the low end already: together is one width lower
+        got = M.read_line([[0.0], [0.7]], [[0.7], [0.7]], 0, 100)
+        self.assertAlmostEqual(got[1][0], -30.0)
 
     def test_a_reversed_scale(self):
         # left 10, right 0: 13 sits past the left end
