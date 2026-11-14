@@ -758,10 +758,16 @@ def read_one_line(series, left, right, moves=None):
 
     for i, ps in enumerate(series):
         pts = sorted(ps or ())
-        pairs = [(a, b) for j, a in enumerate(pts) for b in pts[j + 1:] if abs(b - a - 1) < 0.03]
+        # two lines one on each edge (a frame, or a line pinned at both
+        # ends) say nothing about where the reading is
+        pairs = [(a, b) for j, a in enumerate(pts) for b in pts[j + 1:]
+                 if abs(b - a - 1) < 0.03 and not (abs(a) <= e and abs(b - 1) <= e)]
         if pairs and any(b > 1 + e for a, b in pairs) and k != 1:
             a, b = pairs[-1]
-            if not carries_on(i, a):
+            # a wrap starts where the line just was, up at the top, and goes
+            # on from the low end (a scribble, or a line from a gap in the
+            # data, draws one-off pairs)
+            if not carries_on(i, a) or last is None or abs(b - last) > 0.35:
                 pairs = [(a, b) for a, b in pairs if b <= 1 + e]
         r = None
         if pairs:
@@ -827,12 +833,14 @@ def read_one_line(series, left, right, moves=None):
                 leapt = i
             out.append((val(p + k), True))
             last = p + k
-        elif any(p >= 1 - e for p in inside):
+        elif any(p >= 1 - e for p in inside) and not any(p <= e for p in inside):
             out.append((val(1 + k), k != 0) if k else (hi if right > left else lo, False))
             last = 1 + k
-        else:
+        elif not any(p >= 1 - e for p in inside):
             out.append((val(k), k != 0) if k else (lo if right > left else hi, False))
             last = 0.0 + k
+        else:
+            out.append(None)                     # on both edges at once: nothing to go on
     return out
 
 
@@ -1009,7 +1017,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # along the track's edges (a box's sides; a pinned line says nothing
         # the reader can write), and where it runs out of the track
         line = [sg for sg in groups[wmain] if not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 0.3
-                                                  and (abs(sg[1]) < 0.003 or abs(sg[1] - 1) < 0.003))]
+                                                  and (abs(sg[1]) < 0.003 or abs(sg[1] - 1) < 0.003))
+                and not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 3.0)]   # one straight stroke over
+        #                                                    3 m is a legend's sample line, not readings
         crossing = [sg for sg in line if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
         whole = [ms + [p for p in ps if p < -e or p > 1 + e]
                  for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
