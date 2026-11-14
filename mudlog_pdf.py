@@ -739,6 +739,7 @@ def read_one_line(series, left, right, moves=None):
     lo, hi = min(left, right), max(left, right)
     e = wscale.EDGE
     out, k, last = [], 0, None                   # k: scale widths the line in the track is off the reading
+    leapt = -10 ** 9                             # where the line last leapt up over half the track
 
     def val(p):
         return left + p * (right - left)
@@ -815,12 +816,15 @@ def read_one_line(series, left, right, moves=None):
                     -e <= a0 and a1 <= 1 + e and a0 <= min(p, prev) + 0.05 and a1 >= max(p, prev) - 0.05
                     for a0, a1 in moves[i]):
                 pass                                 # drawn across the track: the reading moved
-            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25:
-                k = 1                            # off the top, in from the low end: wrapped
+            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25 and i - leapt > 20:
+                k = 1                            # off the top, in from the low end: wrapped (a line that
+                #                                  leapt up just before is a spike coming back down)
             elif last is not None and k == 1 and p - prev > 0.3:
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
             elif last is not None and k == -1 and prev - p > 0.3:
                 k = 0
+            if last is not None and k == 0 and p - (last - k) > 0.5:
+                leapt = i
             out.append((val(p + k), True))
             last = p + k
         elif any(p >= 1 - e for p in inside):
