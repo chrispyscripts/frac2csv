@@ -769,6 +769,42 @@ def read_one_line(series, left, right, moves=None):
     return out
 
 
+def _recorded_step(segs):
+    """the step a curve was recorded at, from its drawn line: the spacing
+    down the log of the line's corners (most of its strokes run from one
+    reading to the next; a dashed line's dashes are left out), in 0.05 m;
+    None when no spacing stands out"""
+    c = collections.Counter()
+    for da, _pa, db, _pb in segs:
+        L = abs(db - da)
+        if 0.08 <= L <= 2.05:                   # shorter is a dashed line's dash
+            c[round(L / 0.05) * 0.05] += 1
+    if not c:
+        return None
+    best, n = c.most_common(1)[0]
+    return round(best, 2) if n >= 0.3 * sum(c.values()) else None
+
+
+def _shift(values, k, blend=True):
+    """readings moved k grid steps deeper (k need not be whole: between two
+    readings the value is taken straight between them, or with blend False
+    (a curve drawn in steps) the nearer one, the deeper at half way)"""
+    out = []
+    for i in range(len(values)):
+        x = i - k
+        j = int(math.floor(x))
+        f = x - j
+        a = values[j] if 0 <= j < len(values) else None
+        b = values[j + 1] if 0 <= j + 1 < len(values) else None
+        if f < 1e-9:
+            out.append(a)
+        elif not blend or a is None or b is None:
+            out.append(a if f < 0.5 else b)
+        else:
+            out.append(round(a + (b - a) * f, 4))
+    return out
+
+
 def _offset(main, other):
     """how another line of the curve's colour runs beside its main line,
     where the main line crosses a depth once inside the track: 0 the same
@@ -914,12 +950,22 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
         values = _fill(values, top, step)
         if sum(v is not None for v in values) < 10:
             continue
+        # LogViewer draws a reading half its recorded step shallower than
+        # its depth; the step is the spacing of the line's corners down the
+        # log. The readings are put back where the log has them.
+        rec = _recorded_step(groups[wmain])
+        half = rec / 2 if rec else 0.0
+        if half >= step / 4:
+            long_ = [sg for sg in groups[wmain] if abs(sg[2] - sg[0]) >= 0.08]
+            steps = long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.5 * len(long_)
+            values = _shift(values, half / step, blend=not steps)     # a step drawn flat is not blended
         vc = V.curve(first.name)
         out.append({"name": first.name, "kind": first.kind or vc["key"], "units": first.unit,
                     "unit": V.unit(first.unit)["key"] if first.unit else None,
                     "top": round(top, 3), "step": step, "values": values,
                     "scale": [[round(d, 3), l, r] for d, l, r in secs], "colour": "#%06x" % colour,
-                    "track_pt": [round(x0, 1), round(x1, 1)], "past_scale": unsure})
+                    "track_pt": [round(x0, 1), round(x1, 1)], "past_scale": unsure,
+                    "recorded_step": rec, "shifted_m": round(half, 3) if half >= step / 4 else 0.0})
     return out
 
 
