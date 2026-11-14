@@ -177,6 +177,28 @@ class OneLine(unittest.TestCase):
         got = self.read(series, 90.0, 0.0)
         self.assertAlmostEqual(got[-1], 90 - 0.57 * 90, delta=0.5)
 
+    def test_back_by_the_top_after_a_gap_is_under_the_scale(self):
+        # gamma 50 - 120 at 61, nothing drawn for 3 m, then only the copy in
+        # from the top (the reading 44 is under the scale): not 114
+        series = [[0.16], [0.164], [0.167]] + [[]] * 31 + [[0.919], [0.919], [0.925], [0.936]]
+        got = self.read(series, 50.0, 120.0)
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 120.0, under=True)]
+        self.assertAlmostEqual(got[-1], 50 + (0.936 - 1) * 70, delta=0.5)
+        # on a scale from nothing the copy is not read under
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 150.0)]
+        self.assertAlmostEqual(got[-1], 0.936 * 150, delta=0.5)
+
+    def test_a_sharp_junk_dip_under_a_scale_from_nothing(self):
+        # gas 0 - 1000 at 260, a junk reading far under (its bottom cut off
+        # the page): down to -0.25, back up from -0.37 within 0.5 m
+        line = [(100.0, 0.26, 100.3, 0.26), (100.3, 0.18, 100.4, -0.25), (100.6, -0.37, 100.7, 0.0),
+                (100.7, 0.0, 100.8, 0.26)]
+        got = M._null_dips(line, 100.0, 0.1, 0.0, 1000.0)
+        self.assertTrue({4, 5, 6} <= got and 0 not in got, got)
+        # a wrapped line run out of the low end goes on down: no dip
+        line = [(100.0, 0.1, 100.3, 0.05), (100.3, 0.05, 100.4, -0.25)]
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 1000.0), set())
+
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
         # wrap is read across the gap

@@ -782,12 +782,24 @@ def _null_dips(line, top, step, left, right):
     {index}"""
     if right == left:
         return set()
+    out = set()
+    if left == 0:
+        # junk under a scale from nothing (-368 on gas 0 - 1000): the line
+        # dives well under the track to a point and straight back up; a
+        # wrapped line run out of the low end goes on down instead
+        # (the bottom of the dive can be cut off the page: a stroke down to
+        # well under the track, and one back up from there within 0.5 m)
+        down = sorted(db for da, pa, db, pb in line if pb < -0.15 and pa > pb + 0.15)
+        up = sorted(da for da, pa, db, pb in line if pa < -0.15 and pb > pa + 0.15)
+        for d1 in down:
+            d2 = next((u for u in up if 0 <= u - d1 <= 0.5), None)
+            if d2 is not None:
+                out.update(range(int(round((d1 - top) / step)) - 3, int(round((d2 - top) / step)) + 4))
     pn = (NULL - left) / (right - left)
     if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
-        return set()
+        return out
     # (a place on an edge is no sign: a reading of nothing is drawn there)
     at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5 and min(abs(q), abs(q - 1)) > 0.02]
-    out = set()
     for da, pa, db, pb in line:
         for d, p in ((da, pa), (db, pb)):
             if any(abs(p - q) < 0.004 for q in at):
@@ -864,10 +876,11 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
         got = [(r[0] - left) / (right - left) for r in out[-15:] if r is not None][-5:]
         return len(got) >= 2 and all(-0.2 <= q <= 0.3 for q in got)       # (junk just under counts)
 
-    def back_in_at_top(i):
-        """since the last reading the line was first drawn by the top of
-        the track (a dashed line's first dash after a gap): a wrapped line
-        run out of the low end and the reading in again from the top"""
+    def back_in_at_top(i, at):
+        """since the last reading (at, in the track) the line went on down
+        and was next drawn by the top of the track (a dashed line's dashes
+        after a gap): a wrapped line run out of the low end and the reading
+        in again from the top"""
         if last_i is None or not moves:
             return False
         for j in range(last_i + 1, i):
@@ -875,8 +888,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             if any(q > 1 + e for q in seen_):
                 return False                     # the line itself past the top: still wrapped
             if any(q >= 0.85 for q in seen_):
-                return True                      # by the top, with only the low end drawn before
-            if any(q > 0.2 for q in seen_):
+                return True                      # by the top, with only the line going down before
+            if any(q > max(at, 0.2) + 0.03 for q in seen_):
                 return False
         return False
 
@@ -901,13 +914,13 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                 return True
         return False
 
-    last_i, seen, under_since = None, [], None
+    last_i, seen, under_since, before_gap = None, [], None, None
     for i, ps in enumerate(series):
         if out and out[-1] is not None:
             last_i = i - 1
         if k == -1:
             under_since = i - 1 if under_since is None else under_since
-            top_ps = [q for ps_ in series[under_since:i] for q in ps_ or () if q >= 0.5]
+            top_ps = [q for ps_ in series[max(under_since, i - 10):i] for q in ps_ or () if q >= 0.5]   # (the last 1 m)
             drawn = sum(1 for ps_ in series[under_since:i] if any(q >= 0.5 for q in ps_ or ()))
             if not under and i - under_since > 10 and top_ps and max(top_ps) - min(top_ps) > 0.03 \
                     and drawn >= 0.7 * (i - under_since):    # (a line drawn all along, not junk's bits)
@@ -918,6 +931,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             under_since = None
         if last is not None and i - last_i > 30 and not (
                 any(q > 1 + e for q in seen) or (any(q >= 1 - e for q in seen) and not any(q <= e for q in seen))):
+            before_gap = last if k == 0 else None
             last, k = None, 0                    # nothing read for 30 readings: the line starts afresh
             #                                      (unless it went off past the top: it comes back wrapped)
         if ps:
@@ -999,6 +1013,13 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                     -e <= a0 and a1 <= 1 + e and a0 <= min(p, prev) + 0.05 and a1 >= max(p, prev) - 0.05
                     for a0, a1 in moves[i]):
                 pass                                 # drawn across the track: the reading moved
+            elif k == 0 and under and last_i is not None and 1 < i - last_i <= 50 and p >= 0.8 \
+                    and (last if last is not None else before_gap) is not None \
+                    and (prev if last is not None else before_gap) <= 0.35 \
+                    and abs(p - 1 - (last if last is not None else before_gap)) \
+                    < abs(p - (last if last is not None else before_gap)):
+                k = -1                           # back after a gap by the top, the reading before low: run
+                #                                  under the scale (only its copy in from the top drawn)
             elif last is not None and k == 0 and prev <= 0.25 and p >= 0.9 and went_under(i) and not crossed(i, prev, p) \
                     and (under or low_a_while()):
                 k = -1                           # gone just under the low edge, drawn in at the top
@@ -1011,7 +1032,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                     and not crossed(i, p, prev):
                 k = 1                            # off the top, in from the low end: wrapped (a line that
                 #                                  leapt up just before is a spike coming back down)
-            elif last is not None and k == 1 and prev <= 0.2 and back_in_at_top(i):
+            elif last is not None and k == 1 and prev <= 0.3 and back_in_at_top(i, prev):
                 k = 0                            # the wrapped line out of the low end, in again from the top
             elif last is not None and k == 1 and p - prev > 0.3:
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
