@@ -1033,6 +1033,20 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     values[i0 + k] = round(r[0], 4)
                 else:
                     unsure += 1
+        # a scale from above nothing over a hundredfold and more (resistivity
+        # 0.2 - 2000) is drawn logarithmic: the line's place is the reading's
+        # logarithm between the ends
+        logs = []
+        for j, (d_from, left, right) in enumerate(secs):
+            if left > 0 and right > 0 and max(left, right) / min(left, right) >= 100:
+                d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
+                i0 = max(0, int(round((d_from - top) / step)))
+                i1 = min(n, int(round((d_to - top) / step)))
+                for i in range(i0, i1):
+                    if values[i] is not None:
+                        pos = (values[i] - left) / (right - left)
+                        values[i] = round(left * (right / left) ** pos, 4)
+                logs.append(round(d_from, 3))
         values = _fill(values, top, step)
         if sum(v is not None for v in values) < 10:
             dropped.append((first.name, "fewer than 10 readings"))
@@ -1052,7 +1066,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     "top": round(top, 3), "step": step, "values": values,
                     "scale": [[round(d, 3), l, r] for d, l, r in secs], "colour": "#%06x" % colour,
                     "track_pt": [round(x0, 1), round(x1, 1)], "past_scale": unsure,
-                    "recorded_step": rec, "shifted_m": round(half, 3) if half >= step / 4 else 0.0})
+                    "recorded_step": rec, "shifted_m": round(half, 3) if half >= step / 4 else 0.0,
+                    "log_scale_from": logs})
     return out
 
 
