@@ -473,6 +473,46 @@ def intervals_from_tiles(tiles, join_m=0.05):
 
 # ---------------------------------------------------------------- curves
 
+def _grid_lines(doc, pages):
+    """the light lines straight down the log (a curve track's grid), across
+    in points, from the first two log pages"""
+    out = collections.Counter()
+    for P in sorted(pages, key=lambda q: q.page)[:2]:
+        for d in doc[P.page - 1].get_drawings():
+            c = d.get("color")
+            if not c or min(c[:3]) <= 0.35 or max(c[:3]) - min(c[:3]) > 0.1:
+                continue                           # a grey line only
+            for it in d["items"]:
+                if it[0] != "l":
+                    continue
+                p, q = it[1], it[2]
+                a0, a1 = P.across(p.x, p.y), P.across(q.x, q.y)
+                if abs(a0 - a1) < 0.3 and abs(P.depth(p.x, p.y) - P.depth(q.x, q.y)) > 1.0:
+                    out[round(a0 * 2) / 2] += 1
+    return sorted(out)
+
+
+def _grid_edges(grid, lines_pt, x0, x1):
+    """a curve track's edges from its grid: evenly spaced grey lines across
+    the track, its edges one spacing outside the outer ones (a slide bar's
+    strip beside the track can be inside it, its line no edge of the
+    scale). (x0, x1) as they were where the grid does not say"""
+    inner = [g for g in grid if x0 - 12 < g < x1 + 12]
+    if len(inner) < 4:
+        return x0, x1
+    gaps = [b - a for a, b in zip(inner, inner[1:])]
+    sp = sorted(gaps)[len(gaps) // 2]
+    if sp < 2 or any(abs(g - sp) > 0.2 * sp for g in gaps):
+        return x0, x1
+
+    def snap(x):
+        near = min(lines_pt, key=lambda l: abs(l - x))
+        return near if abs(near - x) <= 1.5 else None
+
+    a, b = snap(inner[0] - sp), snap(inner[-1] + sp)
+    return (a if a is not None else x0), (b if b is not None else x1)
+
+
 def _widen(segs, lines_pt, x0, x1):
     """a curve's track widened past a line of the log while the curve's own
     line runs on across it: it crosses the line again and again, and much of
@@ -992,9 +1032,11 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     and e2[1] - e2[0] <= 1.5 * (e1[1] - e1[0])):
                 a, b = band[e1], band.get(e2, e2)
                 band[e1] = (min(a[0], b[0]), max(a[1], b[1]))
+    grid = _grid_lines(doc, pages)
     out = []
     for (colour, (x0, x1), _name), seen in curves.items():
         x0, x1 = band.get((x0, x1), (x0, x1))
+        x0, x1 = _grid_edges(grid, lines_pt, x0, x1)
         # a scale one caption alone gives, between two that agree, is a
         # misread number, not a change of scale
         seen = [t for i, t in enumerate(seen)
