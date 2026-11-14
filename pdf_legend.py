@@ -368,6 +368,34 @@ def _caption_name(text):
     return name.strip(), unit.strip(), vc["key"]
 
 
+def _decades(left, right, mine, ca):
+    """a log scale can print every decade between its ends (1 10 100 1000):
+    the numbers nearest the name either side are then only the inner two.
+    The series is followed out each way, a number at a time, while the next
+    one along the same row is the next decade (the same ratio as the inner
+    two) no further on than they are apart"""
+    lv, rv = left[1], right[1]
+    if lv <= 0 or rv <= 0 or abs(math.log10(rv / lv)) < 0.3:
+        return left, right
+    r = rv / lv
+    gap = abs(right[2] - left[2])
+
+    def out(end, way):
+        _d, v, at = end
+        row = next((o for a, o, x in mine if abs(a - at) < 0.5 and abs(x - v) < 1e-9), None)
+        while row is not None:
+            want = v / r if way < 0 else v * r
+            nxt = [(abs(a - at), a, x) for a, o, x in mine
+                   if (a - at) * way > 2.0 and abs(a - at) <= gap and abs(o - row) <= 3.0
+                   and abs(x - want) <= 0.01 * want]
+            if not nxt:
+                break
+            _g, at, v = min(nxt)
+        return (abs(at - ca), v, at)
+
+    return out(left, -1), out(right, 1)
+
+
 def captions(pg, pno, across):
     """the curve captions on a page. across(x, y) gives a page point's
     place across the log (the coordinate the scale runs along), so a
@@ -387,7 +415,9 @@ def captions(pg, pno, across):
             continue
         a0, a1 = sorted((across(bb[0], bb[1]), across(bb[2], bb[3])))
         cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+        ca = across(cx, cy)
         left = right = None
+        mine = []                                   # (along, off the row, value) of this colour's numbers near it
         for nb, v, ncol in nums:
             if ncol != col:
                 continue
@@ -396,6 +426,7 @@ def captions(pg, pno, across):
             if d > 260:
                 continue
             na = across(nx, ny)
+            mine.append((na, math.sqrt(max(0.0, d * d - (na - ca) ** 2)), v))
             if na < a0:
                 if left is None or d < left[0]:
                     left = (d, v, na)
@@ -404,6 +435,7 @@ def captions(pg, pno, across):
                     right = (d, v, na)
         if left is None or right is None:
             continue
+        left, right = _decades(left, right, mine, ca)
         c = Caption(pno + 1, bb, nm[0], nm[2], nm[1], col)
         c.left, c.left_at, c.right, c.right_at = left[1], left[2], right[1], right[2]
         out.append(c)

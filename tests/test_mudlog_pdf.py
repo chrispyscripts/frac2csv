@@ -257,6 +257,31 @@ class Legend(unittest.TestCase):
         caps = L.captions(pg, 0, lambda x, y: -y)
         self.assertEqual([(c.name, c.left, c.right) for c in caps], [("Gas", 0.0, 10.0)])
 
+    def test_a_log_scale_with_every_decade_printed(self):
+        # sideways: 1 10 Shallow 100 1000 up the page; a black Gamma 0 .. 150
+        # beside it is no part of the series
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        red = (1, 0, 0)
+        for y, t in ((206, "1"), (184, "10"), (168, "Shallow (ohm.m)"), (152, "100"), (130, "1000")):
+            pg.insert_text((400, y), t, fontsize=6, color=red)
+        for y, t in ((206, "0"), (168, "Gamma (API)"), (130, "150")):
+            pg.insert_text((440, y), t, fontsize=6)
+        caps = L.captions(pg, 0, lambda x, y: -y)
+        got = {(c.name, c.left, c.right) for c in caps}
+        self.assertEqual(got, {("Shallow", 1.0, 1000.0), ("Gamma", 0.0, 150.0)})
+        doc.close()
+
+    def test_a_linear_scale_is_not_followed_out(self):
+        # 0 Gas 100 with an unrelated 1000 further along: not a decade series
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        for y, t in ((184, "0"), (168, "Gas (units)"), (152, "100"), (130, "1000")):
+            pg.insert_text((400, y), t, fontsize=6, color=(1, 0, 0))
+        caps = L.captions(pg, 0, lambda x, y: -y)
+        self.assertEqual([(c.name, c.left, c.right) for c in caps], [("Gas", 0.0, 100.0)])
+        doc.close()
+
 
 @unittest.skipUnless(fitz, "PyMuPDF not installed")
 class Lines(unittest.TestCase):

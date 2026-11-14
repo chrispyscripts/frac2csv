@@ -753,7 +753,29 @@ def _moves(segs, top, n, step):
     return out
 
 
-def read_one_line(series, left, right, moves=None):
+NULL = -999.25
+
+
+def _null_dips(line, top, step, left, right):
+    """the readings where LogViewer drew the log's null (-999.25, no
+    reading) as if it were one: on a wide scale its place is just past the
+    low edge, and the line turns there (and its copy one width on). ->
+    {index}"""
+    if right == left:
+        return set()
+    pn = (NULL - left) / (right - left)
+    if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
+        return set()
+    at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5]
+    out = set()
+    for da, pa, db, pb in line:
+        for d, p in ((da, pa), (db, pb)):
+            if any(abs(p - q) < 0.004 for q in at):
+                out.add(int(round((d - top) / step)))
+    return out
+
+
+def read_one_line(series, left, right, moves=None, under=False, nulls=()):
     """a curve's readings where LogViewer drew it with one line only, down
     the log: series[i], where its line crosses depth i as a share of the
     track, unclipped (the PDF keeps the line past the track's edge, cut off
@@ -775,7 +797,10 @@ def read_one_line(series, left, right, moves=None):
     step drawn flat): then the reading really moved. A wrong wrap would
     misread everything until the next jump, a missed one only the readings
     past the scale, so a jump is taken for a wrap only where it plainly is
-    one."""
+    one. With under (a scale that starts above nothing), a pair by the low
+    edge is below the scale where the line just was there. At nulls (the
+    log's null drawn as a reading, _null_dips) there is no reading, and the
+    line starts afresh after it."""
     lo, hi = min(left, right), max(left, right)
     e = wscale.EDGE
     out, k, last = [], 0, None                   # k: scale widths the line in the track is off the reading
@@ -805,7 +830,16 @@ def read_one_line(series, left, right, moves=None):
                 return True
         return False
 
+    last_i = None
     for i, ps in enumerate(series):
+        if out and out[-1] is not None:
+            last_i = i - 1
+        if last is not None and i - last_i > 30:
+            last, k = None, 0                    # nothing read for 30 readings: the line starts afresh
+        if i in nulls:
+            out.append(None)
+            last, k = None, 0
+            continue
         pts = sorted(ps or ())
         # two lines one on each edge (a frame, or a line pinned at both
         # ends) say nothing about where the reading is
@@ -826,7 +860,10 @@ def read_one_line(series, left, right, moves=None):
             elif a < -e:
                 # below the low end only where the line already is (mudlog
                 # readings rarely go under a scale that starts at nothing)
-                r, k = (a, -1) if k == -1 else (b, 0)
+                if k == -1 or (under and last is not None and abs(a - last) < 0.25 and abs(a - last) < abs(b - last)):
+                    r, k = a, -1
+                else:
+                    r, k = b, 0
             else:
                 r, k = nearest([(b, 0), (a, 0)])
             out.append((val(r), True))
@@ -876,8 +913,9 @@ def read_one_line(series, left, right, moves=None):
                 #                                  leapt up just before is a spike coming back down)
             elif last is not None and k == 1 and p - prev > 0.3:
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
-            elif last is not None and k == -1 and prev - p > 0.3:
-                k = 0
+            elif last is not None and k == -1 and (prev - p > 0.3 or p < 0.5):
+                k = 0                            # (and a reading half a width under the scale is no
+                #                                  dip: the line was wrapped, now in the scale)
             if last is not None and k == 0 and p - (last - k) > 0.5:
                 leapt = i
             out.append((val(p + k), True))
@@ -901,13 +939,35 @@ def _recorded_step(segs):
     out), so of 1, 0.5, 0.2 and 0.1 m the step is the largest that one
     stroke in seven matches (within a tenth of it: a sideways page's depth
     scale can be a little off); None when none does"""
-    lens = [abs(db - da) for da, _pa, db, _pb in segs if abs(db - da) >= 0.08]
+    long_ = [(da, db) for da, _pa, db, _pb in segs if abs(db - da) >= 0.08]
+    lens = [abs(db - da) for da, db in long_]
     if len(lens) < 20:
         return None
     for S in (1.0, 0.5, 0.2, 0.1):
         if sum(1 for L in lens if abs(L - S) <= max(0.012, 0.1 * S)) >= 0.15 * len(lens):
-            return S
+            return S if _in_step(long_, S) else None
     return None
+
+
+def _in_step(strokes, S, window=10.0):
+    """whether the line's corners fall a whole number of steps apart down
+    the log: readings S apart put every corner at one place in the step.
+    A line LogViewer drew simplified (its corners where it bends, not at the
+    readings) has strokes of many lengths, some near S by chance, its
+    corners anywhere. Judged over each `window` metres (a page's depth
+    scale can be a little off, so the place can drift down the log)"""
+    by = collections.defaultdict(list)
+    for da, db in strokes:
+        for d in (da, db):
+            by[int(d // window)].append((d / S) % 1.0)
+    got = tot = 0
+    for ph in by.values():
+        if len(ph) < 6:
+            continue
+        best = max(sum(1 for q in ph if min(abs(q - c), 1 - abs(q - c)) <= 0.1) for c in ph)
+        got += best
+        tot += len(ph)
+    return tot == 0 or got >= 0.5 * tot
 
 
 def _shift(values, k, blend=True):
@@ -927,6 +987,18 @@ def _shift(values, k, blend=True):
             out.append(a if f < 0.5 else b)
         else:
             out.append(round(a + (b - a) * f, 4))
+    return out
+
+
+def _hold(values, top, step, every):
+    """readings on the grid from top by step, each taken at its nearest
+    depth that is a whole number of `every` metres (ties go deeper)"""
+    n = len(values)
+    out = []
+    for i in range(n):
+        d = top + i * step
+        j = int(round((math.floor(d / every + 0.5 + 1e-9) * every - top) / step))
+        out.append(values[j] if 0 <= j < n else None)
     return out
 
 
@@ -978,8 +1050,12 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         a, b = re.sub(r"[^a-z0-9]", "", a.lower()), re.sub(r"[^a-z0-9]", "", b.lower())
         return bool(a and b) and (a in b or b in a)
 
+    # a track at the side of the log can run to the page's edge, with no
+    # line of its own there
+    sides = [P.across(x, y) for P in pages for r in [doc[P.page - 1].rect] for x, y in ((r.x0, r.y0), (r.x1, r.y1))]
+    edged = sorted(set(lines_pt) | ({min(sides), max(sides)} if sides else set()))
     for d, c in sorted(caps, key=lambda t: t[0]):
-        e = _track_edges(lines_pt, c.left_at, c.right_at)
+        e = _track_edges(lines_pt, c.left_at, c.right_at) or _track_edges(edged, c.left_at, c.right_at)
         if not e:
             continue
         # the same name (its scale may change down the log), or a name cut
@@ -1099,7 +1175,11 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             if two_lines:
                 got = read_line(main[i0:i1], wrap[i0:i1], left, right)
             else:
-                got = read_one_line(whole[i0:i1], left, right, moves[i0:i1])
+                # a linear scale that starts above nothing (gamma 50 - 150)
+                # can be run under: the line wraps in from the top there
+                under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
+                got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], under=under,
+                                    nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1})
             for k, r in enumerate(got):
                 if r is None:
                     continue
@@ -1115,7 +1195,10 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 continue
             d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
             for i in range(max(0, int(round((d_from - top) / step))), min(n, int(round((d_to - top) / step)))):
-                if values[i] is None and main[i] and all(abs(p - zero) < 0.01 for p in main[i]):
+                # (with, on the other edge, the line one width on: a reading
+                # of nothing is drawn on both)
+                if values[i] is None and main[i] and any(abs(p - zero) < 0.01 for p in main[i]) \
+                        and all(abs(p - zero) < 0.01 or abs(abs(p - zero) - 1) < 0.01 for p in main[i]):
                     values[i] = 0.0
         # a scale from above nothing over a thousandfold (a resistivity's over a
         # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
@@ -1140,12 +1223,19 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # LogViewer draws a reading half its recorded step shallower than
         # its depth; the step is the spacing of the line's corners down the
         # log. The readings are put back where the log has them.
-        rec = _recorded_step(groups[wmain])
+        # (from the strokes in this track only: a curve of the same colour
+        # in another track is no part of this one's line)
+        own = [sg for sg in groups[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
+        rec = _recorded_step(own)
         half = rec / 2 if rec else 0.0
         if half >= step / 4:
-            long_ = [sg for sg in groups[wmain] if abs(sg[2] - sg[0]) >= 0.08]
+            long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]
             steps = long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.5 * len(long_)
             values = _shift(values, half / step, blend=not steps)     # a step drawn flat is not blended
+            # each reading held from half way to the reading before to half
+            # way to the next, as the log's own LAS holds it (the line drawn
+            # between readings is LogViewer's, not a reading)
+            values = _hold(values, top, step, rec)
         vc = V.curve(first.name)
         out.append({"name": first.name, "kind": first.kind or vc["key"], "units": first.unit,
                     "unit": V.unit(first.unit)["key"] if first.unit else None,

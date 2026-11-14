@@ -10,7 +10,9 @@ source reading is looked up in the PDF's LAS at the same depth (its nearest
 row), and every difference is measured as a share of the curve's printed
 scale width: how far apart the two would be drawn on the printout. The
 depth shift that best lines the two up is found (LogViewer draws a curve
-about half a recorded step shallower than its depth).
+about half a recorded step shallower than its depth). On a logarithmic
+scale (from above nothing over a thousandfold, a resistivity's over a
+hundredfold) the readings' logarithms are compared, as they are drawn.
 
 A reading the two disagree on by more than AGREE of the width is put down
 to the first of these that fits:
@@ -149,6 +151,18 @@ def _scale_at(scales, d):
     return cur[1], cur[2]
 
 
+def _log_kind(src, mn):
+    """a resistivity curve (its log_vocab kind, or its name)"""
+    nm = _name(dict((m, d) for m, _u, d in src["curves"]).get(mn, ""), mn)
+    return "resistivity" in str(_kind(nm) or "") or "resist" in nm.lower()
+
+
+def _is_log(lo, hi, resist):
+    """a scale LogViewer draws logarithmic: from above nothing over a
+    thousandfold (a resistivity's over a hundredfold)"""
+    return lo > 0 and hi / lo >= (100 if resist else 1000)
+
+
 def compare_curve(src, mn, pdf, pmn, scales):
     """one curve: {n, coverage, lag_m, mae, p95, max, bias, within_1, within_2, causes{}}
     (errors as shares of the printed scale width)"""
@@ -161,13 +175,24 @@ def compare_curve(src, mn, pdf, pmn, scales):
         lo, hi = vs[int(0.05 * (len(vs) - 1))], vs[int(0.95 * (len(vs) - 1))]
         scales = [(dep[0], lo, hi if hi > lo else lo + 1)]
 
+    logs = _log_kind(src, mn)
+
     def errors(lag):
         out = []
         for d, v in pts:
             left, right = _scale_at(scales, d)
-            w = abs(right - left) or 1.0
+            lo, hi = min(left, right), max(left, right)
             p = _at(pdf, pmn, d + lag) if pmn else None
-            out.append((d, v, p, None if p is None else (p - v) / w, w, min(left, right), max(left, right)))
+            if _is_log(lo, hi, logs):
+                # a logarithmic scale: places along it are the readings'
+                # logarithms, so the miss is measured between those
+                at = lambda x: math.log10(max(x, lo * 1e-3) / lo)
+                w = math.log10(hi / lo)
+                vv, pp, lo_, hi_ = at(v), None if p is None else at(p), 0.0, w
+            else:
+                w = (hi - lo) or 1.0
+                vv, pp, lo_, hi_ = v, p, lo, hi
+            out.append((d, vv, pp, None if pp is None else (pp - vv) / w, w, lo_, hi_))
         return out
 
     best = None

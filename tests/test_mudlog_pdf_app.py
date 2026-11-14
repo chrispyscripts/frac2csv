@@ -76,11 +76,75 @@ class OneLine(unittest.TestCase):
         got = self.read(series)
         self.assertAlmostEqual(got[-1], 450, delta=1)
 
+    def test_a_dip_under_a_scale_that_starts_above_nothing(self):
+        # gamma 50 - 150: the line runs just under 50 (drawn wrapped in at
+        # the top, with the line itself just past the low edge) and back up
+        series = [[0.05], [0.03], [-0.02, 0.98], [-0.03, 0.97], [0.02, 1.02], [0.05, 1.05], [0.3], [0.31]]
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True)]
+        for g, want in zip(got, (55, 53, 48, 47, 52, 55, 80, 81)):
+            self.assertAlmostEqual(g, want, delta=0.6)
+        # a scale from nothing (gas 0 - 500) is not run under: the top line is the reading
+        got = [r and r[0] for r in M.read_one_line([[0.05], [0.03], [-0.02, 0.98], [0.97]], 0.0, 500.0)]
+        self.assertAlmostEqual(got[2], 490, delta=1)
+
+    def test_the_null_drawn_as_a_reading_is_a_gap(self):
+        # gas 0 - 10000: the log's null (-999.25) sits just past the low
+        # edge, and the line dips to it (its copy one width on, at the top)
+        pn = (M.NULL - 0) / 10000.0
+        line = [(100.0, 0.14, 100.4, 0.14), (100.4, 0.14, 100.5, pn), (100.5, pn, 100.6, 0.3),
+                (100.4, 1.14, 100.5, pn + 1), (100.5, pn + 1, 100.6, 1.3)]
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 10000.0), {5})
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 150.0), set())     # far off: no dip drawn
+        # the copy of the dip, then the line and its copy back up from it
+        series = [[0.14]] * 4 + [[0.125, 1.127], [0.915], [0.065, 1.067], [0.3, 1.3], [0.32]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 10000.0, nulls={6})]
+        self.assertIsNone(got[6])
+        self.assertAlmostEqual(got[8], 3200, delta=1)                        # not wrapped
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 10000.0)]
+        self.assertAlmostEqual(got[8], 13200, delta=1)                       # (without: read as a wrap)
+
+    def test_after_a_long_gap_the_line_starts_afresh(self):
+        # the line high in the track, then nothing for 4 m, then low: no
+        # wrap is read across the gap
+        series = [[0.8]] * 5 + [[]] * 40 + [[0.15], [0.3], [0.6], [0.62]]
+        got = self.read(series)
+        self.assertAlmostEqual(got[45], 75, delta=1)
+        self.assertAlmostEqual(got[-1], 310, delta=1)
+
     def test_a_pair_by_the_low_edge_is_in_the_scale(self):
         series = [[0.98], [0.96, -0.04], [0.9]]
         got = self.read(series)
         self.assertAlmostEqual(got[1], 480, delta=1)
         self.assertAlmostEqual(got[2], 450, delta=1)
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class Steps(unittest.TestCase):
+    def test_a_reading_held_to_its_nearest_recorded_depth(self):
+        # read every 0.1 m from 100.0, recorded every 0.5 m: each reading
+        # holds from half way to the one before to half way to the next
+        vals = [float(i) for i in range(11)]          # 100.0 .. 101.0
+        got = M._hold(vals, 100.0, 0.1, 0.5)
+        self.assertEqual(got, [0.0, 0.0, 0.0, 5.0, 5.0, 5.0, 5.0, 5.0, 10.0, 10.0, 10.0])
+
+    def test_the_recorded_step_from_corners_in_step(self):
+        # a line from reading to reading every 0.5 m (drawn 0.25 m shallow)
+        regular = [(100.25 + 0.5 * i, 0.3, 100.75 + 0.5 * i, 0.4) for i in range(60)]
+        self.assertEqual(M._recorded_step(regular), 0.5)
+        # a line LogViewer drew simplified: corners where it bends, strokes
+        # whole numbers of 0.061 m long, some near 0.2 m by chance
+        import random
+        rnd = random.Random(4)
+        d, simplified = 100.0, []
+        for _ in range(200):
+            L = 0.061 * rnd.choice((2, 3, 3, 4, 5, 6, 7, 8))
+            simplified.append((d, 0.3, d + L, 0.4))
+            d += L
+        self.assertIsNone(M._recorded_step(simplified))
+
+    def test_held_off_the_end_is_nothing(self):
+        got = M._hold([1.0, 2.0, 3.0], 100.2, 0.1, 1.0)
+        self.assertEqual(got, [None, None, None])     # 100.2 .. 100.4 hold the reading at 100.0
 
 
 def header_page(rows):
