@@ -206,7 +206,7 @@ _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  "wellsight_app.py", "wellsight_print.py", "wellsight_logviewer.py",
                  "wellsight_server.py", "wellsight_library.py", "wellsight_symbols.py",
                  "wellsight_descriptions.py", "wellsight_layout.py", "log_vocab.py",
-                 "wellsight_scales.py", "mudlog_key.py",
+                 "wellsight_scales.py", "mudlog_key.py", "mudlog_pdf_app.py",
                  # mudlogs read from their PDF alone: not a frac reader either
                  "mudlog_pdf.py", "pdf_legend.py"}
 
@@ -569,6 +569,24 @@ def serialize(results, notes):
     return stages, tables, notes, summary
 
 
+def _mudlog_pdf(data, filename):
+    """a PDF the frac readers found nothing in, read as a mudlog's printout
+    (mudlog_pdf_app.py) when it is one and something on it reads: the
+    /api/wellsight response, else None"""
+    import mudlog_pdf_app as mpa
+    try:
+        ok, _why = mpa.looks_like_mudlog(data)
+        if not ok:
+            return None
+        out = wss.decode_pdf(data, os.path.basename(filename))
+    except Exception:  # noqa: BLE001 -- not a printout it can read: the frac answer stands
+        return None
+    p = out.get("payload") or {}
+    if not (p.get("curves") or p.get("rocks") or p.get("symbols")):
+        return None
+    return out
+
+
 def process_bytes(data, filename, job="", fix_text=None):
     doc = fitz.open(stream=data, filetype="pdf")
     results, notes = pipeline.extract_document(doc, filename=filename,
@@ -910,6 +928,13 @@ class Handler(BaseHTTPRequestHandler):
                     stages, tables, notes, summary = process_bytes(
                         data, req.get("filename", "file.pdf"),
                         str(req.get("job", "")), fix_text=req.get("fix") or None)
+                    # Nothing for the frac readers in it: a mudlog's printout
+                    # is read as a log instead (curves, rocks, symbols, header)
+                    mudlog = _mudlog_pdf(data, req.get("filename", "file.pdf")) \
+                        if not stages and not tables else None
+                if mudlog:
+                    return self._json(200, {"stages": [], "tables": [], "notes": notes,
+                                            "summary": summary, "mudlog": mudlog})
                 return self._json(200, {"stages": stages, "tables": tables,
                                         "notes": notes, "summary": summary})
             if self.path == "/api/manifest":

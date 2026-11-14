@@ -78,11 +78,13 @@ def _stitch(rec, pdf_bytes, source):
     else:
         info["part"] = "all"
     # Every track's place across the strip, from the log's own layout, so a
-    # view can show the column of the printout a data set is drawn in.
+    # view can show the column of the printout a data set is drawn in (a
+    # printout read on its own brings the columns it read off itself).
     try:
-        info["tracks"] = wl.place(wl.read_tracks(rec["native"]), info.get("lines_pt") or [],
-                                  info.get("curves_pt"), info["full_width_pt"],
-                                  wl.curve_track_title(p.get("curves")))
+        info["tracks"] = rec["tracks"] if rec.get("tracks") is not None else \
+            wl.place(wl.read_tracks(rec["native"]), info.get("lines_pt") or [],
+                     info.get("curves_pt"), info["full_width_pt"],
+                     wl.curve_track_title(p.get("curves")))
     except Exception:  # noqa: BLE001 -- the layout is extra; the curve track still shows
         info["tracks"] = []
     info.pop("lines_pt", None)
@@ -118,6 +120,29 @@ def decode(req):
             resp["printoutLookup"] = found
     _put(rec)
     return 200, resp
+
+
+def decode_pdf(data, name):
+    """a mudlog printout PDF read on its own (mudlog_pdf_app.py), held like
+    a decoded log with the PDF stitched as its printout -> the response
+    /api/wellsight gives"""
+    import mudlog_pdf_app as mpa
+    out = mpa.read(data, name)
+    tracks = []
+    for t in out["reading"].get("tracks") or []:
+        tracks.append({"title": t["title"], "keys": t["keys"], "x0": t["x0"], "x1": t["x1"],
+                       "snapped": True, "clipped": False})
+    rec = {"id": uuid.uuid4().hex[:12], "payload": out["payload"], "files": out["files"],
+           "header": out.get("header") or {}, "native": None, "strip": None, "strip_info": None,
+           "tracks": tracks}
+    resp = _public(rec)
+    try:
+        _stitch(rec, bytes(data), name)
+        resp["printout"] = rec["strip_info"]
+    except Exception as e:  # noqa: BLE001
+        resp["printoutError"] = str(e)
+    _put(rec)
+    return resp
 
 
 def _library_folder(folder):

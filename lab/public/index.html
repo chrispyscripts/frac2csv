@@ -1666,6 +1666,7 @@ async function handleWellsight(f, q, printoutFile) {
 
 function wellsightLine(q, printoutError) {
   const p = q.ws.payload, bits = [];
+  if (p.source === "pdf") bits.push("mudlog printout, read from the PDF alone");
   bits.push(`LAS: ${p.curves.length} curve${p.curves.length === 1 ? "" : "s"}`);
   if (p.lithology.length) bits.push("lithology");
   const az = p.analysis && p.analysis.show_zones;
@@ -1803,7 +1804,12 @@ function showWellsight(entry, items) {
   $("ws-sub").textContent = [p.file, `${p.app} ${p.version}`,
     p.top != null ? `${p.top}–${p.bottom} m ${p.axis}` : "", p.scale,
     p.licence && "licence " + p.licence].filter(Boolean).join(" · ");
-  wellsightStatus().then(st => { $("wsprintbtn").hidden = !st.available; });
+  // a printout PDF read on its own (mudlog_pdf_app.py): it is its own
+  // printout, and there is no log file to print or look up
+  const fromPdf = p.source === "pdf";
+  wellsightStatus().then(st => { $("wsprintbtn").hidden = !st.available || fromPdf; });
+  $("wspdfbtn").hidden = fromPdf;
+  $("wsfolderbtn").hidden = fromPdf;
   $("wsmsg").hidden = true;
   wsBuildPairs();
   wsNotes();
@@ -1910,11 +1916,16 @@ function wsNotes() {
       + (c.labels ? `; ${c.labels} labels, median ${c.median_m} m from their depth` : "")
       + (P.gaps && P.gaps.length ? `; gaps at ${P.gaps.map(g => g.join("–")).join(", ")} m` : "")
       + ` (${P.source || "printout"}).`);
-    out.push("LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.");
-    if ((P.tracks || []).length)
-      out.push("The printout's columns are found from the log's own layout: the tracks it shows, in order, at their "
-        + "printed widths, laid on the lines the printout draws between them"
-        + ((P.tracks || []).some(t => !t.snapped) ? " (some edges did not land on a line and are estimated)." : "."));
+    if (p.source === "pdf") {
+      if ((P.tracks || []).length)
+        out.push("The printout's columns are the ones it draws: between its long lines, titled by its header row.");
+    } else {
+      out.push("LogViewer draws a curve half a recorded step shallower than the depth the LAS gives it.");
+      if ((P.tracks || []).length)
+        out.push("The printout's columns are found from the log's own layout: the tracks it shows, in order, at their "
+          + "printed widths, laid on the lines the printout draws between them"
+          + ((P.tracks || []).some(t => !t.snapped) ? " (some edges did not land on a line and are estimated)." : "."));
+    }
     if (P.library) out.push(`Printout from the printouts folder: ${P.library.path}`);
   }
   for (const w of p.warnings || []) out.push(w);
@@ -1926,10 +1937,13 @@ function wsNotes() {
   const has = !!P;
   $("wsopenpdf").hidden = !has;
   $("wsnoprint").hidden = has;
+  const fromPdf = wsv.p.source === "pdf";
   $("wsprintlbl").textContent = has
-    ? `Printout: LogViewer, stitched · ${P.log_pages} pages · ${P.pt_per_m} pt/m · each data set over its own column`
+    ? (fromPdf ? `Printout: this PDF, stitched · ${P.log_pages} pages · ${P.pt_per_m} pt/m · `
+                 + "the data sets above are read off it"
+               : `Printout: LogViewer, stitched · ${P.log_pages} pages · ${P.pt_per_m} pt/m · each data set over its own column`)
     : "No printout";
-  $("wsfindbtn").hidden = has;
+  $("wsfindbtn").hidden = has || fromPdf;
   if (!has) $("wsnoprint").textContent = (wsv.entry.ws.lookup ? "Not in the printouts folder: "
       + wsv.entry.ws.lookup + ". " : "No printout yet. ")
     + "Print with LogViewer (Windows), or Add printout PDF: in LogViewer, File > Print, "
@@ -3355,6 +3369,7 @@ async function handleFile(f, q, saveDir, fixFile) {
     if (bytes.length > MAX_BYTES && !(localInfo && localInfo.local))
       chunks = await splitPdf(bytes, q);
     const stages = [], tables = [], notes = [], summary = [];
+    let mudlog = null;           // the desktop app read it as a mudlog printout instead
     for (let i = 0; i < chunks.length; i++) {
       q.set(chunks.length > 1 ? `extracting ${i + 1}/${chunks.length}` : "extracting");
       const lo = 0.1 + 0.8 * (i / chunks.length);
@@ -3402,10 +3417,23 @@ async function handleFile(f, q, saveDir, fixFile) {
       }
       tables.push(...(out.tables || []));
       notes.push(...(out.notes || []));
+      if (out.mudlog) mudlog = out.mudlog;
       for (const g of (out.summary || [])) {   // chunk-relative -> global pages
         g.pages = g.pages.map(p => p + chunks[i].start - 1);
         summary.push(g);
       }
+    }
+    if (mudlog && !stages.length && !tables.length) {
+      // No frac charts or tables in it, and it is a mudlog's printout: read
+      // as a log (curves, rocks, symbols, header, notes), the PDF its printout
+      q.ws = { id: mudlog.id, payload: mudlog.payload, printout: mudlog.printout || null, lookup: "" };
+      q.provider = "PDF printout";
+      q.items = wsSets(mudlog.payload).map(s => ({ type: "wsset", ...s }));
+      const nm = q.head.querySelector(".nm");
+      if (nm && mudlog.payload.well) nm.title = mudlog.payload.well;
+      wellsightLine(q, mudlog.printoutError);
+      if (!current) selectFile(q);
+      return;
     }
     render(q, f.name, stages, tables, notes, summary);
     const bits = [];
