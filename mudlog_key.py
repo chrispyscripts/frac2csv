@@ -37,19 +37,27 @@ The key, schema "frac2csv/mudlog-key/1". A PDF reader writes the same fields
 score(key, candidate) marks each part 0..1 and says why; a part the key has
 nothing for is None. What counts as right:
 
-  header     the field's text, case, spaces and punctuation aside
-  curves     each key curve against the reader's curve of the same kind:
+  header     the field's text, case, spaces and punctuation aside (a
+             "..._label" field, the label the log prints, left out; a
+             well ID and a UWI are one field)
+  curves     each key curve the printout prints (its name is on the log
+             pages: "printed") against the reader's curve of the same kind:
              the share of its readings the reader has within 1 % of the
              printed scale's width (about 1.5 pt across the track; 2 % of
              the curve's own range where the scale is not known), at the
              depth shift that gets most right; a reading past twice its
              printed scale is left out (the printout does not show it)
   rocks      the share of the logged depth given the right rock (a
-             "blank" rock, drawn as nothing, left out)
+             "blank" rock, drawn as nothing, and one under a code of the
+             log's own, "raw:...", left out)
   symbols    found within 0.5 m with the right term (F1)
   intervals  the share of each interval's length given the right term
   text       the words of each note found within its depth window
-  tracks     both edges within 2 pt
+  tracks     both edges within 2 pt, the reader's column named by its
+             title or what it holds; a column the printout splits with a
+             line of its own may be read as the columns either side of it,
+             one the log leaves untitled is matched on its edges, and one
+             under 5 pt wide (a double line) is left out
 
 Standard library, plus PyMuPDF to build.
 """
@@ -111,6 +119,24 @@ def refresh_curves(key, log_path):
     with open(log_path, "rb") as f:
         raw = f.read()
     key["curves"] = _curves(raw, ws.read_log(raw))
+    return key
+
+
+def mark_printed(key, pdf):
+    """each curve's "printed": whether its name is printed on the log pages
+    of the printout (as its caption). A log holds curves its printout does
+    not draw; a reader cannot be marked on those. pdf: a path or bytes"""
+    import fitz
+    doc = fitz.open(stream=pdf, filetype="pdf") if isinstance(pdf, (bytes, bytearray)) else fitz.open(pdf)
+    pages = [p["page"] for p in (key.get("printout") or {}).get("log_pages") or []]
+    lines = set()
+    for pno in pages:
+        for b in doc[pno - 1].get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                lines.add(_norm_text("".join(sp["text"] for sp in ln["spans"])))
+    for c in key.get("curves") or []:
+        name = _norm_text(c.get("name"))
+        c["printed"] = bool(name) and any(name in t for t in lines)
     return key
 
 
@@ -182,6 +208,7 @@ def build(log_path, pdf_path, rel_log=None, rel_pdf=None):
                                            wl.curve_track_title(log.get("curves")))]
     except Exception as e:  # noqa: BLE001 - a layout the reader cannot place is noted, not fatal
         po["tracks_error"] = "%s: %s" % (type(e).__name__, e)
+    mark_printed(key, pdf)
     ck = info["check"] or {}
     po["ok"] = bool(ck.get("labels")) and (ck.get("within_0.1m") or 0) >= 0.9 and not info["gaps"]
     return key
@@ -208,11 +235,18 @@ def _norm_text(s):
     return re.sub(r"[^a-z0-9.]+", "", str(s or "").lower())
 
 
+SAME_FIELD = (("well_id", "uwi"),)
+
+
 def score_header(key, cand):
-    kh = {k: v for k, v in (key.get("header") or {}).items() if str(v).strip()}
+    # a "..._label" field is the label the log prints for a field, not a value
+    kh = {k: v for k, v in (key.get("header") or {}).items() if str(v).strip() and not k.endswith("_label")}
     if not kh:
         return None
-    ch = cand.get("header") or {}
+    ch = dict(cand.get("header") or {})
+    for a, b in SAME_FIELD:                     # a well's ID is its UWI
+        ch.setdefault(a, ch.get(b))
+        ch.setdefault(b, ch.get(a))
     fields, total = {}, 0.0
     for k, v in kh.items():
         # a unit after a number is the same reading: "564.4" and "564.4 m"
@@ -314,7 +348,8 @@ def _compare_curve(k, c):
 
 
 def score_curves(key, cand):
-    kc = [c for c in key.get("curves") or [] if sum(v is not None for v in c["values"]) >= 10]
+    kc = [c for c in key.get("curves") or [] if sum(v is not None for v in c["values"]) >= 10
+          and c.get("printed") is not False]
     if not kc:
         return None
     pool = list(cand.get("curves") or [])
@@ -353,9 +388,11 @@ NO_ROCK = ("blank", "none")
 
 
 def score_rocks(key, cand, step=0.1):
-    # "blank" is a log's way of drawing no rock: nothing on the printout to find
+    # "blank" is a log's way of drawing no rock: nothing on the printout to
+    # find. A rock under a code of the log's own ("raw:BAKKEN", a formation
+    # drawn in some rock's pattern) the key cannot name: left out too
     k_ivs = [(r["top"], r["base"], _rock_of(r)) for r in key.get("rocks") or []]
-    k_ivs = [iv for iv in k_ivs if iv[2] not in NO_ROCK]
+    k_ivs = [iv for iv in k_ivs if iv[2] not in NO_ROCK and not str(iv[2]).startswith("raw:")]
     if not k_ivs:
         return None
     c_ivs = sorted((r["top"], r["base"], _rock_of(r)) for r in cand.get("rocks") or [])
@@ -450,19 +487,39 @@ def score_text(key, cand, line_m=0.6, chars_per_line=40):
     return {"score": got / want, "words": want, "precision": round(prec, 4)}
 
 
+UNTITLED = "Untitled track"      # wellsight_layout's name for a track the log gives no title
+
+
 def score_tracks(key, cand, tol=2.0):
-    kt = [t for t in key.get("tracks") or [] if t.get("snapped")]
+    # a "track" under 5 pt wide is a double line, and an untitled one that
+    # runs to the strip's edge is not printed: no reader can see either
+    edge = (key.get("printout") or {}).get("strip_width_pt") or math.inf
+    kt = [t for t in key.get("tracks") or [] if t.get("snapped") and t["x1"] - t["x0"] >= 5.0
+          and not (t["title"] == UNTITLED and t["x1"] >= edge - 0.5)]
     if not kt:
         return None
-    ct = cand.get("tracks") or []
+    ct = sorted(cand.get("tracks") or [], key=lambda c: c["x0"])
     right, rows = 0, []
     for t in kt:
+        # a title the log does not give ("Untitled track") is matched on the
+        # edges alone; a column the printout splits with a line of its own
+        # (a cross-section beside the descriptions) is the run of columns
+        # between the key's edges
+        untitled = not t["keys"] and _norm_text(t["title"]) == _norm_text(UNTITLED)
         best = None
-        for c in ct:
-            if set(c.get("keys") or []) & set(t["keys"]) or _norm_text(c.get("title")) == _norm_text(t["title"]):
-                e = max(abs(c["x0"] - t["x0"]), abs(c["x1"] - t["x1"]))
-                if best is None or e < best:
-                    best = e
+        for i in range(len(ct)):
+            for j in range(i, len(ct)):
+                if ct[j]["x0"] > t["x1"] + tol:
+                    break
+                run = ct[i:j + 1]
+                if any(abs(a["x1"] - b["x0"]) > tol for a, b in zip(run, run[1:])):
+                    break
+                named = untitled or any(set(c.get("keys") or []) & set(t["keys"])
+                                        or _norm_text(c.get("title")) == _norm_text(t["title"]) for c in run)
+                if named:
+                    e = max(abs(run[0]["x0"] - t["x0"]), abs(run[-1]["x1"] - t["x1"]))
+                    if best is None or e < best:
+                        best = e
         ok = best is not None and best <= tol
         right += ok
         rows.append({"title": t["title"], "edge_error_pt": best, "ok": ok})

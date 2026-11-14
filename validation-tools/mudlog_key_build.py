@@ -63,11 +63,14 @@ def _one(args):
 
 
 def _refresh_one(args):
-    root, path = args
+    root, path, printed_only = args
     import mudlog_key as K
     try:
         key = K.load(path)
-        K.refresh_curves(key, os.path.join(root, key["log"]["file"]))
+        if not printed_only:
+            K.refresh_curves(key, os.path.join(root, key["log"]["file"]))
+        if (key.get("printout") or {}).get("log_pages"):
+            K.mark_printed(key, os.path.join(root, key["printout"]["file"]))
         K.save(key, path)
         return "ok", sum(1 for c in key["curves"] if c.get("scale")), len(key["curves"]), \
             sum(1 for c in key["curves"] if c.get("wraps"))
@@ -75,7 +78,7 @@ def _refresh_one(args):
         return "%s: %s" % (type(e).__name__, e), 0, 0, 0
 
 
-def refresh(root, out, jobs, limit=None):
+def refresh(root, out, jobs, limit=None, printed_only=False):
     paths = []
     for dp, _dirs, files in os.walk(out):
         paths += [os.path.join(dp, f) for f in files if f.endswith(".key.json.gz")]
@@ -85,7 +88,7 @@ def refresh(root, out, jobs, limit=None):
     print("%d keys to refresh" % len(paths), flush=True)
     done, scaled, curves, wrapped, errs = 0, 0, 0, 0, []
     with ProcessPoolExecutor(jobs) as ex:
-        for st, s, n, w in ex.map(_refresh_one, [(root, p) for p in paths], chunksize=8):
+        for st, s, n, w in ex.map(_refresh_one, [(root, p, printed_only) for p in paths], chunksize=8):
             done += 1
             scaled, curves, wrapped = scaled + s, curves + n, wrapped + w
             if st != "ok":
@@ -105,10 +108,12 @@ def main(argv=None):
     ap.add_argument("--refresh-curves", action="store_true",
                     help="write the curves of the keys already in OUT again from their logs (printed "
                          "scales and wraps), without stitching the printouts again")
+    ap.add_argument("--refresh-printed", action="store_true",
+                    help="mark which curves of the keys already in OUT their printouts print (by caption)")
     a = ap.parse_args(argv)
     root, out = os.path.abspath(os.path.expanduser(a.folder)), os.path.abspath(os.path.expanduser(a.out))
-    if a.refresh_curves:
-        return refresh(root, out, a.jobs, a.limit)
+    if a.refresh_curves or a.refresh_printed:
+        return refresh(root, out, a.jobs, a.limit, printed_only=a.refresh_printed and not a.refresh_curves)
     os.makedirs(out, exist_ok=True)
     jl = os.path.join(out, "index.jsonl")
     done = set()
