@@ -272,6 +272,31 @@ class Legend(unittest.TestCase):
         self.assertEqual(got, {("Shallow", 1.0, 1000.0), ("Gamma", 0.0, 150.0)})
         doc.close()
 
+    def test_a_number_run_into_the_next_caption(self):
+        # sideways: "30 WOB 0" in blue and "25000 SPP 0" in red, the blue 0
+        # and the red caption one text line ("0 SPP (kPa)")
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        blue, red = (0, 0, 1), (1, 0, 0)
+        pg.insert_text((400, 130), "30", fontsize=6, color=blue)
+        pg.insert_text((400, 146), "WOB (kDaN)", fontsize=6, color=blue)
+        pg.insert_text((440, 130), "25000", fontsize=6, color=red)
+        tw = fitz.TextWriter(pg.rect)
+        font = fitz.Font("helv")
+        tw.append((400, 162), "0 ", font=font, fontsize=6)
+        tw.write_text(pg, color=blue)
+        tw = fitz.TextWriter(pg.rect)
+        tw.append((406.5, 162), "SPP (kPa)", font=font, fontsize=6)
+        tw.write_text(pg, color=red)
+        pg.insert_text((440, 178), "0", fontsize=6, color=red)
+        got = {(c.name, c.unit, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: -y)}
+        self.assertIn(("WOB", "kDaN", 0.0, 30.0), got)
+        doc.close()
+
+    def test_double_bracket_units(self):
+        self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))
+        self.assertEqual(L._caption_name("Deep ((ohm/m))"), ("Deep", "ohm/m", "deep_resistivity"))
+
     def test_a_linear_scale_is_not_followed_out(self):
         # 0 Gas 100 with an unrelated 1000 further along: not a decade series
         doc = fitz.open()

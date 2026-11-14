@@ -860,6 +860,22 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
         got = [(r[0] - left) / (right - left) for r in out[-15:] if r is not None][-5:]
         return len(got) >= 2 and all(-0.2 <= q <= 0.3 for q in got)       # (junk just under counts)
 
+    def back_in_at_top(i):
+        """since the last reading the line was first drawn by the top of
+        the track (a dashed line's first dash after a gap): a wrapped line
+        run out of the low end and the reading in again from the top"""
+        if last_i is None or not moves:
+            return False
+        for j in range(last_i + 1, i):
+            seen_ = [q for a0, a1 in moves[j] for q in (a0, a1)] + list(series[j] or ())
+            if any(q > 1 + e for q in seen_):
+                return False                     # the line itself past the top: still wrapped
+            if any(q >= 0.85 for q in seen_):
+                return True                      # by the top, with only the low end drawn before
+            if any(q > 0.2 for q in seen_):
+                return False
+        return False
+
     def high_a_while():
         """the line has been up by the top of the track for its last two
         readings (a line that only leapt there is no wrap when it drops)"""
@@ -940,7 +956,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
         if k == 1 and inside and (out_lo or (moves and any(
                 a1 - a0 > 0.02 and a0 < -e for a0, a1 in moves[i]))):
             k = 0                                # the wrapped line runs out of the low end: back in the scale
-        elif k == 0 and out_hi and last is not None:
+        elif k == 0 and out_hi and last is not None and not any(abs(q - last) < 0.08 for q in inside):
+            # (not where the line goes on inside the track from the reading
+            # above: what runs out of the top there is another line)
             r = min(out_hi, key=lambda p: abs(p - last))
             if abs(r - last) < 0.5 and carries_on(i, r - 1):
                 k = 1                            # out of the high end, on one width lower
@@ -987,6 +1005,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                     and not crossed(i, p, prev):
                 k = 1                            # off the top, in from the low end: wrapped (a line that
                 #                                  leapt up just before is a spike coming back down)
+            elif last is not None and k == 1 and prev <= 0.2 and back_in_at_top(i):
+                k = 0                            # the wrapped line out of the low end, in again from the top
             elif last is not None and k == 1 and p - prev > 0.3:
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
             elif last is not None and k == -1 and (prev - p > 0.3 or p < 0.5):
@@ -1118,6 +1138,10 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             x0, y0, x1, y1 = c.bbox
             # a caption is printed just below where its scale starts
             d = min(P.depth(x0, y0), P.depth(x1, y1)) - CAPTION_M
+            # a note's word that took a depth label for a number (RPM 0
+            # .. 1240 at 1241 m) is no caption: scales end on round numbers
+            if any(abs(v - d) < 5 and v % 50 for v in (c.left, c.right)):
+                continue
             if P.on(d, 0.5):
                 caps.append((d, c))
     # one curve per colour and name in a column: a curve captioned again
@@ -1134,15 +1158,22 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
     # line of its own there
     sides = [P.across(x, y) for P in pages for r in [doc[P.page - 1].rect] for x, y in ((r.x0, r.y0), (r.x1, r.y1))]
     edged = sorted(set(lines_pt) | ({min(sides), max(sides)} if sides else set()))
+    # every scale each curve's own name is captioned with, down the whole
+    # log (a name cut short is matched on all of them, not only those above)
+    scales_of = collections.defaultdict(set)
+    for d, c in caps:
+        e = _track_edges(lines_pt, c.left_at, c.right_at) or _track_edges(edged, c.left_at, c.right_at)
+        if e:
+            scales_of[(c.colour, e, c.name)].add((c.left, c.right))
     for d, c in sorted(caps, key=lambda t: t[0]):
         e = _track_edges(lines_pt, c.left_at, c.right_at) or _track_edges(edged, c.left_at, c.right_at)
         if not e:
             continue
         # the same name (its scale may change down the log), or a name cut
-        # short with the same scale: two scales at once are two curves
+        # short with a scale the curve is captioned with: two scales at
+        # once are two curves
         key = next((k for k in curves if k[0] == c.colour and k[1] == e and (
-            k[2] == c.name or (same(k[2], c.name) and any((x.left, x.right) == (c.left, c.right)
-                                                          for _d, x in curves[k])))), None)
+            k[2] == c.name or (same(k[2], c.name) and (c.left, c.right) in scales_of[k]))), None)
         if key is None:
             key = (c.colour, e, c.name)
         curves.setdefault(key, []).append((d, c))
@@ -1247,7 +1278,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 for i, ps in enumerate(ser):
                     wrap[i] += ps
         two_lines = any(wrap)
-        values, unsure = [None] * n, 0
+        values, unsure, pinned = [None] * n, 0, {}
         for j, (d_from, left, right) in enumerate(secs):
             d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
             i0 = max(0, int(round((d_from - top) / step)))
@@ -1266,6 +1297,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 if r[1]:
                     values[i0 + k] = round(r[0], 4)
                 else:
+                    pinned[i0 + k] = round(r[0], 4)
                     unsure += 1
         # a line along the edge where the scale is nothing (gas 0 - 500): a
         # reading of nothing, not one past the scale (it cannot go below)
@@ -1280,6 +1312,12 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 if values[i] is None and main[i] and any(abs(p - zero) < 0.01 for p in main[i]) \
                         and all(abs(p - zero) < 0.01 or abs(abs(p - zero) - 1) < 0.01 for p in main[i]):
                     values[i] = 0.0
+        # a line along the scale's end otherwise is the reading there or past
+        # it: the end is written (a detector pegged at its top reads its top),
+        # and counted as past the scale
+        for i, v in pinned.items():
+            if values[i] is None:
+                values[i] = v
         # a scale from above nothing over a thousandfold (a resistivity's over a
         # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
         # place is the reading's logarithm between the ends; a gas scale

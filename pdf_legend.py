@@ -55,16 +55,28 @@ class Swatch:
         return "Swatch(%s %s:%s %r)" % (self.label, self.group, self.term, [round(v, 1) for v in self.bbox])
 
 
-def _lines(pg):
-    """the page's text lines: (bbox, text, colour as 0xRRGGBB, size)"""
+def _lines(pg, by_colour=False):
+    """the page's text lines: (bbox, text, colour as 0xRRGGBB, size). With
+    by_colour, a line is cut where its colour changes (one curve's number
+    run into the next curve's caption: "0 SPP (kPa)")"""
     out = []
     for b in pg.get_text("dict")["blocks"]:
         for ln in b.get("lines", []):
             spans = [s for s in ln["spans"] if s["text"].strip()]
             if not spans:
                 continue
-            text = " ".join(s["text"].strip() for s in spans)
-            out.append((tuple(ln["bbox"]), text, spans[0]["color"], spans[0]["size"]))
+            runs = [[spans[0]]]
+            for s in spans[1:]:
+                if by_colour and s["color"] != runs[-1][-1]["color"]:
+                    runs.append([s])
+                else:
+                    runs[-1].append(s)
+            for run in runs:
+                text = " ".join(s["text"].strip() for s in run)
+                bb = tuple(ln["bbox"]) if len(runs) == 1 else (
+                    min(s["bbox"][0] for s in run), min(s["bbox"][1] for s in run),
+                    max(s["bbox"][2] for s in run), max(s["bbox"][3] for s in run))
+                out.append((bb, text, run[0]["color"], run[0]["size"]))
     return out
 
 
@@ -342,7 +354,7 @@ class Caption:
         return "Caption(%s [%s] %s..%s #%06x p%d)" % (self.name, self.unit, self.left, self.right, self.colour, self.page)
 
 
-_UNIT = re.compile(r"^(.*?)\s*\(([^()]*)\)\s*$")
+_UNIT = re.compile(r"^(.*?)\s*\(\(?([^()]*)\)?\)\s*$")       # "Gamma (API)", "Neutron ((%))"
 
 
 # a note printed by a curve, not its caption: a reading or range in its
@@ -406,7 +418,7 @@ def captions(pg, pno, across):
     left, its right end on the right. On a page that is the right way up
     the three sit on one row; on a sideways one the numbers are stacked by
     the names, so the nearest number on each side is taken."""
-    lines = _lines(pg)
+    lines = _lines(pg, by_colour=True)
     nums = [(bb, float(t), c) for bb, t, c, _s in lines if NUMBER.match(t.strip())]
     out = []
     for bb, text, col, _sz in lines:

@@ -159,6 +159,24 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(moving, 0.0, 1000.0)]
         self.assertAlmostEqual(got[-1], 800, delta=2)
 
+    def test_a_dashed_wrapped_line_back_in_at_the_top(self):
+        # gas 0 - 2500 wrapped (along the bottom), then the dashed line runs
+        # out of the low end and comes in again by the top, falling across
+        # the track: the reading is back in the scale
+        series = [[0.9], [0.95], [0.03], [0.04], [], [], [], [0.26], [0.27]]
+        moves = [[]] * 4 + [[(0.019, 0.039)], [(0.937, 0.965), (0.854, 0.882)], [(0.52, 0.548), (0.353, 0.381)],
+                            []] + [[]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 2500.0, moves)]
+        self.assertAlmostEqual(got[3], 2600, delta=1)                        # wrapped
+        self.assertAlmostEqual(got[-1], 675, delta=1)                        # back in the scale
+
+    def test_another_line_out_of_the_top_is_no_wrap(self):
+        # the curve carries on at 0.55 in the middle of its track; another
+        # line of its colour runs out of the top beside it
+        series = [[0.53], [0.54], [0.549, 0.028, 1.028], [0.559, 0.051, 1.051], [0.568], [0.57]]
+        got = self.read(series, 90.0, 0.0)
+        self.assertAlmostEqual(got[-1], 90 - 0.57 * 90, delta=0.5)
+
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
         # wrap is read across the gap

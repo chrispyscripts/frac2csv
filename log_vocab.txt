@@ -373,7 +373,7 @@ rpm                   | Rotary speed                 | rpm     = RPM, Rotary, Ro
 spp                   | Standpipe pressure           | kPa     = SPP, Standpipe Pressure, Pump Pressure
 diff_pressure         | Differential pressure        | kPa     = Diff Pres, Diff Press, Differential Pressure
 neutron_porosity      | Neutron porosity             | %       = NPHI, Neutron Porosity, Neutron Por, Neut Por, NPOR, NPSS, NPRL, NPDL,
-    PHIN, PHINSS, NPOR_SAN, Thermal Neutron Porosity, CNLS, CNSS, Neut. Por.
+    PHIN, PHINSS, NPOR_SAN, Thermal Neutron Porosity, CNLS, CNSS, Neut. Por., Neutron
 density_porosity      | Density porosity             | %       = DPHI, Density Porosity, Density Por, Den Por, Dens Por, Dens. Por.,
     DPOR, DPSS, DPRL, DPDL
     PORLSS
