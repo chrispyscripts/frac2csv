@@ -887,9 +887,11 @@ def _in_track(series):
     return [[p for p in ps if -e <= p <= 1 + e] for ps in series]
 
 
-def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
+def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, dropped=None):
     """-> [{name, kind, units, unit, top, step, values, scale, colour,
-    track_pt, past_scale}]"""
+    track_pt, past_scale}]. dropped, a list, gets (name, why) for each
+    captioned curve whose line could not be read"""
+    dropped = dropped if dropped is not None else []
     caps = []
     for P in pages:
         for c in L.captions(doc[P.page - 1], P.page - 1, P.across):
@@ -981,9 +983,11 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
         groups = {w: _relative(sg, x0, x1) for w, sg in strokes.of(colour).items()}
         groups = {w: sg for w, sg in groups.items() if sg}
         if not groups:
+            dropped.append((first.name, "no line of its colour in its track"))
             continue
         wmain = max(groups, key=lambda w: (_inside(groups[w]), w))
         if _inside(groups[wmain]) < 0.05 * (bottom - top):
+            dropped.append((first.name, "its line runs %.0f m of the log's %.0f m" % (_inside(groups[wmain]), bottom - top)))
             continue
         main = _in_track(_series(groups[wmain], top, n, step))
         # the line where it runs out of the track, past the scale: the
@@ -1031,6 +1035,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None):
                     unsure += 1
         values = _fill(values, top, step)
         if sum(v is not None for v in values) < 10:
+            dropped.append((first.name, "fewer than 10 readings"))
             continue
         # LogViewer draws a reading half its recorded step shallower than
         # its depth; the step is the spacing of the line's corners down the
@@ -1309,7 +1314,10 @@ def read(pdf, parts=None, library=None):
         if unknown:
             out["notes"].append("%d pictures on the log are not in the legend" % unknown)
     if "curves" in parts:
-        out["curves"] = read_curves(doc, pages, info.get("lines_pt") or [], top, bottom)
+        dropped = []
+        out["curves"] = read_curves(doc, pages, info.get("lines_pt") or [], top, bottom, dropped=dropped)
         if not out["curves"]:
             out["notes"].append("no curve captions found")
+        for name, why in dropped:
+            out["notes"].append("%s is captioned but not read: %s" % (name, why))
     return out
