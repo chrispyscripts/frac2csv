@@ -44,7 +44,8 @@ nothing for is None. What counts as right:
              the curve's own range where the scale is not known), at the
              depth shift that gets most right; a reading past twice its
              printed scale is left out (the printout does not show it)
-  rocks      the share of the logged depth given the right rock
+  rocks      the share of the logged depth given the right rock (a
+             "blank" rock, drawn as nothing, left out)
   symbols    found within 0.5 m with the right term (F1)
   intervals  the share of each interval's length given the right term
   text       the words of each note found within its depth window
@@ -348,11 +349,15 @@ def _at(depth_ivs, d):
     return None
 
 
+NO_ROCK = ("blank", "none")
+
+
 def score_rocks(key, cand, step=0.1):
-    kr = key.get("rocks") or []
-    if not kr:
+    # "blank" is a log's way of drawing no rock: nothing on the printout to find
+    k_ivs = [(r["top"], r["base"], _rock_of(r)) for r in key.get("rocks") or []]
+    k_ivs = [iv for iv in k_ivs if iv[2] not in NO_ROCK]
+    if not k_ivs:
         return None
-    k_ivs = [(r["top"], r["base"], _rock_of(r)) for r in kr]
     c_ivs = sorted((r["top"], r["base"], _rock_of(r)) for r in cand.get("rocks") or [])
     n = right = 0
     for top, base, rock in k_ivs:
