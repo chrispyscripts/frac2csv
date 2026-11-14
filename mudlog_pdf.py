@@ -1042,12 +1042,14 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     values[i0 + k] = round(r[0], 4)
                 else:
                     unsure += 1
-        # a scale from above nothing over a hundredfold and more (resistivity
-        # 0.2 - 2000) is drawn logarithmic: the line's place is the reading's
-        # logarithm between the ends
+        # a scale from above nothing over a thousandfold (a resistivity's over a
+        # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
+        # place is the reading's logarithm between the ends; a gas scale
+        # 10 - 1000 is not
         logs = []
+        resist = "resistivity" in (first.kind or V.curve(first.name)["key"] or "")
         for j, (d_from, left, right) in enumerate(secs):
-            if left > 0 and right > 0 and max(left, right) / min(left, right) >= 100:
+            if left > 0 and right > 0 and max(left, right) / min(left, right) >= (100 if resist else 1000):
                 d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
                 i0 = max(0, int(round((d_from - top) / step)))
                 i1 = min(n, int(round((d_to - top) / step)))
