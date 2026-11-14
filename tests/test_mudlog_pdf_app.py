@@ -83,9 +83,15 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True)]
         for g, want in zip(got, (55, 53, 48, 47, 52, 55, 80, 81)):
             self.assertAlmostEqual(g, want, delta=0.6)
-        # a scale from nothing (gas 0 - 500) is not run under: the top line is the reading
-        got = [r and r[0] for r in M.read_one_line([[0.05], [0.03], [-0.02, 0.98], [0.97]], 0.0, 500.0)]
-        self.assertAlmostEqual(got[2], 490, delta=1)
+        # a scale from nothing (gas 0 - 500) is run under by junk readings
+        # (a pair one width apart by the low edge, where the line just was)
+        got = [r and r[0] for r in M.read_one_line([[0.05], [0.03], [-0.02, 0.98], [0.97], [0.04, 1.04], [0.05]],
+                                                   0.0, 500.0)]
+        self.assertAlmostEqual(got[2], -10, delta=1)
+        self.assertAlmostEqual(got[-1], 25, delta=1)
+        # a log scale is not
+        got = [r and r[0] for r in M.read_one_line([[0.05], [0.03], [-0.02, 0.98], [0.97]], 0.2, 2000.0)]
+        self.assertAlmostEqual(got[2], 0.2 + 0.98 * 1999.8, delta=1)
 
     def test_the_null_drawn_as_a_reading_is_a_gap(self):
         # gas 0 - 10000: the log's null (-999.25) sits just past the low
@@ -102,6 +108,56 @@ class OneLine(unittest.TestCase):
         self.assertAlmostEqual(got[8], 3200, delta=1)                        # not wrapped
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 10000.0)]
         self.assertAlmostEqual(got[8], 13200, delta=1)                       # (without: read as a wrap)
+
+    def test_just_under_the_low_edge_of_a_scale_from_nothing(self):
+        # gas 0 - 10000 runs down to just under 0 (junk readings): the line
+        # goes out of the low edge and comes in at the top with nothing
+        # drawn across the track, then back up from the low edge
+        series = [[0.047, 1.049], [0.021, 1.023], [-0.004, 0.997]] + [[0.9948]] * 5 + \
+                 [[0.0136, 1.0154], [0.0636, 1.0653], [0.1135, 1.1152], [0.2], [0.2]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 10000.0)]
+        for g in got[3:8]:
+            self.assertLess(abs(g), 200)                                     # about nothing, not 9948
+        self.assertAlmostEqual(got[-1], 2000, delta=1)                       # not wrapped
+        # a real leap up is drawn across the track
+        series = [[0.05], [0.05], [0.5], [0.96], [0.96]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 10000.0)]
+        self.assertAlmostEqual(got[-1], 9600, delta=1)
+
+    def test_off_the_top_edge_and_in_at_the_low_one_is_a_wrap(self):
+        # nothing drawn across the track between: the line went past the
+        # top and goes on in from the low edge, climbing slowly
+        series = [[0.9], [0.95], [0.995], [], [0.01], [0.02], [0.03], [0.04]]
+        got = self.read(series, 0.0, 150.0)
+        self.assertAlmostEqual(got[-1], 156, delta=1)
+        # a real drop is drawn across the track
+        series = [[0.9], [0.95], [0.995], [0.5], [0.01], [0.02], [0.03], [0.04]]
+        got = self.read(series, 0.0, 150.0)
+        self.assertAlmostEqual(got[-1], 6, delta=1)
+
+    def test_a_dashed_line_dropping_is_not_a_wrap(self):
+        # a dashed line: between readings only its dashes are drawn (moves),
+        # down through the middle of the track; the drop is real
+        series = [[0.8], [0.8], [], [], [], [0.18], [0.18], [0.3], [0.62], [0.62]]
+        moves = [[]] * 2 + [[(0.755, 0.775)], [(0.515, 0.535)], [(0.215, 0.235)]] + [[]] * 5
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        self.assertAlmostEqual(got[5], 180, delta=1)
+        # with nothing drawn between, the same jump is a wrap
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, [[]] * 10)]
+        self.assertAlmostEqual(got[5], 1180, delta=1)
+
+    def test_junk_under_a_scale_from_nothing_sits_flat(self):
+        # gas 0 - 1000 along the bottom, then a pair by the low edge: junk
+        # just under; flat for 2 m it stays junk
+        lead = [[0.06], [0.05], [0.04], [0.03]]
+        flat = lead + [[-0.005, 0.995]] + [[0.995]] * 20 + [[0.02, 1.02], [0.05]]
+        got = [r and r[0] for r in M.read_one_line(flat, 0.0, 1000.0)]
+        self.assertTrue(all(g is None or abs(g) <= 20 for g in got[4:-1]), got)
+        # a line in from the top that moves for over 1 m is the reading: a
+        # wrapped line run out of the bottom, not junk
+        moving = lead + [[-0.005, 0.995]] + [[0.99 - 0.01 * j] for j in range(20)]
+        got = [r and r[0] for r in M.read_one_line(moving, 0.0, 1000.0)]
+        self.assertAlmostEqual(got[-1], 800, delta=2)
 
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
@@ -141,6 +197,19 @@ class Steps(unittest.TestCase):
             simplified.append((d, 0.3, d + L, 0.4))
             d += L
         self.assertIsNone(M._recorded_step(simplified))
+
+    def test_track_edges_from_the_grid(self):
+        lines = [67.0, 170.5, 199.5]
+        # a track cut off by the page: no line at its left edge, the grid
+        # (every 14.3 pt) puts it a spacing left of the first grid line;
+        # the next track's grid close by is no part of it
+        grid = [9.5, 24.0, 38.0, 52.5, 77.0, 88.0, 98.0, 108.5]
+        a, b = M._grid_edges(grid, lines, 0.0, 67.0)
+        self.assertAlmostEqual(a, -4.75, delta=0.3)
+        self.assertEqual(b, 67.0)
+        # a track with lines at both edges keeps them
+        self.assertEqual(M._grid_edges([77.0, 88.0, 98.0, 108.5, 119.0, 129.0, 139.5, 150.0, 160.5],
+                                       lines, 67.0, 170.5), (67.0, 170.5))
 
     def test_held_off_the_end_is_nothing(self):
         got = M._hold([1.0, 2.0, 3.0], 100.2, 0.1, 1.0)

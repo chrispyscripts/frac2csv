@@ -497,12 +497,21 @@ def _grid_edges(grid, lines_pt, x0, x1):
     the track, its edges one spacing outside the outer ones (a slide bar's
     strip beside the track can be inside it, its line no edge of the
     scale). (x0, x1) as they were where the grid does not say"""
+    def even(inner):
+        if len(inner) < 4:
+            return None
+        gaps = [b - a for a, b in zip(inner, inner[1:])]
+        sp = sorted(gaps)[len(gaps) // 2]
+        return None if sp < 2 or any(abs(g - sp) > 0.2 * sp for g in gaps) else sp
+
+    # the grid a little past the edges (they can be a line out), else the
+    # grid inside them only (the next track's grid close by)
     inner = [g for g in grid if x0 - 12 < g < x1 + 12]
-    if len(inner) < 4:
-        return x0, x1
-    gaps = [b - a for a, b in zip(inner, inner[1:])]
-    sp = sorted(gaps)[len(gaps) // 2]
-    if sp < 2 or any(abs(g - sp) > 0.2 * sp for g in gaps):
+    sp = even(inner)
+    if sp is None:
+        inner = [g for g in grid if x0 < g < x1]
+        sp = even(inner)
+    if sp is None:
         return x0, x1
 
     def snap(x):
@@ -510,6 +519,12 @@ def _grid_edges(grid, lines_pt, x0, x1):
         return near if abs(near - x) <= 1.5 else None
 
     a, b = snap(inner[0] - sp), snap(inner[-1] + sp)
+    # an edge with no line of its own (the page's edge, the track cut off
+    # by it) is where the grid puts it
+    if a is None and x0 not in lines_pt:
+        a = inner[0] - sp
+    if b is None and x1 not in lines_pt:
+        b = inner[-1] + sp
     return (a if a is not None else x0), (b if b is not None else x1)
 
 
@@ -766,7 +781,8 @@ def _null_dips(line, top, step, left, right):
     pn = (NULL - left) / (right - left)
     if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
         return set()
-    at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5]
+    # (a place on an edge is no sign: a reading of nothing is drawn there)
+    at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5 and min(abs(q), abs(q - 1)) > 0.02]
     out = set()
     for da, pa, db, pb in line:
         for d, p in ((da, pa), (db, pb)):
@@ -797,7 +813,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
     step drawn flat): then the reading really moved. A wrong wrap would
     misread everything until the next jump, a missed one only the readings
     past the scale, so a jump is taken for a wrap only where it plainly is
-    one. With under (a scale that starts above nothing), a pair by the low
+    one. On a linear scale (under: one that starts above nothing; or one
+    from nothing, which only junk readings run under), a pair by the low
     edge is below the scale where the line just was there. At nulls (the
     log's null drawn as a reading, _null_dips) there is no reading, and the
     line starts afresh after it."""
@@ -821,6 +838,36 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                 return any(abs(q - p) < 0.25 for q in inside)
         return False
 
+    def crossed(i, a, b):
+        """the line is drawn across the track between places a and b since
+        the last reading, down to depth i: through the middle between them
+        (a dashed line's dashes too), or in one stroke from one to the other"""
+        lo, hi = min(a, b) + 0.08, max(a, b) - 0.08
+        j0 = i if last_i is None else max(last_i + 1, i - 5)
+        if any(lo < q < hi for ps in series[j0:i + 1] for q in ps or ()):
+            return True
+        return bool(moves) and any(lo < a0 < hi or lo < a1 < hi or (a0 <= lo and a1 >= hi)
+                                   for ms in moves[j0:i + 1] for a0, a1 in ms)
+
+    def low_a_while():
+        """the line has run along the bottom of the track for its last
+        readings (junk under a scale from nothing comes after such a run; a
+        wrapped line coming down fast through the track runs out too)"""
+        got = [(r[0] - left) / (right - left) for r in out[-15:] if r is not None][-5:]
+        return len(got) >= 2 and all(-0.2 <= q <= 0.3 for q in got)       # (junk just under counts)
+
+    def high_a_while():
+        """the line has been up by the top of the track for its last two
+        readings (a line that only leapt there is no wrap when it drops)"""
+        got = [(r[0] - left) / (right - left) for r in out[-15:] if r is not None][-2:]
+        return len(got) == 2 and all(0.85 <= q <= 1.2 for q in got)
+
+    def went_under(i):
+        """the line ran out of the low edge just above depth i"""
+        if any(q <= e for ps in series[max(0, i - 2):i] for q in ps or ()):
+            return True
+        return bool(moves) and any(a0 <= e for ms in moves[max(0, i - 1):i + 1] for a0, _a1 in ms)
+
     def comes_back(i):
         """the line in the track is back near the top within 3 m below
         depth i: a short wrap ends when the reading falls back under the
@@ -830,12 +877,25 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                 return True
         return False
 
-    last_i = None
+    last_i, seen, under_since = None, [], None
     for i, ps in enumerate(series):
         if out and out[-1] is not None:
             last_i = i - 1
-        if last is not None and i - last_i > 30:
+        if k == -1:
+            under_since = i - 1 if under_since is None else under_since
+            top_ps = [q for ps_ in series[under_since:i] for q in ps_ or () if q >= 0.5]
+            if not under and i - under_since > 10 and top_ps and max(top_ps) - min(top_ps) > 0.03:
+                k, under_since = 0, None         # junk under a scale from nothing sits flat: a line
+                if last is not None:             # in from the top that moves for 1 m is the reading
+                    last += 1
+        else:
+            under_since = None
+        if last is not None and i - last_i > 30 and not (
+                any(q > 1 + e for q in seen) or (any(q >= 1 - e for q in seen) and not any(q <= e for q in seen))):
             last, k = None, 0                    # nothing read for 30 readings: the line starts afresh
+            #                                      (unless it went off past the top: it comes back wrapped)
+        if ps:
+            seen = list(ps)
         if i in nulls:
             out.append(None)
             last, k = None, 0
@@ -860,7 +920,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             elif a < -e:
                 # below the low end only where the line already is (mudlog
                 # readings rarely go under a scale that starts at nothing)
-                if k == -1 or (under and last is not None and abs(a - last) < 0.25 and abs(a - last) < abs(b - last)):
+                if k == -1 or ((under or (left == 0 and low_a_while())) and last is not None
+                               and abs(a - last) < 0.25 and abs(a - last) < abs(b - last)):
                     r, k = a, -1
                 else:
                     r, k = b, 0
@@ -888,7 +949,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             past = [p for p in pts if p < -e or p > 1 + e]
             if past and last is not None:
                 r = min(past, key=lambda p: abs(p - last - (1 if k == 1 and p < 0 else 0)))
-                if r > 1:
+                if r > 1 and k == 1 and abs(r + 1 - last) < abs(r - last):
+                    v = r + 1                    # the wrapped line itself past the top: past twice
+                elif r > 1:
                     v = r                        # the line past the top is the reading itself
                     if k == 1:
                         k = 0                    # ... and it is back: the wrapped line has ended
@@ -908,7 +971,16 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
                     -e <= a0 and a1 <= 1 + e and a0 <= min(p, prev) + 0.05 and a1 >= max(p, prev) - 0.05
                     for a0, a1 in moves[i]):
                 pass                                 # drawn across the track: the reading moved
-            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25 and i - leapt > 20 and comes_back(i):
+            elif last is not None and k == 0 and prev <= 0.25 and p >= 0.9 and went_under(i) and not crossed(i, prev, p) \
+                    and (under or low_a_while()):
+                k = -1                           # gone just under the low edge, drawn in at the top
+                #                                  (a real leap up draws its line across the track)
+            elif last is not None and k == 0 and prev >= 0.9 and p <= 0.1 and i - leapt > 20 and not crossed(i, p, prev) \
+                    and high_a_while():
+                k = 1                            # off the top edge, in at the low one, nothing drawn
+                #                                  across between: wrapped (a real drop is drawn across)
+            elif last is not None and k == 0 and prev >= 0.75 and p <= 0.25 and i - leapt > 20 and comes_back(i) \
+                    and not crossed(i, p, prev):
                 k = 1                            # off the top, in from the low end: wrapped (a line that
                 #                                  leapt up just before is a spike coming back down)
             elif last is not None and k == 1 and p - prev > 0.3:
@@ -921,6 +993,10 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=()):
             out.append((val(p + k), True))
             last = p + k
         elif any(p >= 1 - e for p in inside) and not any(p <= e for p in inside):
+            if k == 0 and last is not None and last <= 0.25 and went_under(i) and not crossed(i, last, 1.0) \
+                    and (under or low_a_while()):
+                k = -1                           # gone just under the low edge, drawn in at the top
+                #                                  (a real leap up draws its line across the track)
             out.append((val(1 + k), k != 0) if k else (hi if right > left else lo, False))
             last = 1 + k
         elif not any(p >= 1 - e for p in inside):

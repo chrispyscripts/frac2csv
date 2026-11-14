@@ -92,8 +92,9 @@ def read_las(text):
 
 
 def _name(desc, mnem):
-    """a curve's own name from its LAS description ("Gamma (track ...)")"""
-    d = re.split(r"\s*\(", desc or "", 1)[0].strip()
+    """a curve's own name from its LAS description ("Gamma (track ...)"; a
+    name can hold brackets of its own: "PROPANE (C3) (track ...)")"""
+    d = re.sub(r"\s*\(track\b.*$", "", desc or "").strip()
     return d or mnem
 
 
