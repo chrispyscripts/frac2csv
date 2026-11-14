@@ -205,7 +205,10 @@ _NOT_A_READER = {"localapp.py", "version.py", "frac2csv_gui.py", "well_json.py",
                  # WellSight logs have their own path and no cached analyses
                  "wellsight_app.py", "wellsight_print.py", "wellsight_logviewer.py",
                  "wellsight_server.py", "wellsight_library.py", "wellsight_symbols.py",
-                 "wellsight_descriptions.py", "wellsight_layout.py", "log_vocab.py"}
+                 "wellsight_descriptions.py", "wellsight_layout.py", "log_vocab.py",
+                 "wellsight_scales.py", "mudlog_key.py",
+                 # mudlogs read from their PDF alone: not a frac reader either
+                 "mudlog_pdf.py", "pdf_legend.py"}
 
 
 def code_stamp():

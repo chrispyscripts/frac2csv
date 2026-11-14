@@ -39,9 +39,11 @@ nothing for is None. What counts as right:
 
   header     the field's text, case, spaces and punctuation aside
   curves     each key curve against the reader's curve of the same kind:
-             coverage x (1 - mean error / 5 % of the curve's range); a
-             reading past twice its printed scale is left out (the printout
-             holds it at the edge of the track, so no reader can have it)
+             the share of its readings the reader has within 1 % of the
+             printed scale's width (about 1.5 pt across the track; 2 % of
+             the curve's own range where the scale is not known), at the
+             depth shift that gets most right; a reading past twice its
+             printed scale is left out (the printout does not show it)
   rocks      the share of the logged depth given the right rock
   symbols    found within 0.5 m with the right term (F1)
   intervals  the share of each interval's length given the right term
@@ -266,28 +268,48 @@ def _readable(k, d, v):
     return p is None or abs(p[1]) < 2
 
 
+CURVE_TOL = 0.01        # a reading is right within 1 % of its printed scale's width
+CURVE_TOL_RANGE = 0.02  # ... or, with no printed scale, 2 % of the curve's 5-95 % range
+
+
 def _compare_curve(k, c):
+    """the share of the key curve's readings the reader has right (within
+    CURVE_TOL of the printed scale's width at that depth: about 1.5 pt on a
+    printout, what a drawn line can be read to), at the depth shift that
+    gets most right"""
     pts = [(k["top"] + i * k["step"], v) for i, v in enumerate(k["values"])
            if v is not None and _readable(k, k["top"] + i * k["step"], v)]
     if not pts:
         return None
-    vs = sorted(v for _, v in pts)
-    rng = _pct(vs, 0.95) - _pct(vs, 0.05) or (vs[-1] - vs[0]) or 1.0
+    secs = [tuple(s) for s in k.get("scale") or []]
+    if secs:
+        tols = []
+        for d, _v in pts:
+            left, right = wscale.scale_at(secs, d)
+            tols.append(CURVE_TOL * abs(right - left) or 1e-9)
+    else:
+        vs = sorted(v for _, v in pts)
+        rng = _pct(vs, 0.95) - _pct(vs, 0.05) or (vs[-1] - vs[0]) or 1.0
+        tols = [CURVE_TOL_RANGE * rng] * len(pts)
     best = None
     for s in (-1.0, -0.5, 0.0, 0.5, 1.0):
         shift = s * k["step"]
-        pairs = [(v, _grid_value(c, d + shift)) for d, v in pts]
-        got = [(a, b) for a, b in pairs if b is not None]
-        if not got:
-            continue
-        cov, err = len(got) / len(pts), sum(abs(a - b) for a, b in got) / len(got) / rng
-        r = (cov * max(0.0, 1.0 - err / 0.05), -err, cov, shift)
-        if best is None or r[:2] > best[:2]:
+        got = right = 0
+        err = 0.0
+        for (d, v), t in zip(pts, tols):
+            b = _grid_value(c, d + shift)
+            if b is None:
+                continue
+            got += 1
+            e = abs(v - b) / t
+            err += e
+            right += e <= 1.0
+        r = (right / len(pts), got / len(pts), err / got if got else None, shift)
+        if best is None or r[0] > best[0]:
             best = r
-    if best is None:
-        return {"coverage": 0.0, "error": None, "shift_m": None, "score": 0.0}
-    sc, nerr, cov, shift = best
-    return {"coverage": round(cov, 4), "error": round(-nerr, 5), "shift_m": shift, "score": round(sc, 4)}
+    sc, cov, err, shift = best
+    return {"coverage": round(cov, 4), "error": None if err is None else round(err * (CURVE_TOL if secs else CURVE_TOL_RANGE), 5),
+            "shift_m": shift, "score": round(sc, 4)}
 
 
 def score_curves(key, cand):

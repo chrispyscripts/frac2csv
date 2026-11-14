@@ -32,7 +32,7 @@
 
 # A symbol category as files name it -> the group it belongs to.
 [category]
-rock                   = LITHOLOGY, LOGLITH
+rock                   = LITHOLOGY, LOGLITH, ROCKTYPES, ROCKTYPE
 mineral                = MINERAL, ACCESSORYMINERALS, LITHOLOGYRJM
 fossil                 = FOSSIL, FOSSILROCKBUILDER
 stringer               = STRINGER
