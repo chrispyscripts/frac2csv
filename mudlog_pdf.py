@@ -1046,6 +1046,16 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     values[i0 + k] = round(r[0], 4)
                 else:
                     unsure += 1
+        # a line along the edge where the scale is nothing (gas 0 - 500): a
+        # reading of nothing, not one past the scale (it cannot go below)
+        for j, (d_from, left, right) in enumerate(secs):
+            zero = 0.0 if left == 0 else 1.0 if right == 0 else None
+            if zero is None:
+                continue
+            d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
+            for i in range(max(0, int(round((d_from - top) / step))), min(n, int(round((d_to - top) / step)))):
+                if values[i] is None and main[i] and all(abs(p - zero) < 0.01 for p in main[i]):
+                    values[i] = 0.0
         # a scale from above nothing over a thousandfold (a resistivity's over a
         # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
         # place is the reading's logarithm between the ends; a gas scale
