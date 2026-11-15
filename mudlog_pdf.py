@@ -887,10 +887,13 @@ def read_line(main, wrap, left, right):
             up, down = u + span, u - span          # the reading, were the thin line below it / above it
             if any(abs(m - up) < agree or abs(m - down) < agree for m in mid):
                 sure += [c for c in (up, down) if any(abs(m - c) < agree for m in mid)]
-            elif at_hi and up >= hi - tol:
-                sure.append(up)
-            elif at_lo and down <= lo + tol:
-                sure.append(down)
+            elif (at_hi and up >= hi - tol) or (at_lo and down <= lo + tol):
+                # the main line along the end the reading is past; where it
+                # lies on both ends, or folded back in on the thin line too,
+                # the one that carries on from the reading above
+                sure += [c for c, ok in ((up, at_hi and up >= hi - tol), (down, at_lo and down <= lo + tol)) if ok]
+                if any(abs(m - u) < together for m in vm):
+                    sure.append(down if last is not None and last < lo else up)
             elif any(abs(m - u) < together for m in vm):
                 # together: the main line folded back in on the thin one,
                 # one width off the reading (past the high end, or past the

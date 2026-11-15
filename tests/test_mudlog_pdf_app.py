@@ -355,6 +355,15 @@ class OneLine(unittest.TestCase):
         self.assertLess(got[2], 0)
         self.assertAlmostEqual(got[-1], 68, delta=1)
 
+    def test_two_lines_the_main_on_both_ends_carries_on(self):
+        # gas 0 - 1000 near nothing, drawn as two lines: the main along the
+        # low end (a point of it on the high end too), the thin line one
+        # width higher: nothing, not past the top twice
+        main = [[0.008], [0.005], [0.004, 1.005], [0.004, 1.004], [], []]
+        wrap = [[1.009], [1.007], [1.005], [1.005], [1.003], [1.0]]
+        got = [r and r[0] for r in M.read_line(main, wrap, 0.0, 1000.0)]
+        self.assertTrue(all(v is not None and v < 20 for v in got), got)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

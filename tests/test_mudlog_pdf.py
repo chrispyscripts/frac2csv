@@ -321,6 +321,8 @@ class Legend(unittest.TestCase):
         self.assertEqual(L._caption_name("Sidetrack 1 MWD GR (API)"), ("Sidetrack 1 MWD GR", "API", "gamma"))
         self.assertIsNone(L._caption_name("z grains and abundant (5%)"))
         self.assertIsNone(L._caption_name("RPM-0"))
+        self.assertIsNone(L._caption_name("JOLI FOU FM (-32.6m SS)"))
+        self.assertEqual(L._caption_name("DRILL TIME (min/0.5 m)")[1], "min/0.5 m")
         self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")
 
     def test_double_bracket_units(self):

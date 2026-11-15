@@ -388,6 +388,8 @@ def _caption_name(text):
         return None             # a line of the descriptions, or a depth's note ("m TVD, (-949.33 m SS)")
     if re.search(r"[A-Za-z]\s*-\s*\d+(\.\d+)?$", name.strip()):
         return None             # a reading by its name ("RPM-0", "RPM-35")
+    if re.fullmatch(r"-?\d+(\.\d+)?\s*(m|ft)?\s*(SS|TVD|MD|KB)?", unit.strip(), re.I) and re.search(r"\d", unit):
+        return None             # a depth for its unit: a formation top's ("JOLI FOU FM (-32.6m SS)")
     return name.strip(), unit.strip(), vc["key"]
 
 
