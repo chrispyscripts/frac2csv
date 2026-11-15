@@ -322,6 +322,8 @@ class Legend(unittest.TestCase):
         self.assertIsNone(L._caption_name("z grains and abundant (5%)"))
         self.assertIsNone(L._caption_name("RPM-0"))
         self.assertIsNone(L._caption_name("JOLI FOU FM (-32.6m SS)"))
+        self.assertIsNone(L._caption_name("from trip gas (650 units)"))
+        self.assertEqual(L._caption_name("Total Gas (units/10000)")[0], "Total Gas")
         self.assertEqual(L._caption_name("DRILL TIME (min/0.5 m)")[1], "min/0.5 m")
         self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")
 

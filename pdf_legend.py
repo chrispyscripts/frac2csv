@@ -390,6 +390,8 @@ def _caption_name(text):
         return None             # a reading by its name ("RPM-0", "RPM-35")
     if re.fullmatch(r"-?\d+(\.\d+)?\s*(m|ft)?\s*(SS|TVD|MD|KB)?", unit.strip(), re.I) and re.search(r"\d", unit):
         return None             # a depth for its unit: a formation top's ("JOLI FOU FM (-32.6m SS)")
+    if re.fullmatch(r"\d{3,}(\.\d+)?\s*units?", unit.strip(), re.I):
+        return None             # a reading for its unit: a note ("from trip gas (650 units)")
     return name.strip(), unit.strip(), vc["key"]
 
 

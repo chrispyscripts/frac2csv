@@ -364,6 +364,23 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_line(main, wrap, 0.0, 1000.0)]
         self.assertTrue(all(v is not None and v < 20 for v in got), got)
 
+    def test_a_fast_fall_to_the_null_its_copy_well_in(self):
+        # gas 0 - 1500 falling to the null (-999.25) so fast that by the
+        # next reading its copy is already well down from the top: drawn
+        # out of the low edge, in at the top: under the scale, back in
+        # after it comes over the top again
+        series = [[0.054]] * 3 + [[0.881], [0.633], [0.384], [0.7, -0.302], [0.04, 1.042], [0.043], [0.033]]
+        moves = [[(0.054, 0.054)]] * 3 + [[(-0.064, 0.054), (0.881, 0.937), (0.937, 1.056)], [(0.633, 0.881)],
+                                          [(0.384, 0.633)], [(-0.572, -0.302), (0.332, 0.384), (0.429, 0.7)],
+                                          [(-0.302, 0.04), (0.7, 1.042)], [(0.04, 0.054), (1.042, 1.056)],
+                                          [(0.033, 0.043)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1500.0, moves, drawn_wraps=True)]
+        self.assertLess(got[3], 0)
+        self.assertAlmostEqual(got[-1], 49.5, delta=1)
+        # not trusted: read along the copy, then over the top
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1500.0, moves)]
+        self.assertGreater(got[-1], 1500)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

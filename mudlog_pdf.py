@@ -1286,8 +1286,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 k = -1                           # back after a gap by the top, the reading before low: run
                 #                                  under the scale (only its copy in from the top drawn)
                 drawn_under = ran_out_low_in_top(i)
-            elif last is not None and k == 0 and prev <= 0.25 and p >= 0.9 and went_under(i) and not crossed(i, prev, p) \
-                    and (under or low_a_while() or (left == 0 and ran_out_low_in_top(i))):
+            elif last is not None and k == 0 and prev <= 0.25 and went_under(i) and not crossed(i, prev, p) and (
+                    (p >= 0.9 and (under or low_a_while() or (left == 0 and ran_out_low_in_top(i))))
+                    or (left == 0 and p >= 0.6 and ran_out_low_in_top(i))):      # (a fast fall: the copy well in)
                 k = -1                           # gone just under the low edge, drawn in at the top
                 #                                  (a real leap up draws its line across the track)
                 drawn_under = ran_out_low_in_top(i)
@@ -1717,7 +1718,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 # crossing the track draws the same by chance)
                 if past(got) > 0.05:
                     alt = settled(dict(args, drawn_wraps=True))
-                    if past(alt) < 0.5 * past(got):
+                    if past(alt) < 0.6 * past(got):          # (its dives to the null are under the scale too)
                         got = alt
             for k, r in enumerate(got):
                 if r is None:
