@@ -378,8 +378,10 @@ def _caption_name(text):
     if _NOTE.search(name or "") and unit and re.fullmatch(r"[A-Za-z][A-Za-z .]*?\s+\d{2,3}", name.strip()) \
             and V.curve(re.sub(r"\s+\d+$", "", name.strip()))["key"]:
         pass                    # a known curve with a number in its name and a unit: "Gamma 180 (API)"
-    elif not name or NUMBER.match(name) or _NOTE.search(name) or re.search(r"\d\s*-\s*\d", unit or ""):
-        return None             # a note: a reading or range in the name, or a range for a unit
+    elif not name or NUMBER.match(name) or _NOTE.search(name) or re.search(r"\d\w*\s*-\s*\d", unit or ""):
+        return None             # a note: a reading or range in the name, or a range for a unit ("60s - 1200 units")
+    if re.search(r"[=:]|--\s*$|\S\s{2,}\d+(\.\d+)?$|\s0$", name):
+        return None             # a note: a reading by a name ("DEN = 1175", "RPM  0", "RPM  --", "Mud Type:KCL")
     vc = V.curve(t)
     if not vc["key"]:
         vc = V.curve(name)
@@ -393,8 +395,9 @@ def _caption_name(text):
                 if v["key"] and all(x.lower().strip(".") in _QUALIFIERS for x in w[j:]):
                     vc = v
                     break
-        if not vc["key"]:
-            return None
+        if not vc["key"] and not (vc.get("source") and not vc.get("notes") and not vc.get("qualifiers")
+                                  and len(w) <= 2 and w[0][:1].isupper()):
+            return None         # (a curve named for its company alone, "Weatherford", is one)
     if vc["key"] in ("md", "tvd") or name.strip().upper() in ("VD", "TV", "SS"):
         return None             # a depth scale's label (a cross-section's TVD), not a curve
     if not unit and name.strip().islower() and len(name.strip()) <= 6:

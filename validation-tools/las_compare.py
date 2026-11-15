@@ -112,9 +112,16 @@ def _kind(name):
         return None
 
 
+def _unit_kind(unit):
+    """a curve's kind from its unit alone, for a source curve with no name of
+    its own (WellSight names an unnamed curve after its track: "New Track")"""
+    return {"api": "gamma"}.get(_norm(unit))
+
+
 def pair_curves(src, pdf):
     """[(source mnem, pdf mnem or None)], [pdf mnems left over]"""
     s_names = [(mn, _name(d, mn)) for mn, _u, d in src["curves"]]
+    s_units = {mn: u for mn, u, _d in src["curves"]}
     p_names = [(mn, _name(d, mn)) for mn, _u, d in pdf["curves"]]
     left = dict(p_names)
     hits = {}
@@ -125,7 +132,7 @@ def pair_curves(src, pdf):
     for mn, nm in s_names:                      # then the one curve left of the same kind
         if mn in hits:
             continue
-        k = _kind(nm)
+        k = _kind(nm) or _unit_kind(s_units.get(mn))
         same = [p for p, pn in left.items() if k and _kind(pn) == k]
         if len(same) == 1:
             hits[mn] = same[0]

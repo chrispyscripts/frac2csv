@@ -19,7 +19,10 @@ Cases are chosen by kind of log, from logs the PDF reader was not tuned on
   control        any log, at random
 
 --exclude names an earlier batch's cases.csv, so a new batch (another
---seed) is logs no batch has seen.
+--seed) is logs no batch has seen. --cases runs an earlier batch's
+cases.csv again as it is (the same logs, under the same kinds): a run of a
+changed reader to set beside that batch's, whatever logs have been added
+or keyed again since.
 
 For each case: wellsight_server.decode + save writes OUT/las/source/<name>.las,
 decode_pdf + save writes OUT/las/pdf/<name>.from-printout.las, and
@@ -171,6 +174,7 @@ def main(argv=None):
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--exclude", action="append", default=[],
                     help="a cases.csv of an earlier batch: its logs are not chosen again (repeatable)")
+    ap.add_argument("--cases", help="an earlier batch's cases.csv, run again as it is (no choosing)")
     a = ap.parse_args(argv)
     keys, root, out = (os.path.expanduser(x) for x in (a.keys, a.root, a.out))
     os.makedirs(out, exist_ok=True)
@@ -179,7 +183,12 @@ def main(argv=None):
     for path in a.exclude:
         with open(os.path.expanduser(path), newline="", encoding="utf-8") as f:
             exclude |= {r["log"] for r in csv.DictReader(f)}
-    cases, pool = choose(keys, a.per, a.seed, a.jobs, exclude)
+    if a.cases:
+        with open(os.path.expanduser(a.cases), newline="", encoding="utf-8") as f:
+            cases = list(csv.DictReader(f))
+        pool = len(cases)
+    else:
+        cases, pool = choose(keys, a.per, a.seed, a.jobs, exclude)
     with open(os.path.join(out, "cases.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(cases[0]))
         w.writeheader()

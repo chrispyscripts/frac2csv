@@ -333,6 +333,25 @@ class Legend(unittest.TestCase):
         self.assertEqual(L._caption_name("DRILL TIME (min/0.5 m)")[1], "min/0.5 m")
         self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")
 
+    def test_a_reading_by_a_name_is_a_note_not_a_caption(self):
+        # a mud check or drilling parameter written down the log ("DEN =
+        # 1175", "RPM  0") with numbers by it is no curve's caption
+        for note in ("DEN =", "DEN = 1175", "VIS =", "RPM  0", "RPM 0", "RPM           1", "RPM  --",
+                     "Mud Type:KCL MUD (Water Based)", "GAS DETECTOR TEST (60s - 1200 units)"):
+            self.assertIsNone(L._caption_name(note), note)
+        # a curve numbered in its name still is one
+        self.assertEqual(L._caption_name("Gas 1")[0], "Gas 1")
+        self.assertEqual(L._caption_name("Caliper 2 (mm)")[0], "Caliper 2")
+        self.assertEqual(L._caption_name("Gamma 180 (API)")[0], "Gamma 180")
+
+    def test_a_curve_named_for_its_company_alone_is_a_caption(self):
+        # "Weatherford" in green over its 0 and 150: a second gamma by the
+        # company that ran it; the company in a note is not
+        self.assertEqual(L._caption_name("Weatherford"), ("Weatherford", "", None))
+        self.assertEqual(L._caption_name("Continental Labs")[0], "Continental Labs")
+        for note in ("Weatherford tool failed", "weatherford", "Ryan Energy"):
+            self.assertIsNone(L._caption_name(note), note)
+
     def test_stacked_captions_upright_take_their_own_rows(self):
         # upright: red "100 PROPANE GAS (UNITS) 0" over red "0 TOTAL GAS
         # (UNITS) 500"; the wider 100 above sits nearer TOTAL GAS's middle

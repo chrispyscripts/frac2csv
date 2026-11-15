@@ -726,6 +726,45 @@ def _reread_after_short_gaps(got, read_from, past, levels):
                 break
 
 
+_GAS_KINDS = {"total_gas", "methane", "ethane", "propane", "butane", "pentane", "heavy_gas", "co2", "h2s"}
+
+
+def _reread_past_runs(got, read_from, past, lo, hi, run=50, follow=False):
+    """a line a width off from where it crossed an edge, to the end: each
+    run of `run` or more readings past the scale is read again afresh from
+    its start (the crossing read the wrong way: a reading under the scale
+    drawn wrapped, not one over it), where the line is read past its scale
+    most of the way, or where the run is over the scale straight after a
+    reading under it (a line back from a dive to the null cannot have gone
+    over the top on the way); kept where that halves what is past the
+    scale from there on. With follow (gas, which can be over its scale
+    most of a lateral for real), the first way only where read afresh the
+    line also follows on from the reading before the run at least as
+    closely: a line that went over the top for real, by the edge just
+    before, follows on as it was read and would jump the track's width
+    read afresh. got is changed in place"""
+    over = lambda r: r is not None and r[1] and r[0] > hi
+    under = lambda r: r is not None and r[0] < lo            # (a dive pinned at the null too)
+    i = 0
+    while i < len(got):
+        if got[i] is None or not past([got[i]]):
+            i += 1
+            continue
+        j = i
+        while j < len(got) and (got[j] is None or past([got[j]])):
+            j += 1
+        back = over(got[i]) and any(under(r) for r in got[max(0, i - 10):i])
+        if j - i >= run and (past(got) > 0.5 or back):
+            alt = read_from(i, 0)
+            if past(alt) < 0.5 * past(got[i:]):
+                before = next((got[x][0] for x in range(i - 1, max(-1, i - 11), -1) if got[x] is not None), None)
+                first = next((r[0] for r in alt if r is not None), None)
+                if (back or not follow or before is None or first is None
+                        or abs(first - before) <= abs(got[i][0] - before)):
+                    got[i:] = alt
+        i = j
+
+
 def _stretches(got, gap=30):
     """[(start, end)] of the stretches of readings between gaps of `gap`
     or more with nothing read"""
@@ -813,6 +852,12 @@ def _relative(segs, x0, x1):
 def _inside(segs):
     """how far the strokes run inside the track, in metres down it"""
     return sum(db - da for da, pa, db, pb in segs if -0.005 <= pa <= 1.005 and -0.005 <= pb <= 1.005)
+
+
+def _inside_drawn(segs):
+    """_inside without straight runs down the track over 3 m: a grid's
+    lines in the curve's colour (a grey curve on a grey grid) say nothing"""
+    return _inside([sg for sg in segs if not (abs(sg[1] - sg[3]) < 1e-4 and sg[2] - sg[0] > 3.0)])
 
 
 def _series(segs, top, n, step):
@@ -1653,7 +1698,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         if not groups:
             dropped.append((first.name, "no line of its colour in its track"))
             continue
-        wmain = max(groups, key=lambda w: (_inside(groups[w]), w))
+        wmain = max(groups, key=lambda w: (_inside_drawn(groups[w]), _inside(groups[w]), w))
         if _inside(groups[wmain]) < 0.05 * (bottom - top):
             dropped.append((first.name, "its line runs %.0f m of the log's %.0f m" % (_inside(groups[wmain]), bottom - top)))
             continue
@@ -1679,6 +1724,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         for w, sg in groups.items():
             if w == wmain:
                 continue
+            # (a grid drawn in the curve's colour at another width: its
+            # straight runs down the track are not the line)
+            sg = [x for x in sg if not (abs(x[1] - x[3]) < 1e-4 and x[2] - x[0] > 3.0)]
             ser = _series(sg, top, n, step)
             k = _offset(main, ser)
             if k == 0:
@@ -1741,6 +1789,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                                for kk, vv in args.items()}
                         return read_one_line(whole[i0 + s_:i1], left, right, moves[i0 + s_:i1], k0=k0, **sub)
                     _reread_after_short_gaps(got, from_, past, (-1, 1) if under else (1,))
+                    kind = first.kind or V.curve(first.name)["key"]
+                    gas = kind in _GAS_KINDS or (not kind and "gas" in first.name.lower())
+                    _reread_past_runs(got, from_, past, lo_ - tol, hi_ + tol, follow=gas)
                     return got
                 got = settled(args)
                 # a wrap under the scale drawn (out of the low edge, in at the

@@ -294,6 +294,62 @@ class OneLine(unittest.TestCase):
         M._reread_after_short_gaps(got, read_from, past, (-1, 1))
         self.assertEqual(got[94:], high)
 
+    def test_a_line_a_width_off_from_an_edge_to_the_end_read_again(self):
+        # gas 0 - 1000: in the scale, then read a width high (1100 for 100)
+        # from a crossing to the end, most of the curve: read again afresh
+        # from where it went past, kept from there on
+        past = lambda g: (lambda rs: sum(not -20 <= v <= 1020 for v in rs) / len(rs) if rs else 0.0)(
+            [r[0] for r in g if r and r[1]])
+        seen = []
+
+        def read_from(s_, k0):
+            seen.append((s_, k0))
+            return [(100.0, True)] * (len(got) - s_)
+        ok, high = [(500.0, True)] * 20, [(1100.0, True)] * 80
+        got = ok + high
+        M._reread_past_runs(got, read_from, past, -20, 1020)
+        self.assertEqual(got, ok + [(100.0, True)] * 80)
+        self.assertEqual(seen, [(20, 0)])
+        # a run past the scale for less than half the curve is left so
+        # (gas really past its scale for a while)
+        got = ok * 5 + high
+        M._reread_past_runs(got, read_from, past, -20, 1020)
+        self.assertEqual(got[100:], high)
+        # unless it starts straight after a dive under the scale (the line
+        # back from the null cannot have gone over the top on the way)
+        got = ok * 5 + [(-999.0, False), (1001.0, True)] + high
+        M._reread_past_runs(got, read_from, past, -20, 1020)
+        self.assertEqual(got[102:], [(100.0, True)] * 80)
+        # nor is a short run read again
+        got = ok + high[:30]
+        M._reread_past_runs(got, read_from, past, -20, 1020)
+        self.assertEqual(got[20:], high[:30])
+        # nor kept where reading afresh is no nearer the scale
+        got = ok + high
+        M._reread_past_runs(got, lambda s_, k0: [(2005.0, True)] * (len(got) - s_), past, -20, 1020)
+        self.assertEqual(got[20:], high)
+        # nor, for gas (over its scale most of a lateral for real), where
+        # the line went over the top: by the top edge just before, the
+        # reading over it follows on (afresh, the line would jump the width
+        # of the track)
+        got = [(980.0, True)] * 20 + high
+        M._reread_past_runs(got, read_from, past, -20, 1020, follow=True)
+        self.assertEqual(got[20:], high)
+        # a gamma is not over its scale most of the log: the reading before
+        # the run may be a width off already, and it is read afresh anyway
+        got = [(980.0, True)] * 20 + high
+        M._reread_past_runs(got, read_from, past, -20, 1020)
+        self.assertEqual(got[20:], [(100.0, True)] * 80)
+
+    def test_the_line_is_the_width_drawn_most_not_a_grid_of_its_colour(self):
+        # a grey curve on a grey grid: the grid's straight runs down the
+        # track are longer, but say nothing; the curve's line is the one
+        grid = [(0.0, p, 60.0, p) for p in (0.1, 0.2, 0.3, 0.4, 0.5)]
+        line = [(d * 0.5, 0.3 + 0.1 * (d % 2), d * 0.5 + 0.5, 0.3 + 0.1 * ((d + 1) % 2)) for d in range(100)]
+        self.assertGreater(M._inside(grid), M._inside(line))
+        self.assertEqual(M._inside_drawn(grid), 0)
+        self.assertAlmostEqual(M._inside_drawn(line), 50.0)
+
     def test_a_wrap_drawn_under_the_scale_stays_under_while_it_moves(self):
         # 50 - 150: down to the low edge, the pair (just under it, its copy
         # at the top), then the copy moving down past the middle: still
