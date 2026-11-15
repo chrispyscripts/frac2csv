@@ -464,6 +464,8 @@ def captions(pg, pno, across, one=None):
         cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
         ca = across(cx, cy)
         left = right = at_end = None
+        left_by = right_by = None
+        h = bb[3] - bb[1]
         mine = []                                   # (along, off the row, value) of this colour's numbers near it
         for nb, v, ncol, nsz in nums:
             if ncol != col or abs(nsz - size) > 0.2 * size:
@@ -477,12 +479,13 @@ def captions(pg, pno, across, one=None):
             if off > 50:
                 continue                    # (another column's: a legend's names have no numbers)
             mine.append((na, off, v, perp(nx, ny)))
-            if na < a0:
-                if left is None or d < left[0]:
-                    left = (d, v, na)
+            by = (off > 0.6 * h, d)                 # (a number on the caption's own row first: a wider
+            if na < a0:                             #  one in the row above can sit nearer its middle)
+                if left is None or by < left_by:
+                    left, left_by = (d, v, na), by
             elif na > a1:
-                if right is None or d < right[0]:
-                    right = (d, v, na)
+                if right is None or by < right_by:
+                    right, right_by = (d, v, na), by
             elif na > a1 - 5 and (at_end is None or d < at_end[0]):
                 at_end = (d, v, na)             # (a decade number set under the name's end)
         if right is None and at_end is not None:

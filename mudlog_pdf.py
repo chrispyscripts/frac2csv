@@ -1326,6 +1326,13 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 k = 0                            # wrapped just past the top, the line itself back along it
             out.append((val(1 + k), k != 0) if k else (hi if right > left else lo, False))
             last = 1 + k
+        elif not any(p >= 1 - e for p in inside) and k == 0 and last is not None and high_a_while() and (
+                (last >= 0.9 and moves and any(a1 >= 1 - e for a0, a1 in moves[i])
+                 and not any(a0 < 0.5 < a1 for a0, a1 in moves[i]))
+                or (last >= 0.95 and last_i is not None and i - last_i <= 4 and not crossed(i, 0.0, last))):
+            k = 1                                # up to the top edge (or by it just before), only its
+            out.append((val(1.0), True))         # wrap's copy on the low edge, nothing drawn across
+            last = 1.0                           # between: over the top
         elif not any(p >= 1 - e for p in inside):
             out.append((val(k), k != 0) if k else (lo if right > left else hi, False))
             last = 0.0 + k

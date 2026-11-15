@@ -395,6 +395,25 @@ class OneLine(unittest.TestCase):
         got = M.read_one_line(series, 0.0, 10000.0, moves[:13] + [[(0.5, 0.5)], [(0.45, 0.5)]])
         self.assertIsNone(got[5])
 
+    def test_up_to_the_top_and_only_its_copy_at_the_low_edge_is_over_it(self):
+        # gas 0 - 1000 rising to the top; the next reading only its wrap's
+        # copy on the low edge (nothing drawn across): over the top
+        series = [[0.932], [0.951, -0.051], [0.982, -0.02], [0.997, -0.005], [-0.0], [0.009], [0.019]]
+        moves = [[(0.919, 0.932)], [(0.945, 0.951), (-0.057, -0.051)], [(0.966, 0.982), (-0.035, -0.02)],
+                 [(0.982, 0.997), (-0.02, -0.005)], [(0.997, 1.001), (-0.005, -0.001)], [], []]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        self.assertAlmostEqual(got[-1], 1019, delta=1)
+        # the crossing itself not drawn (stopped just under the top, a gap)
+        series = [[0.928], [0.953], [0.972], [], [], [-0.002], [0.014], [0.027]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, [[]] * 8)]
+        self.assertAlmostEqual(got[-1], 1027, delta=1)
+        # one reading by the top just after junk is no run up to it: the
+        # line coming up from under the scale into it
+        series = [[]] * 5 + [[0.943, -0.056], [0.005], [0.005]]
+        moves = [[]] * 5 + [[(-0.143, -0.056), (0.853, 0.943)], [(-0.056, 0.005), (0.943, 1.005)], [(0.005, 0.005)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        self.assertLess(got[-1], 100)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

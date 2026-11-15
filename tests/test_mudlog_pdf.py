@@ -332,6 +332,20 @@ class Legend(unittest.TestCase):
         self.assertEqual(L._caption_name("DRILL TIME (min/0.5 m)")[1], "min/0.5 m")
         self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")
 
+    def test_stacked_captions_upright_take_their_own_rows(self):
+        # upright: red "100 PROPANE GAS (UNITS) 0" over red "0 TOTAL GAS
+        # (UNITS) 500"; the wider 100 above sits nearer TOTAL GAS's middle
+        # than its own 0
+        doc = fitz.open()
+        pg = doc.new_page(width=612, height=792)
+        red = (1, 0, 0)
+        for x, y, t in ((20.2, 667, "100"), (69.4, 667, "PROPANE GAS (UNITS)"), (181.1, 667, "0"),
+                        (20.2, 675, "0"), (73.9, 675, "TOTAL GAS (UNITS)"), (174.6, 675, "500")):
+            pg.insert_text((x, y), t, fontsize=6.5, color=red)
+        got = {(c.name, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: x)}
+        self.assertEqual(got, {("PROPANE GAS", 100.0, 0.0), ("TOTAL GAS", 0.0, 500.0)})
+        doc.close()
+
     def test_double_bracket_units(self):
         self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))
         self.assertEqual(L._caption_name("Deep ((ohm/m))"), ("Deep", "ohm/m", "deep_resistivity"))

@@ -381,6 +381,7 @@ bulk_density          | Bulk density                 | kg/m3   = RHOB, Bulk Dens
 density_correction    | Density correction           | kg/m3   = DRHO, Density Correction, Density Corr, DCOR
     LCOR
 pe                    | Photoelectric factor         | b/e     = PE, PEF, P.E, P.E., Pe, Formation Pe, Photoelectric, Photoelectric Factor
+oil_stain             | Chips oil stained            | %       = % Chips Oil Stained, Chips Oil Stained, % Oil Stained Chips, Oil Stained Chips
     PDPE, PECL
 sp                    | Spontaneous potential        | mV      = SP, Spontaneous Potential, Spotaneous Potential, Self Potential
     SPU
