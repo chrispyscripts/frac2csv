@@ -880,6 +880,7 @@ def _null_dips(line, top, step, left, right):
             continue
         # (a place on an edge is no sign: a reading of nothing is drawn there)
         at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5 and min(abs(q), abs(q - 1)) > 0.02]
+        outside, inside = [], []
         for da, pa, db, pb in line:
             if db - da > 0.5 and abs(pa - pb) < 1e-4 and any(abs(pa - q) < 0.002 for q in at):
                 # drawn flat along it (or its copy) for a stretch: no reading
@@ -888,12 +889,13 @@ def _null_dips(line, top, step, left, right):
                 continue
             for d, p in ((da, pa), (db, pb)):
                 if any(abs(p - q) < 0.004 for q in at):
-                    j = int(round((d - top) / step))
-                    # past the track nothing else is drawn there: the line on
-                    # its way down to it and back up is no reading either; its
-                    # copy inside the track can meet the line's own corner by
-                    # chance
-                    out.update(range(j - 3, j + 4) if not 0 <= p <= 1 else (j,))
+                    (inside if 0 <= p <= 1 else outside).append(int(round((d - top) / step)))
+        # past the track nothing else is drawn there: the line on its way
+        # down to it and back up is no reading either. Its copy inside the
+        # track counts only beside that (the line's own corner can meet it)
+        for j in outside:
+            out.update(range(j - 3, j + 4))
+        out.update(j for j in inside if any(abs(j - o) <= 5 for o in outside))
     return out
 
 
@@ -1181,6 +1183,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                     and (under or low_a_while()):
                 k = -1                           # gone just under the low edge, drawn in at the top
                 #                                  (a real leap up draws its line across the track)
+            if k == 1 and last is not None and abs(1 - last) < abs(2 - last):
+                k = 0                            # wrapped just past the top, the line itself back along it
             out.append((val(1 + k), k != 0) if k else (hi if right > left else lo, False))
             last = 1 + k
         elif not any(p >= 1 - e for p in inside):
