@@ -110,6 +110,15 @@ def _tables(body, curves, marks):
             n = body[p]
             if not (1 <= n <= 64 and body[p + 1:p + 4] == b"\x00\x00\x00"):
                 continue
+            # p can be a block's section count, not a table: a block of one
+            # section for one curve (1 | depth | 1 | left | 1 | right) reads
+            # as a table of one from p too, its depth taken for the left
+            # value and its left for the right. So a block from p comes first.
+            sec = _sections(body, p + 12)
+            if sec:
+                out.append((p + 12, sec[1], sec[0]))
+                done_to = sec[1]
+                break
             tab = _table_at(body, p)
             if tab is None:
                 continue

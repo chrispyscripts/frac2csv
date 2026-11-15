@@ -44,6 +44,29 @@ class Blocks(unittest.TestCase):
         self.assertEqual(sc.scale_at([(1130.0, 0, 500), (1410.0, 0, 4000)], 1409.9), (0, 500))
         self.assertEqual(sc.scale_at([(1130.0, 0, 500), (1410.0, 0, 4000)], 1410.0), (0, 4000))
 
+    def test_a_block_found_past_a_record(self):
+        pre = b"\xff" * 12                                 # the end of a curve record
+        b = block([(575.0, [0, 0, 0], [5, 1000, 150])])
+        got = sc._tables(pre + b + b"\x09\x00" * 8, [], [0])
+        self.assertEqual(got, [(12 + 12, 12 + len(b), [(575.0, [0, 0, 0], [5, 1000, 150])])])
+
+    def test_one_curve_one_section(self):
+        # 1 | depth | 1 | left | 1 | right: its count and depth read as a
+        # table of one as well, the depth for the left value and the left
+        # for the right; the block is the reading
+        pre = b"\xff" * 12
+        b = block([(740.0, [150.0], [0.0])])
+        got = sc._tables(pre + b + struct.pack("<i", 1) + b"\x00" * 16, [], [0])
+        self.assertEqual(got, [(12 + 12, 12 + len(b), [(740.0, [150.0], [0.0])])])
+        b2 = block([(200.0, [0.0], [150.0])])
+        got = sc._tables(pre + b + pre + b2, [], [0, 12 + len(b)])
+        self.assertEqual([secs for _p, _e, secs in got], [[(740.0, [150.0], [0.0])], [(200.0, [0.0], [150.0])]])
+
+    def test_one_curve_two_sections(self):
+        b = block([(1130.0, [0.0], [500.0]), (1410.0, [0.0], [4000.0])])
+        got = sc._tables(b"\xff" * 12 + b, [], [0])
+        self.assertEqual(got[0][2], [(1130.0, [0.0], [500.0]), (1410.0, [0.0], [4000.0])])
+
     def test_not_a_table(self):
         self.assertIsNone(sc._table_at(struct.pack("<i", 2) + struct.pack("<2d", 0, 0) + struct.pack("<i", 3), 0))
         same = struct.pack("<i", 1) + struct.pack("<d", 5) + struct.pack("<i", 1) + struct.pack("<d", 5)
