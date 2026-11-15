@@ -1471,7 +1471,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
     dropped = dropped if dropped is not None else []
     caps = []
     grid = _grid_lines(doc, pages)
-    from_grid = {}                                 # caption -> the track its log scale was fitted to
+    from_grid = {}                                 # id(caption) -> (caption, the track its log scale was fitted to)
     for P in pages:
         ones = []
         found = L.captions(doc[P.page - 1], P.page - 1, P.across, ones)
@@ -1483,7 +1483,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             if ends:
                 c.left, c.right = ends
                 c.left_at, c.right_at = e[0] + 0.5, e[1] - 0.5
-                from_grid[id(c)] = e
+                from_grid[id(c)] = (c, e)          # (the caption kept: an id is reused once freed)
                 found.append(c)
         for c in found:
             x0, y0, x1, y1 = c.bbox
@@ -1536,7 +1536,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             return None
         c.left, c.right = ends
         c.left_at, c.right_at = e[0] + 0.5, e[1] - 0.5
-        from_grid[id(c)] = e
+        from_grid[id(c)] = (c, e)
         return c
     kept = []
     for d, c, P in caps:
@@ -1640,7 +1640,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         best = max(names, key=lambda k: (k[2] is not None, names[k], len(k[0]) + len(k[1] or "")))
         first = next(c for _d, c in seen if (c.name, c.unit, c.kind) == best)
         x0, x1 = _past_decade_lines(first, lines_pt, x0, x1)
-        fitted = next((from_grid[id(c)] for _d, c in seen if id(c) in from_grid), None)
+        fitted = next((from_grid[id(c)][1] for _d, c in seen if from_grid.get(id(c), (None,))[0] is c), None)
         if fitted:
             x0, x1 = fitted                      # its scale was fitted to these edges: no wider
         secs = []

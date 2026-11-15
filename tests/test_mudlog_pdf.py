@@ -323,6 +323,7 @@ class Legend(unittest.TestCase):
         self.assertIsNone(L._caption_name("RPM-0"))
         self.assertIsNone(L._caption_name("JOLI FOU FM (-32.6m SS)"))
         self.assertIsNone(L._caption_name("from trip gas (650 units)"))
+        self.assertIsNone(L._caption_name("srtd, fr-g (5%)"))
         self.assertEqual(L._caption_name("Gamma thru casing"), ("Gamma thru casing", "", "gamma"))
         self.assertIsNone(L._caption_name("lower fine grained"))
         for note in ("Butane Test", "Gas detector test", "Gas Maxed", "RPM n/a", "ROTARY INCREASED TO",

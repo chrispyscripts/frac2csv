@@ -400,7 +400,7 @@ def _caption_name(text):
     if not unit and name.strip().islower() and len(name.strip()) <= 6:
         return None             # a word of the descriptions ("med", "gas."): a caption is capitalised
     if name.rstrip().endswith((",", ";")) or len(name.split()) > 6 \
-            or (name[:1].islower() and len(name.split()) >= 4):
+            or (name[:1].islower() and (len(name.split()) >= 4 or "," in name)):
         return None             # a line of the descriptions, or a depth's note ("m TVD, (-949.33 m SS)")
     if re.search(r"[A-Za-z]\s*-\s*\d+(\.\d+)?$", name.strip()):
         return None             # a reading by its name ("RPM-0", "RPM-35")
