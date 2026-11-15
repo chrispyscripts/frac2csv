@@ -381,6 +381,8 @@ def _caption_name(text):
         return None
     if vc["key"] in ("md", "tvd") or name.strip().upper() in ("VD", "TV", "SS"):
         return None             # a depth scale's label (a cross-section's TVD), not a curve
+    if not unit and name.strip().islower() and len(name.strip()) <= 6:
+        return None             # a word of the descriptions ("med", "gas."): a caption is capitalised
     return name.strip(), unit.strip(), vc["key"]
 
 
