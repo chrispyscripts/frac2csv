@@ -1288,7 +1288,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 drawn_under = ran_out_low_in_top(i)
             elif last is not None and k == 0 and prev <= 0.25 and went_under(i) and not crossed(i, prev, p) and (
                     (p >= 0.9 and (under or low_a_while() or (left == 0 and ran_out_low_in_top(i))))
-                    or (left == 0 and p >= 0.6 and ran_out_low_in_top(i))):      # (a fast fall: the copy well in)
+                    or ((left == 0 or under) and p >= 0.6 and ran_out_low_in_top(i))):  # (a fast fall: the copy well in)
                 k = -1                           # gone just under the low edge, drawn in at the top
                 #                                  (a real leap up draws its line across the track)
                 drawn_under = ran_out_low_in_top(i)

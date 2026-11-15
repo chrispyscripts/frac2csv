@@ -414,6 +414,19 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
         self.assertLess(got[-1], 100)
 
+    def test_a_fast_fall_under_a_scale_above_nothing(self):
+        # gamma 50 - 100 falling fast under 50: drawn out of the low edge,
+        # its copy well in from the top by the next reading, back over the
+        # top after: under the scale, then back in it
+        series = [[0.307], [0.192], [0.048], [0.776], [0.588], [0.862], [0.107, 1.108], [0.253], [0.333]]
+        moves = [[(0.307, 0.361)], [(0.192, 0.29)], [(0.048, 0.192)],
+                 [(0.026, 0.048), (0.776, 0.944), (-0.058, 0.026), (0.944, 1.028)], [(0.582, 0.776)],
+                 [(0.588, 0.862)], [(-0.085, 0.107), (0.862, 0.916), (0.916, 1.108)],
+                 [(0.107, 0.253), (1.108, 1.209)], [(0.253, 0.333)]]
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 100.0, moves, under=True, drawn_wraps=True)]
+        self.assertLess(got[3], 50)
+        self.assertAlmostEqual(got[-1], 66.7, delta=0.5)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

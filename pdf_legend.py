@@ -465,7 +465,7 @@ def captions(pg, pno, across, one=None):
         ca = across(cx, cy)
         left = right = at_end = None
         left_by = right_by = None
-        h = bb[3] - bb[1]
+        h = abs(perp(bb[2], bb[3]) - perp(bb[0], bb[1]))   # (the caption's own row, across its line)
         mine = []                                   # (along, off the row, value) of this colour's numbers near it
         for nb, v, ncol, nsz in nums:
             if ncol != col or abs(nsz - size) > 0.2 * size:

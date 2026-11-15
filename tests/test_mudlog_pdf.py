@@ -346,6 +346,19 @@ class Legend(unittest.TestCase):
         self.assertEqual(got, {("PROPANE GAS", 100.0, 0.0), ("TOTAL GAS", 0.0, 500.0)})
         doc.close()
 
+    def test_a_short_caption_in_a_sideways_decade_stack(self):
+        # sideways: 100 10 Deep 1 0.1 down the page in blue, set left at
+        # one place (the narrow numbers' middles off the short name's):
+        # every decade still the scale's
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        blue = (0, 0, 1)
+        for y, t in ((150, "100"), (172, "10"), (188, "Deep"), (204, "1"), (226, "0.1")):
+            pg.insert_text((109.4, y), t, fontsize=6.5, color=blue)
+        got = [(c.name, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: -y)]
+        self.assertEqual(got, [("Deep", 0.1, 100.0)])
+        doc.close()
+
     def test_double_bracket_units(self):
         self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))
         self.assertEqual(L._caption_name("Deep ((ohm/m))"), ("Deep", "ohm/m", "deep_resistivity"))
