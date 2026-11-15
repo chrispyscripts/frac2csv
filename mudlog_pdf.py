@@ -650,6 +650,25 @@ def _past_decade_lines(c, lines_pt, x0, x1):
     return (max(lo) if lo else x0), (min(hi) if hi else x1)
 
 
+def _stretches(got, gap=30):
+    """[(start, end)] of the stretches of readings between gaps of `gap`
+    or more with nothing read"""
+    out, start, empty = [], None, 0
+    for i, r in enumerate(got):
+        if r is None:
+            empty += 1
+            continue
+        if start is None:
+            start = i
+        elif empty >= gap:
+            out.append((start, i - empty))
+            start = i
+        empty = 0
+    if start is not None:
+        out.append((start, len(got)))
+    return out
+
+
 def _track_edges(lines_pt, a_left, a_right):
     """the long lines either side of a caption's two numbers"""
     lo = [x for x in lines_pt if x <= a_left + 1.0]
@@ -1499,6 +1518,19 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                         alt = read_one_line(whole[i0:i1], left, right, moves[i0:i1], k0=k0, **args)
                         if past(alt) < 0.5 * past(got):
                             got = alt
+                # the same for a stretch the line starts afresh in after a
+                # long gap (it can start there a width off too)
+                got = list(got)
+                for a_, b_ in _stretches(got):
+                    if b_ - a_ < 50 or past(got[a_:b_]) <= 0.2:
+                        continue
+                    sub = {kk: ({j - a_ for j in vv if a_ <= j < b_} if isinstance(vv, set) else vv)
+                           for kk, vv in args.items()}
+                    for k0 in ((-1, 1) if under else (1,)):
+                        alt = read_one_line(whole[i0 + a_:i0 + b_], left, right, moves[i0 + a_:i0 + b_], k0=k0, **sub)
+                        if past(alt) < 0.5 * past(got[a_:b_]):
+                            got[a_:b_] = alt
+                            break
             for k, r in enumerate(got):
                 if r is None:
                     continue
