@@ -422,9 +422,9 @@ def captions(pg, pno, across):
     the three sit on one row; on a sideways one the numbers are stacked by
     the names, so the nearest number on each side is taken."""
     lines = _lines(pg, by_colour=True)
-    nums = [(bb, float(t), c) for bb, t, c, _s in lines if NUMBER.match(t.strip())]
+    nums = [(bb, float(t), c, sz) for bb, t, c, sz in lines if NUMBER.match(t.strip())]
     out = []
-    for bb, text, col, _sz in lines:
+    for bb, text, col, size in lines:
         nm = _caption_name(text)
         if not nm:
             continue
@@ -433,9 +433,9 @@ def captions(pg, pno, across):
         ca = across(cx, cy)
         left = right = None
         mine = []                                   # (along, off the row, value) of this colour's numbers near it
-        for nb, v, ncol in nums:
-            if ncol != col:
-                continue
+        for nb, v, ncol, nsz in nums:
+            if ncol != col or abs(nsz - size) > 0.2 * size:
+                continue                    # (a scale's numbers are in its caption's size)
             nx, ny = (nb[0] + nb[2]) / 2, (nb[1] + nb[3]) / 2
             d = math.hypot(nx - cx, ny - cy)
             if d > 260:

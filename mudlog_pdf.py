@@ -591,6 +591,43 @@ def _widen(segs, lines_pt, x0, x1):
     return x0, x1
 
 
+def _nice(v):
+    """v as a scale's end would print it (1, 2, 2.5 or 5 of a power of ten),
+    or None when it is no such number"""
+    if v <= 0:
+        return None
+    e = math.floor(math.log10(v))
+    for m in (1, 2, 2.5, 5, 10):
+        n = m * 10 ** e
+        if abs(v - n) <= 0.06 * n:
+            return round(n, 6)
+    return None
+
+
+def _ends_from_decades(c, x0, x1):
+    """a caption's scale ends. A log scale can print its decades where they
+    lie on the scale (1 10 100 under its name, the ends 0.2 and 200 at the
+    track's edges unprinted): numbers well inside the track a whole number
+    of decades apart give the ends at the edges, where those come out as a
+    scale's numbers. -> (left, right)"""
+    lv, rv = c.left, c.right
+    if not (lv > 0 and rv > 0) or abs(math.log10(rv / lv)) < 0.99:
+        return lv, rv
+    dec = math.log10(rv / lv)
+    if abs(dec - round(dec)) > 0.01 or x1 <= x0:
+        return lv, rv
+    w = x1 - x0
+    inside = min(c.left_at, c.right_at) > x0 + 0.08 * w or max(c.left_at, c.right_at) < x1 - 0.08 * w
+    if not inside or not (x0 - 1 <= min(c.left_at, c.right_at) and max(c.left_at, c.right_at) <= x1 + 1):
+        return lv, rv
+    per = (c.right_at - c.left_at) / dec              # points per decade, signed
+    if abs(per) < 5:
+        return lv, rv
+    l_ = _nice(10 ** (math.log10(lv) + (x0 - c.left_at) / per))
+    r_ = _nice(10 ** (math.log10(lv) + (x1 - c.left_at) / per))
+    return (l_, r_) if l_ and r_ and (l_, r_) != (lv, rv) else (lv, rv)
+
+
 def _track_edges(lines_pt, a_left, a_right):
     """the long lines either side of a caption's two numbers"""
     lo = [x for x in lines_pt if x <= a_left + 1.0]
@@ -996,7 +1033,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         out_lo = [p for p in pts if p < -e]
         out_hi = [p for p in pts if p > 1 + e]
         if k == 1 and inside and (out_lo or (moves and any(
-                a1 - a0 > 0.02 and a0 < -e for a0, a1 in moves[i]))):
+                a1 - a0 > 0.02 and a0 < -e and a1 > -0.05 for a0, a1 in moves[i]))):   # (one that reaches the low edge)
             k = 0                                # the wrapped line runs out of the low end: back in the scale
         elif k == 0 and out_hi and last is not None and not any(abs(q - last) < 0.08 for q in inside):
             # (not where the line goes on inside the track from the reading
@@ -1037,7 +1074,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 pass                                 # drawn across the track: the reading moved
             elif k == 0 and under and last_i is not None and 1 < i - last_i <= 50 and p >= 0.8 \
                     and (last if last is not None else before_gap) is not None \
-                    and (prev if last is not None else before_gap) <= 0.35 \
+                    and (prev if last is not None else before_gap) <= 0.5 \
                     and abs(p - 1 - (last if last is not None else before_gap)) \
                     < abs(p - (last if last is not None else before_gap)):
                 k = -1                           # back after a gap by the top, the reading before low: run
@@ -1309,8 +1346,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         first = next(c for _d, c in seen if (c.name, c.unit, c.kind) == best)
         secs = []
         for d, c in seen:
-            if not secs or (c.left, c.right) != secs[-1][1:]:
-                secs.append((top if not secs else d, c.left, c.right))
+            l_, r_ = _ends_from_decades(c, x0, x1)
+            if not secs or (l_, r_) != secs[-1][1:]:
+                secs.append((top if not secs else d, l_, r_))
         groups = {w: _relative(sg, x0, x1) for w, sg in strokes.of(colour).items()}
         groups = {w: sg for w, sg in groups.items() if sg}
         if not groups:
