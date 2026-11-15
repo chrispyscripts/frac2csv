@@ -323,6 +323,11 @@ class Legend(unittest.TestCase):
         self.assertIsNone(L._caption_name("RPM-0"))
         self.assertIsNone(L._caption_name("JOLI FOU FM (-32.6m SS)"))
         self.assertIsNone(L._caption_name("from trip gas (650 units)"))
+        self.assertEqual(L._caption_name("Gamma thru casing"), ("Gamma thru casing", "", "gamma"))
+        self.assertIsNone(L._caption_name("lower fine grained"))
+        for note in ("Butane Test", "Gas detector test", "Gas Maxed", "RPM n/a", "ROTARY INCREASED TO",
+                     "Gas lines flooded", "ROP scale change @"):
+            self.assertIsNone(L._caption_name(note), note)
         self.assertEqual(L._caption_name("Total Gas (units/10000)")[0], "Total Gas")
         self.assertEqual(L._caption_name("DRILL TIME (min/0.5 m)")[1], "min/0.5 m")
         self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")

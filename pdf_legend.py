@@ -364,6 +364,12 @@ _UNIT = re.compile(r"^(.*?)\s*\(\(?([^()]*)\)?\)\s*$")       # "Gamma (API)", "N
 _NOTE = re.compile(r"\d{2,}|\d+\.\d+|\d\s*-\s*\d|:\s*\d|#")
 
 
+# words after a curve's name saying which of it a curve is
+_QUALIFIERS = {"thru", "through", "casing", "cased", "open", "hole", "memory", "mem", "rt", "real", "time",
+               "corrected", "corr", "raw", "tvd", "md", "leg", "offset", "sidetrack", "st", "original", "new",
+               "old", "wireline", "mwd", "lwd", "total", "1", "2", "3"}
+
+
 def _caption_name(text):
     """(name, unit text, curve kind) for a caption's name, or None"""
     t = text.strip()
@@ -378,7 +384,17 @@ def _caption_name(text):
     if not vc["key"]:
         vc = V.curve(name)
     if not vc["key"] and not unit:
-        return None
+        # a known curve's name with words after it saying which ("Gamma
+        # thru casing"); not a note by a curve ("Butane Test", "Gas Maxed")
+        w = name.split()
+        if 2 <= len(w) <= 4 and w[0][:1].isupper():
+            for j in (2, 1):
+                v = V.curve(" ".join(w[:j]))
+                if v["key"] and all(x.lower().strip(".") in _QUALIFIERS for x in w[j:]):
+                    vc = v
+                    break
+        if not vc["key"]:
+            return None
     if vc["key"] in ("md", "tvd") or name.strip().upper() in ("VD", "TV", "SS"):
         return None             # a depth scale's label (a cross-section's TVD), not a curve
     if not unit and name.strip().islower() and len(name.strip()) <= 6:

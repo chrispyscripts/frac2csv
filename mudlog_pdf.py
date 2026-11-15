@@ -1334,6 +1334,30 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             last = 1.0                           # top: pegged at the top (its wrap copy on the low edge)
         else:
             out.append(None)                     # on both edges at once: nothing to go on
+    # nothing drawn between the line coming to an end of the scale and the
+    # line back from the same end: it ran along that end, on the track's
+    # edge (where LogViewer's line lies on the edge it is not drawn apart)
+    def at_end(j, p_end, first):
+        r = out[j] if 0 <= j < len(out) else None
+        if r is not None and abs(r[0] - val(p_end)) <= 0.01 * abs(right - left):
+            return True
+        ms = (moves or [])[first] if 0 <= first < len(moves or []) else []
+        return any(min(abs(a0 - p_end), abs(a1 - p_end)) <= 0.01 for a0, a1 in ms)
+    i = 0
+    while i < len(out):
+        if out[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < len(out) and out[j] is None:
+            j += 1
+        if 0 < i and j < len(out) and not any(series[x] for x in range(i, j)):
+            for p_end in (1.0, 0.0):
+                if at_end(i - 1, p_end, i) and at_end(j, p_end, j) \
+                        and abs(out[i - 1][0] - val(p_end)) <= 0.05 * abs(right - left):
+                    out[i:j] = [(val(p_end), False)] * (j - i)
+                    break
+        i = j
     return out
 
 

@@ -381,6 +381,20 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 1500.0, moves)]
         self.assertGreater(got[-1], 1500)
 
+    def test_nothing_drawn_along_an_end_is_that_end(self):
+        # gas 0 - 10000 up to its top and along it, the line on the track's
+        # edge not drawn apart, then back down from the top: the top all along
+        series = [[0.871], [0.945], [0.982]] + [[]] * 10 + [[0.999], [0.896], [0.781]]
+        moves = [[(0.834, 0.871)], [(0.871, 0.945)], [(0.945, 0.982)], [(0.982, 0.999)]] + [[]] * 9 + \
+                [[(0.999, 0.999)], [(0.896, 0.999)], [(0.781, 0.896)]]
+        got = M.read_one_line(series, 0.0, 10000.0, moves)
+        self.assertEqual(got[5], (10000.0, False))
+        self.assertAlmostEqual(got[-1][0], 7810, delta=1)
+        # back somewhere else: no reading in between
+        series = [[0.871], [0.945], [0.982]] + [[]] * 10 + [[0.5], [0.45]]
+        got = M.read_one_line(series, 0.0, 10000.0, moves[:13] + [[(0.5, 0.5)], [(0.45, 0.5)]])
+        self.assertIsNone(got[5])
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one
