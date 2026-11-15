@@ -283,6 +283,45 @@ class OneLine(unittest.TestCase):
         M._reread_after_short_gaps(got, read_from, past, (-1, 1))
         self.assertEqual(got[94:], high)
 
+    def test_a_wrap_drawn_under_the_scale_stays_under_while_it_moves(self):
+        # 50 - 150: down to the low edge, the pair (just under it, its copy
+        # at the top), then the copy moving down past the middle: still
+        # under the scale (a reversed sonic 500 - 100 runs far past 500)
+        series = [[0.2], [0.1], [0.03], [-0.012, 0.988], [0.9], [0.75], [0.6], [0.45], [0.4]]
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True, drawn_wraps=True)]
+        self.assertAlmostEqual(got[4], 40, delta=0.5)
+        self.assertAlmostEqual(got[-1], -10, delta=0.5)
+        # not trusted (read_curves trusts it only where that brings the
+        # line into its scale): half a width under is back in the scale
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True)]
+        self.assertAlmostEqual(got[-1], 90, delta=0.5)
+        # guessed under (back by the top after a gap): half a width under
+        # is no reading, the line is back in the scale
+        series = [[0.2], [0.15], [], [], [0.92], [0.75], [0.6], [0.45], [0.4]]
+        got = [r and r[0] for r in M.read_one_line(series, 50.0, 150.0, under=True)]
+        self.assertAlmostEqual(got[4], 42, delta=0.5)
+        self.assertAlmostEqual(got[-1], 90, delta=0.5)
+
+    def test_on_both_edges_from_by_the_top_is_the_top(self):
+        # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
+        # copy, on the low one
+        series = [[0.9], [0.95], [0.987]] + [[1.0, -0.002]] * 5 + [[0.97, -0.031], [0.74]]
+        got = M.read_one_line(series, 0.0, 10000.0)
+        self.assertEqual(got[4], (10000.0, False))
+        self.assertAlmostEqual(got[-1][0], 7400, delta=1)
+
+    def test_a_line_running_through_the_nulls_place_is_no_null(self):
+        # gas 0 - 10000: the null (-999.25) is drawn at -0.0999 (its copy
+        # at 0.9001); a steep rise through 0.9001, its copy starting at
+        # -0.0999, is a reading
+        pn = M.NULL / 10000.0
+        line = [(100.0, 0.7, 100.1, 0.8), (100.1, 0.8, 100.2, pn + 1), (100.2, pn + 1, 100.3, 1.0),
+                (100.2, pn, 100.3, -0.0017)]
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 10000.0), set())
+        # down to it and back up is the null
+        line = [(100.0, 0.3, 100.1, pn), (100.1, pn, 100.2, 0.3)]
+        self.assertIn(1, M._null_dips(line, 100.0, 0.1, 0.0, 10000.0))
+
     def test_a_pair_by_the_low_edge_is_in_the_scale(self):
         series = [[0.98], [0.96, -0.04], [0.9]]
         got = self.read(series)
