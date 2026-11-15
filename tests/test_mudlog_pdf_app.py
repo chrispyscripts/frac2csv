@@ -329,6 +329,32 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0)]
         self.assertAlmostEqual(got[3], 987, delta=1)
 
+    def test_a_dive_to_the_null_drawn_down_fast(self):
+        # gas 0 - 1000 diving to the null (-999.25, one width under): drawn
+        # down past the low edge faster than a quarter width a step, its
+        # copy in from the top down to the low edge and back up, over the
+        # top as the line comes back in from under: back in the scale
+        series = [[0.14], [0.14], [0.989, -0.007], [0.712, -0.283], [0.486], [0.28], [0.074], [0.285], [0.494],
+                  [0.704], [0.913], [0.093, 1.089], [0.122], [0.108]]
+        moves = [[(0.14, 0.14)], [(0.14, 0.14)], [(-0.007, 0.14), (0.989, 1.136)], [(-0.283, -0.007), (0.712, 0.989)],
+                 [(-0.365, -0.283), (0.486, 0.63)], [(0.28, 0.486)], [(0.074, 0.28)], [(0.002, 0.074), (0.002, 0.285)],
+                 [(0.285, 0.494)], [(0.494, 0.704)], [(0.704, 0.913)], [(-0.082, 0.093), (0.913, 1.089)],
+                 [(0.093, 0.122)], [(0.108, 0.122)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves, drawn_wraps=True)]
+        self.assertAlmostEqual(got[3], -283, delta=1)
+        self.assertAlmostEqual(got[-1], 108, delta=1)
+        # the same drawn: a line run out of the low edge (no pair), its copy
+        # in at the top
+        series = [[0.3], [0.195, 1.191], [0.907], [0.593], [0.279], [0.078], [0.086], [0.4], [0.698],
+                  [0.96, -0.036], [0.023, 1.018], [0.071], [0.068]]
+        moves = [[(0.3, 0.31)], [(0.195, 0.309), (1.191, 1.304)], [(-0.028, 0.195), (0.967, 1.191), (0.907, 0.967)],
+                 [(0.593, 0.907)], [(0.279, 0.593)], [(0.078, 0.279)], [(0.002, 0.078), (0.002, 0.086)],
+                 [(0.086, 0.4)], [(0.4, 0.698)], [(-0.095, -0.036), (0.698, 0.96)], [(-0.036, 0.023), (0.96, 1.018)],
+                 [(0.023, 0.071)], [(0.068, 0.071)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves, drawn_wraps=True)]
+        self.assertLess(got[2], 0)
+        self.assertAlmostEqual(got[-1], 68, delta=1)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

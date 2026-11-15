@@ -1220,8 +1220,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             elif a < -e:
                 # below the low end only where the line already is (mudlog
                 # readings rarely go under a scale that starts at nothing)
-                if k == -1 or ((under or (left == 0 and (low_a_while() or drawn_down(i, a)))) and last is not None
-                               and abs(a - last) < 0.25 and abs(a - last) < abs(b - last)):
+                if k == -1 or (last is not None and abs(a - last) < abs(b - last) and (
+                        ((under or (left == 0 and low_a_while())) and abs(a - last) < 0.25)
+                        or (left == 0 and drawn_down(i, a)))):     # (a stroke down to it: however far)
                     drawn_under = drawn_under or (drawn_wraps and k != -1)    # (the pair is the wrap, drawn)
                     r, k = a, -1
                 else:
@@ -1283,7 +1284,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 #                                  under the scale (only its copy in from the top drawn)
                 drawn_under = ran_out_low_in_top(i)
             elif last is not None and k == 0 and prev <= 0.25 and p >= 0.9 and went_under(i) and not crossed(i, prev, p) \
-                    and (under or low_a_while()):
+                    and (under or low_a_while() or (left == 0 and ran_out_low_in_top(i))):
                 k = -1                           # gone just under the low edge, drawn in at the top
                 #                                  (a real leap up draws its line across the track)
                 drawn_under = ran_out_low_in_top(i)
