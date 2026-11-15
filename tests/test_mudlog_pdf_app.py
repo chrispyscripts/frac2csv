@@ -302,6 +302,22 @@ class OneLine(unittest.TestCase):
         self.assertAlmostEqual(got[4], 42, delta=0.5)
         self.assertAlmostEqual(got[-1], 90, delta=0.5)
 
+    def test_a_line_drawn_down_past_the_low_edge_goes_under(self):
+        # gas 0 - 1000 dropping steeply (junk): drawn in one stroke from
+        # 113 past the low edge, its copy in at the top: under the scale,
+        # not a leap up to 987; back in the scale out of the top after
+        series = [[0.365], [0.264], [0.113], [0.987, -0.016], [0.858, -0.145], [0.729, -0.274],
+                  [0.916], [0.03, 1.033], [0.146], [0.26]]
+        moves = [[(0.365, 0.37)], [(0.264, 0.365)], [(0.113, 0.264)], [(-0.016, 0.113), (0.987, 1.116)],
+                 [(-0.145, -0.016), (0.858, 0.987)], [(-0.274, -0.145), (0.729, 0.858)],
+                 [(0.729, 0.916)], [(-0.073, 0.03), (0.916, 1.033)], [(0.03, 0.146)], [(0.146, 0.26)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        self.assertAlmostEqual(got[3], -16, delta=1)
+        self.assertAlmostEqual(got[-1], 260, delta=1)
+        # no stroke down to it (the copy only): the reading by the top
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0)]
+        self.assertAlmostEqual(got[3], 987, delta=1)
+
     def test_on_both_edges_from_by_the_top_is_the_top(self):
         # gas 0 - 10000 pegged at its top: drawn on the top edge and, its
         # copy, on the low one

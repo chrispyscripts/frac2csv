@@ -1139,6 +1139,12 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 return True
         return False
 
+    def drawn_down(i, a):
+        """the line drawn in one stroke from where it was down past the
+        low edge to a (junk under a scale from nothing dives so)"""
+        return last is not None and last - a >= 0.05 and bool(moves) and any(
+            a0 <= a + 0.01 and a1 >= last - 0.01 for a0, a1 in moves[i])
+
     def ran_out_low_in_top(i):
         """the line drawn out of the low edge and in again at the top just
         now: a wrap under the scale LogViewer drew, not one guessed"""
@@ -1213,7 +1219,7 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             elif a < -e:
                 # below the low end only where the line already is (mudlog
                 # readings rarely go under a scale that starts at nothing)
-                if k == -1 or ((under or (left == 0 and low_a_while())) and last is not None
+                if k == -1 or ((under or (left == 0 and (low_a_while() or drawn_down(i, a)))) and last is not None
                                and abs(a - last) < 0.25 and abs(a - last) < abs(b - last)):
                     drawn_under = drawn_under or (drawn_wraps and k != -1)    # (the pair is the wrap, drawn)
                     r, k = a, -1
@@ -1704,7 +1710,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 # top) can be trusted to stay under while the line moves along:
                 # where reading so brings the line into its scale (another line
                 # crossing the track draws the same by chance)
-                if past(got) > 0.2:
+                if past(got) > 0.05:
                     alt = settled(dict(args, drawn_wraps=True))
                     if past(alt) < 0.5 * past(got):
                         got = alt
