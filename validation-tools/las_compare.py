@@ -28,6 +28,8 @@ to the first of these that fits:
 
 Standard library only (log_vocab for curve names).
 """
+import collections
+import itertools
 import math
 import os
 import re
@@ -242,11 +244,31 @@ def compare(src, pdf, scales_by_name=None):
     not in the source], header: {field: same|different|missing}, depth:
     {source: (strt, stop, step), pdf: (...)}}"""
     pairs, extra = pair_curves(src, pdf)
+    names = {m: _name(d, m) for m, _u, d in src["curves"]}
+    scale = lambda mn: (scales_by_name or {}).get(_norm(names[mn]))
+    # curves of one name ("Gamma" twice): paired the way their readings
+    # agree best (the printout's order of them is not the source's)
+    groups = collections.defaultdict(list)
+    for i, (mn, pmn) in enumerate(pairs):
+        if pmn is not None:
+            groups[_norm(names[mn])].append(i)
+    for g in groups.values():
+        if not 2 <= len(g) <= 4:
+            continue
+        best = None
+        for perm in itertools.permutations([pairs[i][1] for i in g]):
+            agree = 0.0
+            for i, pmn in zip(g, perm):
+                r = compare_curve(src, pairs[i][0], pdf, pmn, scale(pairs[i][0]))
+                agree += r["n"] * r["within_2"] if r and r.get("n") else 0.0
+            if best is None or agree > best[0]:
+                best = (agree, perm)
+        for i, pmn in zip(g, best[1]):
+            pairs[i] = (pairs[i][0], pmn)
     out = []
     for mn, pmn in pairs:
-        nm = _name(dict((m, d) for m, _u, d in src["curves"])[mn], mn)
-        sc = (scales_by_name or {}).get(_norm(nm))
-        r = compare_curve(src, mn, pdf, pmn, sc)
+        nm = names[mn]
+        r = compare_curve(src, mn, pdf, pmn, scale(mn))
         if r is None:
             continue
         r.update(source=mn, pdf=pmn, name=nm, kind=_kind(nm))
