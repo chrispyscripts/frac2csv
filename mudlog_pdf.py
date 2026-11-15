@@ -628,6 +628,28 @@ def _ends_from_decades(c, x0, x1):
     return (l_, r_) if l_ and r_ and (l_, r_) != (lv, rv) else (lv, rv)
 
 
+def _past_decade_lines(c, lines_pt, x0, x1):
+    """a log scale's track whose edges were taken from its decade lines
+    (its numbers 1 and 1000 on two of them, the track running on to 0.2 and
+    2000 past them): out to the next line each side within a decade, where
+    that is no line of the decades. -> (x0, x1)"""
+    lv, rv = c.left, c.right
+    if not (lv > 0 and rv > 0) or abs(math.log10(rv / lv)) < 0.99:
+        return x0, x1
+    dec = math.log10(rv / lv)
+    if abs(dec - round(dec)) > 0.01:
+        return x0, x1
+    per = abs(c.right_at - c.left_at) / dec
+    if per < 5 or abs(min(c.left_at, c.right_at) - x0) > 1.5 or abs(max(c.left_at, c.right_at) - x1) > 1.5:
+        return x0, x1
+    inner = [l for l in lines_pt if x0 - 1 <= l <= x1 + 1]
+    if not all(abs((l - x0) / per - round((l - x0) / per)) < 0.05 for l in inner):
+        return x0, x1                            # (the lines between are not every decade's)
+    lo = [l for l in lines_pt if x0 - per + 1 < l < x0 - 1]
+    hi = [l for l in lines_pt if x1 + 1 < l < x1 + per - 1]
+    return (max(lo) if lo else x0), (min(hi) if hi else x1)
+
+
 def _track_edges(lines_pt, a_left, a_right):
     """the long lines either side of a caption's two numbers"""
     lo = [x for x in lines_pt if x <= a_left + 1.0]
@@ -1384,6 +1406,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         names = collections.Counter((c.name, c.unit, c.kind) for _d, c in seen)
         best = max(names, key=lambda k: (k[2] is not None, names[k], len(k[0]) + len(k[1] or "")))
         first = next(c for _d, c in seen if (c.name, c.unit, c.kind) == best)
+        x0, x1 = _past_decade_lines(first, lines_pt, x0, x1)
         secs = []
         for d, c in seen:
             l_, r_ = _ends_from_decades(c, x0, x1)
