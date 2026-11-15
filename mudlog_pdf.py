@@ -822,6 +822,7 @@ def _moves(segs, top, n, step):
 
 
 NULL = -999.25
+JUNK = -99.99          # a mudlog's own "no reading", drawn as one too
 
 
 def _junk_dives(line, top, step, left, right):
@@ -851,23 +852,57 @@ def _null_dips(line, top, step, left, right):
     if right == left:
         return set()
     out = set()
-    pn = (NULL - left) / (right - left)
-    if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
-        return out
-    # (a place on an edge is no sign: a reading of nothing is drawn there)
-    at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5 and min(abs(q), abs(q - 1)) > 0.02]
-    for da, pa, db, pb in line:
-        for d, p in ((da, pa), (db, pb)):
-            if any(abs(p - q) < 0.004 for q in at):
-                j = int(round((d - top) / step))
-                # past the track nothing else is drawn there: the line on its
-                # way down to it and back up is no reading either; its copy
-                # inside the track can meet the line's own corner by chance
-                out.update(range(j - 3, j + 4) if not 0 <= p <= 1 else (j,))
+    for junk in (NULL,):
+        pn = (junk - left) / (right - left)
+        if -wscale.EDGE <= pn <= 1 + wscale.EDGE or abs(pn) > 3:
+            continue
+        # (a place on an edge is no sign: a reading of nothing is drawn there)
+        at = [q for q in (pn - 1, pn, pn + 1) if -1.5 < q < 2.5 and min(abs(q), abs(q - 1)) > 0.02]
+        for da, pa, db, pb in line:
+            if db - da > 0.5 and abs(pa - pb) < 1e-4 and any(abs(pa - q) < 0.002 for q in at):
+                # drawn flat along it (or its copy) for a stretch: no reading
+                # there all along (a steady reading does not sit on it)
+                out.update(range(int(round((da - top) / step)), int(round((db - top) / step)) + 1))
+                continue
+            for d, p in ((da, pa), (db, pb)):
+                if any(abs(p - q) < 0.004 for q in at):
+                    j = int(round((d - top) / step))
+                    # past the track nothing else is drawn there: the line on
+                    # its way down to it and back up is no reading either; its
+                    # copy inside the track can meet the line's own corner by
+                    # chance
+                    out.update(range(j - 3, j + 4) if not 0 <= p <= 1 else (j,))
     return out
 
 
-def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=(), k0=0):
+def _junk_flats(line, top, step, left, right):
+    """the readings where a mudlog's own "no reading" (-99.99) is drawn
+    flat for a stretch: on a wide scale from nothing just past the low
+    edge, its copy one width on inside the track (a steady reading does not
+    sit exactly there) -> {index}"""
+    if right == left or left != 0:
+        return set()
+    pn = (JUNK - left) / (right - left)
+    if -wscale.EDGE <= pn or pn < -0.5:
+        return set()
+    # (a dashed line draws it in dashes: those close together are one stretch)
+    flat = sorted((da, db) for da, pa, db, pb in line
+                  if abs(pa - pb) < 1e-4 and min(abs(pa - pn), abs(pa - pn - 1)) < 0.002)
+    spans = []
+    for da, db in flat:
+        if spans and da - spans[-1][1] < 0.8:
+            spans[-1][1] = max(spans[-1][1], db)
+            spans[-1][2] += 1
+        else:
+            spans.append([da, db, 1])
+    out = set()
+    for da, db, n in spans:
+        if db - da > 0.5 and (n >= 3 or db - da > 1.0):
+            out.update(range(int(round((da - top) / step)), int(round((db - top) / step)) + 1))
+    return out
+
+
+def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=(), k0=0, junk=()):
     """a curve's readings where LogViewer drew it with one line only, down
     the log: series[i], where its line crosses depth i as a share of the
     track, unclipped (the PDF keeps the line past the track's edge, cut off
@@ -998,6 +1033,11 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         if i in nulls or (i in dives and dive_junk):
             out.append(None)
             last, k = None, 0
+            continue
+        if i in junk:
+            pj = (JUNK - left) / (right - left)
+            out.append((JUNK, True))             # the log's own "no reading", as it holds it
+            last, k = pj, -1
             continue
         pts = sorted(ps or ())
         # two lines one on each edge (a frame, or a line pinned at both
@@ -1403,7 +1443,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                 under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
                 args = dict(under=under,
                             nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
-                            dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1})
+                            dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1},
+                            junk={i - i0 for i in _junk_flats(line, top, step, left, right) if i0 <= i < i1})
                 got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], **args)
                 # a curve is in its scale most of the way (it is printed on it):
                 # one read past it for most of the log started a width off (a

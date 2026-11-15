@@ -215,6 +215,20 @@ class OneLine(unittest.TestCase):
         self.assertAlmostEqual(got[0], 35, delta=0.5)
         self.assertAlmostEqual(got[-1], 82, delta=0.5)
 
+    def test_a_mudlogs_own_no_reading_drawn_flat(self):
+        # gas 0 - 2000: -99.99 for a stretch is drawn (dashed) just under the
+        # low edge, its copy flat at 0.95 inside the track
+        pc = 1 + M.JUNK / 2000.0
+        line = [(100.0, 0.3, 100.1, -0.05)] + [(100.1 + 0.3 * j, pc, 100.3 + 0.3 * j, pc) for j in range(8)]
+        got = M._junk_flats(line, 100.0, 0.1, 0.0, 2000.0)
+        self.assertTrue(set(range(2, 22)) <= got, sorted(got))
+        self.assertEqual(M._junk_flats(line, 100.0, 0.1, 50.0, 150.0), set())        # not a scale from nothing
+        # read as the log holds it, under the scale; the line in again after
+        series = [[0.3], [0.2]] + [[pc]] * 20 + [[0.02, 1.02], [0.1], [0.12]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 2000.0, junk=set(range(2, 22)))]
+        self.assertEqual(got[5], M.JUNK)
+        self.assertAlmostEqual(got[-1], 240, delta=1)
+
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
         # wrap is read across the gap
