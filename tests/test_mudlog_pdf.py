@@ -305,6 +305,21 @@ class Legend(unittest.TestCase):
         self.assertEqual(got, {("ROP", 0.0, 5.0), ("MUD WT", 0.0, 10.0)})
         doc.close()
 
+    def test_a_decade_printed_as_a_power(self):
+        # sideways: 10 100 Total Gas 1000 1e4 up the page
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        for y, t in ((243, "10"), (214, "100"), (200, "Total Gas (units)"), (179, "1000"), (150, "1e4")):
+            pg.insert_text((400, y), t, fontsize=6.5, color=(1, 0, 0))
+        got = [(c.name, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: -y)]
+        self.assertEqual(got, [("Total Gas", 10.0, 10000.0)])
+        doc.close()
+
+    def test_a_description_or_depth_note_is_no_caption(self):
+        self.assertIsNone(L._caption_name("m TVD, (-949.33 m SS)"))
+        self.assertIsNone(L._caption_name("loose sub rounded quartz and random chert grains. Poor (10%)"))
+        self.assertEqual(L._caption_name("Sidetrack 1 MWD GR (API)"), ("Sidetrack 1 MWD GR", "API", "gamma"))
+
     def test_double_bracket_units(self):
         self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))
         self.assertEqual(L._caption_name("Deep ((ohm/m))"), ("Deep", "ohm/m", "deep_resistivity"))

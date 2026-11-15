@@ -699,6 +699,33 @@ def _past_decade_lines(c, lines_pt, x0, x1):
     return (max(lo) if lo else x0), (min(hi) if hi else x1)
 
 
+def _reread_after_short_gaps(got, read_from, past, levels):
+    """a line back after a short gap a width off (a null between, the
+    reading under the scale after it): each stretch between gaps of 3 or
+    more that is mostly past the scale is read again, from its start (or
+    from the stretch before's, where the line went off the scale's far
+    edge on its way in) to the end, from each wrap level in `levels`;
+    kept where that halves what is past the scale in the stretch and is
+    no worse from there on. read_from(start, k0) -> readings from start
+    to the end; past(readings) -> the share past the scale. Only where
+    the line is read past its scale most of the way (a curve is printed on
+    its scale: one really past it for a while is left so). got is changed
+    in place"""
+    if past(got) <= 0.5:
+        return
+    parts = _stretches(got, gap=3)
+    for m_, (a_, b_) in enumerate(parts):
+        if b_ - a_ < 20 or past(got[a_:b_]) <= 0.5:
+            continue
+        for s_ in ([a_, parts[m_ - 1][0]] if m_ else [a_]):
+            alt = next((alt for alt in (read_from(s_, k0) for k0 in levels)
+                        if past(alt[a_ - s_:b_ - s_]) < 0.5 * past(got[a_:b_]) and past(alt) < past(got[s_:])),
+                       None)
+            if alt is not None:
+                got[s_:] = alt
+                break
+
+
 def _stretches(got, gap=30):
     """[(start, end)] of the stretches of readings between gaps of `gap`
     or more with nothing read"""
@@ -1627,6 +1654,12 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                         if past(alt) < 0.5 * past(got[a_:b_]):
                             got[a_:b_] = alt
                             break
+                # and for a line back a width off after a short gap
+                def from_(s_, k0):
+                    sub = {kk: ({j - s_ for j in vv if s_ <= j} if isinstance(vv, set) else vv)
+                           for kk, vv in args.items()}
+                    return read_one_line(whole[i0 + s_:i1], left, right, moves[i0 + s_:i1], k0=k0, **sub)
+                _reread_after_short_gaps(got, from_, past, (-1, 1) if under else (1,))
             for k, r in enumerate(got):
                 if r is None:
                     continue

@@ -249,6 +249,40 @@ class OneLine(unittest.TestCase):
         self.assertAlmostEqual(got[45], 75, delta=1)
         self.assertAlmostEqual(got[-1], 310, delta=1)
 
+    def test_a_line_back_a_width_off_after_a_short_gap_read_again(self):
+        # gamma 50 - 150: in the scale, a null (4 readings of nothing), then
+        # read a width high (k 1) for the rest; read again from the
+        # stretch from k -1 it is in the scale: kept from there on
+        ok = [(80.0, True)] * 30
+        high = [(180.0, True)] * 60
+        got = ok + [None] * 4 + high
+        seen = []
+
+        def read_from(s_, k0):
+            seen.append((s_, k0))
+            return [(80.0, True)] * 60 if k0 == -1 else [(280.0, True)] * 60
+
+        def past(g):
+            rs = [r[0] for r in g if r]
+            return sum(not 48 <= v <= 152 for v in rs) / len(rs) if rs else 0.0
+        M._reread_after_short_gaps(got, read_from, past, (-1, 1))
+        self.assertEqual(got[:34], ok + [None] * 4)
+        self.assertEqual(got[34:], [(80.0, True)] * 60)
+        self.assertEqual(seen[0], (34, -1))
+        # a stretch really past its scale that no level brings in stays
+        got = ok + [None] * 4 + high
+        M._reread_after_short_gaps(got, lambda s_, k0: [(380.0, True)] * (len(got) - s_), past, (-1, 1))
+        self.assertEqual(got[34:], high)
+        # nor is a short one read again
+        got = ok + [None] * 4 + high[:10]
+        M._reread_after_short_gaps(got, read_from, past, (-1, 1))
+        self.assertEqual(got[34:], high[:10])
+        # nor anything in a line read in its scale most of the way (one
+        # really past it for a while)
+        got = ok * 3 + [None] * 4 + high
+        M._reread_after_short_gaps(got, read_from, past, (-1, 1))
+        self.assertEqual(got[94:], high)
+
     def test_a_pair_by_the_low_edge_is_in_the_scale(self):
         series = [[0.98], [0.96, -0.04], [0.9]]
         got = self.read(series)

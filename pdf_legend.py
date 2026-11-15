@@ -37,7 +37,7 @@ SWATCH_MAX_H = 24.0
 LABEL_GAP = 60.0         # pt from a picture's right edge to its label at most
 ROW_TOL = 4.5            # pt: a label's middle within the picture's height, give or take this
 COLUMN_TOL = 20.0        # pt: entries this close across are one column of a box
-NUMBER = re.compile(r"[-+]?\d+(\.\d+)?$")
+NUMBER = re.compile(r"[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$")    # (a log scale's top may be printed 1e4)
 
 
 class Swatch:
@@ -383,6 +383,8 @@ def _caption_name(text):
         return None             # a depth scale's label (a cross-section's TVD), not a curve
     if not unit and name.strip().islower() and len(name.strip()) <= 6:
         return None             # a word of the descriptions ("med", "gas."): a caption is capitalised
+    if name.rstrip().endswith((",", ";")) or len(name.split()) > 6:
+        return None             # a line of the descriptions, or a depth's note ("m TVD, (-949.33 m SS)")
     return name.strip(), unit.strip(), vc["key"]
 
 
