@@ -25,6 +25,7 @@ box title that is not a group ("ACCESSORIES") starts a box with none.
 Needs PyMuPDF.
 """
 import bisect
+import collections
 import math
 import re
 
@@ -397,10 +398,10 @@ def _decades(left, right, mine, ca):
 
     def out(end, way):
         _d, v, at = end
-        row = next((o for a, o, x in mine if abs(a - at) < 0.5 and abs(x - v) < 1e-9), None)
+        row = next((o for a, o, x, *_ in mine if abs(a - at) < 0.5 and abs(x - v) < 1e-9), None)
         while row is not None:
             want = v / r if way < 0 else v * r
-            nxt = [(abs(a - at), a, x) for a, o, x in mine
+            nxt = [(abs(a - at), a, x) for a, o, x, *_ in mine
                    if (a - at) * way > 2.0 and abs(a - at) <= gap and abs(o - row) <= 3.0
                    and abs(x - want) <= 0.01 * want]
             if not nxt:
@@ -423,7 +424,9 @@ def captions(pg, pno, across):
     the names, so the nearest number on each side is taken."""
     lines = _lines(pg, by_colour=True)
     nums = [(bb, float(t), c, sz) for bb, t, c, sz in lines if NUMBER.match(t.strip())]
-    out = []
+    out, where = [], {}
+    # the page's other coordinate (a stack of captions is a column of it)
+    perp = (lambda x, y: x) if abs(across(1.0, 0.0) - across(0.0, 0.0)) < 1e-9 else (lambda x, y: y)
     for bb, text, col, size in lines:
         nm = _caption_name(text)
         if not nm:
@@ -441,7 +444,10 @@ def captions(pg, pno, across):
             if d > 260:
                 continue
             na = across(nx, ny)
-            mine.append((na, math.sqrt(max(0.0, d * d - (na - ca) ** 2)), v))
+            off = math.sqrt(max(0.0, d * d - (na - ca) ** 2))
+            if off > 50:
+                continue                    # (another column's: a legend's names have no numbers)
+            mine.append((na, off, v, perp(nx, ny)))
             if na < a0:
                 if left is None or d < left[0]:
                     left = (d, v, na)
@@ -454,7 +460,40 @@ def captions(pg, pno, across):
         c = Caption(pno + 1, bb, nm[0], nm[2], nm[1], col)
         c.left, c.left_at, c.right, c.right_at = left[1], left[2], right[1], right[2]
         out.append(c)
+        where[id(c)] = (a0, a1, mine)
+    _by_rank(out, where)
     return out
+
+
+def _by_rank(caps, where):
+    """captions of one colour stacked by each other (a sideways page) that
+    took the same number on a side: the stack's numbers run in the order
+    of its names, the first name's outermost, so they are handed out in
+    that order"""
+    def column(c, at, v):                       # where across the page the number taken sits
+        return next((round(pp) for a, _o, x, pp in where[id(c)][2] if abs(a - at) < 0.5 and abs(x - v) < 1e-9), None)
+
+    by = collections.defaultdict(list)
+    for c in caps:
+        by[(c.colour, "L", round(c.left_at, 1), column(c, c.left_at, c.left))].append(c)
+        by[(c.colour, "R", round(c.right_at, 1), column(c, c.right_at, c.right))].append(c)
+    for (_col, side, at, col_), cs in by.items():
+        if col_ is None or len(cs) < 2 or len({c.name for c in cs}) < 2:
+            continue
+        cs = sorted(cs, key=lambda c: where[id(c)][0])
+        lo = min(where[id(c)][0] for c in cs)
+        hi = max(where[id(c)][1] for c in cs)
+        cand = sorted({(round(a, 2), v) for c in cs for a, o, v, pp in where[id(c)][2]
+                       if abs(pp - col_) <= 3.0 and (a < lo if side == "L" else a > hi)},
+                      key=lambda t: abs(t[0] - (lo if side == "L" else hi)))[:len(cs)]
+        if len(cand) < len(cs):
+            continue
+        cand.sort()
+        for c, (a, v) in zip(cs, cand):
+            if side == "L":
+                c.left, c.left_at = v, a
+            else:
+                c.right, c.right_at = v, a
 
 
 def rgb(colour):

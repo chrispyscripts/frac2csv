@@ -293,6 +293,17 @@ class Legend(unittest.TestCase):
         self.assertIn(("WOB", "kDaN", 0.0, 30.0), got)
         doc.close()
 
+    def test_a_stack_of_one_colour_takes_its_numbers_in_order(self):
+        # sideways, a stack: 5 10 above, ROP and MUD WT, 0 0 below, all
+        # black; the nearest number to ROP is MUD WT's 10
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        for y, t in ((66, "5"), (90, "10"), (103, "ROP (min/m)"), (127, "MUD WT (kg/m3)"), (141, "0"), (164, "0")):
+            pg.insert_text((400, y), t, fontsize=6)
+        got = {(c.name, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: -y)}
+        self.assertEqual(got, {("ROP", 0.0, 5.0), ("MUD WT", 0.0, 10.0)})
+        doc.close()
+
     def test_double_bracket_units(self):
         self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))
         self.assertEqual(L._caption_name("Deep ((ohm/m))"), ("Deep", "ohm/m", "deep_resistivity"))
