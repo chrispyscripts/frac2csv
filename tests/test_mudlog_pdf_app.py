@@ -229,6 +229,17 @@ class OneLine(unittest.TestCase):
         self.assertEqual(got[5], M.JUNK)
         self.assertAlmostEqual(got[-1], 240, delta=1)
 
+    def test_the_no_reading_flat_moving_at_its_end_is_still_junk(self):
+        # gas 0 - 300: -99.99 drawn flat (its copy at 0.667), the copy
+        # moving at its very end, then the line back up from under the
+        # scale: back in it, not a width over
+        pc = 1 + M.JUNK / 300.0
+        series = [[0.68]] * 3 + [[pc]] * 40 + [[pc + 0.06], [0.898, -0.097], [0.065, 1.062], [0.227, 1.226],
+                                               [0.386], [0.45]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 300.0, junk=set(range(3, 44)))]
+        self.assertEqual(got[10], M.JUNK)
+        self.assertAlmostEqual(got[-1], 135, delta=1)
+
     def test_nothing_drawn_on_both_edges_after_a_low_reading(self):
         # gas 0 - 500 down to nothing (-3): drawn just under the low edge and
         # along the top; then up from nothing: no wrap

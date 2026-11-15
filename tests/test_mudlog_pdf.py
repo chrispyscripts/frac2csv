@@ -319,6 +319,9 @@ class Legend(unittest.TestCase):
         self.assertIsNone(L._caption_name("m TVD, (-949.33 m SS)"))
         self.assertIsNone(L._caption_name("loose sub rounded quartz and random chert grains. Poor (10%)"))
         self.assertEqual(L._caption_name("Sidetrack 1 MWD GR (API)"), ("Sidetrack 1 MWD GR", "API", "gamma"))
+        self.assertIsNone(L._caption_name("z grains and abundant (5%)"))
+        self.assertIsNone(L._caption_name("RPM-0"))
+        self.assertEqual(L._caption_name("gamma leg 1 (API)")[0], "gamma leg 1")
 
     def test_double_bracket_units(self):
         self.assertEqual(L._caption_name("Neutron ((%))"), ("Neutron", "%", "neutron_porosity"))

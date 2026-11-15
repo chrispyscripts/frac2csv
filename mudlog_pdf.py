@@ -1162,8 +1162,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             last_i = i - 1
         if k == -1:
             under_since = i - 1 if under_since is None else under_since
-            top_ps = [q for ps_ in series[max(under_since, i - 10):i] for q in ps_ or () if q >= 0.5]   # (the last 1 m)
-            drawn = sum(1 for ps_ in series[under_since:i] if any(q >= 0.5 for q in ps_ or ()))
+            # (the last 1 m; the log's own "no reading" drawn flat is no part of it)
+            top_ps = [q for j in range(max(under_since, i - 10), i) if j not in junk for q in series[j] or () if q >= 0.5]
+            drawn = sum(1 for j in range(under_since, i) if j not in junk and any(q >= 0.5 for q in series[j] or ()))
             if not under and i - under_since > 10 and top_ps and max(top_ps) - min(top_ps) > 0.03 \
                     and drawn >= 0.7 * (i - under_since):    # (a line drawn all along, not junk's bits)
                 k, under_since = 0, None         # junk under a scale from nothing sits flat: a line
