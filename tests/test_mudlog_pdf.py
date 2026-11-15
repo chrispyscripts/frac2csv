@@ -11,6 +11,7 @@ symbols.
 
 Run: python3 -m unittest tests.test_mudlog_pdf
 """
+import math
 import os
 import sys
 import unittest
@@ -317,6 +318,47 @@ class Legend(unittest.TestCase):
         caps = L.captions(pg, 0, lambda x, y: -y)
         self.assertEqual([(c.name, c.left, c.right) for c in caps], [("Gas", 0.0, 100.0)])
         doc.close()
+
+    def test_a_resistivity_caption_with_one_decade_number(self):
+        # upright: a red "0 Total Gas (units) 2000" row, under it a red
+        # "Shallow (Ohms)" with only its 10 under the name's end (its ends
+        # unprinted); the Total Gas 2000 on its left is no end of its
+        doc = fitz.open()
+        pg = doc.new_page(width=612, height=792)
+        red = (1, 0, 0)
+        pg.insert_text((40, 100), "0", fontsize=6.5, color=red)
+        pg.insert_text((60, 100), "Total Gas (units)", fontsize=6.5, color=red)
+        pg.insert_text((130, 100), "2000", fontsize=6.5, color=red)
+        pg.insert_text((181, 120), "Shallow (Ohms)", fontsize=6.5, color=red)
+        end = 181 + fitz.get_text_length("Shallow (Ohms)", fontsize=6.5)
+        pg.insert_text((end - 2 - fitz.get_text_length("10", fontsize=6.5) / 2, 128), "10", fontsize=6.5, color=red)
+        one = []
+        caps = L.captions(pg, 0, lambda x, y: x, one)
+        self.assertEqual({c.name for c in caps}, {"Total Gas"})
+        self.assertEqual([(c.name, c.left, c.right) for c in one], [("Shallow", 10.0, 10.0)])
+        self.assertAlmostEqual(one[0].left_at, end - 2, delta=0.5)
+        # without a list for them, such a caption is left out
+        self.assertEqual({c.name for c in L.captions(pg, 0, lambda x, y: x)}, {"Total Gas"})
+        doc.close()
+
+    def test_a_log_scale_s_ends_from_its_grid(self):
+        # a one-decade track 146 - 254 (2 - 20), a line at each whole
+        # number 3 .. 10, the 10 printed by its line
+        per = 108.0
+        at = lambda m, x0=146.0, sign=1: x0 + sign * per * math.log10(m / 2)
+        grid = [at(m) for m in range(3, 11)] + [10.0, 300.0]       # (other tracks' lines)
+        self.assertEqual(M._log_ends_from_grid(grid, 146.0, 254.0, 10.0, at(10) + 2), (2, 20))
+        # every other number's line only (4 6 8 10)
+        grid = [at(m) for m in (4, 6, 8, 10)]
+        self.assertEqual(M._log_ends_from_grid(grid, 146.0, 254.0, 10.0, at(10) + 3), (2, 20))
+        # drawn the other way (20 on the left)
+        grid = [at(m, 254.0, -1) for m in range(3, 11)]
+        self.assertEqual(M._log_ends_from_grid(grid, 146.0, 254.0, 10.0, at(10, 254.0, -1)), (20, 2))
+        # an even grid is no log grid
+        grid = [146.0 + 10.8 * i for i in range(1, 10)]
+        self.assertIsNone(M._log_ends_from_grid(grid, 146.0, 254.0, 10.0, grid[6]))
+        # nor are too few lines
+        self.assertIsNone(M._log_ends_from_grid([at(m) for m in (5, 10)], 146.0, 254.0, 10.0, at(10)))
 
 
 @unittest.skipUnless(fitz, "PyMuPDF not installed")

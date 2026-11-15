@@ -414,7 +414,7 @@ def _decades(left, right, mine, ca):
     return out(left, -1), out(right, 1)
 
 
-def captions(pg, pno, across):
+def captions(pg, pno, across, one=None):
     """the curve captions on a page. across(x, y) gives a page point's
     place across the log (the coordinate the scale runs along), so a
     caption on a sideways page reads the same as one the right way up.
@@ -423,7 +423,9 @@ def captions(pg, pno, across):
     colour either side of it across the log: the scale's left end on the
     left, its right end on the right. On a page that is the right way up
     the three sit on one row; on a sideways one the numbers are stacked by
-    the names, so the nearest number on each side is taken."""
+    the names, so the nearest number on each side is taken. one, a list,
+    gets the resistivity captions with a single decade number only (both
+    ends set to it, to be worked out from the track's grid)."""
     lines = _lines(pg, by_colour=True)
     nums = [(bb, float(t), c, sz) for bb, t, c, sz in lines if NUMBER.match(t.strip())]
     out, where = [], {}
@@ -436,7 +438,7 @@ def captions(pg, pno, across):
         a0, a1 = sorted((across(bb[0], bb[1]), across(bb[2], bb[3])))
         cx, cy = (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
         ca = across(cx, cy)
-        left = right = None
+        left = right = at_end = None
         mine = []                                   # (along, off the row, value) of this colour's numbers near it
         for nb, v, ncol, nsz in nums:
             if ncol != col or abs(nsz - size) > 0.2 * size:
@@ -456,6 +458,24 @@ def captions(pg, pno, across):
             elif na > a1:
                 if right is None or d < right[0]:
                     right = (d, v, na)
+            elif na > a1 - 5 and (at_end is None or d < at_end[0]):
+                at_end = (d, v, na)             # (a decade number set under the name's end)
+        if right is None and at_end is not None:
+            if left is not None and one is not None and "resistivity" in (nm[2] or "") \
+                    and at_end[1] in (0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0):
+                left = None                     # (the number on its left another track's end)
+            if left is None:
+                right = at_end
+        if (left is None) != (right is None) and one is not None and "resistivity" in (nm[2] or "") \
+                and (left or right)[1] in (0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0):
+            # a log scale printed with one decade only (its ends unprinted):
+            # mudlog_pdf works the ends out from the track's log grid
+            c = Caption(pno + 1, bb, nm[0], nm[2], nm[1], col)
+            end = left or right
+            c.left = c.right = end[1]
+            c.left_at = c.right_at = end[2]
+            one.append(c)
+            continue
         if left is None or right is None:
             continue
         left, right = _decades(left, right, mine, ca)

@@ -628,6 +628,55 @@ def _ends_from_decades(c, x0, x1):
     return (l_, r_) if l_ and r_ and (l_, r_) != (lv, rv) else (lv, rv)
 
 
+def _log_ends_from_grid(grid, x0, x1, v, at):
+    """a log scale's ends at a track's edges x0, x1 from its grid: lines at
+    each whole number of each decade (2 3 4 ... 9 10, or some of them),
+    closer together toward each decade's top, the number v printed by its
+    line near `at`. -> (left, right) where the grid plainly is such and
+    the ends come out as a scale's numbers spanning whole decades, else
+    None"""
+    g = sorted(x for x in grid if x0 + 0.5 < x < x1 - 0.5)
+    if len(g) < 4:                                  # (every other number's line: 4 6 8 10)
+        return None
+
+    def fits(X, D, sign):
+        n = 0
+        for z in g:
+            t = sign * (z - X) / D                   # decades from v
+            k = math.floor(t + 1e-9)
+            mi = round(10 ** (t - k))
+            if 1 <= mi <= 10 and abs(sign * D * (k + math.log10(mi)) - (z - X)) <= 1.0:
+                n += 1
+        return n
+
+    for X in sorted((x for x in g if abs(x - at) <= 8), key=lambda x: abs(x - at)):
+        cand = []                                   # (lines fitted, per decade, way)
+        for z in g:
+            if z == X:
+                continue
+            for mi in range(2, 10):
+                for k in (-1, 0):
+                    lv = k + math.log10(mi)
+                    for sign in (1, -1):
+                        D = sign * (z - X) / lv
+                        if D >= 20:
+                            cand.append((fits(X, D, sign), D, sign))
+        most = max((n for n, _D, _s in cand), default=0)
+        if most < max(4, 0.8 * len(g)):
+            continue
+        # of the fits that take the most lines, the first whose ends are a
+        # scale's numbers spanning whole decades
+        for _n, D, sign in (t for t in cand if t[0] == most):
+            l_ = _nice(v * 10 ** (sign * (x0 - X) / D))
+            r_ = _nice(v * 10 ** (sign * (x1 - X) / D))
+            if not (l_ and r_ and l_ != r_):
+                continue
+            dec = math.log10(max(l_, r_) / min(l_, r_))
+            if abs(dec - round(dec)) < 0.01 and round(dec) >= 1:     # (a log scale spans whole decades)
+                return l_, r_
+    return None
+
+
 def _past_decade_lines(c, lines_pt, x0, x1):
     """a log scale's track whose edges were taken from its decade lines
     (its numbers 1 and 1000 on two of them, the track running on to 0.2 and
@@ -1316,8 +1365,22 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
     captioned curve whose line could not be read"""
     dropped = dropped if dropped is not None else []
     caps = []
+    grid = _grid_lines(doc, pages)
+    from_grid = {}                                 # caption -> the track its log scale was fitted to
     for P in pages:
-        for c in L.captions(doc[P.page - 1], P.page - 1, P.across):
+        ones = []
+        found = L.captions(doc[P.page - 1], P.page - 1, P.across, ones)
+        # a log scale printed with one decade (10) only: its ends from the
+        # track's log grid where that is plain
+        for c in ones:
+            e = _track_edges(lines_pt, c.left_at, c.right_at)
+            ends = e and _log_ends_from_grid(grid, e[0], e[1], c.left, c.left_at)
+            if ends:
+                c.left, c.right = ends
+                c.left_at, c.right_at = e[0] + 0.5, e[1] - 0.5
+                from_grid[id(c)] = e
+                found.append(c)
+        for c in found:
             x0, y0, x1, y1 = c.bbox
             # a caption is printed just below where its scale starts
             d = min(P.depth(x0, y0), P.depth(x1, y1)) - CAPTION_M
@@ -1346,7 +1409,38 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
     def apart(c, P):
         n0, n1 = across_name(c, P)
         return any(c.left_at + 1 < l < n0 - 1 or n1 + 1 < l < c.right_at - 1 for l in lines_pt)
-    caps = [(d, c) for d, c, P in caps if not (id(c) in shared and apart(c, P))]
+
+    def own_side(c, P):
+        """a resistivity caption that took another track's number on one
+        side, with its own decade number on the other: its ends from the
+        track's log grid"""
+        if "resistivity" not in (c.kind or ""):
+            return None
+        n0, n1 = across_name(c, P)
+        if any(c.left_at + 1 < l < n0 - 1 for l in lines_pt):
+            v, at = c.right, c.right_at
+        elif any(n1 + 1 < l < c.right_at - 1 for l in lines_pt):
+            v, at = c.left, c.left_at
+        else:
+            return None
+        if v not in (0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0):
+            return None
+        e = _track_edges(lines_pt, at, at)
+        ends = e and _log_ends_from_grid(grid, e[0], e[1], v, at)
+        if not ends:
+            return None
+        c.left, c.right = ends
+        c.left_at, c.right_at = e[0] + 0.5, e[1] - 0.5
+        from_grid[id(c)] = e
+        return c
+    kept = []
+    for d, c, P in caps:
+        if id(c) in shared and apart(c, P):
+            c = own_side(c, P)
+            if c is None:
+                continue
+        kept.append((d, c))
+    caps = kept
     # one curve per colour and name in a column: a curve captioned again
     # lower down, in full or cut short ("Gamma Ray", "Gam"), is the same
     # curve, named by its fullest caption; its scale from each caption down
@@ -1422,7 +1516,6 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                     and e2[1] - e2[0] <= 1.5 * (e1[1] - e1[0])):
                 a, b = band[e1], band.get(e2, e2)
                 band[e1] = (min(a[0], b[0]), max(a[1], b[1]))
-    grid = _grid_lines(doc, pages)
     out = []
     for (colour, (x0, x1), _name), seen in curves.items():
         x0, x1 = band.get((x0, x1), (x0, x1))
@@ -1442,6 +1535,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         best = max(names, key=lambda k: (k[2] is not None, names[k], len(k[0]) + len(k[1] or "")))
         first = next(c for _d, c in seen if (c.name, c.unit, c.kind) == best)
         x0, x1 = _past_decade_lines(first, lines_pt, x0, x1)
+        fitted = next((from_grid[id(c)] for _d, c in seen if id(c) in from_grid), None)
+        if fitted:
+            x0, x1 = fitted                      # its scale was fitted to these edges: no wider
         secs = []
         for d, c in seen:
             l_, r_ = _ends_from_decades(c, x0, x1)
@@ -1564,12 +1660,14 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # 10 - 1000 is not
         logs = []
         resist = "resistivity" in (first.kind or V.curve(first.name)["key"] or "")
-        if off_page and any(l_ > 0 and r_ > 0 and max(l_, r_) / min(l_, r_) >= (100 if resist else 1000)
+        if off_page and any(l_ > 0 and r_ > 0 and (fitted or max(l_, r_) / min(l_, r_) >= (100 if resist else 1000))
                             for _d, l_, r_ in secs):
             dropped.append((first.name, "its logarithmic scale runs off the page"))
             continue
         for j, (d_from, left, right) in enumerate(secs):
-            if left > 0 and right > 0 and max(left, right) / min(left, right) >= (100 if resist else 1000):
+            # (a scale fitted to its track's log grid is logarithmic whatever
+            # it spans: 2 - 20 too)
+            if left > 0 and right > 0 and (fitted or max(left, right) / min(left, right) >= (100 if resist else 1000)):
                 d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
                 i0 = max(0, int(round((d_from - top) / step)))
                 i1 = min(n, int(round((d_to - top) / step)))
