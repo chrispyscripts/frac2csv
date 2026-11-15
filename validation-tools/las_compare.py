@@ -248,23 +248,26 @@ def compare(src, pdf, scales_by_name=None):
     scale = lambda mn: (scales_by_name or {}).get(_norm(names[mn]))
     # curves of one name ("Gamma" twice): paired the way their readings
     # agree best (the printout's order of them is not the source's)
+    # (and where the source has more of them than the printout read, the
+    # ones it read go to the source curves they agree with)
     groups = collections.defaultdict(list)
-    for i, (mn, pmn) in enumerate(pairs):
-        if pmn is not None:
-            groups[_norm(names[mn])].append(i)
+    for i, (mn, _pmn) in enumerate(pairs):
+        groups[_norm(names[mn])].append(i)
     for g in groups.values():
-        if not 2 <= len(g) <= 4:
+        got = [pairs[i][1] for i in g if pairs[i][1] is not None]
+        if len(g) < 2 or not got or len(g) > 4:
             continue
         best = None
-        for perm in itertools.permutations([pairs[i][1] for i in g]):
+        for perm in itertools.permutations(g, len(got)):
             agree = 0.0
-            for i, pmn in zip(g, perm):
+            for i, pmn in zip(perm, got):
                 r = compare_curve(src, pairs[i][0], pdf, pmn, scale(pairs[i][0]))
                 agree += r["n"] * r["within_2"] if r and r.get("n") else 0.0
             if best is None or agree > best[0]:
                 best = (agree, perm)
-        for i, pmn in zip(g, best[1]):
-            pairs[i] = (pairs[i][0], pmn)
+        to = dict(zip(best[1], got))
+        for i in g:
+            pairs[i] = (pairs[i][0], to.get(i))
     out = []
     for mn, pmn in pairs:
         nm = names[mn]
