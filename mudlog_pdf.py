@@ -1062,6 +1062,15 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             last, k = pj, -1
             continue
         pts = sorted(ps or ())
+        # on a scale from nothing, a reading of nothing (or a little under)
+        # is drawn on both edges at once, nothing else drawn: it reads 0
+        # where the reading before was low (by the top it is the top)
+        if left == 0 and k == 0 and (last is None or last <= 0.2) and not any(0.02 < q < 0.98 for q in pts) and any(
+                abs(b - a - 1) < 0.03 and abs(a) <= 0.012 and abs(b - 1) <= 0.012
+                for j, a in enumerate(pts) for b in pts[j + 1:]):
+            out.append((float(left), True))
+            last = 0.0
+            continue
         # two lines one on each edge (a frame, or a line pinned at both
         # ends) say nothing about where the reading is
         pairs = [(a, b) for j, a in enumerate(pts) for b in pts[j + 1:]
@@ -1164,6 +1173,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 leapt = i
             out.append((val(p + k), True))
             last = p + k
+        elif left == 0 and k == 0 and any(p >= 1 - e for p in inside) and any(-0.015 <= q < -e for q in pts):
+            out.append((float(left), True))      # nothing, drawn just under the low edge and along the top
+            last = 0.0
         elif any(p >= 1 - e for p in inside) and not any(p <= e for p in inside):
             if k == 0 and last is not None and last <= 0.25 and went_under(i) and not crossed(i, last, 1.0) \
                     and (under or low_a_while()):

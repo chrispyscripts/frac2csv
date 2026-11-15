@@ -229,6 +229,18 @@ class OneLine(unittest.TestCase):
         self.assertEqual(got[5], M.JUNK)
         self.assertAlmostEqual(got[-1], 240, delta=1)
 
+    def test_nothing_drawn_on_both_edges_after_a_low_reading(self):
+        # gas 0 - 500 down to nothing (-3): drawn just under the low edge and
+        # along the top; then up from nothing: no wrap
+        series = [[0.05], [0.02], [-0.006, 0.996], [-0.008, 0.994], [0.006, 1.008], [0.013, 1.015], [0.03], [0.05]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 500.0)]
+        self.assertEqual(got[2:4], [0.0, 0.0])
+        self.assertAlmostEqual(got[-1], 25, delta=1)
+        # from by the top, the same pair is the top (gamma 0 - 150 at 150)
+        series = [[0.95], [0.98], [0.008, 0.996], [0.02], [0.05]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 150.0)]
+        self.assertGreater(got[2], 140)
+
     def test_after_a_long_gap_the_line_starts_afresh(self):
         # the line high in the track, then nothing for 4 m, then low: no
         # wrap is read across the gap
