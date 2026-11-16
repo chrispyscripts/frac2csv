@@ -930,6 +930,32 @@ class Marking(unittest.TestCase):
 
 
 @unittest.skipUnless(fitz, "needs PyMuPDF")
+class RowShift(unittest.TestCase):
+    """a line drawn in steps on a page with coarse grid rows, its step unknown"""
+
+    def steps(self, row, n=60):
+        segs, d = [], 1000.0
+        for i in range(n):
+            L = row * (2 if i % 3 == 0 else 1)             # a row or two long, as 0.2 m readings at 1:480
+            p = 0.3 + 0.2 * ((i * 7) % 5) / 5
+            segs.append((d, p, d + L, p))
+            d += L
+        return segs
+
+    def test_a_line_in_steps_on_coarse_rows_is_moved_a_row_deeper(self):
+        row = 0.72 / 5.904
+        self.assertAlmostEqual(M._row_shift(self.steps(row), row, 0.1, None), row / 0.1)
+
+    def test_not_where_its_step_is_known_the_rows_are_fine_or_the_line_slopes(self):
+        row = 0.72 / 5.904
+        self.assertEqual(M._row_shift(self.steps(row), row, 0.1, 0.2), 0.0)
+        fine = 0.72 / 11.8079
+        self.assertEqual(M._row_shift(self.steps(fine), fine, 0.1, None), 0.0)
+        sloped = [(1000.0 + 0.2 * i, 0.3, 1000.2 + 0.2 * i, 0.5) for i in range(60)]
+        self.assertEqual(M._row_shift(sloped, row, 0.1, None), 0.0)
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
 class Corners(unittest.TestCase):
     """LogViewer draws a corner for each reading half its recorded step
     shallower, on the 0.01 in grid row next above"""

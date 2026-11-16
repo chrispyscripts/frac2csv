@@ -1779,6 +1779,20 @@ def _shift(values, k, blend=True):
     return out
 
 
+def _row_shift(own, row, step, rec):
+    """how many grid steps to move a line drawn in steps deeper, where its
+    recorded step cannot be told (rec None) on a page whose grid rows
+    (`row` m) are coarse beside it: 0.2 m readings at 1:480 are drawn as
+    steps a row or two long, their lengths no guide to the step, each step
+    on the whole a row shallower than its reading. 0 otherwise"""
+    if rec or row < 0.1:
+        return 0.0
+    long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]
+    if long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.3 * len(long_):
+        return row / step
+    return 0.0
+
+
 def _hold(values, top, step, every):
     """readings on the grid from top by step, each taken at its nearest
     depth that is a whole number of `every` metres (ties go deeper)"""
@@ -2196,6 +2210,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             # way to the next, as the log's own LAS holds it (the line drawn
             # between readings is LogViewer's, not a reading)
             values = _hold(values, top, step, rec)
+        elif _row_shift(own, row, step, rec):
+            values = _shift(values, _row_shift(own, row, step, rec), blend=False)
         vc = V.curve(first.name)
         out.append({"name": first.name, "kind": first.kind or vc["key"], "units": first.unit,
                     "unit": V.unit(first.unit)["key"] if first.unit else None,
