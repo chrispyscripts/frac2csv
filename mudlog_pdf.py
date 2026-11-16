@@ -43,6 +43,7 @@ carry over to others.
 
 Needs PyMuPDF.
 """
+import bisect
 import collections
 import math
 import re
@@ -763,6 +764,33 @@ def _reread_past_runs(got, read_from, past, lo, hi, run=50, follow=False):
                         or abs(first - before) <= abs(got[i][0] - before)):
                     got[i:] = alt
         i = j
+    # a run over the scale straight after a gap, the reading before the gap
+    # only just over the top (not gas): whether the line was still wrapped
+    # after the gap was a guess (unless it goes on where it left off). Read
+    # again afresh from there, kept where that halves what is past the
+    # scale from there on
+    g = 3
+    while g < len(got) and not follow:
+        if over(got[g]) and all(r is None for r in got[g - 3:g]):
+            prior = next((x for x in range(g - 1, max(-1, g - 31), -1) if got[x] is not None), None)
+            j = g
+            while j < len(got) and (got[j] is None or past([got[j]])):
+                j += 1
+            # (where the line was going: on from the reading before the gap
+            # along the line's slope there, a dashed line's gap)
+            prior2 = next((x for x in range(prior - 1, max(-1, prior - 6), -1) if got[x] is not None), None) \
+                if prior is not None else None
+            going = got[prior][0] if prior is not None else None
+            if prior2 is not None:
+                going += (got[prior][0] - got[prior2][0]) * (g - prior) / (prior - prior2)
+            if prior is not None and over(got[prior]) and got[prior][0] <= hi + 0.15 * (hi - lo) and j - g >= run \
+                    and abs(got[g][0] - going) > 0.05 * (hi - lo):          # (not on where it was going)
+                alt = read_from(g, 0)
+                if past(alt) < 0.5 * past(got[g:]):
+                    got[g:] = alt
+            g = max(g + 1, j)
+            continue
+        g += 1
 
 
 def _stretches(got, gap=30):
@@ -861,15 +889,167 @@ def _inside_drawn(segs):
 
 
 def _series(segs, top, n, step):
-    """for each depth top + i * step, the positions where the strokes cross it"""
+    """for each depth top + i * step, the positions where the strokes cross it
+    (a corner on the depth once, not once for each stroke that meets there)"""
     series = [[] for _ in range(n)]
     for da, pa, db, pb in segs:
         i0 = max(0, int(math.ceil((da - top) / step - 1e-9)))
         i1 = min(n - 1, int(math.floor((db - top) / step + 1e-9)))
         for i in range(i0, i1 + 1):
             d = top + i * step
-            series[i].append(pa + (pb - pa) * (d - da) / (db - da))
+            p = pa + (pb - pa) * (d - da) / (db - da)
+            if not any(abs(p - q) < 1e-9 for q in series[i]):
+                series[i].append(p)
     return series
+
+
+ROW_PT = 0.72        # LogViewer draws on a grid of 0.01 in: every corner on it
+SNAP_M = 2.5         # corners judged together over this much of a page
+
+
+def _onto_readings(segs, top, step, row, cuts=(), like=None):
+    """-> ({corner depth: the depth of the reading it was drawn for}, the
+    step the readings were recorded at (None where the corners were left on
+    the grid of `step`, below), how each stretch was found drawn). like: how
+    the curve's main line was
+    found drawn, for another line of it (the thin line one scale width
+    off: its corners are moved with the main line's, stretch by stretch).
+
+    LogViewer draws a line's corner for each reading, half its recorded
+    step shallower than the reading (as _recorded_step's caller says), on
+    the grid row (`row`, in metres) next above that; read where it crosses
+    the readings' depths, a steep line is read off the peaks it draws, and
+    between corners a row apart a reading's depth cannot be told from the
+    strokes' lengths. So: where nearly all the corners in a stretch stand
+    within a row of one place in a step (of 1, 0.5 or 0.2 m, or `step`; the
+    page's depth scale can be a little off, so the place drifts down the
+    log, and jumps at a page's edge: `cuts`, the depths the pages meet at),
+    each is put on its reading. The rest of the line's corners are moved
+    down half the step it was found recorded at. A line its strokes say was
+    recorded coarser (_recorded_step) but whose corners fit only the grid of
+    `step` (they stand wider than a row in the coarser step) has its corners
+    left on the nearest point of that grid, for the caller to move half its
+    recorded step as it moves a line not put back. Not
+    where the line has a corner on every row (readings closer than the
+    step), or most strokes straight down the track (a step drawn: its
+    corners are where one reading gives way to the next, not readings)"""
+    if not row:
+        return {}, None, None
+    inside = [sg for sg in segs if -0.005 <= sg[1] <= 1.005 and -0.005 <= sg[3] <= 1.005]
+    if like is None and (len(inside) < 40 or
+                         sum(1 for sg in inside if abs(sg[1] - sg[3]) < 1e-4) > 0.3 * len(inside)):
+        return {}, None, None
+    cuts = sorted(cuts)
+
+    def block(d):
+        k = bisect.bisect_right(cuts, d)
+        return k, int((d - (cuts[k - 1] if k else top)) // SNAP_M)
+
+    blocks = collections.defaultdict(list)          # judged from the corners inside the track
+    for d in {x for sg in inside for x in (sg[0], sg[2])}:
+        blocks[block(d)].append(d)
+    every = collections.defaultdict(list)           # and all the line's corners moved (past the edge too)
+    for d in {x for sg in segs for x in (sg[0], sg[2])}:
+        every[block(d)].append(d)
+    half = 0.55 * row
+    # a line its strokes say was recorded coarser than `step`, fit only on
+    # the grid of `step`: its corners stay on the nearest point of that grid
+    # (moved half its recorded step after, as a line not fit is)
+    coarse = like is None and (_recorded_step([sg for sg in segs if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02])
+                               or 0.0) > step + 1e-9
+    def place(ds, S, h, origin):
+        """(how many of a stretch's corners stand within a row of one place
+        in the step, that place)"""
+        rs = sorted(((d + h - origin) / S - round((d + h - origin) / S)) * S for d in ds)
+        ring = rs + [r + S for r in rs]                      # the place in the step goes round
+        best, j = (0, 0.0), 0
+        for i in range(len(ring)):
+            while ring[i] - ring[j] > 2 * half or i - j >= len(rs):
+                j += 1
+            if i - j + 1 > best[0]:
+                best = (i - j + 1, (ring[i] + ring[j]) / 2)
+        n, c = best
+        return n, (c + S / 2) % S - S / 2
+
+    def fit(coarse):
+        found = {}
+        for key, ds in blocks.items():
+            if len(ds) < 12:
+                continue
+            for S in (1.0, 0.5, 0.2, step):
+                if row > 0.7 * S:
+                    continue
+                h, origin = (S / 2, 0.0) if S > step + 1e-9 else (0.0 if coarse else S / 2, top)
+                n, c = place(ds, S, h, origin)
+                # where it was drawn: half a step up, then onto the row above,
+                # half a row up on the whole (a coarser line on the grid of
+                # `step`: on a point of it, either way)
+                want = -row / 2 if h else 0.0
+                if n >= 0.85 * len(ds) and abs(c - want) <= (0.3 * S if h else 0.35 * S):
+                    found[key] = (S, h, origin, c)
+                    break
+        return found
+    found = fit(coarse) if like is None else {}
+    if like is None and found and not coarse and \
+            collections.Counter(f[0] for f in found.values()).most_common(1)[0][0] <= step + 1e-9:
+        # readings `step` apart whose corners stand, down the log on the
+        # whole, nearer the readings' own depths than half a step up (some
+        # logs' do: drawn there, or the page's scale off by that much):
+        # left on the nearest point of the grid, as a coarser line's are
+        xs = []
+        for ds in blocks.values():
+            if len(ds) >= 12:
+                n, c = place(ds, step, step / 2, top)
+                if n >= 0.85 * len(ds):
+                    xs.append(2 * math.pi * c / step)
+        if xs and abs(math.atan2(sum(map(math.sin, xs)), sum(map(math.cos, xs)))) * step / (2 * math.pi) > step / 4:
+            coarse = True
+            found = fit(True)
+    if like is not None:
+        found, rec, coarse = like
+    elif not found:
+        return {}, None, None
+    else:
+        rec = collections.Counter(f[0] for f in found.values()).most_common(1)[0][0]
+    out = {}
+    for key, ds in every.items():
+        f = found.get(key)
+        if f and f[0] == rec:
+            S, h, origin, c = f
+            for d in ds:
+                r = ((d + h - origin) / S - round((d + h - origin) / S)) * S
+                r = c + ((r - c + S / 2) % S - S / 2)        # its place nearest the stretch's
+                out[d] = d + h - r if abs(r - c) <= half else d + h
+        elif rec > step + 1e-9 or not coarse:
+            for d in ds:
+                out[d] = d + rec / 2
+    whole = rec > step + 1e-9 or not coarse
+    return out, (rec if whole else None), (found, rec, coarse)
+
+
+def _moved(segs, onto):
+    """the strokes with their corners put back on the readings (onto, from
+    _onto_readings): those left with no depth between their ends go"""
+    if not onto:
+        return segs
+    out = []
+    for da, pa, db, pb in segs:
+        a, b = onto.get(da, da), onto.get(db, db)
+        if b - a > 1e-9:
+            out.append((a, pa, b, pb))
+    return out
+
+
+def _jumps(segs, onto):
+    """the strokes _moved lets go (both ends put on one reading: the line
+    jumping there, out of the track maybe), as flat strokes just above
+    that reading, for _moves (the step it drew arriving at the reading)"""
+    out = []
+    for da, pa, db, pb in segs:
+        a, b = onto.get(da, da), onto.get(db, db)
+        if b - a <= 1e-9 and (da, db) != (a, b) and abs(pa - pb) > 1e-4:
+            out.append((b - 1e-6, pa, b - 1e-6, pb))
+    return out
 
 
 def _fill(values, top, step, most_m=FILL_M):
@@ -986,6 +1166,18 @@ def _moves(segs, top, n, step):
     return out
 
 
+def _joined(ms):
+    """a row's moves (from _moves) with those that meet joined: a line
+    drawn in a few strokes between two readings covers them all"""
+    out = []
+    for a0, a1 in sorted(ms):
+        if out and a0 <= out[-1][1] + 1e-3:
+            out[-1] = (out[-1][0], max(out[-1][1], a1))
+        else:
+            out.append((a0, a1))
+    return out
+
+
 NULL = -999.25
 JUNK = -99.99          # a mudlog's own "no reading", drawn as one too
 
@@ -1039,13 +1231,43 @@ def _null_dips(line, top, step, left, right):
                         and any(a < p2 - 0.01 for a in o) and any(a > p2 + 0.01 for a in o):
                     return True
             return False
-        for da, pa, db, pb in line:
-            if db - da > 0.5 and abs(pa - pb) < 1e-4 and any(abs(pa - q) < 0.002 for q in at):
-                # drawn flat along it (or its copy) for a stretch: no reading
-                # there all along (a steady reading does not sit on it)
+        # drawn flat along it (or its copy) for a stretch, in one stroke or
+        # a stroke from each null to the next: no reading there all along
+        # (a steady reading does not sit on it)
+        flat = sorted((round(pa, 4), da, db) for da, pa, db, pb in line
+                      if abs(pa - pb) < 1e-4 and any(abs(pa - q) < 0.004 for q in at))
+        runs = []
+        for p, da, db in flat:
+            if runs and runs[-1][0] == p and da - runs[-1][2] < 1e-3:
+                runs[-1][2] = max(runs[-1][2], db)
+                runs[-1][3].add((da, db))
+            else:
+                runs.append([p, da, db, {(da, db)}])
+        in_runs = set()
+        # (a steady reading where the null's copy lies, gas pegged at 10000
+        # on 0 - 11000, is come to and left by the line inside the track;
+        # the null's copy is drawn to and from past an edge, where the copy
+        # of the reading before or after it lies)
+        near = [sg for sg in line if not (abs(sg[1] - sg[3]) < 1e-4 and any(abs(sg[1] - q) < 0.004 for q in at))]
+        e_ = wscale.EDGE
+
+        def gradual(d, p, end):
+            return 0 <= p <= 1 and any(
+                abs((db_ if end else da_) - d) < 1e-3 and -e_ <= pa_ <= 1 + e_ and -e_ <= pb_ <= 1 + e_
+                for da_, pa_, db_, pb_ in near)
+        steady = []
+        for p_, da, db, members in runs:
+            if gradual(da, p_, True) and gradual(db, p_, False):
+                steady.append((da - 1e-3, db + 1e-3))
+            elif db - da > 0.5:
                 out.update(range(int(round((da - top) / step)), int(round((db - top) / step)) + 1))
-                continue
+                in_runs |= members
+        for da, pa, db, pb in line:
+            if abs(pa - pb) < 1e-4 and (da, db) in in_runs:
+                continue                     # (marked with its run)
             for d, p in ((da, pa), (db, pb)):
+                if any(a_ <= d <= b_ for a_, b_ in steady):
+                    continue                 # (a steady reading there, and its copy)
                 if any(abs(p - q) < 0.004 for q in at) and not passes(d, p):
                     (inside if 0 <= p <= 1 else outside).append(int(round((d - top) / step)))
         # past the track nothing else is drawn there: the line on its way
@@ -1077,9 +1299,19 @@ def _junk_flats(line, top, step, left, right):
             spans[-1][2] += 1
         else:
             spans.append([da, db, 1])
+    # (a steady reading of the copy's value, gamma 100 on 0 - 200, is come
+    # to and left gradually, in a slope or a step drawn flat; the line
+    # jumps to and from the "no reading")
+    near = [(da, pa, db, pb) for da, pa, db, pb in line
+            if not (abs(pa - pb) < 1e-4 and abs(pa - pn - 1) < 0.002)]
+
+    def gradual(d, end):
+        p = pn + 1
+        return any(abs((db_ if end else da_) - d) < 1e-3 and abs(pa_ - p) <= 0.1 and abs(pb_ - p) <= 0.1
+                   for da_, pa_, db_, pb_ in near)
     out = set()
     for da, db, n in spans:
-        if db - da > 0.5 and (n >= 3 or db - da > 1.0):
+        if db - da > 0.5 and (n >= 3 or db - da > 1.0) and not (gradual(da, True) and gradual(db, False)):
             out.update(range(int(round((da - top) / step)), int(round((db - top) / step)) + 1))
     return out
 
@@ -1191,7 +1423,56 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         """the line drawn in one stroke from where it was down past the
         low edge to a (junk under a scale from nothing dives so)"""
         return last is not None and last - a >= 0.05 and bool(moves) and any(
-            a0 <= a + 0.01 and a1 >= last - 0.01 for a0, a1 in moves[i])
+            a0 <= a + 0.01 and a1 >= last - 0.01 for a0, a1 in _joined(moves[i]))
+
+    def around_down(i):
+        """since the last reading, low in the track, the line was drawn on
+        down to the low edge, in at the top and down across the middle,
+        with no reading where it went round (a dashed line's gaps): the
+        wrapped line ran out of the low end and is back in the scale (not
+        one drawn up from where it was out of the top: a spike over it)"""
+        if last_i is None or last is None or not moves or i - last_i > 10 or last - k > 0.3:
+            return False
+        ms = [m for ms_ in moves[last_i + 1:i + 1] for m in ms_]
+        if any(abs(a0 - (last - k)) <= 0.02 and a1 > 1 + e
+               for a0, a1 in _joined([m for ms_ in moves[last_i + 1:i] for m in ms_])):
+            return False
+        # (a piece by each edge, the top one drawn in the track, not the
+        # line's copy past it; and one in the middle of the track, not a
+        # stroke across all of it)
+        return (any(a0 <= 0.05 and a1 <= 0.5 for a0, a1 in ms)
+                and any(a1 >= 0.95 and 0.5 <= a0 <= 1 + e for a0, a1 in ms)
+                and any(a0 < 0.6 and a1 > 0.4 and a0 > e and a1 < 1 - e for a0, a1 in ms))
+
+    from_right = right == 0 and left > 0            # (a scale from nothing drawn right to left)
+
+    def passing(i, ps):
+        """the line drawn across the track in one stroke at depth i with
+        nothing drawn just above, and not going on below from where it
+        crosses: a stroke between readings far past the scale (junk, -9100
+        on gas 0 - 2000) passing through on its way, not a reading (after
+        three or more rows with nothing drawn, in one stroke from or to past
+        an edge: a dashed line's gap between dashes is shorter, and two
+        marks far apart are not one stroke)"""
+        if i < 3 or not ps or any(series[j] for j in range(i - 3, i)) or not moves or not moves[i]:
+            return False
+        if not any(a1 - a0 >= 0.5 and (a0 < -e or a1 > 1 + e) for a0, a1 in _joined(moves[i])):
+            return False
+        return not any(carries_on(i, p) for p in ps if -e <= p <= 1 + e)
+
+    def came_down(i, r):
+        """the line drawn higher than r past the top since the last reading:
+        at depth i it comes down from far over the scale (a spike past it
+        more than a width), not out of the top on its way up"""
+        if last_i is None or not moves:
+            return False
+        return any(a1 > r + 0.05 for ms in moves[last_i + 1:i + 1] for _a0, a1 in ms)
+
+    def from_below(i, r):
+        """the line drawn up to r past the top in one sweep from under the
+        low edge at depth i: back from far under the scale (junk, -9500 on
+        gas 0 - 1000) through the track, not out of the top from the reading"""
+        return bool(moves) and any(a0 < -e and a1 >= r - 0.01 for a0, a1 in _joined(moves[i]))
 
     def ran_out_low_in_top(i):
         """the line drawn out of the low edge and in again at the top just
@@ -1202,6 +1483,10 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         return any(a0 <= e and a1 > 2 * e for a0, a1 in ms) and any(a1 >= 1 - e and a0 < 1 - 2 * e for a0, a1 in ms)
 
     last_i, seen, under_since, before_gap, dive_junk = None, [], None, None, False
+    # the null's place on the scale (-999.25 drawn as a reading): after a
+    # stretch of it the line comes back from there
+    p_null = (NULL - left) / (right - left) if right != left else None
+    null_run = null_along = 0
     drawn_under = False                      # (k -1 from a wrap drawn under the scale)
     for i, ps in enumerate(series):
         if k != -1:
@@ -1233,12 +1518,28 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         if i in nulls or (i in dives and dive_junk):
             out.append(None)
             last, k = None, 0
+            if i in nulls:
+                null_run += 1
+                if p_null is not None and any(abs(q - (p_null - math.floor(p_null))) < 0.004 for q in ps or ()):
+                    null_along += 1
             continue
+        if null_run >= 5 and null_along >= 0.8 * null_run and p_null is not None \
+                and not (0 <= p_null <= 1) and abs(p_null) < 3:
+            # back from a stretch of the null drawn along its place (its
+            # copy in the track all the way: not a dip to it and back): the
+            # line leaves it from there, wrapped the way the copy is drawn
+            k = math.floor(p_null)
+            last, last_i = p_null, i - 1
+        null_run = null_along = 0
         if i in junk:
             pj = (JUNK - left) / (right - left)
             out.append((JUNK, True))             # the log's own "no reading", as it holds it
             last, k = pj, -1
             continue
+        if passing(i, ps):
+            out.append(None)                     # a stroke passing through, not the line read:
+            last, k = None, 0                    # the line starts afresh after it (where it was
+            continue                             # before the junk says nothing)
         pts = sorted(ps or ())
         # on a scale from nothing, a reading of nothing (or a little under)
         # is drawn on both edges at once, nothing else drawn: it reads 0
@@ -1284,13 +1585,14 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
         out_lo = [p for p in pts if p < -e]
         out_hi = [p for p in pts if p > 1 + e]
         if k == 1 and inside and (out_lo or (moves and any(
-                a1 - a0 > 0.02 and a0 < -e and a1 > -0.05 for a0, a1 in moves[i]))):   # (one that reaches the low edge)
+                a1 - a0 > 0.02 and a0 < -e and a1 > -0.05 for a0, a1 in moves[i]))   # (one that reaches the low edge)
+                or around_down(i)):
             k = 0                                # the wrapped line runs out of the low end: back in the scale
         elif k == 0 and out_hi and last is not None and not any(abs(q - last) < 0.08 for q in inside):
             # (not where the line goes on inside the track from the reading
             # above: what runs out of the top there is another line)
             r = min(out_hi, key=lambda p: abs(p - last))
-            if abs(r - last) < 0.5 and carries_on(i, r - 1):
+            if abs(r - last) < 0.5 and carries_on(i, r - 1) and not came_down(i, r) and not from_below(i, r):
                 k = 1                            # out of the high end, on one width lower
                 out.append((val(r), True))
                 last = r
@@ -1350,11 +1652,13 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             elif last is not None and k == 1 and p - prev > 0.3:
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
             elif last is not None and k == -1 and (prev - p > (0.5 if drawn_under else 0.3)
-                                                   or (p < 0.5 and not drawn_under)):
+                                                   or (p < 0.5 and not drawn_under and not from_right)):
                 k = 0                            # (and a reading half a width under the scale is no
                 #                                  dip: the line was wrapped, now in the scale; but
                 #                                  one drawn out of the low edge and in at the top
-                #                                  stays under it while it moves along)
+                #                                  stays under it while it moves along, and so does
+                #                                  one on a scale drawn from nothing at the right:
+                #                                  under it is over its top, gas 2500 - 0 at 3700)
             if last is not None and k == 0 and p - (last - k) > 0.5:
                 leapt = i
             out.append((val(p + k), True))
@@ -1379,6 +1683,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
             out.append((val(1.0), True))         # wrap's copy on the low edge, nothing drawn across
             last = 1.0                           # between: over the top
         elif not any(p >= 1 - e for p in inside):
+            if k == -1 and last is not None and abs(last) < abs(last + 1):
+                k = 0                            # just under the scale, now the line on the low edge:
+            #                                      back at nothing (not a width under)
             out.append((val(k), k != 0) if k else (lo if right > left else hi, False))
             last = 0.0 + k
         elif k == 0 and last is not None and last >= 0.9:
@@ -1643,6 +1950,8 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         if not any(o[0] == k[0] and clipped(k[2], o[2]) and len(curves[o]) >= len(v) for o in curves))
     strokes = strokes or Strokes(doc, pages)
     n = int(round((bottom - top) / step)) + 1
+    row = ROW_PT * abs(pages[0].a) if pages else 0.0         # the drawing grid's row, in metres
+    cuts = sorted(P.lo for P in pages)[1:]                   # where one page gives way to the next
     # the curves captioned in one block share a track: where one curve's
     # line shows the track runs on past a line (_widen), so do the others'
     band = {}
@@ -1699,6 +2008,15 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             dropped.append((first.name, "no line of its colour in its track"))
             continue
         wmain = max(groups, key=lambda w: (_inside_drawn(groups[w]), _inside(groups[w]), w))
+        # each line's corners put back on the readings they were drawn for
+        # (another line of the colour too few to tell: moved as the main one)
+        drawn = groups
+        onto = {}
+        onto[wmain], moved, how = _onto_readings(groups[wmain], top, step, row, cuts)
+        for w, sg in groups.items():
+            if w != wmain:
+                onto[w] = _onto_readings(sg, top, step, row, cuts, like=how)[0] if how else {}
+        groups = {w: _moved(sg, onto[w]) for w, sg in groups.items()}
         if _inside(groups[wmain]) < 0.05 * (bottom - top):
             dropped.append((first.name, "its line runs %.0f m of the log's %.0f m" % (_inside(groups[wmain]), bottom - top)))
             continue
@@ -1719,6 +2037,9 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
                  for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
         flat = [sg for sg in _relative(strokes.of(colour, flats=True).get(wmain, []), x0, x1)
                 if -0.5 < sg[1] < 1.5 and -0.5 < sg[3] < 1.5]
+        if onto.get(wmain):
+            flat = [(onto[wmain].get(da, da), pa, onto[wmain].get(db, db), pb) for da, pa, db, pb in flat]
+            flat += _jumps(drawn[wmain], onto[wmain])
         moves = _moves(line + flat, top, n, step)
         wrap = [[] for _ in range(n)]
         for w, sg in groups.items():
@@ -1862,10 +2183,12 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # log. The readings are put back where the log has them.
         # (from the strokes in this track only: a curve of the same colour
         # in another track is no part of this one's line)
-        own = [sg for sg in groups[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
-        rec = _recorded_step(own)
+        own = [sg for sg in drawn[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
+        rec = moved or _recorded_step(own)
         half = rec / 2 if rec else 0.0
-        if half >= step / 4:
+        if moved:
+            values = _hold(values, top, step, rec)      # (its corners already put back on the readings)
+        elif half >= step / 4:
             long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]
             steps = long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.5 * len(long_)
             values = _shift(values, half / step, blend=not steps)     # a step drawn flat is not blended

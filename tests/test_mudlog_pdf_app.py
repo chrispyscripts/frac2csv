@@ -509,6 +509,156 @@ class OneLine(unittest.TestCase):
         self.assertAlmostEqual(got[1], 480, delta=1)
         self.assertAlmostEqual(got[2], 450, delta=1)
 
+    def test_a_stroke_across_the_track_back_from_far_past_the_scale_is_no_reading(self):
+        # gas 0 - 2000 at nothing (on both edges at once), then 4 m of junk
+        # far under the scale (-9100), drawn off the track; coming back the
+        # line sweeps across the track in one stroke, then runs along the
+        # low edge (its copy along the top) and on up: back near nothing
+        series = ([[0.001, 1.001]] * 3 + [[]] * 40 + [[-0.48, 0.515]]
+                  + [[0.001, 1.001], [0.001, 1.001], [0.004, 1.004], [0.007, 1.007], [0.014], [0.014]])
+        moves = ([[]] * 43 + [[(-0.646, -0.48), (-0.312, 0.348), (0.348, 0.515)]]
+                 + [[(-0.48, 0.001), (0.515, 1.001)], [(0.001, 0.001)], [(0.001, 0.004)], [(0.004, 0.007)],
+                    [(0.007, 0.014)], [(0.014, 0.014)]])
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 2000.0, moves)]
+        self.assertIsNone(got[43])
+        self.assertAlmostEqual(got[-1], 28, delta=1)                         # not 2028
+
+    def test_a_dashed_wrapped_line_round_the_low_end_between_readings(self):
+        # gas 0 - 500 wrapped, coming down; between two readings the dashed
+        # line runs on down to the low edge, in at the top (the dash there
+        # starts just past it) and down across the middle: back in the scale
+        series = one_line([400, 450, 490, 530, 580, 620, 580, 560]) + [[], [], [], [0.183], [0.19]]
+        moves = [[]] * 8 + [[(0.009, 0.027), (0.993, 1.01), (0.888, 0.906)], [(0.45, 0.47)], [(0.3, 0.32)],
+                            [(0.183, 0.2)], [(0.183, 0.19)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 500.0, moves)]
+        self.assertAlmostEqual(got[7], 560, delta=1)
+        self.assertAlmostEqual(got[-1], 95, delta=1)                         # not 595
+
+    def test_a_scale_from_nothing_drawn_right_to_left_wraps_deep(self):
+        # gas 2500 - 0: over 2500 the line runs out of the left edge and in
+        # from the right; at 3800 the wrapped line is past the middle and
+        # still over the scale
+        vals = [2000, 2300, 2450, 2600, 3000, 3500, 3800, 3500, 3000]
+        pos = [1 - v / 2500.0 for v in vals]
+        series = [[p] if p >= 0 else [p + 1] for p in pos]
+        series[3] = [pos[3], pos[3] + 1]                                     # the line past the edge and its wrap
+        got = [r and r[0] for r in M.read_one_line(series, 2500.0, 0.0, under=True)]
+        for g, v in zip(got, vals):
+            self.assertAlmostEqual(g, v, delta=2)
+
+    def test_the_null_drawn_flat_a_stroke_to_each_null(self):
+        # gas 0 - 10200: a run of nulls (-999.25) drawn as its copy at the
+        # top, a stroke from each null to the next and a little off its place
+        pn = M.NULL / 10200.0
+        q = pn + 1 + 0.002
+        line = ([(100.0, 0.3, 100.2, 0.01), (100.2, 0.01, 100.3, pn)]
+                + [(100.3 + 0.2 * j, q, 100.5 + 0.2 * j, q) for j in range(6)] + [(101.5, q, 101.6, 0.17)])
+        got = M._null_dips(line, 100.0, 0.1, 0.0, 10200.0)
+        self.assertTrue(set(range(4, 15)) <= got, sorted(got))
+        # a steady reading drawn flat in strokes of 0.2 m elsewhere is no null
+        line = [(100.3 + 0.2 * j, 0.5, 100.5 + 0.2 * j, 0.5) for j in range(6)]
+        self.assertEqual(M._null_dips(line, 100.0, 0.1, 0.0, 10200.0), set())
+
+    def test_a_line_drawn_out_of_the_low_edge_in_two_strokes_goes_under(self):
+        # gas 0 - 1000 falling fast to a little under nothing: the stroke
+        # out of the low edge drawn in two pieces, its copy in at the top
+        series = [[0.666], [0.644], [0.622], [0.057], [0.966, -0.035], [0.966], [0.966]]
+        moves = [[], [(0.644, 0.666)], [(0.622, 0.644)], [(0.057, 0.622)],
+                 [(0.044, 0.057), (-0.035, 0.044), (0.966, 1.044)], [(0.966, 0.966)], [(0.966, 0.966)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        for g in got[4:]:
+            self.assertAlmostEqual(g, -34, delta=1)                          # not 966
+
+    def test_back_from_just_under_nothing_along_the_low_edge(self):
+        # gas 0 - 1000 a little under nothing (its copy along the top, the
+        # wrap drawn), then back up from the low edge
+        series = [[0.457], [0.147, 1.145], [0.988, -0.013], [0.988], [0.99], [0.992, -0.008],
+                  [0.0046, 1.0052], [0.018, 1.018], [0.042], [0.065]]
+        moves = [[], [(0.147, 0.457), (1.145, 1.457)], [(0.0, 0.147), (-0.013, 0.0), (0.996, 1.145), (0.988, 0.996)],
+                 [(0.988, 0.988)], [(0.988, 0.99)], [(0.99, 0.992)], [(-0.008, 0.0046), (0.992, 1.0052)],
+                 [(0.0046, 0.018), (1.0052, 1.018)], [(0.018, 0.042)], [(0.042, 0.065)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves, drawn_wraps=True)]
+        self.assertAlmostEqual(got[3], -12, delta=1)
+        for g, v in zip(got[6:], (0, 18, 42, 65)):
+            self.assertAlmostEqual(g, v, delta=6)                            # not -995
+
+    def test_back_down_from_a_spike_far_over_the_scale_is_in_it(self):
+        # gamma 0 - 150 at 14, a spike to 1900 (out of the top twice, its
+        # copies drawn across), nothing drawn while far over, then the line
+        # comes down from over the top and across the track to 14 again
+        series = [[0.082]] * 3 + [[0.094], [0.266], [0.77], [], [], [], [1.221], [0.095], [0.092], [0.088]]
+        moves = [[]] + [[(0.082, 0.082)]] * 2 + [
+            [(0.082, 0.094)], [(0.094, 0.381), (0.381, 1.069), (-0.621, 0.075), (0.075, 0.266)], [(0.266, 0.77)],
+            [(0.77, 1.459)], [], [], [(1.221, 1.494)], [(0.805, 1.221), (0.415, 0.805), (0.095, 0.415)],
+            [(0.092, 0.095)], [(0.088, 0.092)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 150.0, moves)]
+        for g, v in zip(got[-3:], (14.2, 13.8, 13.2)):
+            self.assertAlmostEqual(g, v, delta=1)                            # not 164
+
+    def test_back_from_junk_far_under_the_scale_in_one_sweep_is_in_it(self):
+        # gas 0 - 1000 at 580, then junk far under it (-9500); coming back
+        # the line sweeps up through the track past the top in one row, its
+        # copy one width lower ending on the reading (55)
+        series = [[0.58]] * 3 + [[]] * 20 + [[-0.071], [0.049, 1.032], [0.115], [0.179]]
+        moves = [[]] + [[(0.58, 0.58)]] * 2 + [[(0.08, 0.58), (-0.415, 0.08), (0.58, 1.08)]] + [[]] * 19 + [
+            [(-0.205, -0.071)], [(-0.015, 0.049), (-0.071, 0.29), (0.29, 0.79), (0.79, 1.032)],
+            [(0.049, 0.115), (1.032, 1.055)], [(0.115, 0.179)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0, moves)]
+        for g, v in zip(got[-3:], (49, 115, 179)):
+            self.assertAlmostEqual(g, v, delta=2)                            # not 1049
+
+    def test_a_run_over_the_scale_after_a_gap_from_just_over_the_top_is_read_afresh(self):
+        # ROP 0 - 10 just over its top (10.4), a gap of nulls, then read on
+        # one width up (12.8) for 6 m: read afresh from after the gap (2.8);
+        # not gas (over its scale for real for long), not from well over
+        lo, hi = -0.2, 10.2
+
+        def past(rs):
+            vs = [r[0] for r in rs if r is not None and r[1]]
+            return sum(1 for v in vs if v < lo or v > hi) / len(vs) if vs else 0.0
+
+        def run(before, follow=False, after=12.8):
+            got = [(5.0, True)] * 100 + [(before, True)] * 3 + [None] * 5 + [(after, True)] * 60
+            M._reread_past_runs(got, lambda s, k0: [(2.8, True)] * (len(got) - s), past, lo, hi, follow=follow)
+            return got
+        self.assertEqual(run(10.4)[108], (2.8, True))
+        self.assertEqual(run(10.4)[102], (10.4, True))
+        self.assertEqual(run(10.4, follow=True)[108], (12.8, True))
+        self.assertEqual(run(14.0)[108], (12.8, True))
+        self.assertEqual(run(10.4, after=10.6)[108], (10.6, True))     # on where it left off: wrapped
+
+    def test_a_wrapped_line_back_down_from_a_spike_over_the_top_stays_wrapped(self):
+        # ROP 0 - 2 wrapped at 2.5, a spike up out of the top (to 7.5), and
+        # back down across the track to 2.05: still a width over
+        series = [[0.274]] * 3 + [[]] * 5 + [[0.026]] * 3
+        moves = ([[]] + [[(0.274, 0.274)]] * 2 + [[(0.274, 0.327), (0.327, 0.766), (0.766, 1.197)]] + [[]] * 4
+                 + [[(0.026, 0.427), (0.427, 0.862), (0.862, 1.297)]] + [[(0.026, 0.026)]] * 2)
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 2.0, moves, k0=1)]
+        for g in got[-3:]:
+            self.assertAlmostEqual(g, 2.05, delta=0.02)                      # not 0.05
+
+    def test_a_wrapped_line_by_a_flat_stroke_across_the_track_stays_wrapped(self):
+        # ROP 0 - 2 wrapped at 2.3; a flat stroke of its colour across the
+        # whole track at one depth is no way out of the low end
+        series = [[0.153]] * 3 + [[0.174]] * 3
+        moves = ([[]] + [[(0.153, 0.153)]] * 2 + [[(0.153, 0.174), (0.0, 1.001), (1.001, 1.044), (1.162, 1.336)]]
+                 + [[(0.174, 0.174)]] * 2)
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 2.0, moves, k0=1)]
+        for g in got[-3:]:
+            self.assertAlmostEqual(g, 2.35, delta=0.02)                      # not 0.35
+
+    def test_a_steady_reading_where_no_reading_s_copy_lies_is_no_junk(self):
+        # gamma 0 - 200: "no reading" (-99.99) drawn flat lies one width on
+        # at 100.01, mid-track; a steady 100 come to and left gradually (in
+        # a slope or in flat steps) is a reading, jumped to and from is junk
+        q = (M.JUNK + 200.0) / 200.0
+        flats = [(100.3 + 0.2 * j, q, 100.5 + 0.2 * j, q) for j in range(6)]
+        sloped = [(100.0, 0.3, 100.2, 0.45), (100.2, 0.45, 100.3, q)] + flats + [(101.5, q, 101.6, 0.47)]
+        stepped = [(100.0, 0.47, 100.3, 0.47)] + flats + [(101.5, 0.52, 101.8, 0.52)]
+        jumped = [(100.0, 0.3, 100.2, 0.1), (100.2, 0.1, 100.3, q)] + flats + [(101.5, q, 101.6, 0.1)]
+        self.assertEqual(M._junk_flats(sloped, 100.0, 0.1, 0.0, 200.0), set())
+        self.assertEqual(M._junk_flats(stepped, 100.0, 0.1, 0.0, 200.0), set())
+        self.assertTrue(set(range(4, 15)) <= M._junk_flats(jumped, 100.0, 0.1, 0.0, 200.0))
 
 @unittest.skipUnless(fitz, "needs PyMuPDF")
 class Steps(unittest.TestCase):
@@ -777,6 +927,72 @@ class Marking(unittest.TestCase):
         K.mark_printed(key, T.printout())
         printed = {c["name"]: c["printed"] for c in key["curves"]}
         self.assertEqual(printed, {"ROP": True, "Gamma": True, "SCALED MWD GR RT": False})
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class Corners(unittest.TestCase):
+    """LogViewer draws a corner for each reading half its recorded step
+    shallower, on the 0.01 in grid row next above"""
+
+    @staticmethod
+    def drawn(step, row, d0, n, shift=0.0):
+        import math
+        import random
+        rnd = random.Random(3)
+        reads = [(round(d0 + step * i, 6), rnd.uniform(0.1, 0.9)) for i in range(n)]
+        corners = [(math.floor((d - step / 2) / row) * row + shift, p) for d, p in reads]
+        segs = [(a, pa, b, pb) for (a, pa), (b, pb) in zip(corners, corners[1:])]
+        return reads, segs
+
+    def test_corners_put_back_on_their_readings(self):
+        row = 0.72 / 5.904                     # a 1:480 page: a row is 0.122 m
+        reads, segs = self.drawn(0.2, row, 1000.0, 200, shift=0.01)
+        onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertEqual(rec, 0.2)
+        n = int(round(40.0 / 0.1)) + 1
+        ser = M._series(M._moved(segs, onto), 1000.0, n, 0.1)
+        # (the last 2.5 m, too few corners to fit, is moved half a step only)
+        for d, p in reads[5:-15]:
+            got = ser[int(round((d - 1000.0) / 0.1))]
+            self.assertEqual(len(got), 1)
+            self.assertAlmostEqual(got[0], p, places=6)
+
+    def test_a_corner_on_every_row_is_left(self):
+        row = 0.72 / 11.8079
+        _reads, segs = self.drawn(0.01, row, 1000.0, 3000)
+        segs = [s for s in segs if s[2] - s[0] > 1e-6]
+        self.assertEqual(M._onto_readings(segs, 1000.0, 0.1, row)[0], {})
+
+    def test_a_line_drawn_in_steps_is_left(self):
+        row = 0.72 / 11.8079
+        reads, _segs = self.drawn(0.5, row, 1000.0, 100)
+        segs = [(d - 0.25, p, d + 0.25, p) for d, p in reads]          # straight down the track
+        self.assertEqual(M._onto_readings(segs, 1000.0, 0.1, row)[0], {})
+
+    def test_corners_of_readings_a_step_apart_put_back(self):
+        row = 0.72 / 11.8079                   # a 1:240 page: a row is 0.061 m
+        # (floored onto the row above, and the page's scale off by about half
+        # a row the other way: on the whole half a step up, as in the logs)
+        reads, segs = self.drawn(0.1, row, 1000.0, 400, shift=0.028)
+        onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertEqual(rec, 0.1)
+        ser = M._series(M._moved(segs, onto), 1000.0, 401, 0.1)
+        for d, p in reads[5:-5]:
+            got = ser[int(round((d - 1000.0) / 0.1))]
+            self.assertEqual(len(got), 1)
+            self.assertAlmostEqual(got[0], p, places=6)
+
+    def test_two_corners_on_one_reading_keep_the_line_s_jump(self):
+        # a line run out of the track in one row, its corners both put on
+        # one reading: the stroke between them is gone from the line, kept
+        # as a jump arriving at that reading
+        segs = [(99.6, 0.3, 99.654, 0.079), (99.654, 0.079, 99.715, -0.013)]
+        onto = {99.6: 99.6, 99.654: 99.8, 99.715: 99.8}
+        self.assertEqual(M._moved(segs, onto), [(99.6, 0.3, 99.8, 0.079)])
+        jumps = M._jumps(segs, onto)
+        self.assertEqual(len(jumps), 1)
+        ms = M._moves(jumps, 99.0, 11, 0.1)
+        self.assertEqual(ms[8], [(-0.013, 0.079)])
 
 
 if __name__ == "__main__":
