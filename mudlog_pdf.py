@@ -1209,8 +1209,10 @@ def read_line(main, wrap, left, right):
         sure, either = [], []
         for u in (val(p) for p in ws):
             up, down = u + span, u - span          # the reading, were the thin line below it / above it
-            if any(abs(m - up) < agree or abs(m - down) < agree for m in mid):
-                sure += [c for c in (up, down) if any(abs(m - c) < agree for m in mid)]
+            # (the main line by an end too: a reading just inside it, the
+            # thin line a width off on the far side)
+            if any(abs(m - up) < agree or abs(m - down) < agree for m in vm):
+                sure += [c for c in (up, down) if any(abs(m - c) < agree for m in vm)]
             elif (at_hi and up >= hi - tol) or (at_lo and down <= lo + tol):
                 # the main line along the end the reading is past; where it
                 # lies on both ends, or folded back in on the thin line too,

@@ -486,6 +486,15 @@ class Lines(unittest.TestCase):
         got = M.read_line([[0.0]], [[0.7]], 0, 100)
         self.assertAlmostEqual(got[0][0], -30.0)
 
+    def test_a_reading_just_inside_an_end(self):
+        # 3 on 0..1000 lies within the edge of the track: the thin line a
+        # width lower bears the main line out (3), not a reading past the
+        # low end (-1997)
+        got = M.read_line([[0.003]], [[-0.997]], 0, 1000)
+        self.assertAlmostEqual(got[0][0], 3.0)
+        got = M.read_line([[0.998]], [[-0.002]], 0, 1000)
+        self.assertAlmostEqual(got[0][0], 998.0)
+
     def test_lines_together_are_folded(self):
         # 95, then the two lines together at 0.05: 105 (folded in), not 5
         got = M.read_line([[0.95], [0.05]], [[-0.05], [0.05]], 0, 100)
