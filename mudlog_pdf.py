@@ -907,6 +907,105 @@ ROW_PT = 0.72        # LogViewer draws on a grid of 0.01 in: every corner on it
 SNAP_M = 2.5         # corners judged together over this much of a page
 
 
+def _dash_unit(segs, inside):
+    """for a dashed line (a fifth or more of the ends of its strokes in the
+    track meet no other stroke): the unit of its drawing across the track
+    (the smallest move across it its strokes make, as a share of the
+    track); None for a line drawn whole"""
+    ends = collections.Counter()
+    for sg in segs:
+        ends[(sg[0], sg[1])] += 1
+        ends[(sg[2], sg[3])] += 1
+    pts = [(sg[0], sg[1]) for sg in inside] + [(sg[2], sg[3]) for sg in inside]
+    if not pts or sum(1 for p in pts if ends[p] == 1) < 0.2 * len(pts):
+        return None
+    moves = collections.Counter(round(abs(sg[1] - sg[3]), 4) for sg in inside if abs(sg[1] - sg[3]) > 1e-4)
+    return min((v for v, n in moves.items() if n >= 5), default=None)
+
+
+def _bent_fit(ps, t0, S):
+    """the least-squares line through points ps (depth, place), straight
+    between knots t0 + k S and bending only at them -> its root mean
+    square miss"""
+    lo = math.floor((ps[0][0] - t0) / S)
+    n = math.ceil((ps[-1][0] - t0) / S) - lo + 1
+    if n < 2:
+        return 0.0
+    a, b, c, y = [1e-6] * n, [0.0] * n, [0.0] * n, [0.0] * n      # the normal equations: tridiagonal
+    rows = []
+    for d, p in ps:
+        u = (d - t0) / S - lo
+        i = min(int(math.floor(u)), n - 2)
+        w1 = u - i
+        w0 = 1.0 - w1
+        a[i] += w0 * w0
+        a[i + 1] += w1 * w1
+        c[i] += w0 * w1
+        b[i + 1] += w0 * w1
+        y[i] += w0 * p
+        y[i + 1] += w1 * p
+        rows.append((i, w0, w1, p))
+    cc, yy = [0.0] * n, [0.0] * n
+    for i in range(n):
+        m = a[i] - (b[i] * cc[i - 1] if i else 0.0)
+        cc[i] = c[i] / m if i < n - 1 else 0.0
+        yy[i] = (y[i] - (b[i] * yy[i - 1] if i else 0.0)) / m
+    x = [0.0] * n
+    x[-1] = yy[-1]
+    for i in range(n - 2, -1, -1):
+        x[i] = yy[i] - cc[i] * x[i + 1]
+    return math.sqrt(sum((p - w0 * x[i] - w1 * x[i + 1]) ** 2 for i, w0, w1, p in rows) / len(rows))
+
+
+def _dash_step(segs, top, row):
+    """the step a dashed line was recorded at: between its readings'
+    corners (half a step up, on the row above: LogViewer's) the line runs
+    straight, so its dashes' ends lie on a line bending only every step,
+    at one place in it down the log (readings on whole steps from 0 m, as
+    _hold has them). Of 1, 0.5 and 0.2 m, the coarsest that, over 20 m
+    stretches, the dashes fit about as well as the next finer, the place
+    it bends at in each stretch much the same and half a step up ->
+    (that step, how far its readings are below where it bends: half a step
+    and about half a row); None for a line drawn whole or in steps"""
+    if not row:
+        return None
+    inside = [sg for sg in segs if -0.005 <= sg[1] <= 1.005 and -0.005 <= sg[3] <= 1.005]
+    if len(inside) < 40 or sum(1 for sg in inside if abs(sg[1] - sg[3]) < 1e-4) > 0.5 * len(inside):
+        return None
+    q = _dash_unit(segs, inside)
+    if not q:
+        return None
+    blocks = collections.defaultdict(set)
+    for sg in inside:
+        blocks[int((sg[0] - top) // 20.0)].add((sg[0], sg[1] / q))
+        blocks[int((sg[0] - top) // 20.0)].add((sg[2], sg[3] / q))
+    # judged on the stretches the line stays in the track through: where
+    # it runs out its copy a scale width over comes in (a jump across)
+    blocks = [ps for ps in map(sorted, blocks.values())
+              if len(ps) >= 20 and all(abs(b[1] - a[1]) * q <= 0.35 for a, b in zip(ps, ps[1:]))]
+    if len(blocks) < 3 or row > 0.7 * 0.2:
+        return None
+    tried = []
+    for S in (1.0, 0.5, 0.2):
+        k = max(1, int(round(2 * S / row)))
+        got = [min((_bent_fit(ps, j * S / k, S), j * S / k) for j in range(k)) for ps in blocks]
+        misses = sorted(m for m, _ph in got)
+        x = sum(math.cos(2 * math.pi * ph / S) for _m, ph in got) / len(got)
+        y = sum(math.sin(2 * math.pi * ph / S) for _m, ph in got) / len(got)
+        at = math.atan2(y, x) / (2 * math.pi) * S
+        off = abs((at - (S / 2 - row / 2) + S / 2) % S - S / 2)
+        tried.append((S, misses[len(misses) // 2], math.hypot(x, y) >= 0.6 and off <= 0.15 * S,
+                      (S - at + S / 4) % S - S / 4))
+    # (where it bends within 0.15 of a step of LogViewer's place: a finer
+    # step's line can bend about as steadily a fifth of a coarser step off;
+    # the miss a unit and a half over the next finer step's at most: a
+    # step coarser than the line's misses the corners between its bends)
+    for i, (S, miss, steady, down) in enumerate(tried):
+        if steady and miss <= 1.5 + (tried[i + 1][1] if i + 1 < len(tried) else 0.0):
+            return S, down
+    return None
+
+
 def _onto_readings(segs, top, step, row, cuts=(), like=None):
     """-> ({corner depth: the depth of the reading it was drawn for}, the
     step the readings were recorded at (None where the corners were left on
@@ -1779,6 +1878,23 @@ def _shift(values, k, blend=True):
     return out
 
 
+def _coarse_step(own, row):
+    """the step of a line drawn on grid rows (`row`, m) too coarse to show
+    each reading's corner on its own (0.2 m readings on 1:480 and 1:600
+    pages' 0.12 and 0.15 m rows): its corners a row or two apart, the
+    strokes between them are on the whole the step long. 0.2 where they
+    are, within a twentieth; None otherwise, or for a line drawn in steps
+    (_row_shift's)"""
+    if row < 0.1:
+        return None
+    long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.5 * row]
+    if len(long_) < 40 or sum(1 for sg in long_ if abs(sg[1] - sg[3]) < 1e-4) > 0.3 * len(long_) \
+            or sum(1 for sg in long_ if abs(sg[2] - sg[0]) > 2.5 * row) > 0.05 * len(long_):
+        return None
+    mean = sum(abs(sg[2] - sg[0]) for sg in long_) / len(long_)
+    return 0.2 if abs(mean - 0.2) <= 0.01 else None
+
+
 def _row_shift(own, row, step, rec):
     """how many grid steps to move a line drawn in steps deeper, where its
     recorded step cannot be told (rec None) on a page whose grid rows
@@ -2027,6 +2143,7 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         drawn = groups
         onto = {}
         onto[wmain], moved, how = _onto_readings(groups[wmain], top, step, row, cuts)
+        dashed = _dash_step(groups[wmain], top, row)
         for w, sg in groups.items():
             if w != wmain:
                 onto[w] = _onto_readings(sg, top, step, row, cuts, like=how)[0] if how else {}
@@ -2198,9 +2315,17 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
         # (from the strokes in this track only: a curve of the same colour
         # in another track is no part of this one's line)
         own = [sg for sg in drawn[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
-        rec = moved or _recorded_step(own)
+        rec = moved or _recorded_step(own) or _coarse_step(own, row)
         half = rec / 2 if rec else 0.0
-        if moved:
+        if dashed and dashed[0] != rec:
+            # a dashed line: its dash ends are no readings (they fit a
+            # finer step), its corners mostly in the gaps; its step from
+            # where its dashes lie, the readings moved down from where it
+            # bends (its corners put on a finer step's readings already:
+            # the rest of half its step)
+            values = _shift(values, ((dashed[0] - moved) / 2 if moved else dashed[1]) / step)
+            values = _hold(values, top, step, dashed[0])
+        elif moved:
             values = _hold(values, top, step, rec)      # (its corners already put back on the readings)
         elif half >= step / 4:
             long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]

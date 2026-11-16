@@ -1021,5 +1021,111 @@ class Corners(unittest.TestCase):
         self.assertEqual(ms[8], [(-0.013, 0.079)])
 
 
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class DashedLine(unittest.TestCase):
+    """a line LogViewer draws dashed: its dash ends are no readings"""
+
+    @staticmethod
+    def drawn(step, row, d0, n, on=((11, 3), (1, 3))):
+        """readings `step` apart, their corners half a step up on the row
+        above, places on a 0.007 grid; the line cut into dashes `on` rows
+        long with gaps between (dash, gap, dot, gap), split at each corner"""
+        import math
+        import random
+        rnd = random.Random(5)
+        q = 0.007
+        reads, p = [], 0.5
+        for i in range(n):                   # a line wandering across the track
+            p = min(0.9, max(0.1, p + rnd.uniform(-0.15, 0.15)))
+            reads.append((round(d0 + step * i, 6), round(p / q) * q))
+        corners = [(math.floor((d - step / 2) / row + 1e-9) * row, p) for d, p in reads]
+        pattern = [x for pair in on for x in pair]
+        cut, k, lit, d = [], 0, [], d0 - step
+        while d < d0 + step * n:
+            cut.append(d)
+            lit.append(k % 2 == 0)
+            d += pattern[k % len(pattern)] * row
+            k += 1
+        at = lambda a, b, x: a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0])
+        segs = []
+        for a, b in zip(corners, corners[1:]):
+            xs = sorted({a[0], b[0]} | {c for c in cut if a[0] < c < b[0]})
+            for x0, x1 in zip(xs, xs[1:]):
+                j = max(i for i, c in enumerate(cut) if c <= x0 + 1e-9)
+                if lit[j]:
+                    segs.append((x0, a[1] if x0 == a[0] else at(a, b, x0), x1, b[1] if x1 == b[0] else at(a, b, x1)))
+        return reads, corners, segs
+
+    @staticmethod
+    def short(step, row, n):
+        """readings `step` apart drawn in dashes two rows long, three rows
+        apart: single strokes, a corner seldom in one; their ends on the
+        drawing's grid (a row down the log, 0.007 across)"""
+        _reads, _corners, segs = DashedLine.drawn(step, row, 1000.0, n, on=((2, 3),))
+        q = 0.007
+        g = lambda d: round(d / row) * row
+        return [(g(a), round(pa / q) * q, g(b), round(pb / q) * q) for a, pa, b, pb in segs
+                if b - a > 1.5 * row]
+
+    def test_the_step_of_a_line_dashed_and_dotted(self):
+        row = 0.72 / 11.8079
+        _reads, _corners, segs = self.drawn(0.5, row, 1000.0, 300)
+        q = 0.007
+        g = lambda d: round(d / row) * row
+        segs = [(g(a), round(pa / q) * q, g(b), round(pb / q) * q) for a, pa, b, pb in segs]
+        S, down = M._dash_step(segs, 1000.0, row)
+        self.assertEqual(S, 0.5)
+        self.assertAlmostEqual(down, 0.25 + row / 2, delta=row / 2)       # on the row above: half a row more
+
+    def test_its_step_found_from_where_its_dashes_lie(self):
+        row = 0.72 / 11.8079
+        self.assertEqual(M._dash_step(self.short(0.5, row, 300), 1000.0, row)[0], 0.5)
+        self.assertEqual(M._dash_step(self.short(1.0, row, 150), 1000.0, row)[0], 1.0)
+
+    def test_no_step_for_a_line_drawn_whole(self):
+        row = 0.72 / 11.8079
+        _reads, corners, _segs = self.drawn(0.5, row, 1000.0, 300)
+        whole = [(a, pa, b, pb) for (a, pa), (b, pb) in zip(corners, corners[1:])]
+        self.assertIsNone(M._dash_step(whole, 1000.0, row))
+
+    def test_not_a_step_its_bends_sit_off_of(self):
+        # readings a fifth of a step off whole steps from 0 m: the line
+        # bends that far from where LogViewer bends one recorded at the step
+        row = 0.72 / 11.8079
+        _reads, _corners, segs = self.drawn(0.5, row, 1000.1, 300)
+        q = 0.007
+        g = lambda d: round(d / row) * row
+        segs = [(g(a), round(pa / q) * q, g(b), round(pb / q) * q) for a, pa, b, pb in segs]
+        self.assertNotEqual((M._dash_step(segs, 1000.0, row) or (None,))[0], 0.5)
+
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class CoarseRows(unittest.TestCase):
+    """0.2 m readings on a page whose grid rows are coarser than half that"""
+
+    @staticmethod
+    def line(row, n=400):
+        import math
+        import random
+        rnd = random.Random(7)
+        corners, p = [], 0.5
+        for i in range(n):
+            p = min(0.9, max(0.1, p + rnd.uniform(-0.1, 0.1)))
+            corners.append((math.floor((1000.0 + 0.2 * i - 0.1) / row + 1e-9) * row, p))
+        return [(a, pa, b, pb) for (a, pa), (b, pb) in zip(corners, corners[1:]) if b - a > 1e-9]
+
+    def test_its_step_from_its_strokes_lengths_on_the_whole(self):
+        for row in (0.72 / 4.7254, 0.72 / 5.904):          # 1:600 and 1:480
+            self.assertEqual(M._coarse_step(self.line(row), row), 0.2)
+
+    def test_not_on_fine_rows_nor_for_a_line_drawn_in_steps(self):
+        self.assertIsNone(M._coarse_step(self.line(0.72 / 11.8079), 0.72 / 11.8079))
+        row = 0.72 / 4.7254
+        steps = [(a, pa, b, pa) for a, pa, b, _pb in self.line(row)]
+        self.assertIsNone(M._coarse_step(steps, row))
+
+
 if __name__ == "__main__":
     unittest.main()
