@@ -573,20 +573,27 @@ def _mudlog_pdf(data, filename):
     """a PDF the frac readers found nothing in, read as a mudlog's printout
     (mudlog_pdf_app.py) when it is one and something on it reads: the
     /api/wellsight response, else None"""
+    return _read_printout(data, filename)[0]
+
+
+def _read_printout(data, filename):
+    """a PDF read as a mudlog's printout (mudlog_pdf_app.py) -> (the
+    /api/wellsight response, None), or (None, why it is not one) when it is
+    not a printout or nothing on it reads"""
     import mudlog_pdf_app as mpa
     try:
-        ok, _why = mpa.looks_like_mudlog(data)
+        ok, why = mpa.looks_like_mudlog(data)
         if not ok:
-            return None
+            return None, "it does not look like a log printout (%s)" % why
         out = wss.decode_pdf(data, os.path.basename(filename))
-    except Exception:  # noqa: BLE001 -- not a printout it can read: the frac answer stands
-        return None
+    except Exception as e:  # noqa: BLE001 -- not a printout it can read
+        return None, "it could not be read as a log printout (%s)" % e
     # a log: a curve the vocabulary knows (gamma, ROP, gas ...), or rocks or
     # symbols named by a legend; a form's "Ground Elevation  0 ... 10" is not
     p = out.get("payload") or {}
     if not (any(c.get("kind") for c in p.get("curves") or []) or p.get("rocks") or p.get("symbols")):
-        return None
-    return out
+        return None, "no curve, rock or symbol on it that the Lab knows"
+    return out, None
 
 
 def process_bytes(data, filename, job="", fix_text=None):
@@ -912,6 +919,17 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/wellsight-find":
                 with _READ_GATE:
                     return self._json(*wss.find(req))
+            # LAS extraction: a printout PDF read as a log straight away (no
+            # frac read first) -> the /api/wellsight response, or why not
+            if self.path == "/api/wellsight-pdf":
+                data = base64.b64decode(req.get("data") or "")
+                if data[:5] != b"%PDF-":
+                    return self._json(422, {"error": "Not a PDF."})
+                with _READ_GATE:
+                    out, why = _read_printout(data, req.get("filename", "file.pdf"))
+                if not out:
+                    return self._json(422, {"error": "No log read: " + why})
+                return self._json(200, out)
             if self.path == "/api/extract":
                 data = base64.b64decode(req["data"])
                 if data[:5] != b"%PDF-":

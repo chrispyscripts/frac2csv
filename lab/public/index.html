@@ -573,13 +573,76 @@
           animation:sp .8s linear infinite; vertical-align:-1px; margin-right:5px; }
   @keyframes sp { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
+  /* ---- the menu the app opens on: Frac2CSV or LAS extraction ---- */
+  .home { position:fixed; inset:0; z-index:60; background:var(--bg); overflow:auto;
+          display:flex; flex-direction:column; align-items:center; justify-content:center;
+          padding:32px 16px; }
+  .homehead { text-align:center; margin-bottom:26px; }
+  .homehead .wordmark { font-size:30px; }
+  .homehead .sub { color:var(--mut); font-size:13.5px; margin-top:6px; }
+  .homecards { display:grid; grid-template-columns:repeat(2, minmax(0, 340px)); gap:18px;
+               width:100%; justify-content:center; }
+  @media (max-width:720px) { .homecards { grid-template-columns:minmax(0, 440px); } }
+  .homecard { display:flex; flex-direction:column; align-items:flex-start; gap:9px; text-align:left;
+              border:1px solid var(--line); border-radius:12px; background:var(--panel);
+              color:var(--ink); font:inherit; padding:22px 22px 18px; cursor:pointer;
+              transition:border-color .15s, box-shadow .15s; }
+  .homecard:hover, .homecard:focus-visible, .homecard.hot {
+              border-color:var(--carmine); outline:none;
+              box-shadow:0 0 0 3px rgba(163,22,49,.16); }
+  .homecard .hk { font-size:10.5px; font-weight:700; letter-spacing:.07em;
+                  text-transform:uppercase; color:var(--carmine); }
+  .homecard .ht { font-size:22px; font-weight:700; letter-spacing:-0.02em; line-height:1.2; }
+  .homecard .hd { color:var(--mut); font-size:13px; line-height:1.5; }
+  .homecard .hx { font-family:var(--mono); font-size:11px; color:var(--mut); width:100%;
+                  border-top:1px solid var(--line); padding-top:10px; margin-top:auto; }
+  .homecard[disabled] { cursor:default; opacity:.55; }
+  .homecard[disabled]:hover { border-color:var(--line); box-shadow:none; }
+  .homenote { color:var(--mut); font-size:12px; margin-top:22px; text-align:center; }
+  /* the top bar: back to the menu, and which tool this is */
+  .modename { font-size:13.5px; font-weight:600; color:var(--mut);
+              padding-left:14px; border-left:1px solid var(--line); }
+  [data-mode="las"] .exportwrap, [data-mode="frac"] #lasbtn { display:none; }
+  /* each file belongs to the tool it was opened in: the list shows the tool's own */
+  [data-mode="frac"] .fileitem[data-mode="las"],
+  [data-mode="las"] .fileitem[data-mode="frac"] { display:none; }
+  .dropinfo { color:var(--mut); font-size:11px; margin:4px 12px 0; }
 </style>
 </head>
-<body>
+<body data-mode="frac">
 <div class="app">
+  <!-- The menu the app opens on: which tool. Frac2CSV reads frac reports;
+       LAS extraction reads WellSight logs, or a log's printout PDF, to LAS.
+       Files dropped on a card open that tool with them. -->
+  <div class="home" id="home" role="dialog" aria-modal="true" aria-label="Choose a tool">
+    <div class="homehead">
+      <div class="wordmark">Carmine's Lab</div>
+      <div class="sub">Choose a tool. ☰ Menu at the top left comes back here at any time.</div>
+    </div>
+    <div class="homecards">
+      <button type="button" class="homecard" id="homefrac" data-mode="frac">
+        <span class="hk">Frac reports → CSV</span>
+        <span class="ht">Frac2CSV</span>
+        <span class="hd">Each stage's per-second curves (pressure, rate, proppant) and the
+          report's tables, read from frac treatment reports and saved as CSV or Excel.</span>
+        <span class="hx">Drop frac report PDFs, a .txt drive list or CSV files</span>
+      </button>
+      <button type="button" class="homecard" id="homelas" data-mode="las">
+        <span class="hk">Mudlogs → LAS</span>
+        <span class="ht">LAS extraction</span>
+        <span class="hd" id="homelasd">A WellSight log from LogViewer, or a log's printout PDF,
+          read to LAS: its curves shown over the printout, then saved as a .las file.</span>
+        <span class="hx">Drop .sl6 .slg .hl6 .hlg logs or printout PDFs</span>
+      </button>
+    </div>
+    <div class="homenote">Files dropped on a card open in that tool.</div>
+  </div>
   <div class="top">
+    <button type="button" class="btn" id="homebtn"
+            title="Back to the menu: Frac2CSV or LAS extraction">☰ Menu</button>
     <div class="wordmark">Carmine's Lab</div>
     <span class="verbadge" id="verbadge" hidden></span>
+    <span class="modename" id="modename">Frac2CSV</span>
     <div class="grow"></div>
     <div class="exportwrap">
       <button type="button" class="btn primary" id="exportbtn">⬇ Export ▾</button>
@@ -858,12 +921,12 @@ curves and see their header, checks and text, with a printout PDF beside them">L
         matched by name if the layout differs. Exports save into each PDF's own
         folder.</div>
       </div>
-      <!-- One drop zone takes every kind the Lab reads, each sent to its own
-           reader by its extension. (A PDF reports / CSV files switch above it
-           gated the two; it went when the Lab took WellSight logs.) -->
-      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs, WellSight logs or CSV files">
-        Drop PDFs, WellSight logs, CSV files or a .txt file list here <b>or click</b>
-        <input type="file" id="file" accept=".pdf,.txt,.csv,.sl6,.slg,.hl6,.hlg,.sl8,.hl8,.ml6,.mlg,.ml8" hidden multiple>
+      <!-- One drop zone, each file sent to its own reader by its extension;
+           what it says and takes is the tool's (setMode). A PDF is a frac
+           report in Frac2CSV and a log's printout in LAS extraction. -->
+      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Upload frac report PDFs, a .txt file list or CSV files">
+        <span id="droptext">Drop frac report PDFs, a .txt drive list or CSV files here <b>or click</b></span>
+        <input type="file" id="file" accept=".pdf,.txt,.csv" hidden multiple>
       </div>
     </div>
 
@@ -1104,13 +1167,14 @@ let localInfo = null;
 fetch("/api/local-info").then(r => r.ok ? r.json() : null)
   .then(j => {
     localInfo = j; refreshDestUI();
+    homeLocal(!!(j && j.local));
     // index the WellSight printouts folder now, so the first log dropped
     // does not wait for a walk of a whole drive
     if (j && j.local && settings.wsLibrary)
       fetch("/api/wellsight-library", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder: settings.wsLibrary }) }).catch(() => {});
-  }).catch(() => {});
+  }).catch(() => homeLocal(false));
 // destination-folder field: editable on the desktop app, informational on web
 function refreshDestUI() {
   const local = !!(localInfo && localInfo.local);
@@ -1256,6 +1320,7 @@ function tableCsvName(base, title, i, used) {
   return name;
 }
 const entries = [];     // file entries (for provider menu + filtering)
+let mode = "frac";      // the tool open: "frac" (Frac2CSV) or "las" (LAS extraction), setMode
 
 // ---------- upload plumbing ----------
 const drop = $("drop"), fileInput = $("file"), leftcol = $("leftcol");
@@ -1420,8 +1485,9 @@ async function showWholePdf(entry) {
   }
 }
 
-function makeFileEntry(name) {
+function makeFileEntry(name, tool) {
   const el = document.createElement("div"); el.className = "fileitem";
+  el.dataset.mode = tool || mode;          // the tool it was opened in (setMode)
   const head = document.createElement("div"); head.className = "filehead";
   head.innerHTML = `<span class="nm">${name}</span>`
     + `<span class="st"><span class="spin"></span>queued</span>`
@@ -1501,10 +1567,23 @@ function dropWrong(names) {
     $("drop").parentNode.insertBefore(el, $("drop").nextSibling);
   }
   if (!names.length) { el.textContent = ""; return; }
+  const reads = mode === "las"
+    ? "LAS extraction reads WellSight logs and log printout PDFs."
+    : "Frac2CSV reads frac report PDFs, CSV files and .txt file lists.";
   el.textContent = names.length === 1
-    ? `${names[0]} was left out: the Lab reads PDF reports, WellSight logs, CSV files and .txt file lists.`
-    : `${names.length} files were left out: ${names.join(", ")}. The Lab reads PDF reports, WellSight logs, `
-      + "CSV files and .txt file lists.";
+    ? `${names[0]} was left out. ${reads}`
+    : `${names.length} files were left out: ${names.join(", ")}. ${reads}`;
+}
+// What went to the other tool (a WellSight log dropped on Frac2CSV opens in
+// LAS extraction): said, so the file is not looked for in the wrong list.
+function dropInfo(text) {
+  let el = $("dropinfo");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "dropinfo"; el.id = "dropinfo";
+    $("drop").parentNode.insertBefore(el, $("drop").nextSibling);
+  }
+  el.textContent = text || "";
 }
 
 // A dropped CSV, parsed into the same {title, columns, rows} a parsed table
@@ -1660,7 +1739,28 @@ async function handleWellsight(f, q, printoutFile) {
     const nm = q.head.querySelector(".nm");
     if (nm && out.payload.well) nm.title = out.payload.well;
     wellsightLine(q, out.printoutError);
-    if (!current) selectFile(q);
+    if (!current && entryMode(q) === mode) selectFile(q);
+  } catch (e) {
+    q.set("✗ " + e.message, "err");
+  }
+}
+
+// LAS extraction: a printout PDF read as a log straight away (localapp's
+// /api/wellsight-pdf, mudlog_pdf_app.py), no frac read first; the PDF is
+// its own printout
+async function handleLasPdf(f, q) {
+  try {
+    q._pdfFile = f;
+    q.set("reading printout"); q.progress(0.25);
+    const out = await postJson("/api/wellsight-pdf", { filename: f.name,
+      data: await b64(new Uint8Array(await f.arrayBuffer())) });
+    q.ws = { id: out.id, payload: out.payload, printout: out.printout || null, lookup: "" };
+    q.provider = "PDF printout";
+    q.items = wsSets(out.payload).map(s => ({ type: "wsset", ...s }));
+    const nm = q.head.querySelector(".nm");
+    if (nm && out.payload.well) nm.title = out.payload.well;
+    wellsightLine(q, out.printoutError);
+    if (!current && entryMode(q) === mode) selectFile(q);
   } catch (e) {
     q.set("✗ " + e.message, "err");
   }
@@ -3031,6 +3131,104 @@ $("lasbtn").addEventListener("click", () => {
   lasWin = window.open("lasviewer.html", winName("lasviewer"), "popup,width=1400,height=900");
 });
 
+// ---------- the menu the app opens on: Frac2CSV or LAS extraction ----------
+// Two tools on one page. Each file belongs to the tool it was opened in (its
+// .fileitem carries data-mode) and the list shows only that tool's, so going
+// back to the menu and into the other tool loses nothing; each tool opens
+// again on the file it last had open.
+const MODES = {
+  frac: { name: "Frac2CSV",
+          drop: "Drop frac report PDFs, a .txt drive list or CSV files here <b>or click</b>",
+          aria: "Upload frac report PDFs, a .txt file list or CSV files",
+          accept: ".pdf,.txt,.csv",
+          empty: "Drop a frac report PDF on the left to begin. Pick a PDF to list its stages "
+            + "in the middle column, then click a stage to see its per-second curves and "
+            + "download as CSV or Excel." },
+  las: { name: "LAS extraction",
+         drop: "Drop WellSight logs (LogViewer) or log printout PDFs here <b>or click</b>",
+         aria: "Upload WellSight logs or log printout PDFs",
+         accept: ".pdf," + WS_EXTS.join(","),
+         empty: "Drop a WellSight log (.sl6, .slg, .hl6, .hlg …) or a log's printout PDF on the "
+           + "left to begin. Each opens with its curves over the printout; Save LAS writes "
+           + "them to a .las file." },
+};
+const lastOpen = {};      // the file each tool had open when it was left
+let modeChosen = false;   // a tool picked: Escape on the menu goes back to it
+function entryMode(e) { return (e && e.el && e.el.dataset.mode) || "frac"; }
+// the open file put away (it belongs to the other tool)
+function closeCurrent() {
+  current = null;
+  document.querySelectorAll(".filehead.sel").forEach(h => h.classList.remove("sel"));
+  clearStageList();
+  $("timewarn").hidden = true;
+  $("dropnote").hidden = true;
+  $("previewpane").hidden = true;
+  $("wspane").hidden = true;
+  $("empty").hidden = false;
+  pushStacked();
+  updateTableBtn();
+}
+function applyMode(m) {
+  mode = m;
+  const M = MODES[m];
+  document.body.dataset.mode = m;
+  document.title = "Carmine's Lab — " + M.name;
+  $("modename").textContent = M.name;
+  $("droptext").innerHTML = M.drop;
+  $("drop").setAttribute("aria-label", M.aria);
+  $("file").setAttribute("accept", M.accept);
+  $("empty").textContent = M.empty;
+}
+function setMode(m) {
+  modeChosen = true;
+  $("home").hidden = true;
+  if (m === mode && !(current && current.entry && entryMode(current.entry) !== m)) return;
+  if (current && current.entry) lastOpen[entryMode(current.entry)] = current.entry;
+  applyMode(m);
+  dropWrong([]); dropInfo("");
+  if (current && current.entry && entryMode(current.entry) !== m) closeCurrent();
+  const back = lastOpen[m];
+  if (!current && back && entries.includes(back) && back.items.length) selectFile(back);
+  updateClearAll();
+}
+function showHome() {
+  $("home").hidden = false;
+  const b = $(mode === "las" && !$("homelas").disabled ? "homelas" : "homefrac");
+  b.focus();
+}
+for (const card of document.querySelectorAll(".homecard")) {
+  card.addEventListener("click", () => setMode(card.dataset.mode));
+  // files dropped on a card open its tool with them
+  card.addEventListener("dragenter", e => { if (dragging(e) && !card.disabled) card.classList.add("hot"); });
+  card.addEventListener("dragover", e => {
+    if (!dragging(e) || card.disabled) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+  });
+  card.addEventListener("dragleave", e => { if (!card.contains(e.relatedTarget)) card.classList.remove("hot"); });
+  card.addEventListener("drop", e => {
+    e.preventDefault();
+    card.classList.remove("hot");
+    if (card.disabled) return;
+    setMode(card.dataset.mode);
+    enqueue([...e.dataTransfer.files]);
+  });
+}
+$("homebtn").addEventListener("click", showHome);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("home").hidden && modeChosen) { e.preventDefault(); setMode(mode); }
+}, true);
+// LAS extraction reads logs with the desktop app's server: on the web the
+// card says so and stays shut
+function homeLocal(local) {
+  const b = $("homelas");
+  b.disabled = !local;
+  b.title = local ? "" : "WellSight logs and log printouts are read in the desktop app";
+  if (!local) $("homelasd").textContent = "In the desktop app: a WellSight log from LogViewer, "
+    + "or a log's printout PDF, read to LAS.";
+}
+applyMode("frac");
+$("homefrac").focus();
+
 // The arrow keys in the stacked and header windows step through the logs
 // here, so all the windows always show the same one.
 function wsNavLogs(dir) {
@@ -3072,8 +3270,25 @@ function enqueue(files) {
     if (n.endsWith(".pdf") && logs[stemOf(f.name)])
       printouts.add(f);
   }
+  // Which tool each file is for: a WellSight log is LAS extraction's and a
+  // CSV or .txt list Frac2CSV's wherever it is dropped; a PDF is the open
+  // tool's (a frac report, or a log's printout). A drop all for the other
+  // tool opens that tool with it.
+  const toolOf = f => {
+    const n = f.name.toLowerCase();
+    if (isWellsightName(f.name) || printouts.has(f)) return "las";
+    if (n.endsWith(".csv") || n.endsWith(".txt")) return "frac";
+    return mode;
+  };
+  const tools = new Set([...files].map(toolOf));
+  if (tools.size === 1 && !tools.has(mode)) setMode([...tools][0]);
+  let elsewhere = 0;
   for (const f of files) {
     const n = f.name.toLowerCase();
+    if (toolOf(f) === "frac" && mode === "las") {   // a list or CSV dropped with logs
+      refused.push(f.name + " (open Frac2CSV from ☰ Menu for it)");
+      continue;
+    }
     if (n.endsWith(".csv")) { loadCsvFile(f); continue; }     // already data: parsed, not extracted
     if (printouts.has(f)) continue;                 // travels with its log
     if (isWellsightName(f.name)) {
@@ -3081,7 +3296,8 @@ function enqueue(files) {
         refused.push(f.name + " (WellSight logs open in the desktop app)");
         continue;
       }
-      const q = makeFileEntry(f.name);
+      const q = makeFileEntry(f.name, "las");
+      if (mode !== "las") elsewhere++;
       const pr = [...printouts].find(g => stemOf(g.name) === stemOf(f.name)) || null;
       workStarted();
       busy = busy.then(() => handleWellsight(f, q, pr))
@@ -3096,6 +3312,18 @@ function enqueue(files) {
     }
     if (n.endsWith(".txt")) { loadManifest(f); continue; }
     if (!n.endsWith(".pdf")) { refused.push(f.name); continue; }
+    if (mode === "las") {                           // a log's printout, read as the log
+      if (!isLocal()) {
+        refused.push(f.name + " (log printouts are read in the desktop app)");
+        continue;
+      }
+      const q = makeFileEntry(f.name, "las");
+      workStarted();
+      busy = busy.then(() => handleLasPdf(f, q))
+                 .catch(() => {})
+                 .finally(workFinished);
+      continue;
+    }
     const q = makeFileEntry(f.name);
     const fix = fixes[n.slice(0, -4)] || null;
     workStarted();
@@ -3104,6 +3332,8 @@ function enqueue(files) {
                .finally(workFinished);
   }
   dropWrong(refused);
+  dropInfo(elsewhere ? `${elsewhere} WellSight log${elsewhere === 1 ? " was" : "s were"} opened in `
+                       + `LAS extraction: ☰ Menu to see ${elsewhere === 1 ? "it" : "them"}.` : "");
 }
 
 // ---------- TXT file-list manifests (batch straight off the drive) ----------
@@ -9839,7 +10069,7 @@ function navFile(dir) {
 
 function navigableEntries() {
   return entries
-    .filter(e => e.items && e.items.length)
+    .filter(e => e.items && e.items.length && entryMode(e) === mode)   // the open tool's
     // by position on screen, not load order: a queue finishes out of order
     .sort((a, b) => (a.el.compareDocumentPosition(b.el)
                      & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
@@ -10776,7 +11006,7 @@ function updateCount() {
 }
 
 function updateClearAll() {
-  $("clearall").hidden = entries.length === 0;
+  $("clearall").hidden = !entries.some(e => entryMode(e) === mode);   // the open tool's list
   const n = emptyEntries().length;
   const b = $("reportall");
   if (b) {
@@ -10788,7 +11018,7 @@ function updateClearAll() {
 }
 // Files that finished with nothing, i.e. the ones showing a Report button.
 function emptyEntries() {
-  return entries.filter(e => e.el && e.el.querySelector(".rptbtn"));
+  return entries.filter(e => e.el && e.el.querySelector(".rptbtn") && entryMode(e) === mode);
 }
 // One batch, one report.
 //
@@ -10878,8 +11108,15 @@ function deleteEntry(entry) {
 }
 
 function clearAll() {
-  for (const e of entries.slice()) e.el.remove();
-  entries.length = 0; wells.length = 0; tableFiles.length = 0;
+  // the open tool's files only: the other tool's list is out of sight
+  if (mode === "las") {
+    for (const e of entries.filter(x => entryMode(x) === "las")) deleteEntry(e);
+    return;
+  }
+  for (const e of entries.filter(x => entryMode(x) !== "las")) e.el.remove();
+  const keep = entries.filter(x => entryMode(x) === "las");
+  entries.length = 0; entries.push(...keep);
+  wells.length = 0; tableFiles.length = 0;
   current = null;
   clearStageList();
   manifest = null;
