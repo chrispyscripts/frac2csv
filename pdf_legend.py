@@ -482,8 +482,13 @@ def captions(pg, pno, across, one=None):
             if off > 50:
                 continue                    # (another column's: a legend's names have no numbers)
             mine.append((na, off, v, perp(nx, ny)))
-            by = (off > 0.6 * h, d)                 # (a number on the caption's own row first: a wider
-            if na < a0:                             #  one in the row above can sit nearer its middle)
+            # (a number on the caption's own row first: a wider one in the
+            # row above can sit nearer its middle; then one set level with
+            # the caption's start, as its scale's are, before another label
+            # printed over it, an azimuth's 180 on a sideways page)
+            level = abs(perp(nb[0], nb[1]) - perp(bb[0], bb[1])) <= 1.5
+            by = (off > 0.6 * h, not level, d)
+            if na < a0:
                 if left is None or by < left_by:
                     left, left_by = (d, v, na), by
             elif na > a1:

@@ -273,6 +273,20 @@ class Legend(unittest.TestCase):
         self.assertEqual(got, {("Shallow", 1.0, 1000.0), ("Gamma", 0.0, 150.0)})
         doc.close()
 
+    def test_a_label_printed_over_a_scale_number_is_not_it(self):
+        # sideways: 20 ROP 0 up the page, the numbers set level with the
+        # caption's start; another label (an azimuth's 180) printed over
+        # the 20, a little off it and nearer the caption's middle
+        doc = fitz.open()
+        pg = doc.new_page(width=792, height=612)
+        pg.insert_text((300, 354), "20", fontsize=6.5)
+        pg.insert_text((295, 356), "180", fontsize=6.5)
+        pg.insert_text((300, 400), "ROP (min/m)", fontsize=6.5)
+        pg.insert_text((300, 446), "0", fontsize=6.5)
+        got = [(c.name, c.left, c.right) for c in L.captions(pg, 0, lambda x, y: -y)]
+        self.assertEqual(got, [("ROP", 0.0, 20.0)])
+        doc.close()
+
     def test_a_number_run_into_the_next_caption(self):
         # sideways: "30 WOB 0" in blue and "25000 SPP 0" in red, the blue 0
         # and the red caption one text line ("0 SPP (kPa)")
