@@ -13,7 +13,9 @@ own outputs, written only when the user saves:
   <file>.las                 LAS 2.0, every curve at its recorded step
   <file>.curve-track.las     the curve track only, on one regular step: the
                              finest any of its curves is recorded at, so no
-                             reading is thinned out (what Save LAS writes)
+                             reading is thinned out (what Save LAS writes);
+                             with the log's Porosity and Grain Size cells as
+                             curves after them (wellsight_cells.py)
   <file>.csv / .json         the same table, and everything else in the file
   <file>.lithology.csv, .survey.csv, .accessories.csv, .picture-N.png
                              where the log has them
@@ -26,6 +28,7 @@ own outputs, written only when the user saves:
 Standard library only, like the converter.
 """
 import hashlib
+import math
 import os
 import shutil
 import sys
@@ -45,6 +48,7 @@ import json                   # noqa: E402
 import wellsight_symbols as wsym   # noqa: E402
 import wellsight_scales as wscale   # noqa: E402
 import wellsight_descriptions as wdesc   # noqa: E402
+import wellsight_cells as wcells   # noqa: E402
 
 # The four the converter reads (StripLog / HorizontalLog, v5 and v6). The
 # extension is only a hint: the 32-byte signature inside the body decides,
@@ -126,18 +130,83 @@ def _convert(data, name, las_step=STEP):
         row = cv.convert_one((src, out, name))
         if row.get("status") not in ("ok", "no_curves"):
             raise NotWellSight(f"{name}: {row.get('reason') or row.get('status')}")
-        erow = el.export_one((src, os.path.join(tmp, "x"), name, "curves", las_step))
         files = {}
         for fn in sorted(os.listdir(out)):
             with open(os.path.join(out, fn), "rb") as f:
                 files[fn] = f.read()
-        x = os.path.join(tmp, "x", name + ".las")
-        if erow.get("status") == "ok" and os.path.exists(x):
-            with open(x, "rb") as f:
-                files[name + CURVE_LAS] = f.read()
+        las = _curve_track_las(data, name, las_step, os.path.join(tmp, name + CURVE_LAS))
+        if las is not None:
+            files[name + CURVE_LAS] = las
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return files
+
+
+def _curve_track_las(data, name, las_step, path):
+    """The LAS Save writes: the converter's curve-track export (export_las
+    "curves", the same file it writes), with the log's Porosity and Grain
+    Size cells as curves after the curves, on the same depths, the depth
+    range stretched to take in every filled row. None when the log has no
+    curve track to write."""
+    try:
+        log = ws.read_log(data)
+        res = el.export_curves(log, las_step)
+    except Exception:  # noqa: BLE001 -- as export_one: no file, the rest still saved
+        return None
+    if not res:
+        return None
+    table, cols, meta, notes = res
+    try:
+        table, cols, meta, notes = _with_cells(data, log, table, cols, meta, notes)
+    except Exception as ex:  # noqa: BLE001 -- the cells are extra; never lose the curves over them
+        notes = notes + ["Porosity / Grain Size cells could not be read (%s: %s)." % (type(ex).__name__, ex)]
+    try:
+        cv.write_las(path, log, name, hashlib.sha1(data).hexdigest(), table, cols, meta, notes=notes)
+    except Exception:  # noqa: BLE001 -- as export_one
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _with_cells(data, log, table, cols, meta, notes):
+    body, _ = ws.inflate(data, [])
+    titles = {t[2] for t in ws.tracks(body) if t[2]} | set(log.get("columns") or [])
+    found = wcells.grids(body, titles)
+    if not found:
+        return table, cols, meta, notes
+    grid, step = table
+    top = log["top"]
+    k0 = int(round((grid[0] - top) / step))
+    k1 = int(round((grid[-1] - top) / step))
+    span = wcells.span(found, top)
+    if span:
+        a = int(math.floor((span[0] - top) / step + 1e-9))
+        b = int(math.ceil((span[1] - top) / step - 1e-9)) - 1
+        if a < k0 or b > k1:
+            n0, n1 = min(k0, a), max(k1, b)
+            cols = [[None] * (k0 - n0) + list(c) + [None] * (n1 - k1) for c in cols]
+            grid = [top + k * step for k in range(n0, n1 + 1)]
+            k0, k1 = n0, n1
+    curves, left_out = wcells.las_curves(found, top, grid, step)
+    used = {mn for mn, _ in meta}
+    meta, cols = list(meta), list(cols)
+    for mn, unit, desc, vals in curves:
+        m, i = mn, 2
+        while m in used:
+            m, i = "%s_%d" % (mn, i), i + 1
+        used.add(m)
+        meta.append((m, {"mnem": m, "name": mn, "source_mnemonic": "", "units": unit, "step": step,
+                         "description": desc}))
+        cols.append(vals)
+    notes = list(notes)
+    if curves:
+        notes = [x.replace("Content: curve-track data only (no lithology, text or survey).",
+                           "Content: curve-track data, then the log's Porosity / Grain Size cells as curves "
+                           "(no lithology, text or survey).") for x in notes]
+        notes.append("Cell curves (%s): read from the log's own cells; each depth holds the cell row it is in. "
+                     "See each curve's description." % ", ".join(c[0] for c in curves))
+    notes += left_out
+    return (grid, step), cols, meta, notes
 
 
 def _most_common_column(items):
