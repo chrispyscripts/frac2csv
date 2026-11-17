@@ -11,7 +11,7 @@ pads.forEach((p,i)=>p.wells.push({pad:p,well:{wa:String(i)},points:[[i*200,0,0],
 const initial={yaw:.91,pitch:-.2,scale:.27,target:[111,-800,245],pan:[55,-31]};
 const plain=o=>JSON.parse(JSON.stringify(o));
 const noop=()=>{};
-const c={console,structuredClone,Math,JSON,Promise,data:{pads},pad:null,well:null,stage:null,interval:null,hover:null,entryCamera:null,
+const c={console,structuredClone,Math,JSON,Promise,SL:null,data:{pads},pad:null,well:null,stage:null,interval:null,hover:null,entryCamera:null,
   camera:structuredClone(initial),goal:{scale:1,target:[0,0,0]},padMenu:element(),padPage:element(),returnButton:element(),canvas:element(),tip:element(),overlay,
   resize:noop,renderPanel:noop,fit(){c.camera.pan=[900,900];c.goal.target=[0,0,0];c.goal.scale=1;},
   active:true,hits:[],width:1000,height:800,raf:0,requestAnimationFrame:()=>1,path:noop,project:p=>p,
@@ -39,6 +39,8 @@ c.draw();assert(c.hits.length>0);assert(c.hits.every(h=>h.p===c.pad),'background
 // Gamma mode: a logged well gets per-bin hit targets on the locked pad only; an
 // unlogged well (pad-1) draws dashed and must not throw or add gamma targets.
 const logged=pads[0].wells[0];Object.assign(logged,{gmd0:0,gbin:5,gv:[90,null,120,140,60],gpts:[[0,0,0],[0,-5,0],[0,-10,0],[0,-15,0],[0,-20,0],[0,-25,0]],gby:[[0,4],[2,3]]});
+// the log run as logRun (cluster-underground.js) caches it: the type's readings, a point per bin edge, bins by colour
+c.logRun=w=>w.gv?{t:{md0:w.gmd0,bin:w.gbin,v:w.gv},pts:w.gpts,by:new Map([['#000',w.gby[0]],['#111',w.gby[1]]])}:{t:null};
 c.colorBy='gamma';c.draw();const gh=c.hits.filter(h=>h.g!=null);
 assert.deepEqual(plain(gh.map(h=>h.g)),[4],'bins 1,4,7… are hover targets; bin 1 has no reading so only 4 remains');assert(c.hits.every(h=>h.p===c.pad),'gamma targets stay on the locked pad');
 c.colorBy='pad';

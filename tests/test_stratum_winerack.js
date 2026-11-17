@@ -7,7 +7,7 @@ const slice=(src,a,b)=>{const i=src.indexOf(a);assert(i>=0,'missing '+a);const j
 
 // ---------- the rack: a pad turned along its laterals, and a line moved along it ----------
 const rack=read('winerack.js');
-const c={Math,Number,String,Object,Array,Set,Map,isFinite,LANDING_M:400,colorBy:'pad',gamma:null};
+const c={Math,Number,String,Object,Array,Set,Map,isFinite,LANDING_M:400,colorBy:'pad',gamma:null,SL:null};
 vm.createContext(c);
 vm.runInContext(slice(rack,'function rackGeom(p)','const rackInk'),c);
 vm.runInContext(slice(rack,'function centralWell(R)','\n}\n')+'\n}',c);

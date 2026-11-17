@@ -20,7 +20,7 @@ const FM=m.FVMetrics;
 
 // ---------- the rack: geometry, then the colour of each well where the line crosses it ----------
 const rack=read('winerack.js');
-const c={Math,Number,String,Object,Array,Set,Map,isFinite,Date,LANDING_M:400,colorBy:'pad',gamma:null,SG:null,FM,metric:'avgP',rels:null,
+const c={Math,Number,String,Object,Array,Set,Map,isFinite,Date,LANDING_M:400,colorBy:'pad',gamma:null,SG:null,SL:null,FM,metric:'avgP',rels:null,
   padInk:i=>['#2563eb','#e8590c'][i%2]};
 vm.createContext(c);
 vm.runInContext(slice(rack,'const fmt =','\n'),c);

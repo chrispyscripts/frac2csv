@@ -2,7 +2,7 @@
 'use strict';
 const button=document.createElement('button');button.id='change-view';button.textContent='Change View';button.setAttribute('aria-label','Change View to underground cluster');document.body.append(button);
 const overlay=document.createElement('section');overlay.id='underground';overlay.setAttribute('aria-label','Underground cluster explorer');overlay.setAttribute('aria-hidden','true');overlay.inert=true;
-overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Arrow keys move the view, Shift and the arrows turn and tilt it, plus and minus zoom. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false">Gamma</button><button data-color="metric" aria-pressed="false" title="Colour each stage by a measure from its treatment">Stage</button><button data-color="relation" aria-pressed="false" title="Colour the wells parent, child, co-completed or standalone">Parent/child</button><button data-color="date" aria-pressed="false" title="Colour the wells by when they were fracked">Date</button></div><button id="ug-quakes" type="button" aria-pressed="false" title="Earthquakes since 2013 (Earthquakes Canada, the BC Energy Regulator and the BC Seismic Research Consortium)">Quakes</button><button id="ug-qfilter" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Filter the earthquakes: dates, magnitude, undetermined depths">Filter</button><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-png" type="button" title="Save this view as a PNG image">PNG</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Arrow keys move, Shift + arrows turn and tilt, + / − zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
+overlay.innerHTML=`<canvas aria-label="Interactive surveyed well paths. Arrow keys move the view, Shift and the arrows turn and tilt it, plus and minus zoom. Select pads using the pad menu." tabindex="0"></canvas><div class="ug-head"><div><div class="ug-title">Below the surface</div><div class="ug-sub">Loading…</div></div><div class="ug-tools"><div class="ug-color" role="group" aria-label="Colour wells by"><span>Colour</span><button data-color="pad" aria-pressed="true">Pad</button><button data-color="gamma" aria-pressed="false" title="Colour the wells by their log data: gamma ray, rock type, porosity, oil shows or a log curve ([ and ] step through them)">Gamma</button><button data-color="metric" aria-pressed="false" title="Colour each stage by a measure from its treatment">Stage</button><button data-color="relation" aria-pressed="false" title="Colour the wells parent, child, co-completed or standalone">Parent/child</button><button data-color="date" aria-pressed="false" title="Colour the wells by when they were fracked">Date</button></div><button id="ug-quakes" type="button" aria-pressed="false" title="Earthquakes since 2013 (Earthquakes Canada, the BC Energy Regulator and the BC Seismic Research Consortium)">Quakes</button><button id="ug-qfilter" type="button" hidden aria-haspopup="dialog" aria-expanded="false" title="Filter the earthquakes: dates, magnitude, undetermined depths">Filter</button><button id="ug-all">All pads</button><button id="ug-reset">Reset camera</button><button id="ug-png" type="button" title="Save this view as a PNG image">PNG</button><button id="ug-back">Surface view ↗</button></div></div><aside class="ug-panel"><label for="ug-pad">Explore the cluster</label><select id="ug-pad"><option value="">All pads</option></select><div id="ug-content" class="ug-summary">Loading directional surveys…</div></aside><div class="ug-hint">Drag to orbit · Shift-drag / right-drag to pan · Scroll to zoom · Arrow keys move, Shift + arrows turn and tilt, + / − zoom · Click a pad to lock on<br>Survey geometry uses local surface-relative TVD; measured intervals are shown; treatment-stage matching is unverified.</div><div class="ug-tip"></div><div class="ug-legend" hidden></div>`;
 document.body.append(overlay);
 const padPage=document.createElement('iframe');padPage.className='ug-pad-page';padPage.title='Pad data';padPage.hidden=true;overlay.append(padPage);
 const returnButton=document.createElement('button');returnButton.id='ug-return';returnButton.textContent='← Back to underground';returnButton.hidden=true;overlay.querySelector('.ug-tools').prepend(returnButton);
@@ -29,13 +29,14 @@ map.on('zoom',positionButton);map.on('moveend',positionButton);new ResizeObserve
 // The region: every pad's position, so the 3D view can take whichever pads the
 // map is showing. A pad's wells are fetched only when an area containing it opens.
 let region=null,areaTitle='Below the surface',areaName='';
-const regionReady=fetch('data/region/index.json').then(r=>{if(!r.ok)throw Error('Unable to load the region');return r.json()}).then(d=>{region=d;positionButton();return d});
+const SL=window.StratumLogs;
+const regionReady=Promise.all([fetch('data/region/index.json').then(r=>{if(!r.ok)throw Error('Unable to load the region');return r.json()}),SL?SL.skReady:null]).then(([d,sk])=>{if(sk)d.pads=d.pads.concat(sk.pads);region=d;positionButton();return d});
 const padCache=new Map(),AREA_MAX=30;
-function fetchPad(id){if(!padCache.has(id))padCache.set(id,fetch('data/region/pads/'+encodeURIComponent(id)+'.json').then(r=>{if(!r.ok)throw Error('pad '+id);return r.json()}));return padCache.get(id)}
+function fetchPad(id){if(!padCache.has(id))padCache.set(id,fetch(SL?SL.padUrl(id):'data/region/pads/'+encodeURIComponent(id)+'.json').then(r=>{if(!r.ok)throw Error('pad '+id);return r.json()}));return padCache.get(id)}
 const padDist=(a,lat,lon)=>Math.hypot(a.lat-lat,(a.lon-lon)*Math.cos(lat*Math.PI/180))*111.32;
 // the map's setting: only wells with treatment charts, or every well
 const chartedOnly=()=>!!(window.stratumWells&&window.stratumWells.chartedOnly());
-const shownPads=()=>chartedOnly()?region.pads.filter(p=>p.curves):region.pads;
+const shownPads=()=>chartedOnly()?region.pads.filter(p=>p.curves||p.logs):region.pads;
 // the pads in the map's view, nearest its centre first, at most AREA_MAX of them
 // so the scene stays legible; an empty view takes the nearest few instead
 function areaIds(){if(!region)return[];const b=map.getBounds(),c=map.getCenter(),near=p=>padDist(p,c.lat,c.lng);let ps=shownPads().filter(p=>b.contains([p.lon,p.lat]));if(!ps.length)ps=shownPads().slice().sort((x,y)=>near(x)-near(y)).slice(0,6);return ps.sort((x,y)=>near(x)-near(y)).slice(0,AREA_MAX).map(p=>p.id)}
@@ -44,7 +45,7 @@ function idsAround(id,km=4){const c=region&&region.pads.find(p=>p.id===id);if(!c
 async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.pads.find(p=>p.id===id)).filter(Boolean);if(!entries.length)throw Error('No pads in this area');
  const raw=await Promise.all(entries.map(e=>fetchPad(e.id)));
  // copies: the scene writes points, colours and caches onto its pads
- let pads=raw.map(p=>structuredClone(p));if(chartedOnly()){pads.forEach(p=>p.wells=p.wells.filter(w=>w.well.curves));pads=pads.filter(p=>p.wells.length);if(!pads.length)throw Error('No wells with treatment charts in this area')}
+ let pads=raw.map(p=>structuredClone(p));if(chartedOnly()){pads.forEach(p=>p.wells=p.wells.filter(w=>w.well.curves||w.well.logs));pads=pads.filter(p=>p.wells.length);if(!pads.length)throw Error('No wells with treatment charts in this area')}
  if(data&&pad)selectPad('');rackLayer.replaceChildren();well=null;stage=null;interval=null;hover=null;
  const d={pads};data=d;
  const lat0=d.pads.reduce((a,p)=>a+p.lat,0)/d.pads.length,lon0=d.pads.reduce((a,p)=>a+p.lon,0)/d.pads.length;
@@ -54,12 +55,13 @@ async function loadArea(ids){await regionReady;const entries=ids.map(id=>region.
  // the grid reaches past the furthest well, and down past the deepest
  const pts=d.pads.flatMap(p=>p.wells.flatMap(w=>w.points));d.gridR=Math.max(6000,Math.ceil(Math.max(...pts.map(q=>Math.max(Math.abs(q[0]),Math.abs(q[2]))))/1000)*1000+1000);d.gridD=Math.max(3000,Math.ceil(-Math.min(...pts.map(q=>q[1]))/1000)*1000);
  const fields={};entries.forEach(e=>{if(e.field)fields[e.field]=(fields[e.field]||0)+e.wells});const top=Object.entries(fields).sort((a,b)=>b[1]-a[1])[0];
- areaTitle=(top?top[0]+' area':'This area')+' · Below the surface';
+ const skArea=SL&&entries.every(e=>SL.isLocalPad(e.id));areaTitle=(top?top[0]+' area':skArea?'Saskatchewan logs near '+entries[0].name:'This area')+' · Below the surface';
  overlay.querySelector('.ug-title').textContent=areaTitle;
  overlay.querySelector('.ug-sub').textContent=`${d.pads.length} pads / ${d.pads.reduce((n,p)=>n+p.wells.length,0)} surveyed well paths · metres`;
  if(gamma)attachGamma(gamma);
  if(quakes)attachQuakes();
- UGX.dom=null;asofRange();if(colorBy==='metric')ensureMetrics();if(colorBy!=='pad'&&colorBy!=='gamma')renderLegend();
+ logType=SL?SL.pick(areaWells()):'gamma';logLabel();
+ UGX.dom=null;asofRange();if(colorBy==='metric')ensureMetrics();if(colorBy!=='pad')renderLegend();
  return d;}
 // ---------- Earthquakes ----------
 // Natural Resources Canada's catalog. Each event is a ring on the surface at its
@@ -92,18 +94,43 @@ qfButton.onclick=e=>{if(!quakes)return;const rows=quakes.rows,days=rows.map(r=>r
 addEventListener('stratum:quakefilter',()=>{qfLabel();if(data&&showQuakes)renderPanel()});
 
 // Gamma is an extra layer: if it fails to load, the view still opens in pad colours.
-const gammaReady=fetch('data/gamma.json').then(r=>r.ok?r.json():null).then(g=>{if(g){gamma=g;if(data)attachGamma(g)}}).catch(e=>console.warn('gamma layer',e)).then(()=>{if(!gamma){const b=overlay.querySelector('[data-color=gamma]');b.disabled=true;b.title='Gamma data unavailable'}});
+const gammaReady=fetch('data/gamma.json').then(r=>r.ok?r.json():null).then(g=>{if(g){gamma=g;if(data)attachGamma(g)}}).catch(e=>console.warn('gamma layer',e)).then(()=>SL&&SL.skReady).then(sk=>{if(!gamma&&!sk){const b=overlay.querySelector('[data-color=gamma]');b.disabled=true;b.title='Gamma data unavailable'}});
 function gammaBucket(v){return SG.bucket(v,gamma.scale,GAMMA_N)}
 // another scheme chosen, here or in another window: recolour everything that shows gamma
-addEventListener('stratum:gammapalette',()=>{GAMMA_RAMP=SG.stops();GAMMA_INK=SG.steps(GAMMA_N);if(gamma)attachGamma(gamma);if(data)renderPanel()});
+addEventListener('stratum:gammapalette',()=>{GAMMA_RAMP=SG.stops();GAMMA_INK=SG.steps(GAMMA_N);UGX.ver++;if(gamma)attachGamma(gamma);if(data)renderPanel()});
+// another kind of log data chosen, here or in another window (logs.js)
+addEventListener('stratum:logtype',()=>{if(!SL)return;logType=SL.pick(areaWells());UGX.ver++;logLabel();renderLegend();if(data)renderPanel()});
 // light or dark (theme.js): the pads take that theme's colours; the scene redraws on its next frame
 addEventListener('stratum:theme',()=>{UK=UGK[isDark()?'dark':'light'];if(data)data.pads.forEach(p=>{p.color=padColor(p.ci)});UGX.ver++;renderLegend();if(data)renderPanel()});
 // Each bin becomes one segment of the path between its two MD edges; segments are
 // grouped by colour once here so a frame strokes one path per colour, not per bin.
 function attachGamma(g){gamma=g;const bin=g.bin_m;if(data)data.pads.forEach(p=>p.wells.forEach(w=>{const x=g.wells[String(w.well.wa).padStart(5,'0')];if(!x)return;w.gmd0=x.md0;w.gbin=bin;w.gv=x.v;w.gruns=x.runs;w.gest=!!x.estimated;w.gfrom=x.from||[];w.gpts=x.v.concat([null]).map((_,i)=>pointAt(w,x.md0+i*bin));w.gby=GAMMA_INK.map(()=>[]);x.v.forEach((v,i)=>{if(v!=null)w.gby[gammaBucket(v)].push(i)})}));renderLegend();}
-function renderLegend(){const L=overlay.querySelector('.ug-legend');if(colorBy==='metric'||colorBy==='relation'||colorBy==='date'){modeLegend(L);return}if(!gamma){L.hidden=true;return}const s=gamma.scale,all=data?data.pads.flatMap(p=>p.wells):[],n=all.filter(w=>w.gv&&!w.gest).length,est=all.filter(w=>w.gest).length,none=all.length-n-est,E=gamma.estimate;
- L.innerHTML=`<div class="ug-glabel">Wells coloured by gamma ray</div><div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${SG.PALETTES[SG.current()].diverging?'median '+s.p50:Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone ug-gest"><i></i>Estimated from offset logs · ${est} wells</div><div class="ug-gnone"><i></i>No gamma · ${none} wells</div><div class="ug-gfoot">${n} measured (LAS logs from the BCER eLibrary)${est&&E?`; ${est} estimated: neighbours' gamma at the same subsea depth, smoothed to ${E.smoothed_m} m. Tested on ${E.tested} logged wells, an estimate's lateral level is off by ${E.level_mae} API on average`:''}. Scale spans the laterals (P2–P98).</div>`;L.querySelector('.ug-gbar').after(SG.picker());L.hidden=colorBy!=='gamma';placeLegend();}
-async function setColor(m){if(m==='gamma'){await gammaReady;if(!gamma)m='pad'}if(m!=='pad'&&m!=='gamma'&&!FVM())m='pad';colorBy=m;UGX.ver++;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));if(m==='metric')ensureMetrics();if(m==='relation')ensureRels();renderLegend();if(data)renderPanel();}
+function renderLegend(){const L=overlay.querySelector('.ug-legend');if(colorBy==='metric'||colorBy==='relation'||colorBy==='date'){modeLegend(L);return}if(colorBy!=='gamma'){L.hidden=true;return}logLegend(L);L.hidden=false;placeLegend();}
+// ---------- Colour by log data: gamma, rock type, porosity, oil shows, a curve (logs.js) ----------
+// Each well's run of the type chosen is cut into segments along its path, one per
+// bin, grouped by colour once (cached with UGX.ver) so a frame strokes a path per colour.
+let logType='gamma';
+const areaWells=()=>data?data.pads.flatMap(p=>p.wells):[];
+// gamma on a BC well keeps data/gamma.json's scale; a WellSight log's runs, the Saskatchewan set's
+const logScale=(w,k)=>SL?SL.scale(k,w&&!w.logs&&gamma?gamma.scale:null):gamma&&gamma.scale;
+function logRun(w){const k=logType;if(w.lr&&w.lr.k===k&&w.lr.ver===UGX.ver)return w.lr;const t=SL?SL.track(w,k):(w.gv?{md0:w.gmd0,bin:w.gbin,v:w.gv,est:w.gest}:null);
+ if(!t)return w.lr={k,ver:UGX.ver,t:null};const sc=logScale(w,k),pts=t.v.concat([null]).map((_,i)=>pointAt(w,t.md0+i*t.bin)),by=new Map();
+ t.v.forEach((v,i)=>{if(v==null)return;const c=SL?SL.ink(k,v,sc):GAMMA_INK[gammaBucket(v)];if(!c)return;if(!by.has(c))by.set(c,[]);by.get(c).push(i)});
+ return w.lr={k,ver:UGX.ver,t,pts,by,sc}}
+function logLabel(){const b=overlay.querySelector('[data-color=gamma]');if(b&&SL)b.textContent=SL.def(logType).short}
+function setLogType(k){logType=k;UGX.ver++;logLabel();renderLegend();if(data)renderPanel()}
+function logLegend(L){const all=areaWells(),k=logType,d=SL?SL.def(k):{t:'Gamma ray'},has=all.filter(w=>logRun(w).t),est=has.filter(w=>w.lr.t.est).length,bc=all.some(w=>!w.logs);
+ L.innerHTML=`<div class="ug-glabel">Wells coloured by ${esc(lower(d.t))}</div>`;
+ if(SL)L.append(SL.menu({types:SL.available(all),value:k,onPick:setLogType}));
+ const key=document.createElement('div');key.className='ug-lkey';
+ if(k==='gamma'&&bc&&gamma){const s=gamma.scale,E=gamma.estimate,n=has.length-est;key.innerHTML=`<div class="ug-gbar" style="background:linear-gradient(90deg,${GAMMA_RAMP.join(',')})"></div><div class="ug-gticks"><span>≤${s.lo}</span><span>${SG.PALETTES[SG.current()].diverging?'median '+s.p50:Math.round((s.lo+s.hi)/2)}</span><span>≥${s.hi} API</span></div><div class="ug-gticks ug-gends"><span>cleaner</span><span>shalier</span></div><div class="ug-gnone ug-gest"><i></i>Estimated from offset logs · ${est} wells</div><div class="ug-gnone"><i></i>No gamma · ${all.length-has.length} wells</div><div class="ug-gfoot">${n} measured (LAS logs from the BCER eLibrary)${est&&E?`; ${est} estimated: neighbours' gamma at the same subsea depth, smoothed to ${E.smoothed_m} m. Tested on ${E.tested} logged wells, an estimate's lateral level is off by ${E.level_mae} API on average`:''}. Scale spans the laterals (P2–P98).</div>`}
+ else{const w0=has[0]||all[0];key.innerHTML=(SL?SL.keyHtml(k,logScale(w0,k),SL.rocksIn(all)):'')+(all.length>has.length?`<div class="ug-gnone"><i></i>Dashed: no ${esc(lower(d.t))} · ${all.length-has.length} of ${all.length} wells</div>`:'')+`<div class="ug-gfoot">${SL?esc(SL.about(k)):''}</div>`}
+ L.append(key);
+ const ramp=!SL||SL.def(k).kind==='ramp';if(ramp)key.querySelector('.ug-gbar,.lg-bar')?.after(SG.picker());}
+// "Drill time (ROP)" -> "drill time (ROP)"
+const lower=t=>/^[A-Z][a-z]/.test(t)?t[0].toLowerCase()+t.slice(1):t;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function setColor(m){if(m==='gamma'){await gammaReady;if(SL)await SL.skReady;if(!gamma&&!(SL&&SL.sk()))m='pad'}if(m!=='pad'&&m!=='gamma'&&!FVM())m='pad';colorBy=m;UGX.ver++;overlay.querySelectorAll('.ug-color button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===m)));if(m==='metric')ensureMetrics();if(m==='relation')ensureRels();renderLegend();if(data)renderPanel();}
 overlay.querySelectorAll('.ug-color button').forEach(b=>b.onclick=()=>setColor(b.dataset.color));
 function pointAt(w,md){const t=w.trajectory;let i=t.md.findIndex(m=>m>=md);if(i<0)i=t.md.length-1;if(i===0)return w.points[0];const a=w.points[i-1],b=w.points[i],v=(md-t.md[i-1])/(t.md[i]-t.md[i-1]||1);return a.map((x,k)=>x+(b[k]-x)*v);}
 function focusInterval(w,d){well=w;interval=d;goal.target=d.point.slice();goal.scale=Math.max(goal.scale,.45);camera.pan=[width>640?145:70,0];renderPanel();}
@@ -116,24 +143,28 @@ const padUrl=()=>'pad.html?set='+encodeURIComponent(pad.set||'region')+'&pad='+e
 const viewPicked=()=>{if(window.stratumSection&&well)window.stratumSection.view(well.well.wa,stage?stage.label:null)};
 const section={available:()=>active&&!!pad,showing:()=>sectionOn&&active&&!!pad,frame:()=>padPage,
  show:src=>{sectionOn=true;padPage.title='Well section';padPage.src=src},
- hide:()=>{if(!sectionOn)return;sectionOn=false;if(pad){padPage.title='Pad data';padPage.src=padUrl()}}};
+ hide:()=>{if(!sectionOn)return;sectionOn=false;if(pad){padPage.title='Pad data';padPage.src=logPad()?'about:blank':padUrl()}}};
 function selectPad(id){
  const next=data.pads.find(p=>p.id===id)||null;
  if(pad&&next&&next!==pad)return;
- if(next&&!pad){entryCamera=structuredClone(camera);pad=next;overlay.classList.add('pad-data');sectionOn=false;padPage.title='Pad data';padPage.src=padUrl();padPage.hidden=false;returnButton.hidden=false;padMenu.disabled=true;overlay.querySelector('#ug-all').hidden=true;overlay.querySelector('.ug-title').textContent=pad.name+' · Pad data';resize();}
+ if(next&&!pad){entryCamera=structuredClone(camera);pad=next;overlay.classList.add('pad-data');sectionOn=false;padPage.title='Pad data';if(logPad())padPage.src='about:blank';else padPage.src=padUrl();padPage.hidden=false;returnButton.hidden=false;padMenu.disabled=true;overlay.querySelector('#ug-all').hidden=true;overlay.querySelector('.ug-title').textContent=pad.name+' · Pad data';resize();}
  if(!next){pad=null;sectionOn=false;padPage.hidden=true;returnButton.hidden=true;overlay.classList.remove('pad-data');padMenu.disabled=false;overlay.querySelector('#ug-all').hidden=false;overlay.querySelector('.ug-title').textContent=areaTitle;resize();}
  padMenu.value=pad?.id||'';well=pad?.wells[0]||null;stage=null;interval=null;hover=null;tip.style.display='none';fit(pad);renderPanel();
+ if(next&&logPad()&&window.stratumSection&&well)window.stratumSection.view(well.well.wa);
 }
+// a pad of WellSight wells: no pad page (no frac stages), the section shows the well instead
+const logPad=()=>!!(pad&&SL&&SL.isLocalPad(pad.id));
 function returnToCluster(){if(!pad)return;const saved=entryCamera;selectPad('');if(saved){Object.assign(camera,structuredClone(saved));goal.scale=saved.scale;goal.target=saved.target.slice();}entryCamera=null;returnButton.hidden=true;canvas.focus();}
 returnButton.onclick=()=>returnToCluster();
 
-function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.flatMap(p=>p.wells),nS=all.reduce((n,w)=>n+(w.stages||[]).length,0),nI=all.reduce((n,w)=>n+w.depth_intervals.length,0),nG=all.filter(w=>w.gv).length;content.innerHTML=`<div class="ug-stat">${all.length} wells · ${fmt(nS)} stage summaries · ${fmt(nI)} stage depths</div>Click a pad marker to lock on to it, or press its Wine rack button to open it in the wine rack window. Other pads stay visible.<p>Stage summaries and depths are as filed with the BCER. Open a well for its treatment charts where the Lab has read its frac report.</p>`+(colorBy==='gamma'&&gamma?`<p>Gamma ray is drawn along ${nG} of these wells (${all.filter(w=>w.gest).length} of them estimated from offset logs, dashed). Hover a well for its reading; lock a pad and pick a well for its full log.</p>`:'')+(showQuakes&&data.quakes?quakeSummary():'');return;}
- const select=document.createElement('select');select.setAttribute('aria-label','Select well');pad.wells.forEach(w=>{const o=document.createElement('option');o.value=w.well.wa;o.textContent='WA '+w.well.wa+' · '+w.stages.length+' stages';select.append(o)});select.value=well.well.wa;select.onchange=()=>{well=pad.wells.find(w=>w.well.wa===select.value);stage=null;interval=null;renderPanel();viewPicked()};content.append(select);
+function renderPanel(){content.replaceChildren();if(!pad){const all=data.pads.flatMap(p=>p.wells),nS=all.reduce((n,w)=>n+(w.stages||[]).length,0),nI=all.reduce((n,w)=>n+w.depth_intervals.length,0),nG=all.filter(w=>logRun(w).t).length,nL=all.filter(w=>w.logs).length,lt=SL?SL.def(logType).t:'Gamma ray';content.innerHTML=(nL===all.length?`<div class="ug-stat">${all.length} wells · WellSight mud logs</div>Click a pad marker to lock on to it, or press its Wine rack button to open it in the wine rack window. Other pads stay visible.<p>These Saskatchewan wells come from their WellSight logs: the path from the log's survey, and along it the log's rock types, porosity, oil shows and curves. Colour them by any of these with the Gamma button's menu.</p>`:`<div class="ug-stat">${all.length} wells · ${fmt(nS)} stage summaries · ${fmt(nI)} stage depths</div>Click a pad marker to lock on to it, or press its Wine rack button to open it in the wine rack window. Other pads stay visible.<p>Stage summaries and depths are as filed with the BCER. Open a well for its treatment charts where the Lab has read its frac report.</p>`)+(colorBy==='gamma'?`<p>${esc(lt)} is drawn along ${nG} of these wells${logType==='gamma'&&all.some(w=>w.gest)?` (${all.filter(w=>w.gest).length} of them estimated from offset logs, dashed)`:''}. Hover a well for its reading; lock a pad and pick a well for its full log.${SL&&SL.available(all).length>1?' <span class="ug-keys">[ and ] step through the kinds of log data.</span>':''}</p>`:'')+(showQuakes&&data.quakes?quakeSummary():'');return;}
+ const select=document.createElement('select');select.setAttribute('aria-label','Select well');pad.wells.forEach(w=>{const o=document.createElement('option');o.value=w.well.wa;o.textContent=(SL?SL.wellId(w.well):'WA '+w.well.wa)+(w.logs?' · mud log':' · '+w.stages.length+' stages');select.append(o)});select.value=well.well.wa;select.onchange=()=>{well=pad.wells.find(w=>w.well.wa===select.value);stage=null;interval=null;renderPanel();viewPicked()};content.append(select);
  const title=document.createElement('div');title.textContent=well.well.name;content.append(title);
  if(window.stratumSection){const vw=document.createElement('button');vw.type='button';vw.className='ug-viewwell';vw.textContent='View well';vw.title='The whole well in 2D, below; pop it out to keep it beside this view';vw.onclick=()=>window.stratumSection.view(well.well.wa,stage?stage.label:null);content.append(vw);window.stratumSection.follow(well.well.wa,stage?stage.label:null)}
- const W_=well.well,facts=[W_.operator,W_.formation,W_.year,W_.cum_gas_e3m3!=null?fmt(W_.cum_gas_e3m3)+' e³m³ gas to date':null,W_.refracs?W_.refracs+' later completion'+(W_.refracs>1?'s':'')+' on file':null].filter(Boolean);if(facts.length){const f=document.createElement('div');f.className='ug-facts';f.textContent=facts.join(' · ');content.append(f)}
+ const W_=well.well,facts=[W_.operator,W_.formation,W_.year,W_.surface_loc&&well.logs?'surface '+W_.surface_loc:null,W_.cum_gas_e3m3!=null?fmt(W_.cum_gas_e3m3)+' e³m³ gas to date':null,W_.refracs?W_.refracs+' later completion'+(W_.refracs>1?'s':'')+' on file':null].filter(Boolean);if(facts.length){const f=document.createElement('div');f.className='ug-facts';f.textContent=facts.join(' · ');content.append(f)}
  const rl=UGX.rel&&UGX.rel.get(String(+W_.wa));if(rl){const f=document.createElement('div');f.className='ug-facts';f.textContent='Spacing: '+relWords(rl)+(rl.parents&&rl.depletionDays!=null?` · its parent${rl.parents>1?'s':''} had produced up to ${fmt(rl.depletionDays)} days`:'');content.append(f)}
  if(colorBy==='gamma')gammaPanel(well);
+ if(well.logs){logFacts(well);return}
  gmmrPanel(pad);
  const depthSelect=document.createElement('select');depthSelect.setAttribute('aria-label','Measured depth interval');const empty=document.createElement('option');empty.value='';empty.textContent='Measured intervals · select to focus';depthSelect.append(empty);well.depth_intervals.forEach(d=>{const o=document.createElement('option');o.value=d.n;o.textContent='Depth order '+d.n+' · '+fmt(d.top_m,1)+'–'+fmt(d.base_m,1)+' m';depthSelect.append(o)});depthSelect.value=interval?.n||'';depthSelect.onchange=()=>{const d=well.depth_intervals.find(d=>String(d.n)===depthSelect.value);if(d)focusInterval(well,d)};content.append(depthSelect);if(interval){const x=document.createElement('div');x.textContent='Selected interval: '+fmt(interval.top_m,1)+'–'+fmt(interval.base_m,1)+' m MD. Depth-order ID '+interval.n+'.';content.append(x)}
  const label=document.createElement('div');label.textContent=well.stages[0]?.source==='BCER hydraulic fracture'?'Stage summaries as filed with the BCER':'Treatment summaries (independent numbering)';content.append(label);
@@ -160,22 +191,35 @@ function gmmrPanel(p){if(!gmmr)return;const reps={};p.wells.forEach(w=>{const r=
   (r.felt||[]).forEach(f=>{const y=document.createElement('div');y.className='ug-felt';y.textContent='Felt: '+f;d.append(y)});
   box.append(d)});
  content.append(box)}
-function gammaPanel(w){const box=document.createElement('div');box.className='ug-gamma';content.append(box);const head=document.createElement('div');head.className='ug-glabel';head.textContent='Gamma ray · API'+(w.gest?' · estimated':'');box.append(head);
- if(!w.gv){box.append('No gamma log filed with the BCER for this well; its path is dashed.');return}
- const td=w.trajectory.md.at(-1),heel=w.well.heel_md||0,mdAt=i=>w.gmd0+(i+.5)*w.gbin,logged=w.gv.map((v,i)=>v==null?null:mdAt(i)).filter(m=>m!=null);
- const lat=w.gv.filter((v,i)=>v!=null&&mdAt(i)>=heel).sort((a,b)=>a-b),q=f=>lat.length?(w.gest?'~':'')+lat[Math.floor(f*(lat.length-1))]:null;
- const cv=document.createElement('canvas');cv.setAttribute('role','img');cv.setAttribute('aria-label','Gamma ray against measured depth, '+fmt(logged[0])+' to '+fmt(logged.at(-1))+' m');box.append(cv);
+// The selected well's log data of the type chosen, as a strip along MD: a reading's
+// bar height and colour are both the reading (a rock fills its bar), so the strip
+// reads without the key. Hover it for a value.
+function gammaPanel(w){const k=logType,d=SL?SL.def(k):{t:'Gamma ray',u:'API',kind:'ramp'},R=logRun(w),t=R.t;const box=document.createElement('div');box.className='ug-gamma';content.append(box);const head=document.createElement('div');head.className='ug-glabel';head.textContent=d.t+(d.u&&d.kind==='ramp'?' · '+d.u:'')+(t&&t.est?' · estimated':'');box.append(head);
+ if(!t){box.append(w.logs?`This well’s log has no ${d.t.toLowerCase()}; its path is dashed.`:k==='gamma'?'No gamma log filed with the BCER for this well; its path is dashed.':`No ${d.t.toLowerCase()} for this well: the BC wells have gamma only. Its path is dashed.`);return}
+ const td=w.trajectory.md.at(-1),heel=w.well.heel_md||0,mdAt=i=>t.md0+(i+.5)*t.bin,logged=t.v.map((v,i)=>v==null?null:mdAt(i)).filter(m=>m!=null),sc=R.sc;
+ const lat=t.v.filter((v,i)=>v!=null&&mdAt(i)>=heel),pool=lat.length?lat:t.v.filter(v=>v!=null),q=f=>{const x=pool.slice().sort((a,b)=>a-b);return x.length?x[Math.floor(f*(x.length-1))]:null},u=d.u?' '+d.u:'',dg=v=>Math.abs(v)>=100?0:Math.abs(v)>=10?1:2;
+ let rows;
+ if(k==='rock'){const n=new Map();pool.forEach(v=>n.set(v,(n.get(v)||0)+1));rows=[['Rocks'+(lat.length?' on the lateral':''),[...n.entries()].sort((a,b)=>b[1]-a[1]).slice(0,4).map(([r,c])=>SL.rockName(r)+' '+Math.round(100*c/pool.length)+'%').join(' · ')]]}
+ else if(k==='show'){const m=l=>pool.filter(v=>v>=l).length*t.bin;rows=[['Shows',fmt(m(1))+' m'+(lat.length?' on the lateral':'')],['Moderate or strong',fmt(m(3))+' m'],['Strongest',SL.SHOW_NAMES[Math.max(...pool)]||'–']]}
+ else rows=[[(lat.length?'Lateral':'Logged')+' median',q(.5)==null?'–':(t.est?'~':'')+fmt(q(.5),dg(q(.5)))+u],[(lat.length?'Lateral':'Logged')+' P10–P90',q(.1)==null?'–':fmt(q(.1),dg(q(.1)))+'–'+fmt(q(.9),dg(q(.9)))+u]];
+ rows.push(['Logged',fmt(logged[0])+'–'+fmt(logged.at(-1))+' m MD']);
+ const cv=document.createElement('canvas');cv.setAttribute('role','img');cv.setAttribute('aria-label',d.t+' against measured depth, '+fmt(logged[0])+' to '+fmt(logged.at(-1))+' m');box.append(cv);
  const read=document.createElement('div');read.className='ug-gread';read.textContent='Hover the strip for a reading';box.append(read);
- const dl=document.createElement('dl');[['Lateral median',q(.5)==null?'–':q(.5)+' API'],['Lateral P10–P90',q(.1)==null?'–':q(.1)+'–'+q(.9)+' API'],['Logged',fmt(logged[0])+'–'+fmt(logged.at(-1))+' m MD']].forEach(([k,v])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=k;dd.textContent=v;dl.append(dt,dd)});box.append(dl);
- const src=document.createElement('div');src.className='ug-gsrc';src.textContent=w.gest?'No gamma log was filed for this well. Estimated from '+w.gfrom.map(f=>'WA '+f.wa+' ('+f.km+' km)').join(', ')+' at the same subsea depth, smoothed; expect its level to be within about '+(gamma.estimate?.level_mae??'?')+' API, and no detail along the lateral.':w.gruns.map(r=>r.mnemonic+' · '+r.file).join(' + ');box.append(src);
- const W=cv.clientWidth||230,H=74,base=H-14,d=devicePixelRatio||1;cv.width=W*d;cv.height=H*d;const c=cv.getContext('2d');c.setTransform(d,0,0,d,0,0);const X=md=>md/td*W;
+ const dl=document.createElement('dl');rows.forEach(([a,b])=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=a;dd.textContent=b;dl.append(dt,dd)});box.append(dl);
+ const src=document.createElement('div');src.className='ug-gsrc';src.textContent=w.logs?'WellSight '+(w.logs.src||[]).map(x=>x.log+' log'+(x.from!=null?' '+fmt(x.from)+'–'+fmt(x.to)+' m':'')).join(' + ')+(k==='rock'&&w.logs.src.some(x=>x.lith)?'; rock from the '+w.logs.src.find(x=>x.lith).lith:''):t.est?'No gamma log was filed for this well. Estimated from '+(w.gfrom||[]).map(f=>'WA '+f.wa+' ('+f.km+' km)').join(', ')+' at the same subsea depth, smoothed; expect its level to be within about '+(gamma.estimate?.level_mae??'?')+' API, and no detail along the lateral.':(w.gruns||[]).map(r=>r.mnemonic+' · '+r.file).join(' + ');box.append(src);
+ const W=cv.clientWidth||230,H=74,base=H-14,dpr=devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr;const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);const X=md=>md/td*W;
  c.strokeStyle=UK.base;c.beginPath();c.moveTo(0,base+.5);c.lineTo(W,base+.5);c.stroke();
- c.globalAlpha=w.gest?.55:1;w.gv.forEach((v,i)=>{if(v==null)return;const x0=X(w.gmd0+i*w.gbin),h=Math.min(1,v/200)*(base-4);c.fillStyle=GAMMA_INK[gammaBucket(v)];c.fillRect(x0,base-h,Math.max(1,X(w.gbin)),h)});c.globalAlpha=1;
+ c.globalAlpha=t.est?.55:1;t.v.forEach((v,i)=>{if(v==null)return;const x0=X(t.md0+i*t.bin),h=(SL?SL.height(k,v,sc):Math.min(1,v/200))*(base-4);c.fillStyle=SL?SL.ink(k,v,sc)||UK.none:GAMMA_INK[gammaBucket(v)];c.fillRect(x0,base-h,Math.max(1,X(t.bin)),h)});c.globalAlpha=1;
  if(heel){c.strokeStyle=UK.mut;c.setLineDash([2,3]);c.beginPath();c.moveTo(X(heel)+.5,2);c.lineTo(X(heel)+.5,base);c.stroke();c.setLineDash([]);}
  if(interval){c.fillStyle=UK.on;c.fillRect(X(interval.top_m),base+1,Math.max(2,X(interval.base_m-interval.top_m)),3)}
  c.fillStyle=UK.mut;c.font='10px system-ui';c.textBaseline='bottom';c.fillText('0 m',0,H);c.textAlign='right';c.fillText(fmt(td)+' m MD',W,H);if(heel){c.textAlign='center';c.fillText('heel',Math.min(W-60,Math.max(20,X(heel))),H)}
- cv.onpointermove=e=>{const br=cv.getBoundingClientRect(),md=(e.clientX-br.left)/(br.width||W)*td,i=Math.floor((md-w.gmd0)/w.gbin),v=w.gv[i];read.textContent=fmt(md)+' m MD · '+(v==null?'no reading':'GR '+v+' API')};cv.onpointerleave=()=>{read.textContent='Hover the strip for a reading'};
+ cv.onpointermove=e=>{const br=cv.getBoundingClientRect(),md=(e.clientX-br.left)/(br.width||W)*td,v=SL?SL.at(t,md):t.v[Math.floor((md-t.md0)/t.bin)];read.textContent=fmt(md)+' m MD · '+(SL?SL.words(k,v):v==null?'no reading':'GR '+v+' API')};cv.onpointerleave=()=>{read.textContent='Hover the strip for a reading'};
 }
+// a WellSight well in the pad panel: what its log holds, and where the well's place and path come from
+function logFacts(w){const L=w.logs,W_=w.well,box=document.createElement('div');box.className='ug-logfacts';
+ const types=SL?SL.available([w]):[];
+ box.innerHTML=`<div class="ug-glabel">WellSight mud log</div><div>Logged ${fmt(L.md0)}–${fmt(L.md0+L.n*L.bin)} m MD (${(L.src||[]).map(x=>esc(x.log)+' log').join(' + ')}).</div><div>Holds ${types.map(t=>esc(t.short.toLowerCase())).join(', ')}; colour the wells by any of them with the Gamma button’s menu.</div><div class="ug-gsrc">Placed from its ${esc(W_.placed_by||'location')}; ${W_.vertical?'a vertical well':'path from its '+esc(W_.path_from||'survey')}. No frac stages on file.</div>`;
+ content.append(box)}
 function project(q){const x=q[0]-camera.target[0],y=q[1]-camera.target[1],z=q[2]-camera.target[2],c=Math.cos(camera.yaw),s=Math.sin(camera.yaw),xx=x*c-z*s,zz=x*s+z*c,cp=Math.cos(camera.pitch),sp=Math.sin(camera.pitch);return [width/2+camera.pan[0]+xx*camera.scale,height/2+camera.pan[1]-(y*cp-zz*sp)*camera.scale,zz*cp+y*sp];}
 function path(points,color,lineWidth,alpha=1){ctx.beginPath();points.forEach((q,i)=>{const a=project(q);i?ctx.lineTo(a[0],a[1]):ctx.moveTo(a[0],a[1])});ctx.strokeStyle=color;ctx.lineWidth=lineWidth;ctx.globalAlpha=alpha;ctx.stroke();ctx.globalAlpha=1;}
 function draw(){if(!active)return;raf=requestAnimationFrame(draw);keyNav();camera.scale+=(goal.scale-camera.scale)*.11;camera.target=camera.target.map((v,i)=>v+(goal.target[i]-v)*.1);ctx.clearRect(0,0,width,height);hits=[];
@@ -189,7 +233,7 @@ function draw(){if(!active)return;raf=requestAnimationFrame(draw);keyNav();camer
  wells.forEach(w=>{const selected=w===well,bright=!pad||w.pad===pad,hov=w===hw&&bright;
   // not fracked yet on the "as of" date: a faint dashed trace with nothing to hover
   if(ghost(w)){ctx.setLineDash([2,5]);path(w.points,UK.none,1,bright?.3:.1);ctx.setLineDash([]);return}
-  if(hov)path(w.points,UK.hl,(selected?3.5:3)+4,.85);if(g)gammaWell(w,selected||hov,bright);else if(colorBy==='metric')metricWell(w,selected||hov,bright);else path(w.points,colorBy==='pad'?w.pad.color:wellInk(w),selected?3.5:hov?3:bright?1.7:1,bright?(hov?1:.88):.25);
+  if(hov)path(w.points,UK.hl,(selected?3.5:3)+4,.85);if(g)logWell(w,selected||hov,bright);else if(colorBy==='metric')metricWell(w,selected||hov,bright);else path(w.points,colorBy==='pad'?w.pad.color:wellInk(w),selected?3.5:hov?3:bright?1.7:1,bright?(hov?1:.88):.25);
   // hover targets along the path, so a well can be caught anywhere, not only at its toe
   if(bright)for(let i=2;i<w.points.length-1;i+=3){const a=project(w.points[i]);hits.push({x:a[0],y:a[1],w,p:w.pad,r:6,path:true})}if(bright&&colorBy==='metric')metricHits(w);const q=project(w.points.at(-1)),lit=rackHover===w.pad;ctx.beginPath();ctx.arc(q[0],q[1],selected?4:lit?5:2,0,Math.PI*2);ctx.fillStyle=lit?UK.lit:ink(w.pad.color);ctx.globalAlpha=bright?1:.18;ctx.fill();ctx.globalAlpha=1;if(bright)hits.push({x:q[0],y:q[1],w,p:w.pad,r:8});// the stage, parent/child and date colours are the message: interval marks only where one is focused
   w.depth_intervals.forEach(d=>{if(colorBy!=='pad'&&colorBy!=='gamma'&&interval!==d)return;const a=project(d.point),on=interval===d||hover?.d===d,s=on?4:colorBy!=='pad'?1.2:1.7;ctx.globalAlpha=bright?(colorBy!=='pad'&&!on?.55:1):.22;ctx.fillStyle=on?UK.on:ink(w.pad.color);ctx.fillRect(a[0]-s,a[1]-s,s*2,s*2);ctx.globalAlpha=1;if(bright)hits.push({x:a[0],y:a[1],w,p:w.pad,d,r:5})});});
@@ -198,12 +242,12 @@ function draw(){if(!active)return;raf=requestAnimationFrame(draw);keyNav();camer
 }
 // The whole path dashed in slate first: where there is no reading (no LAS, or above
 // the first logged depth) that is what shows; logged bins are stroked over it.
-function gammaWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,UK.none,selected?1.8:1.1,bright?.85:.2);ctx.setLineDash([]);if(!w.gpts)return;
- const P=w.gpts.map(project);ctx.lineCap='round';ctx.lineWidth=selected?4.5:bright?2.4:1.2;ctx.globalAlpha=bright?.96:.22;
- if(w.gest){ctx.setLineDash([7,5]);ctx.lineCap='butt';ctx.globalAlpha*=.8}
- w.gby.forEach((ix,k)=>{if(!ix.length)return;ctx.beginPath();ix.forEach(i=>{ctx.moveTo(P[i][0],P[i][1]);ctx.lineTo(P[i+1][0],P[i+1][1])});ctx.strokeStyle=GAMMA_INK[k];ctx.stroke()});
+function logWell(w,selected,bright){ctx.setLineDash([3,4]);path(w.points,UK.none,selected?1.8:1.1,bright?.85:.2);ctx.setLineDash([]);const R=logRun(w);if(!R.t)return;
+ const P=R.pts.map(project);ctx.lineCap='round';ctx.lineWidth=selected?4.5:bright?2.4:1.2;ctx.globalAlpha=bright?.96:.22;
+ if(R.t.est){ctx.setLineDash([7,5]);ctx.lineCap='butt';ctx.globalAlpha*=.8}
+ R.by.forEach((ix,col)=>{ctx.beginPath();ix.forEach(i=>{ctx.moveTo(P[i][0],P[i][1]);ctx.lineTo(P[i+1][0],P[i+1][1])});ctx.strokeStyle=col;ctx.stroke()});
  ctx.setLineDash([]);ctx.globalAlpha=1;ctx.lineCap='butt';
- if(bright)for(let i=1;i<w.gv.length;i+=3)if(w.gv[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
+ const v=R.t.v;if(bright)for(let i=1;i<v.length;i+=3)if(v[i]!=null)hits.push({x:(P[i][0]+P[i+1][0])/2,y:(P[i][1]+P[i+1][1])/2,w,p:w.pad,g:i,r:5});}
 // ---------- Colour by stage metric, parent/child or frac date; "as of" a date ----------
 // metrics.js (FVMetrics) works out the measures and the labels. Colours are cached on
 // each well with UGX.ver: a new measure, theme, area or spacing limits bump it and a well
@@ -252,6 +296,11 @@ function ensureRels(){const M=FVM();if(!M)return;M.relations().then(m=>{UGX.rel=
 addEventListener('stratum:spacing',()=>{if(UGX.rel||colorBy==='relation')ensureRels()});
 // metrics.js missing (it loads with the page): the three colours stand down
 regionReady.then(()=>{if(!FVM())overlay.querySelectorAll('.ug-color [data-color=metric],.ug-color [data-color=relation],.ug-color [data-color=date]').forEach(b=>{b.disabled=true;b.title='Stage metrics unavailable'})}).catch(()=>{});
+// a reading along a well, in words; for a WellSight well, everything its log says there
+function logTip(h){const w=h.w,R=logRun(w),t=R.t,md=t.md0+(h.g+.5)*t.bin,v=t.v[h.g];let s=(SL?SL.wellId(w.well):'WA '+w.well.wa)+' · '+fmt(md)+' m MD · ';
+ if(!SL)return s+'GR '+v+' API';s+=SL.words(logType,v)+(t.est?' (estimated from WA '+(w.gfrom||[]).map(f=>f.wa).join(', ')+')':'');
+ if(w.logs){const more=SL.available([w]).filter(x=>x.k!==logType&&!x.curve).map(x=>SL.words(x.k,SL.at(SL.track(w,x.k),md))).filter(x=>!/^no /.test(x));if(more.length)s+=' · '+more.join(' · ')}
+ return s}
 const relWords=r=>{const M=FVM(),L=M&&r&&M.REL[r.relation];return L?`${L.t}${M.BOUNDED[r.bounded]?' · '+M.BOUNDED[r.bounded].toLowerCase():''}`:''};
 const stageTip=h=>{const M=FVM();return 'WA '+h.w.well.wa+' · stage '+h.m.z.label+(M?' · '+M.BY[UGX.metric].t+(h.m.v==null?': no value':' '+M.fmt(h.m.v,UGX.metric)):'')};
 const wellTip=w=>colorBy==='relation'?(UGX.rel&&UGX.rel.get(String(+w.well.wa))?' · '+relWords(UGX.rel.get(String(+w.well.wa))):''):colorBy==='date'?(fracDay(w)!=null?' · fracked '+dayStr(fracDay(w)):' · no frac dates on file'):'';
@@ -284,7 +333,11 @@ asofPlay.onclick=()=>{if(UGX.play){stopAsOf();return}const sp=UGX.span;if(!sp||s
 // with its title and key, since the panels over it are not part of the picture
 function modeKey(c,x,y){const M=FVM();c.font='12px system-ui,sans-serif';c.textBaseline='middle';
  const bar=(stops,a,b,label)=>{c.fillStyle=UK.mut;c.fillText(label,x,y);let px=x+c.measureText(label).width+10;c.fillText(a,px,y);px+=c.measureText(a).width+6;const gr=c.createLinearGradient(px,0,px+110,0);stops.forEach((s,i)=>gr.addColorStop(i/(stops.length-1),s));c.fillStyle=gr;c.fillRect(px,y-4,110,8);c.fillStyle=UK.mut;c.fillText(b,px+116,y)};
- if(colorBy==='gamma'&&gamma)bar(GAMMA_RAMP,'≤'+gamma.scale.lo,'≥'+gamma.scale.hi+' API','Gamma ray');
+ if(colorBy==='gamma'&&SL&&(logType!=='gamma'||!gamma||!areaWells().some(w=>!w.logs))){const d=SL.def(logType),all=areaWells(),sc=logScale(all.find(w=>logRun(w).t),logType);
+  if(logType==='rock'||logType==='show'){const list=logType==='rock'?SL.rocksIn(all).slice(0,8).map(r=>[SL.rockInk(SL.rockTerm(r)),SL.rockName(r)]):SL.SHOW_NAMES.map((n,i)=>[SL.ink('show',i),n]);c.fillStyle=UK.mut;c.fillText(d.t,x,y);let px=x+c.measureText(d.t).width+12;list.forEach(([col,n])=>{c.fillStyle=col;c.fillRect(px,y-5,12,10);c.fillStyle=UK.mut;c.fillText(n,px+16,y);px+=c.measureText(n).width+30})}
+  else if(logType==='por')bar(Array.from({length:8},(_,i)=>SL.ink('por',i*24/7)),'0','24 %','Porosity');
+  else if(sc)bar(GAMMA_RAMP,'≤'+fmt(sc.lo,1),'≥'+fmt(sc.hi,1)+(d.u?' '+d.u:''),d.t)}
+ else if(colorBy==='gamma'&&gamma)bar(GAMMA_RAMP,'≤'+gamma.scale.lo,'≥'+gamma.scale.hi+' API','Gamma ray');
  else if(colorBy==='metric'&&M&&UGX.dom)bar(Array.from({length:7},(_,i)=>M.colour(UGX.dom[0]+i/6*(UGX.dom[1]-UGX.dom[0]),UGX.dom,UGX.metric)),M.fmt(UGX.dom[0],UGX.metric),M.fmt(UGX.dom[1],UGX.metric),'Stages: '+M.BY[UGX.metric].t);
  else if(colorBy==='date'&&M&&UGX.span)bar(Array.from({length:7},(_,i)=>M.colour(i/6,[0,1])),dayStr(UGX.span[0]),dayStr(UGX.span[1]),'Frac date');
  else if(colorBy==='relation'&&M){let px=x;Object.entries(M.REL).forEach(([k,r])=>{c.fillStyle=M.relColour(k);c.beginPath();c.arc(px+5,y,5,0,Math.PI*2);c.fill();c.fillStyle=UK.mut;c.fillText(r.t,px+14,y);px+=c.measureText(r.t).width+30})}
@@ -307,7 +360,7 @@ function close(){active=false;cancelAnimationFrame(raf);overlay.classList.remove
 overlay.querySelector('#ug-back').onclick=close;overlay.querySelector('#ug-all').onclick=()=>selectPad('');overlay.querySelector('#ug-reset').onclick=()=>{camera.yaw=-.5;camera.pitch=.4;fit(pad)};padMenu.onchange=()=>selectPad(padMenu.value);
 window.addEventListener('resize',()=>{resize();if(active)fit(pad)});overlay.addEventListener('keydown',e=>{if(e.key==='Escape'){if(pad)returnToCluster();else close()}});
 canvas.oncontextmenu=e=>e.preventDefault();canvas.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,pan:e.shiftKey||e.button===2};canvas.setPointerCapture(e.pointerId);tip.style.display='none'};
-canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.q?`M${hover.q.mag} ${hover.q.type} · ${hover.q.date} · ${hover.q.src==='bcsrc'?'relocated (BC Seismic Research Consortium), ±'+(hover.q.herr??'?')+' m across, ±'+(hover.q.derr??'?')+' m deep':hover.q.src==='bcer'?'BC Energy Regulator catalogue, ±'+fmt(hover.q.maj??hover.q.herr)+' × '+fmt(hover.q.min)+' m (az '+fmt(hover.q.az)+'°), ±'+fmt(hover.q.derr)+' m deep':'Earthquakes Canada'+(hover.q.fixed?', depth not solved':'')}${hover.q.industry?' · suspected industry-related':''}${hover.q.near?' · '+hover.q.near:''}`:hover.m?stageTip(hover):hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?'WA '+hover.w.well.wa+' · '+fmt(hover.w.gmd0+(hover.g+.5)*hover.w.gbin)+' m MD · GR '+(hover.w.gest?'~':'')+hover.w.gv[hover.g]+' API'+(hover.w.gest?' (estimated from WA '+hover.w.gfrom.map(f=>f.wa).join(', ')+')':''):hover.w?'WA '+hover.w.well.wa+' · '+hover.w.stages.length+' stage summaries'+wellTip(hover.w):hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
+canvas.onpointermove=e=>{if(drag){const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(drag.pan){camera.pan[0]+=dx;camera.pan[1]+=dy}else{camera.yaw+=dx*.006;camera.pitch=Math.max(-.9,Math.min(1.3,camera.pitch+dy*.005))}drag.x=e.clientX;drag.y=e.clientY;return}hover=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);canvas.style.cursor=hover?'pointer':'grab';tip.style.display=hover?'block':'none';if(hover){tip.textContent=hover.q?`M${hover.q.mag} ${hover.q.type} · ${hover.q.date} · ${hover.q.src==='bcsrc'?'relocated (BC Seismic Research Consortium), ±'+(hover.q.herr??'?')+' m across, ±'+(hover.q.derr??'?')+' m deep':hover.q.src==='bcer'?'BC Energy Regulator catalogue, ±'+fmt(hover.q.maj??hover.q.herr)+' × '+fmt(hover.q.min)+' m (az '+fmt(hover.q.az)+'°), ±'+fmt(hover.q.derr)+' m deep':'Earthquakes Canada'+(hover.q.fixed?', depth not solved':'')}${hover.q.industry?' · suspected industry-related':''}${hover.q.near?' · '+hover.q.near:''}`:hover.m?stageTip(hover):hover.d?'WA '+hover.w.well.wa+' · depth order '+hover.d.n+' · '+fmt(hover.d.top_m,1)+'–'+fmt(hover.d.base_m,1)+' m MD':hover.g!=null?logTip(hover):hover.w?(SL?SL.wellId(hover.w.well):'WA '+hover.w.well.wa)+(hover.w.logs?' · WellSight mud log':' · '+hover.w.stages.length+' stage summaries'+wellTip(hover.w)):hover.p.name+' · '+hover.p.wells.length+' wells · Click to lock';tip.style.left=Math.min(width-270,e.clientX+16)+'px';tip.style.top=Math.min(height-65,e.clientY+16)+'px'}};
 canvas.onpointerup=e=>{if(drag&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)<5){const hit=[...hits].reverse().find(h=>Math.hypot(h.x-e.clientX,h.y-e.clientY)<h.r);if(hit&&!hit.q&&(!pad||hit.p===pad)){if(!pad)selectPad(hit.p.id);if(hit.w){well=hit.w;if(hit.d)focusInterval(well,hit.d);else renderPanel();viewPicked()}}}drag=null};canvas.onpointercancel=()=>drag=null;canvas.onpointerleave=()=>{hover=null;tip.style.display='none'};
 canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,Math.min(2,goal.scale*Math.exp(-e.deltaY*.0015)))},{passive:false});
 // ---------- the keyboard ----------
@@ -316,6 +369,7 @@ canvas.addEventListener('wheel',e=>{e.preventDefault();goal.scale=Math.max(.012,
 // a little each frame. Not while typing or choosing in a menu.
 const navKeys=new Set(),NAV=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-','_'];let navShift=false,navLast=0;
 const typing=t=>!!(t&&t.closest&&t.closest('input,select,textarea,[contenteditable=""],[contenteditable=true]'));
+addEventListener('keydown',e=>{if(active&&colorBy==='gamma'&&SL&&!typing(e.target)&&SL.stepKey(e,SL.available(areaWells()),setLogType)){e.preventDefault();return}});
 addEventListener('keydown',e=>{navShift=e.shiftKey;if(!active||e.metaKey||e.ctrlKey||e.altKey||!NAV.includes(e.key)||typing(e.target))return;e.preventDefault();if(!navKeys.size)navLast=0;navKeys.add(e.key);tip.style.display='none'});
 addEventListener('keyup',e=>{navShift=e.shiftKey;navKeys.delete(e.key);if(e.key==='+'||e.key==='=')navKeys.delete('+'),navKeys.delete('=');if(e.key==='-'||e.key==='_')navKeys.delete('-'),navKeys.delete('_')});
 addEventListener('blur',()=>{navKeys.clear();navShift=false});
@@ -351,7 +405,7 @@ function toeMid(p){if(!p.toeMid)p.toeMid=[0,1,2].map(i=>p.wells.reduce((a,w)=>a+
 // The buttons ride on each pad's cluster of toes as the scene turns; ones that
 // would land on each other step down, the way the pad labels do.
 function placeRackButtons(){if(!data)return;const placed=[];data.pads.forEach(p=>{let b=p.rackBtn;if(!b){b=p.rackBtn=document.createElement('button');b.type='button';b.className='ug-rackbtn';b.onclick=()=>openRackWindow(p.id);b.onmouseenter=b.onfocus=()=>{rackHover=p};b.onmouseleave=b.onblur=()=>{if(rackHover===p)rackHover=null};rackLayer.append(b)}
- const on=active&&(!pad||p===pad),q=on?project(toeMid(p)):null,vis=on&&q[0]>20&&q[0]<width-20&&q[1]>90&&q[1]<height-30;b.hidden=!vis;if(!vis)return;
+ const on=active&&(!pad||p===pad)&&!(SL&&SL.isLocalPad(p.id)&&p.wells.length<2),q=on?project(toeMid(p)):null,vis=on&&q[0]>20&&q[0]<width-20&&q[1]>90&&q[1]<height-30;b.hidden=!vis;if(!vis)return;
  b.textContent='Wine rack ↗';b.title='Wine rack: '+p.name+' across its laterals, in the wine rack window';b.setAttribute('aria-label',b.title);let y=q[1]+12;while(placed.some(l=>Math.abs(l.x-q[0])<90&&Math.abs(l.y-y)<30))y+=30;placed.push({x:q[0],y});b.style.transform=`translate(${Math.round(q[0])}px,${Math.round(y)}px) translateX(-50%)`;});}
 // Leaving for a well view and coming back should land where you were, not at the
 // default cluster. The camera, the focused pad and the selected well are stashed

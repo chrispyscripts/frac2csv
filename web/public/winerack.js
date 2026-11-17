@@ -37,6 +37,10 @@ const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW',
 const compassOf = d => COMPASS16[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
 const LANDING_M = 400;   // how far up the build a well shows before its heel, so it can be seen arriving
 const SG = window.StratumGamma;
+// log data at the line (logs.js): gamma, and a WellSight log's rock type, porosity, oil shows and curves
+const SL = window.StratumLogs || null;
+const wellName = w => (SL ? SL.wellId(w) : 'WA ' + w.wa);
+const shortId = w => (w.licence || w.wa);
 const dark = () => document.documentElement.dataset.theme === 'dark';
 const padInk = i => window.StratumTheme ? StratumTheme.padColor(i) : '#2563eb';
 // marks drawn without a colour of their own: wells in gamma mode on the overview, and no-log wells
@@ -89,10 +93,11 @@ function centralWell(R) {
 
 // a pad's wells in metres about the pad: x east, y up (-TVD), z north
 async function loadPad(id) {
-  const r = await fetch('data/region/pads/' + encodeURIComponent(id) + '.json');
+  if (SL) await SL.skReady;
+  const r = await fetch(SL ? SL.padUrl(id) : 'data/region/pads/' + encodeURIComponent(id) + '.json');
   if (!r.ok) throw Error(r.status === 404 ? 'This pad is not in FracView.' : 'Unable to load this pad.');
   const p = await r.json();
-  if (chartedOnly()) p.wells = p.wells.filter(w => w.well.curves);
+  if (chartedOnly()) p.wells = p.wells.filter(w => w.well.curves || w.well.logs);
   if (!p.wells.length) throw Error('No wells with treatment charts on this pad. Untick “only wells with treatment charts” on the map to see them all.');
   const k = Math.cos(p.lat * Math.PI / 180), xy = (lon, lat) => [(lon - p.lon) * 111320 * k, (lat - p.lat) * 111320];
   p.wells.forEach(w => {
@@ -174,6 +179,8 @@ function rackCross(o, s) {
     const z = o.zones.find(z => hit.md >= z.z0 && hit.md <= z.z1); hit.stage = z ? z.s : null;
     const w = o.w;
     if (w.gv) { const v = w.gv[Math.floor((hit.md - w.gmd0) / w.gbin)]; hit.gamma = v == null ? null : v; }
+    // the log type shown, where it is in this well's log
+    if (SL) { const k = logTypeOf(o.w.pad); hit.lk = k; hit.log = SL.at(SL.track(w, k), hit.md); }
   }
   return hit;
 }
@@ -208,7 +215,15 @@ function dateSpan(R) {
   const d = R.g.ws.map(o => fracDays(o.w)[0]).filter(v => v != null);
   return d.length ? [Math.min(...d), Math.max(...d)] : null;
 }
+// the log type a pad shows: the one chosen, if its wells have it, else the first they have
+function logTypeOf(p) {
+  if (!SL || !p) return 'gamma';
+  const k = SL.current();
+  if (p.lt && p.lt.k === k) return p.lt.v;
+  return (p.lt = { k, v: SL.pick(p.wells) }).v;
+}
 function inkFor(mode, R, o, x) {
+  if (mode === 'gamma' && SL) { if (!x || x.log == null) return null; const k = x.lk || logTypeOf(R.p); return SL.ink(k, x.log, SL.scale(k, !o.w.logs && gamma ? gamma.scale : null)); }
   if (mode === 'gamma') return x && x.gamma != null && gamma ? SG.ink(x.gamma, gamma.scale) : null;
   if (!FM || mode === 'pad') return padInk(R.i);
   if (mode === 'metric') return FM.colour(stageValue(o, x, metric), rackDomain(R, metric), metric);
@@ -443,7 +458,7 @@ function renderPlan(R, hits) {
     const right = t.x + 42 <= W - P.r, x = right ? t.x + 5 : t.x - 5;
     if (kept.some(k => Math.abs(k.y - t.y) < 11 && Math.abs(k.x - x) < 44)) return;
     kept.push({ x, y: t.y });
-    svgEl('text', { x, y: t.y + 3.5, 'text-anchor': right ? 'start' : 'end', class: 'rk-plan-wa' + (t.on ? ' on' : '') }, paths).textContent = t.o.w.well.wa;
+    svgEl('text', { x, y: t.y + 3.5, 'text-anchor': right ? 'start' : 'end', class: 'rk-plan-wa' + (t.on ? ' on' : '') }, paths).textContent = shortId(t.o.w.well);
   });
   svgEl('circle', { cx: X(0), cy: Y(0), r: 5, class: 'rk-padpt' }, svg);
   // the line, and where each well meets it
@@ -490,7 +505,7 @@ function renderSection(R, hits) {
       if (x - px > 34) {
         const t = svgEl('text', { x: (px + x) / 2, y: dy - 6, 'text-anchor': 'middle' }, dim);
         t.textContent = spacingLabel(gap, dv, x - px);
-        svgEl('title', {}, t).textContent = `WA ${h.o.w.well.wa} is ${fmt(gap)} m right of WA ${pv.o.w.well.wa}` + (Math.abs(dv) < 1 ? ', level with it' : ` and ${fmt(Math.abs(dv))} m ${dv > 0 ? 'deeper' : 'shallower'}`);
+        svgEl('title', {}, t).textContent = `${wellName(h.o.w.well)} is ${fmt(gap)} m right of ${wellName(pv.o.w.well)}` + (Math.abs(dv) < 1 ? ', level with it' : ` and ${fmt(Math.abs(dv))} m ${dv > 0 ? 'deeper' : 'shallower'}`);
       }
     }
   });
@@ -499,7 +514,7 @@ function renderSection(R, hits) {
     const o = h.o, w = o.w, x = h.x, cx = X(x.c), cy = Y(x.tvd), fut = future(w, R.asOf), ink = fut ? null : rackInk(R, o, x), r = relOf(w), letter = relLetter(r);
     const v = colorBy === 'metric' ? stageValue(o, x, metric) : null, [f0, f1] = fracDays(w);
     const a = svgEl('g', { class: 'rk-end' + (isPicked(R, w) ? ' on' : '') + (x.landing ? ' landing' : '') + (fut ? ' fut' : ''), tabindex: 0, role: 'button',
-      'aria-label': `${w.well.name}, WA ${w.well.wa}: ${fmt(x.c)} metres across, ${fmt(x.tvd)} metres TVD${x.stage ? ', stage ' + x.stage.label : ''}`
+      'aria-label': `${w.well.name}, ${wellName(w.well)}: ${fmt(x.c)} metres across, ${fmt(x.tvd)} metres TVD${x.stage ? ', stage ' + x.stage.label : ''}`
         + `${r ? ', ' + FM.REL[r.relation].t.toLowerCase() : ''}${fut ? ', not fracked yet on ' + dayStr(R.asOf) : ''}. Show its section in the main window.` }, ends);
     svgEl('circle', { cx, cy, r: Rr, fill: fut ? hole() : x.landing ? hole() : ink || hole(), stroke: x.landing || fut ? ink || none : hole(),
       class: 'rk-dot ' + (fut ? 'rk-fut' : ink ? (colorBy === 'gamma' && w.gest ? 'rk-est' : '') : 'rk-none') }, a);
@@ -517,24 +532,26 @@ function renderSection(R, hits) {
     const box = l => labels.some(b => Math.abs(b.x - cx) < bw && Math.abs(b.y - l) < lh);
     if (box(ly)) ly = cy - Rr - (small ? 6 : 18);
     labels.push({ x: cx, y: ly });
-    svgEl('text', { x: cx, y: ly, 'text-anchor': 'middle', class: 'rk-wa' }, a).textContent = w.well.wa + (x.stage && !small && !fut ? ' · stg ' + x.stage.label : '');
+    svgEl('text', { x: cx, y: ly, 'text-anchor': 'middle', class: 'rk-wa' }, a).textContent = shortId(w.well) + (x.stage && !small && !fut ? ' · stg ' + x.stage.label : '');
     // the second line: what the colour says, where it is not the depth (none for a well still to come)
-    const sub = colorBy === 'metric' ? FM.fmt(v, metric) : colorBy === 'date' && f0 != null ? dayStr(f0) : fmt(x.tvd) + ' m' + (x.landing ? ' · landing' : '');
+    const sub = colorBy === 'metric' ? FM.fmt(v, metric) : colorBy === 'date' && f0 != null ? dayStr(f0)
+      : colorBy === 'gamma' && SL && x.log != null && x.lk !== 'gamma' ? SL.words(x.lk, x.log).replace(/ porosity$| show$/, '') : fmt(x.tvd) + ' m' + (x.landing ? ' · landing' : '');
     if (!small && !fut) svgEl('text', { x: cx, y: ly + 12, 'text-anchor': 'middle', class: 'rk-tvd' }, a).textContent = sub;
     // nearest neighbour on this line, in the section's own metres
     let nn = null;
-    hits.forEach(k => { if (k === h || future(k.o.w, R.asOf)) return; const d = Math.hypot(k.x.c - x.c, k.x.tvd - x.tvd); if (!nn || d < nn.d) nn = { d, h: Math.abs(k.x.c - x.c), v: k.x.tvd - x.tvd, wa: k.o.w.well.wa }; });
+    hits.forEach(k => { if (k === h || future(k.o.w, R.asOf)) return; const d = Math.hypot(k.x.c - x.c, k.x.tvd - x.tvd); if (!nn || d < nn.d) nn = { d, h: Math.abs(k.x.c - x.c), v: k.x.tvd - x.tvd, wa: wellName(k.o.w.well) }; });
     const open = () => { hideTip(); showWell(R, o, x); };
     a.addEventListener('click', open);
     a.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     a.addEventListener('pointerenter', e => {
       const st = x.stage, row = stageRow(o, x);
-      showTip(e, [[w.well.name, 'b'], [`WA ${w.well.wa} · MD ${fmt(x.md)} m at the line · ${fmt(x.tvd)} m TVD${x.landing ? ' (landing, before the heel)' : ''}`],
+      showTip(e, [[w.well.name, 'b'], [`${wellName(w.well)} · MD ${fmt(x.md)} m at the line · ${fmt(x.tvd)} m TVD${x.landing ? ' (landing, before the heel)' : ''}`],
         st ? [`Stage ${st.label}${st.date ? ' · ' + st.date : ''}${st.proppant_t != null ? ' · ' + fmt(st.proppant_t, 1) + ' t' : ''}${st.avg_rate_m3_min != null ? ' · ' + fmt(st.avg_rate_m3_min, 1) + ' m³/min' : ''}`] : null,
         colorBy === 'metric' ? [`${FM.BY[metric].t}: ${v == null ? 'no value for this stage' : FM.fmt(v, metric)}${row && row.src === 'filed' ? ' (as filed)' : ''}`] : null,
         x.gamma != null ? [`Gamma ${w.gest ? '~' : ''}${fmt(x.gamma)} API at the line${w.gest ? ' (estimated)' : ''}`] : null,
+        ...(w.logs && SL ? SL.available([w]).map(t => SL.at(SL.track(w, t.k), x.md) != null ? [SL.words(t.k, SL.at(SL.track(w, t.k), x.md)) + ' at the line'] : null).filter(Boolean).slice(0, 6) : []),
         [f0 == null ? 'No frac dates on file' : `Fracked ${dayStr(f0)}${f1 > f0 ? ' to ' + dayStr(f1) : ''}${fut ? ', after the as-of date' : ''}`],
-        nn ? [`Nearest on this line: WA ${nn.wa}, ${fmt(nn.h)} m across, ${fmt(Math.abs(nn.v))} m ${nn.v < 0 ? 'shallower' : 'deeper'}`] : null,
+        nn ? [`Nearest on this line: ${nn.wa}, ${fmt(nn.h)} m across, ${fmt(Math.abs(nn.v))} m ${nn.v < 0 ? 'shallower' : 'deeper'}`] : null,
         ...relationLines(r),
         [isPicked(R, w) ? 'Its section is in the main window' : 'Click to show its section in the main window', 'i']]);
     });
@@ -555,16 +572,18 @@ function head() {
   $('wr-empty').hidden = racks.length > 0;
   $('wr-sub').textContent = !racks.length ? 'No pads yet' : `${racks.length} pad${racks.length > 1 ? 's' : ''}`
     + (ok.length ? ` · ${ok.reduce((n, R) => n + R.p.wells.length, 0)} wells` : '') + ' · newest at the bottom'
-    + (chartedOnly() ? ' · wells with treatment charts' : '');
+    + (chartedOnly() ? (ok.length && ok.every(R => R.p.wells.every(w => w.logs)) ? ' · wells with mud logs' : ' · wells with treatment charts') : '');
   document.title = 'FracView — ' + (ok.length === 1 ? ok[0].p.name + ' · Wine rack' : `Wine racks${racks.length ? ' · ' + racks.length + ' pads' : ''}`);
   const gb = document.querySelector('[data-color=gamma]');
-  gb.disabled = !gamma; gb.title = gamma ? 'Colour the wells by gamma ray at the line' : 'Gamma data unavailable';
+  const sk = SL && SL.sk();
+  gb.disabled = !gamma && !sk; gb.title = gamma || sk ? 'Colour the wells by their log data at the line: gamma ray, rock type, porosity, oil shows or a curve ([ and ] step through them)' : 'Gamma data unavailable';
+  if (SL) { const ok = racks.filter(R => R.p); gb.textContent = ok.length ? SL.def(logTypeOf(ok[0].p)).short : 'Gamma'; }
   if (!FM) document.querySelectorAll('[data-color=metric],[data-color=relation],[data-color=date]').forEach(b => { b.disabled = true; b.title = 'Stage metrics unavailable'; });
   key();
 }
 function key() {
   const k = $('wr-key');
-  k.hidden = colorBy === 'pad' || (colorBy === 'gamma' && !gamma) || (colorBy !== 'gamma' && !FM);
+  k.hidden = colorBy === 'pad' || (colorBy === 'gamma' && !gamma && !(SL && SL.sk())) || (colorBy !== 'gamma' && !FM);
   if (k.hidden) return;
   k.replaceChildren();
   const select = (label, opts, value, onchange) => {
@@ -574,7 +593,17 @@ function key() {
     sel.value = value; sel.onchange = () => onchange(sel.value);
     k.append(sel);
   };
-  if (colorBy === 'gamma') {
+  const ok = racks.filter(R => R.p), wells = ok.flatMap(R => R.p.wells), lk = SL && ok.length ? logTypeOf(ok[0].p) : 'gamma';
+  if (colorBy === 'gamma' && SL && wells.some(w => w.logs)) {
+    // a WellSight pad: the kind of log data, its key, and the colours where it is a curve
+    const d = SL.def(lk);
+    k.innerHTML = `<span>${d.t} at the line</span>`;
+    k.append(SL.menu({ types: SL.available(wells), value: lk, onPick: () => { racks.forEach(R => { if (R.p) R.p.lt = null; }); head(); renderAll(); } }));
+    const sw = document.createElement('span'); sw.className = 'wr-logkey';
+    sw.innerHTML = SL.keyHtml(lk, SL.scale(lk), SL.rocksIn(wells)) + '<span class="rk-nonekey">none</span>';
+    k.append(sw);
+    if (d.kind === 'ramp') select('Colours', Object.entries(SG.PALETTES).map(([id, q]) => [id, q.name]), SG.current(), v => SG.set(v));
+  } else if (colorBy === 'gamma') {
     k.innerHTML = `<span>Gamma at the line</span><i style="background:${SG.gradient()}"></i><span>${gamma.scale.lo}–${gamma.scale.hi} API</span><span class="rk-nonekey">no log</span>`;
     select('Gamma colours', Object.entries(SG.PALETTES).map(([id, q]) => [id, q.name]), SG.current(), v => SG.set(v));
   } else if (colorBy === 'metric') {
@@ -642,12 +671,20 @@ const saveSoon = () => { clearTimeout(saveT); saveT = setTimeout(save, 250); };
 if (window.StratumSession) StratumSession.provide(() => ({ [STATE_KEY]: JSON.stringify(state()) }));
 
 function setColor(m) {
-  colorBy = !MODES.includes(m) || (m === 'gamma' && !gamma) || (m !== 'gamma' && m !== 'pad' && !FM) ? 'pad' : m;
+  colorBy = !MODES.includes(m) || (m === 'gamma' && !gamma && !(SL && SL.sk())) || (m !== 'gamma' && m !== 'pad' && !FM) ? 'pad' : m;
   document.querySelectorAll('[data-color]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color === colorBy)));
   key(); renderAll(); save();
 }
 document.querySelectorAll('[data-color]').forEach(b => { b.onclick = () => setColor(b.dataset.color); });
 addEventListener('stratum:gammapalette', () => { key(); renderAll(); });
+// another kind of log data chosen, here or in another window (logs.js)
+addEventListener('stratum:logtype', () => { racks.forEach(R => { if (R.p) R.p.lt = null; }); head(); renderAll(); });
+// [ and ] step through the kinds of log data
+addEventListener('keydown', e => {
+  if (colorBy !== 'gamma' || !SL || (e.target && e.target.closest && e.target.closest('input,select,textarea'))) return;
+  const ok = racks.filter(R => R.p), wells = ok.flatMap(R => R.p.wells);
+  if (wells.some(w => w.logs) && SL.stepKey(e, SL.available(wells))) e.preventDefault();
+});
 addEventListener('stratum:theme', () => { key(); renderAll(); });
 // the parent/child labels, again whenever the limits change in Settings (here or in another window)
 const loadRels = () => FM && FM.relations().then(m => { rels = m; renderAll(); }).catch(() => {});
@@ -678,6 +715,7 @@ window.stratumRacks = { add: (id, from) => add(id, { owner: from }), list: () =>
   if (chan && !owner) chan.postMessage({ type: 'hello' });
   head();
   await gammaReady;
+  if (SL) await SL.skReady;
   if (st && st.colorBy && st.colorBy !== 'pad') setColor(st.colorBy); else head();
 })();
 

@@ -18,6 +18,9 @@ const FVM = window.FVMetrics || null;
 // gamma in the colours chosen for every view (gamma-palettes.js), and the slate
 // the lateral is drawn in where there is none
 const gammaInk = (v, g) => window.StratumGamma.ink(v, g);
+// the log data the lateral and the strip under it can show (logs.js): gamma, and a
+// WellSight log's rock type, porosity, oil shows and curves
+const SL = window.StratumLogs || null;
 const GR_MAX = 250;
 // the marks' inks for the theme on screen (theme.js); text takes its colour from the CSS
 const INKS = {
@@ -72,9 +75,10 @@ async function load(wa) {
   WA = String(wa); W = null; hover = null;
   $('ws-name').textContent = 'Loading…'; $('ws-sub').textContent = '';
   let d, row = null;
-  try { d = await getJSON(`data/wells/${encodeURIComponent(WA)}.json`); } catch (e) { if (my === seq) empty(`Well ${WA || '?'} not found.`, `Well ${WA || '?'}`); return; }
+  try { d = await getJSON(SL ? SL.wellUrl(WA) : `data/wells/${encodeURIComponent(WA)}.json`); } catch (e) { if (my === seq) empty(`Well ${WA || '?'} not found.`, `Well ${WA || '?'}`); return; }
   const padId = d.pad && d.pad.id;
-  if (padId) try { row = (await getJSON(`data/region/pads/${encodeURIComponent(padId)}.json`)).wells.find(x => String(x.well.wa) === WA) || null; } catch (e) { /* no survey */ }
+  if (SL) await SL.skReady;
+  if (padId) try { row = (await getJSON(SL ? SL.padUrl(padId) : `data/region/pads/${encodeURIComponent(padId)}.json`)).wells.find(x => String(x.well.wa) === WA) || null; } catch (e) { /* no survey */ }
   if (my !== seq) return;
   W = assemble(d, row);
   if (!FVM || !padId) W.mrows = [];           // no numbers to wait for
@@ -152,7 +156,9 @@ function assemble(d, row) {
     const a = traj[i - 1], b = traj[i], dm = b.md - a.md;
     if (dm > 0 && (b.tvd - a.tvd) / dm < Math.cos(80 * Math.PI / 180)) { heel = a.md; break; }
   }
-  return { well: w, pad: d.pad || {}, traj, az, stages, heel, td: end ? end.md : w.td_m, gamma: null, nCurves: curves.size, units: d.units || {} };
+  const logs = row && row.logs ? row.logs : null;
+  return { well: w, pad: d.pad || {}, traj, az, stages, heel, td: Math.max(end ? end.md : 0, w.td_m || 0), gamma: null, nCurves: curves.size, units: d.units || {},
+           logs, lw: { logs } };
 }
 
 function attachGamma() {
@@ -162,7 +168,14 @@ function attachGamma() {
     ? { md0: g.md0, bin: GAMMA.bin_m || 5, v: g.v, estimated: !!g.estimated, from: g.from,
         lo: (GAMMA.scale && GAMMA.scale.lo) || 70, hi: (GAMMA.scale && GAMMA.scale.hi) || 180, p50: GAMMA.scale ? GAMMA.scale.p50 : null }
     : null;
+  // the well as logs.js reads it: its WellSight log, or its BC gamma
+  W.lw = { logs: W.logs, gv: W.gamma ? W.gamma.v : null, gmd0: W.gamma ? W.gamma.md0 : null, gbin: W.gamma ? W.gamma.bin : null, gest: W.gamma ? W.gamma.estimated : false };
 }
+// the log type shown: the one chosen, if this well has it, else the first it has
+const logType = () => (SL && W ? SL.pick([W.lw]) : 'gamma');
+const logRun = () => (W ? (SL ? SL.track(W.lw, logType()) : W.gamma && { md0: W.gamma.md0, bin: W.gamma.bin, v: W.gamma.v, est: W.gamma.estimated }) : null);
+const logScale = k => (SL ? SL.scale(k, !W.logs && W.gamma ? W.gamma : null) : W.gamma);
+const logInk = (k, v, sc) => (SL ? SL.ink(k, v, sc) : gammaInk(v, W.gamma));
 const gammaAt = md => {
   const g = W && W.gamma; if (!g) return null;
   const v = g.v[Math.floor((md - g.md0) / g.bin)];
@@ -294,7 +307,8 @@ function render() {
   const w = W.well, elev = w.elev_m != null && isFinite(w.elev_m) ? +w.elev_m : null;
   const lateralMode = mode === 'lateral' && W.heel != null;
   K = inks();
-  const track = W.gamma && Ht >= 210 ? 50 : 0, gap = track ? 10 : 0;
+  const LK = logType(), LR = logRun(), LS = LR ? logScale(LK) : null;
+  const track = LR && Ht >= 210 ? 50 : 0, gap = track ? 10 : 0;
   // each stage's pressure over its rate, along the top, where the lateral is
   const hasCurves = W.stages.some(s => s.series), strip = curvesOn && hasCurves && Ht >= 230 ? Math.round(Math.max(48, Math.min(86, Ht * 0.2))) : 0;
   const sy0 = 8, sy1 = sy0 + strip;
@@ -378,18 +392,19 @@ function render() {
   const build = pts.filter(p => p.md <= heel).concat([at(heel)]), lat = [at(heel)].concat(pts.filter(p => p.md > heel));
   out.push(`<polyline points="${line(pts)}" fill="none" stroke="${K.halo}" stroke-opacity="${K.haloOp}" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>`);
   out.push(`<polyline points="${line(build)}" fill="none" stroke="${K.build}" stroke-width="2.2" stroke-linejoin="round"/>`);
-  const g = W.gamma, gammaOn = colorBy === 'gamma' && g;
+  // the log data chosen along the hole: a BC well's gamma along its lateral, a WellSight log wherever it was logged
+  const gammaOn = colorBy === 'gamma' && LR;
   out.push(`<polyline points="${line(lat)}" fill="none" stroke="${gammaOn ? K.filed : K.neutral}" stroke-width="3.2" stroke-linejoin="round" stroke-linecap="round"/>`);
   if (gammaOn) {
     const segs = [];
-    g.v.forEach((v, i) => {
+    LR.v.forEach((v, i) => {
       if (v == null) return;
-      const m0 = g.md0 + i * g.bin;
-      if (m0 + g.bin < heel - 200) return;
-      const a = at(m0), b = at(m0 + g.bin);
-      segs.push(`<line x1="${X(a.vs).toFixed(1)}" y1="${Y(a.tvd).toFixed(1)}" x2="${X(b.vs).toFixed(1)}" y2="${Y(b.tvd).toFixed(1)}" stroke="${gammaInk(v, g)}"/>`);
+      const m0 = LR.md0 + i * LR.bin;
+      if (!W.logs && m0 + LR.bin < heel - 200) return;
+      const a = at(m0), b = at(m0 + LR.bin), c = logInk(LK, v, LS);
+      if (c) segs.push(`<line x1="${X(a.vs).toFixed(1)}" y1="${Y(a.tvd).toFixed(1)}" x2="${X(b.vs).toFixed(1)}" y2="${Y(b.tvd).toFixed(1)}" stroke="${c}"/>`);
     });
-    out.push(`<g stroke-width="5"${g.estimated ? ' stroke-dasharray="7 4"' : ''}>${segs.join('')}</g>`);
+    out.push(`<g stroke-width="5"${LR.est ? ' stroke-dasharray="7 4"' : ''}>${segs.join('')}</g>`);
   }
 
   // stage ticks across the path, at their measured depths
@@ -449,25 +464,31 @@ function render() {
   }
   out.push('</g>');
 
-  // gamma under the section, on the same along-section axis
+  // the log data chosen under the section, on the same along-section axis: a
+  // bar's height and colour are both the reading (a rock fills its bar)
   if (track) {
+    const g = W.gamma, bcGamma = LK === 'gamma' && !W.logs && g, d = SL ? SL.def(LK) : { t: 'Gamma ray', u: 'API', kind: 'ramp' };
     out.push(`<rect x="${x0}" y="${ty0}" width="${x1 - x0}" height="${track}" fill="${K.track}" stroke="var(--line)"/>`);
-    for (const a of [100, 200]) {
+    const hOf = v => (bcGamma || !SL ? Math.min(1, v / GR_MAX) : SL.height(LK, v, LS));
+    if (bcGamma) for (const a of [100, 200]) {
       const y = ty1 - a / GR_MAX * track;
       out.push(`<line x1="${x0}" x2="${x1}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-dasharray="3 4"/><text class="ax" x="${x0 - 7}" y="${y + 4}" text-anchor="end">${a}</text>`);
     }
+    else if (d.kind === 'ramp' && LS) out.push(`<text class="ax" x="${x0 - 7}" y="${ty0 + 10}" text-anchor="end">${fmt(LS.hi, Math.abs(LS.hi) >= 10 ? 0 : 1)}</text>`);
+    else if (LK === 'por') out.push(`<text class="ax" x="${x0 - 7}" y="${ty0 + 10}" text-anchor="end">24%</text>`);
     const bars = [];
-    g.v.forEach((v, i) => {
+    LR.v.forEach((v, i) => {
       if (v == null) return;
-      const m0 = g.md0 + i * g.bin, a = at(m0), b = at(m0 + g.bin);
-      if (Math.abs(b.vs - a.vs) < g.bin * 0.5) return;          // steep hole: no room on this axis
+      const m0 = LR.md0 + i * LR.bin, a = at(m0), b = at(m0 + LR.bin);
+      if (Math.abs(b.vs - a.vs) < LR.bin * 0.5) return;          // steep hole: no room on this axis
       const xa = X(Math.min(a.vs, b.vs)), xb = X(Math.max(a.vs, b.vs));
       if (xb < x0 || xa > x1) return;
-      const h = Math.max(1, Math.min(1, v / GR_MAX) * track);
-      bars.push(`<rect x="${xa.toFixed(1)}" y="${(ty1 - h).toFixed(1)}" width="${Math.max(1, xb - xa + .4).toFixed(1)}" height="${h.toFixed(1)}" fill="${gammaInk(v, g)}"/>`);
+      const h = Math.max(1, hOf(v) * track), c = logInk(LK, v, LS);
+      if (c) bars.push(`<rect x="${xa.toFixed(1)}" y="${(ty1 - h).toFixed(1)}" width="${Math.max(1, xb - xa + .4).toFixed(1)}" height="${h.toFixed(1)}" fill="${c}"/>`);
     });
-    out.push(`<g clip-path="url(#clipx)"${g.estimated ? ' opacity=".75"' : ''}>${bars.join('')}</g>`);
-    out.push(`<text class="chip" x="${x1 - 8}" y="${ty0 + 14}" text-anchor="end">gamma API${g.estimated ? ` · estimated from ${g.from && g.from.length ? g.from.length + ' offset log' + (g.from.length > 1 ? 's' : '') : 'offset logs'} (±15 API)` : ''}</text>`);
+    out.push(`<g clip-path="url(#clipx)"${LR.est ? ' opacity=".75"' : ''}>${bars.join('')}</g>`);
+    const name = bcGamma || !SL ? 'gamma API' : d.t.toLowerCase() + (d.u && d.kind === 'ramp' ? ' ' + d.u : '');
+    out.push(`<text class="chip" x="${x1 - 8}" y="${ty0 + 14}" text-anchor="end">${esc(name)}${LR.est && g ? ` · estimated from ${g.from && g.from.length ? g.from.length + ' offset log' + (g.from.length > 1 ? 's' : '') : 'offset logs'} (±15 API)` : ''}${!bars.length ? ' · none on the lateral (a steep hole has no room on this axis)' : ''}</text>`);
   }
   let scale = null;
   if (strip) {
@@ -525,7 +546,7 @@ function render() {
   $('ws-svg').innerHTML = out.join('');
   $('ws-svg').setAttribute('viewBox', `0 0 ${Wd} ${Ht}`);
 
-  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev, strip, sy0, sy1, rib, ry0, ry1 };
+  G = { x0, x1, y0, y1, ty0, ty1, track, X, Y, samples, heel, elev, strip, sy0, sy1, rib, ry0, ry1, logs: !!W.logs };
   if (!pointerIn) hover = extHover();
   $('ws-foot').textContent = `Vertical section along ${fmt(azDeg)}° (${compass(azDeg)}), from the pad's surface location`
     + ` · ${lateralMode ? 'lateral' : 'whole well'}, ${stretch}`
@@ -578,12 +599,18 @@ function drawHover() {
   } else if (hover) {
     const s = hover.md >= (G.heel - 1) ? stageAt(hover.md) : null;
     if (s && s !== hiS) { out.push(band(s, s.curves ? K.curves : K.filed, .2, 16)); lit(s, .1); }
-    if (G.track && hover.md >= G.heel - 200) out.push(`<line x1="${hover.x}" x2="${hover.x}" y1="${G.y0}" y2="${G.ty1}" stroke="${K.cross}" stroke-opacity=".35"/>`);
+    if (G.track && (G.logs || hover.md >= G.heel - 200)) out.push(`<line x1="${hover.x}" x2="${hover.x}" y1="${G.y0}" y2="${G.ty1}" stroke="${K.cross}" stroke-opacity=".35"/>`);
     out.push(`<circle cx="${hover.x}" cy="${hover.y}" r="5" fill="none" stroke="${K.cross}" stroke-width="2"/>`);
     const gr = gammaAt(hover.md);
     const lines = [`<b>MD ${fmt(hover.md)} m</b> · TVD ${fmt(hover.tvd)} m`,
       `<span class="m">${fmt(hover.vs)} m along the section${G.elev != null ? ` · ${fmt(G.elev - hover.tvd)} m ASL` : ''}</span>`];
-    if (gr != null) lines.push(`Gamma ${fmt(gr)} API${W.gamma.estimated ? ' <span class="m">(estimated)</span>' : ''}`);
+    if (W.logs && SL) {
+      // everything the log says at this depth, the type shown first
+      const k0 = logType(), seen = SL.available([W.lw]), order = [seen.find(t => t.k === k0)].concat(seen.filter(t => t.k !== k0)).filter(Boolean);
+      const said = order.map(t => ({ t, v: SL.at(SL.track(W.lw, t.k), hover.md) })).filter(x => x.v != null);
+      said.slice(0, 7).forEach((x, i) => lines.push(i === 0 ? `<b>${esc(SL.words(x.t.k, x.v))}</b>` : esc(SL.words(x.t.k, x.v))));
+      if (!said.length) lines.push('<span class="m">nothing logged at this depth</span>');
+    } else if (gr != null) lines.push(`Gamma ${fmt(gr)} API${W.gamma.estimated ? ' <span class="m">(estimated)</span>' : ''}`);
     if (s) {
       lines.push(`<b>Stage ${esc(s.label)}</b> · ${fmt(s.top, 1)}${s.base !== s.top ? '–' + fmt(s.base, 1) : ''} m MD`);
       const bits = [s.date && `${s.date}${s.start ? ' ' + s.start : ''}`, s.proppant != null && `${fmt(s.proppant, 1)} t`,
@@ -736,7 +763,7 @@ svg.addEventListener('pointermove', e => {
     return;
   }
   if (G.track && my >= G.ty0 - 4) {
-    for (const s of G.samples) { if (s.md < G.heel - 200) continue; const d = Math.abs(s.x - mx); if (d < bd) { bd = d; best = s; } }
+    for (const s of G.samples) { if (!G.logs && s.md < G.heel - 200) continue; const d = Math.abs(s.x - mx); if (d < bd) { bd = d; best = s; } }
     if (bd > 30) best = null;
   } else {
     for (const s of G.samples) { const d = Math.hypot(s.x - mx, s.y - my); if (d < bd) { bd = d; best = s; } }
@@ -755,6 +782,7 @@ svg.addEventListener('click', () => {
   if (s) { HI = s.label; syncUrl(); render(); openStage(s); }
 });
 svg.addEventListener('keydown', e => {
+  if (W && SL && W.logs && SL.stepKey(e, SL.available([W.lw]), () => { if (colorBy !== 'gamma') { colorBy = 'gamma'; savePrefs(); } })) { e.preventDefault(); return; }
   if (!W || !W.stages.length) return;
   const i = W.stages.findIndex(s => s.label === HI);
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -766,6 +794,8 @@ svg.addEventListener('keydown', e => {
 });
 new ResizeObserver(() => render()).observe($('ws-main'));
 addEventListener('stratum:gammapalette', () => { setPressed(); render(); });
+// another kind of log data chosen, here or in another window (logs.js)
+addEventListener('stratum:logtype', () => { if (W) { header(); render(); } });
 addEventListener('stratum:theme', () => { cardFor = null; render(); });
 
 // ---------- header and controls ----------
@@ -774,13 +804,17 @@ function header() {
   $('ws-name').textContent = w.name || `WA ${WA}`;
   document.title = `FracView — ${w.name || 'WA ' + WA} · section`;
   const n = W.stages.length;
-  $('ws-sub').textContent = [`WA ${WA}`, w.uwi, w.operator, w.formation, W.td ? `TD ${fmt(W.td)} m MD` : null,
+  $('ws-sub').textContent = [SL ? SL.wellId(w) : `WA ${WA}`, w.uwi, w.surface_loc && W.logs ? 'surface ' + w.surface_loc : null, w.operator, w.formation, W.td ? `TD ${fmt(W.td)} m MD` : null,
     w.tvd_m ? `${fmt(w.tvd_m)} m TVD` : null, w.lateral_m ? `lateral ${fmt(w.lateral_m)} m` : null,
-    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : null].filter(Boolean).join(' · ');
+    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : W.logs ? 'WellSight mud log' : null].filter(Boolean).join(' · ');
   $('ws-sub').title = $('ws-sub').textContent;
   const gb = document.querySelector('[data-color=gamma]');
-  gb.disabled = !W.gamma;
-  gb.title = W.gamma ? (W.gamma.estimated ? 'Gamma estimated from offset logs' : 'Gamma from this well’s LAS log') : 'No gamma log on file for this well';
+  gb.disabled = !W.gamma && !W.logs;
+  gb.textContent = SL && W.logs ? SL.def(logType()).short : 'Gamma';
+  gb.title = W.logs ? 'Colour the hole by its WellSight log: rock type, porosity, oil shows, gamma or a curve ([ and ] step through them)'
+    : W.gamma ? (W.gamma.estimated ? 'Gamma estimated from offset logs' : 'Gamma from this well’s LAS log') : 'No gamma log on file for this well';
+  // a WellSight well has no frac charts or stage report
+  $('ws-charts').hidden = !!W.logs && !W.stages.length; $('ws-report').hidden = !!W.logs && !W.stages.length;
   document.querySelector('[data-mode=lateral]').disabled = W.heel == null;
   const ms = $('ws-metric');
   if (FVM) {
@@ -795,7 +829,16 @@ function setPressed() {
   document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
   document.querySelectorAll('[data-color]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color === colorBy)));
   const pal = $('ws-palette');
-  if (pal) { pal.hidden = !(colorBy === 'gamma' && W && W.gamma); pal.value = window.StratumGamma.current(); }
+  const ramp = !SL || !W || SL.def(logType()).kind === 'ramp';
+  if (pal) { pal.hidden = !(colorBy === 'gamma' && W && (W.gamma || W.logs) && ramp); pal.value = window.StratumGamma.current(); }
+  // the kind of log data, where the well has more than gamma
+  const lt = $('ws-logtype');
+  if (lt && SL) {
+    const types = W ? SL.available([W.lw]) : [];
+    lt.replaceChildren();
+    lt.hidden = !(W && W.logs && types.length);
+    if (!lt.hidden) lt.append(SL.menu({ types, value: logType(), label: 'Log data along the hole and under it', onPick: () => { if (colorBy !== 'gamma') { colorBy = 'gamma'; savePrefs(); } hover = null; setPressed(); render(); } }));
+  }
 }
 {
   const pal = $('ws-palette');

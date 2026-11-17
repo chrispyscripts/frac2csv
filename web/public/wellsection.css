@@ -118,3 +118,7 @@ body.embedded .ws-theme{display:none}
 .ws-choose-acts button.go{background:var(--on-bg);border-color:var(--on-bg);color:var(--on-ink)}
 .ws-choose-acts button.go span{color:var(--on-ink);opacity:.85}
 .ws-choose-x{position:absolute;top:7px;right:8px;padding:2px 7px;font-size:15px;line-height:1;background:none;border-color:transparent}
+
+/* the kind of log data (logs.js), in the toolbar */
+.ws-logtype .lg-menu { margin: 0; }
+.ws-logtype .lg-menu select { max-width: 190px; }

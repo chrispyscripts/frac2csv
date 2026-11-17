@@ -81,3 +81,9 @@
 :root:not([data-theme=dark]) .ug-asof{border-color:#e4eaef}
 :root:not([data-theme=dark]) .ug-asof label{color:#566b78}
 :root:not([data-theme=dark]) .ug-asof input{accent-color:#0d8577}
+/* log data (logs.js): the WellSight well's facts in the pad panel, the key's menu and swatches */
+.ug-logfacts{margin:10px 0 4px;padding:10px 0 2px;border-top:1px solid #263c48;display:grid;gap:6px;line-height:1.45}
+:root:not([data-theme=dark]) .ug-logfacts{border-color:#e4eaef}
+.ug-legend.lg-wide,.ug-legend .lg-sw{color:inherit}.ug-legend .lg-ticks{color:inherit}.ug-keys{opacity:.75}
+#underground .ug-legend .lg-menu select{font-size:11px}
+#underground .ug-legend{z-index:6}

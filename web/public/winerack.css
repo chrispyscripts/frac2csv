@@ -108,3 +108,8 @@ main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
 @media(max-width:640px){.wr-head{padding:10px 16px}main{padding:12px 16px 20px}.rk-where{display:none}.wr-key i{width:60px}
   .wr-seg button{padding:6px 7px;font-size:12px}
   .rk-end:hover .rk-dot,.rk-end:focus-visible .rk-dot{r:11px}.rk-when{min-width:0}}
+
+/* a WellSight pad's key: the kind of log data and its swatches (logs.js) */
+#wr-key .lg-menu { margin: 0 4px; min-width: 220px; }
+.wr-logkey { display: inline-flex; flex-direction: column; min-width: 150px; max-width: 420px; }
+.wr-logkey .lg-sw { margin: 0; }

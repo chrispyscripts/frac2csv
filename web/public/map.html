@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="theme.js"></script>
+<script src="logs.js"></script>
 <title>FracView — Pad map</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -220,6 +221,16 @@ async function load() {
       ALL_SETS.push({ set: s.set, name: s.name || s.set, pads: d.pads });
     } catch (e) {}
   }
+  // the Saskatchewan wells from the WellSight logs, where this copy has them (logs.js: local only)
+  try {
+    const sk = window.StratumLogs && await StratumLogs.skReady;
+    if (sk) {
+      const d = await (await fetch("data/sk/pads.json")).json();
+      d.pads.forEach((p, i) => { p.ci = i; p.color = padColor(i); p.set = "sk"; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
+      ALL_SETS.push({ set: "sk", name: "Saskatchewan logs", pads: d.pads });
+      for (const p of sk.pads) PAD_INFO[p.id] = p;
+    }
+  } catch (e) {}
   // operator, field and years per pad, from the region index the 3D view also reads
   try { for (const p of (await (await fetch("data/region/index.json")).json()).pads) PAD_INFO[p.id] = p; } catch (e) {}
   try { demoAreas((await (await fetch("data/region/featured.json")).json()).areas); } catch (e) {}
@@ -235,7 +246,7 @@ try { chartedOnly = localStorage.getItem("stratum.allWells") !== "1"; } catch (e
 window.stratumWells = { chartedOnly: () => chartedOnly };
 function applyFilter() {
   SETS = ALL_SETS.map(S => ({ ...S, pads: !chartedOnly ? S.pads
-    : S.pads.map(p => ({ ...p, wells: p.wells.filter(w => w.stages) })).filter(p => p.wells.length) }));
+    : S.pads.map(p => ({ ...p, wells: p.wells.filter(w => w.stages || w.ws) })).filter(p => p.wells.length) }));
   for (const S of SETS) for (const p of S.pads) PAD_BY_ID[p.id] = p;
   document.getElementById("charted").checked = chartedOnly;
   document.getElementById("survey-only").hidden = chartedOnly;
@@ -277,7 +288,7 @@ function features() {
     for (const w of p.wells) {
       if (!w.path || w.path.length < 2) continue;
       const props = { wa: w.wa, name: w.name, uwi: w.uwi || "", td: w.td, tvd: w.tvd, lateral: w.lateral,
-                      stages: w.stages || 0, ports: w.ports || 0, logs: w.logs || 0, stations: w.stations || 0, color: p.color, pad: p.name };
+                      stages: w.stages || 0, ports: w.ports || 0, logs: w.logs || 0, ws: w.ws || 0, stations: w.stations || 0, color: p.color, pad: p.name };
       lines.push({ type: "Feature", geometry: { type: "LineString", coordinates: w.path }, properties: props });
       toes.push({ type: "Feature", geometry: { type: "Point", coordinates: w.path[w.path.length - 1] }, properties: props });
     }
@@ -604,7 +615,8 @@ function openPad(p, lngLat) {
   if (popup) popup.remove();
   const info = PAD_INFO[p.id] || {};
   const yrs = info.years ? (info.years[0] === info.years[1] ? info.years[0] : info.years.join("–")) : null;
-  const facts = (chartedOnly
+  const facts = (/^sk-/.test(p.id) ? [`${p.wells.length} well${p.wells.length > 1 ? "s" : ""} with a WellSight mud log`, info.operator, yrs]
+    : chartedOnly
     ? [`${p.wells.length} wells with charts${info.wells > p.wells.length ? ` (of ${info.wells})` : ""}`, info.operator, yrs]
     : [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null]).filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat || [p.lon, p.lat])
@@ -625,19 +637,23 @@ function openPad(p, lngLat) {
 let popup = null;
 function openWell(p, lngLat) {
   if (popup) popup.remove();
+  const sk = /^SK/.test(String(p.wa));
   const facts = [
     p.pad, p.td ? `TD ${fmt(p.td)} m` : null, p.tvd ? `TVD ${fmt(p.tvd)} m` : null,
     p.lateral ? `lateral ${fmt(p.lateral)} m` : null,
     p.ports ? `${p.ports} stages at BCER depths` : null,
-    p.stages ? `${p.stages} with treatment curves` : "no treatment curves loaded yet",
-    p.logs ? `${p.logs} log tracks` : null, p.stations ? `${p.stations} survey stations` : null,
+    sk ? "WellSight mud log: rock type, porosity, shows and curves along the well"
+      : p.stages ? `${p.stages} with treatment curves` : "no treatment curves loaded yet",
+    !sk && p.logs ? `${p.logs} log tracks` : null, p.stations ? `${p.stations} survey stations` : null,
   ].filter(Boolean);
+  const id = sk ? "Licence " + String(p.wa).replace(/^SK/, "").replace(/-\d+$/, "") : "WA " + p.wa;
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
     .setLngLat(lngLat)
-    .setHTML(`<div class="pop"><b>${p.name}</b><div class="facts">${p.uwi ? p.uwi + " · " : ""}WA ${p.wa}<br>${facts.join(" · ")}</div>
+    .setHTML(`<div class="pop"><b></b><div class="facts">${p.uwi ? p.uwi + " · " : ""}${id}<br>${facts.join(" · ")}</div>
               <div class="acts"><button type="button" class="view">View well</button>
-              <a href="wellview.html?wa=${encodeURIComponent(p.wa)}">Charts →</a></div></div>`)
+              ${sk ? "" : `<a href="wellview.html?wa=${encodeURIComponent(p.wa)}">Charts →</a>`}</div></div>`)
     .addTo(map);
+  popup.getElement().querySelector(".pop > b").textContent = p.name;
   // picking a well opens it whole in 2D, docked below (or in its popped-out window);
   // View well brings it back after the dock was closed
   const view = () => {
@@ -688,7 +704,7 @@ function sidebar() {
   const nCurves = all.reduce((m, p) => m + p.wells.filter(w => w.stages).length, 0);
   const nAll = ALL_SETS.reduce((m, S) => m + S.pads.reduce((n, p) => n + p.wells.length, 0), 0);
   document.getElementById("sub").textContent = !SETS.length ? "no pads built yet" : chartedOnly
-    ? `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells with charts (of ${nAll.toLocaleString()})`
+    ? `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells with charts${ALL_SETS.some(S => S.set === "sk") ? " or mud logs" : ""} (of ${nAll.toLocaleString()})`
     : `${SETS.map(s => s.name).join(", ")} · ${all.length} pads · ${nWells.toLocaleString()} wells · ${nCurves} with treatment curves`;
   const b = map.getBounds(), c = map.getCenter(), k = Math.cos(c.lat * Math.PI / 180);
   const near = p => Math.hypot(p.lat - c.lat, (p.lon - c.lng) * k);
@@ -699,7 +715,7 @@ function sidebar() {
       <button type="button"><span><span class="sw" style="background:${p.color}"></span>${p.name}</span>
         <span class="n">${p.wells.length} wells${p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} curves` : ""}</span></button>
       <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^\S+(\s+\S+)?\s+HZ\s+/i, "")}
-          <span class="m">${fmt(w.lateral)} m${w.ports ? ` · ${w.ports} stg` : ""}${w.stages ? ` · <b>curves</b>` : ""}${w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
+          <span class="m">${fmt(w.lateral)} m${w.ports ? ` · ${w.ports} stg` : ""}${w.stages ? ` · <b>curves</b>` : ""}${w.ws ? " · <b>mud log</b>" : w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
     </div>`).join("");
   el.querySelectorAll(".pad > button").forEach(b => b.addEventListener("click", () => {
     if (window.stratumGroupMode && stratumGroupMode.active()) { stratumGroupMode.pick(b.parentElement.dataset.id); return; }
@@ -722,7 +738,7 @@ function sidebar() {
     const mid = w.path[Math.floor(w.path.length / 2)];
     map.flyTo({ center: mid, zoom: Math.max(map.getZoom(), 13) });
     openWell({ wa: w.wa, name: w.name, uwi: w.uwi, td: w.td, tvd: w.tvd, lateral: w.lateral, stages: w.stages || 0,
-               ports: w.ports || 0, logs: w.logs || 0, stations: w.stations || 0, pad: w.pad.name }, mid);
+               ports: w.ports || 0, logs: w.logs || 0, ws: w.ws || 0, stations: w.stations || 0, pad: w.pad.name }, mid);
   }));
 }
 load();

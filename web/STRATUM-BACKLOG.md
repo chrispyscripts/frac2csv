@@ -9,6 +9,27 @@ each entry.
 
 ## Done
 
+- **Saskatchewan WellSight logs: rock type, porosity, oil shows and curves**
+  (2026-11-17, LOCAL ONLY: the logs are not public data, so nothing is in the
+  repo or on the live site). `web/scripts/build_sk.py` turns the WellSight
+  conversion (~/dev/wellsight-converted) plus the drive's raw logs (Porosity
+  cells) and SaskGrid 2015 sections into a Saskatchewan set in
+  ~/dev/fracview-sk (2,567 wells, 2,318 pads); `scripts/serve.py 8793 --mount
+  /data/sk=~/dev/fracview-sk` serves it (launch entry `fracview-sk`). Each well
+  is placed from its header (surface coordinates in their section; else the
+  bottom hole less its offset; checked against the bottom hole's own location,
+  median 152 m), its path from the survey (or MD/TVD toward the bottom hole),
+  and its log binned every 2 m of MD. New `public/logs.js` (StratumLogs): the
+  kinds of log data (Gamma ray, Rock type, Porosity, Oil show, every log curve
+  by kind), their colours, words and a menu with ◀ ▶ (and [ ] keys) to cycle
+  through them. The Gamma button in the 3D view, the well section and the wine
+  rack now colours by whichever kind is chosen (one setting,
+  `stratum.logType`, every window); BC areas still have gamma only. The section
+  shows the kind under the hole and every reading at a depth on hover; a
+  Saskatchewan pad in 3D opens its well's section (no pad page, no stages).
+  Left out: 478 horizontal logs with no path at all, 115 with no legal
+  location, 38 with no MD log, 22 with MD/TVD only and no bottom hole. Tests:
+  tests/test_stratum_logs.js, tests/test_stratum_sk_build.py.
 - **Gamma-coloured wells** (2026-10-03). Underground view, Colour: Pad | Gamma.
   `web/scripts/build_gamma.py` → `data/gamma.json` from the eLibrary LAS files;
   46 of 76 Gundy wells have a gamma log, the other 30 draw dashed.
