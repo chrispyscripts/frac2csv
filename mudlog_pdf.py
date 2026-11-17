@@ -1006,6 +1006,23 @@ def _dash_step(segs, top, row):
     return None
 
 
+def _solid(inside):
+    """whether a line with many strokes straight down the track was drawn
+    whole, reading to reading, its straight strokes readings repeated: not
+    in steps (a step's strokes run straight, the jump across to the next
+    left out, so they end where no stroke starts) nor dashed (its pieces
+    apart). Nearly every stroke runs on into another, and those straight
+    down are on the whole no longer than those across (a reading to the
+    next, either way: a step drawn with its jump across a row has strokes
+    straight down the step long, across a row)"""
+    starts = {(round(sg[0], 5), round(sg[1], 5)) for sg in inside}
+    joined = sum(1 for sg in inside if (round(sg[2], 5), round(sg[3], 5)) in starts)
+    across = sorted(sg[2] - sg[0] for sg in inside if abs(sg[1] - sg[3]) >= 1e-4)
+    down = sorted(sg[2] - sg[0] for sg in inside if abs(sg[1] - sg[3]) < 1e-4)
+    return bool(across and down and joined >= 0.9 * len(inside)
+                and down[len(down) // 2] <= 1.5 * across[len(across) // 2])
+
+
 def _onto_readings(segs, top, step, row, cuts=(), like=None):
     """-> ({corner depth: the depth of the reading it was drawn for}, the
     step the readings were recorded at (None where the corners were left on
@@ -1036,13 +1053,19 @@ def _onto_readings(segs, top, step, row, cuts=(), like=None):
         return {}, None, None
     inside = [sg for sg in segs if -0.005 <= sg[1] <= 1.005 and -0.005 <= sg[3] <= 1.005]
     if like is None and (len(inside) < 40 or
-                         sum(1 for sg in inside if abs(sg[1] - sg[3]) < 1e-4) > 0.3 * len(inside)):
+                         (sum(1 for sg in inside if abs(sg[1] - sg[3]) < 1e-4) > 0.3 * len(inside)
+                          and not _solid(inside))):
         return {}, None, None
     cuts = sorted(cuts)
+    # judged over stretches holding a dozen corners or so: a line its
+    # strokes say was recorded every 0.5 or 1 m has five or two and a half
+    # in SNAP_M, too few to tell
+    rec0 = _recorded_step(inside) if like is None else None
+    span = like[3] if like is not None else SNAP_M * max(1.0, (rec0 or 0.0) / 0.2)
 
     def block(d):
         k = bisect.bisect_right(cuts, d)
-        return k, int((d - (cuts[k - 1] if k else top)) // SNAP_M)
+        return k, int((d - (cuts[k - 1] if k else top)) // span)
 
     blocks = collections.defaultdict(list)          # judged from the corners inside the track
     for d in {x for sg in inside for x in (sg[0], sg[2])}:
@@ -1076,7 +1099,11 @@ def _onto_readings(segs, top, step, row, cuts=(), like=None):
             if len(ds) < 12:
                 continue
             for S in (1.0, 0.5, 0.2, step):
-                if row > 0.7 * S:
+                # (not finer than its strokes say it was recorded, but for
+                # the grid of `step`: a line recorded every metre has its
+                # corners on the 0.2 m grid too, and the odd corners of a
+                # stretch's few readings fit that by chance)
+                if row > 0.7 * S or (rec0 and S < rec0 - 1e-9 and S != step):
                     continue
                 h, origin = (S / 2, 0.0) if S > step + 1e-9 else (0.0 if coarse else S / 2, top)
                 n, c = place(ds, S, h, origin)
@@ -1105,11 +1132,17 @@ def _onto_readings(segs, top, step, row, cuts=(), like=None):
             coarse = True
             found = fit(True)
     if like is not None:
-        found, rec, coarse = like
+        found, rec, coarse, _span = like
     elif not found:
         return {}, None, None
     else:
         rec = collections.Counter(f[0] for f in found.values()).most_common(1)[0][0]
+        if coarse and rec <= step + 1e-9 and (rec0 or 0.0) > 0.2 + 1e-9:
+            # a line recorded every 0.5 or 1 m found mostly on the grid of
+            # `step` only: its stretches' corners too few in its own step,
+            # the grid's points by them a chance (0.2 m readings' corners
+            # stand on the grid of 0.1 m steps, as drawn)
+            return {}, None, None
     out = {}
     for key, ds in every.items():
         f = found.get(key)
@@ -1123,7 +1156,7 @@ def _onto_readings(segs, top, step, row, cuts=(), like=None):
             for d in ds:
                 out[d] = d + rec / 2
     whole = rec > step + 1e-9 or not coarse
-    return out, (rec if whole else None), (found, rec, coarse)
+    return out, (rec if whole else None), (found, rec, coarse, span)
 
 
 def _moved(segs, onto):
@@ -1750,8 +1783,9 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
                 #                                  leapt up just before is a spike coming back down)
             elif last is not None and k == 1 and prev <= 0.3 and back_in_at_top(i, prev):
                 k = 0                            # the wrapped line out of the low end, in again from the top
-            elif last is not None and k == 1 and p - prev > 0.3:
+            elif last is not None and k == 1 and p - prev > 0.3 and not crossed(i, prev, p):
                 k = 0                            # the wrapped line jumps back up: the reading is back in the scale
+                #                                  (one drawn up from where it was rose that fast)
             elif last is not None and k == -1 and (prev - p > (0.5 if drawn_under else 0.3)
                                                    or (p < 0.5 and not drawn_under and not from_right)):
                 k = 0                            # (and a reading half a width under the scale is no
@@ -1858,6 +1892,21 @@ def _in_step(strokes, S, window=10.0):
         got += best
         tot += len(ph)
     return tot == 0 or got >= 0.5 * tot
+
+
+def _past_share(curve):
+    """the share of a curve's readings past its scale, by more than a
+    fiftieth of its width"""
+    starts = [d for d, _l, _r in curve["scale"]]
+    n = past = 0
+    for i, v in enumerate(curve["values"]):
+        if v is None:
+            continue
+        _d, l_, r_ = curve["scale"][max(0, bisect.bisect_right(starts, curve["top"] + i * curve["step"] + 1e-9) - 1)]
+        lo, hi = min(l_, r_), max(l_, r_)
+        n += 1
+        past += v < lo - 0.02 * (hi - lo) or v > hi + 0.02 * (hi - lo)
+    return past / n if n else 0.0
 
 
 def _shift(values, k, blend=True):
@@ -2140,213 +2189,236 @@ def read_curves(doc, pages, lines_pt, top, bottom, step=STEP, strokes=None, drop
             dropped.append((first.name, "no line of its colour in its track"))
             continue
         wmain = max(groups, key=lambda w: (_inside_drawn(groups[w]), _inside(groups[w]), w))
-        # each line's corners put back on the readings they were drawn for
-        # (another line of the colour too few to tell: moved as the main one)
-        drawn = groups
-        onto = {}
-        onto[wmain], moved, how = _onto_readings(groups[wmain], top, step, row, cuts)
-        dashed = _dash_step(groups[wmain], top, row)
-        for w, sg in groups.items():
-            if w != wmain:
-                onto[w] = _onto_readings(sg, top, step, row, cuts, like=how)[0] if how else {}
-        groups = {w: _moved(sg, onto[w]) for w, sg in groups.items()}
-        if _inside(groups[wmain]) < 0.05 * (bottom - top):
-            dropped.append((first.name, "its line runs %.0f m of the log's %.0f m" % (_inside(groups[wmain]), bottom - top)))
-            continue
-        main = _in_track(_series(groups[wmain], top, n, step))
-        # the line where it runs out of the track, past the scale: the
-        # strokes with one end inside it (other marks of the colour beyond
-        # the track, another column's lines, are not the curve)
-        e = wscale.EDGE
-        # for a curve drawn with one line: the line without straight runs
-        # along the track's edges (a box's sides; a pinned line says nothing
-        # the reader can write), and where it runs out of the track
-        line = [sg for sg in groups[wmain] if not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 0.3
-                                                  and (abs(sg[1]) < 0.003 or abs(sg[1] - 1) < 0.003))
-                and not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 3.0)]   # one straight stroke over
-        #                                                    3 m is a legend's sample line, not readings
-        crossing = [sg for sg in line if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
-        whole = [ms + [p for p in ps if p < -e or p > 1 + e]
-                 for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
-        flat = [sg for sg in _relative(strokes.of(colour, flats=True).get(wmain, []), x0, x1)
-                if -0.5 < sg[1] < 1.5 and -0.5 < sg[3] < 1.5]
-        if onto.get(wmain):
-            flat = [(onto[wmain].get(da, da), pa, onto[wmain].get(db, db), pb) for da, pa, db, pb in flat]
-            flat += _jumps(drawn[wmain], onto[wmain])
-        moves = _moves(line + flat, top, n, step)
-        wrap = [[] for _ in range(n)]
-        for w, sg in groups.items():
-            if w == wmain:
-                continue
-            # (a grid drawn in the curve's colour at another width: its
-            # straight runs down the track are not the line)
-            sg = [x for x in sg if not (abs(x[1] - x[3]) < 1e-4 and x[2] - x[0] > 3.0)]
-            ser = _series(sg, top, n, step)
-            k = _offset(main, ser)
-            if k == 0:
-                for i, ps in enumerate(_in_track(ser)):
-                    main[i] += ps
-                    whole[i] += ps
-            elif k == 1:
-                for i, ps in enumerate(ser):
-                    wrap[i] += ps
-        two_lines = any(wrap)
-        values, unsure, pinned = [None] * n, 0, {}
-        for j, (d_from, left, right) in enumerate(secs):
-            d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
-            i0 = max(0, int(round((d_from - top) / step)))
-            i1 = min(n, int(round((d_to - top) / step)))
-            if two_lines:
-                got = read_line(main[i0:i1], wrap[i0:i1], left, right)
-            else:
-                # a linear scale that starts above nothing (gamma 50 - 150)
-                # can be run under: the line wraps in from the top there
-                under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
-                args = dict(under=under,
-                            nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
-                            dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1},
-                            junk={i - i0 for i in _junk_flats(line, top, step, left, right) if i0 <= i < i1})
-                lo_, hi_ = min(left, right), max(left, right)
-                tol = 0.02 * (hi_ - lo_)
-
-                def past(g):
-                    rs = [r[0] for r in g if r is not None and r[1]]
-                    return sum(1 for v in rs if v < lo_ - tol or v > hi_ + tol) / len(rs) if rs else 0.0
-
-                def settled(args):
-                    got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], **args)
-                    # a curve is in its scale most of the way (it is printed on it):
-                    # one read past it for most of the log started a width off (a
-                    # reading under the scale at the top, drawn in from the top)
-                    if past(got) > 0.5:
-                        for k0 in ((-1, 1) if under else (1,)):
-                            alt = read_one_line(whole[i0:i1], left, right, moves[i0:i1], k0=k0, **args)
-                            if past(alt) < 0.5 * past(got):
-                                got = alt
-                    # the same for a stretch the line starts afresh in after a
-                    # long gap (it can start there a width off too)
-                    got = list(got)
-                    for a_, b_ in _stretches(got):
-                        if b_ - a_ < 50 or past(got[a_:b_]) <= 0.2:
-                            continue
-                        sub = {kk: ({j - a_ for j in vv if a_ <= j < b_} if isinstance(vv, set) else vv)
-                               for kk, vv in args.items()}
-                        for k0 in ((-1, 1) if under else (1,)):
-                            alt = read_one_line(whole[i0 + a_:i0 + b_], left, right, moves[i0 + a_:i0 + b_], k0=k0, **sub)
-                            if past(alt) < 0.5 * past(got[a_:b_]):
-                                got[a_:b_] = alt
-                                break
-
-                    # and for a line back a width off after a short gap
-                    def from_(s_, k0):
-                        sub = {kk: ({j - s_ for j in vv if s_ <= j} if isinstance(vv, set) else vv)
-                               for kk, vv in args.items()}
-                        return read_one_line(whole[i0 + s_:i1], left, right, moves[i0 + s_:i1], k0=k0, **sub)
-                    _reread_after_short_gaps(got, from_, past, (-1, 1) if under else (1,))
-                    kind = first.kind or V.curve(first.name)["key"]
-                    gas = kind in _GAS_KINDS or (not kind and "gas" in first.name.lower())
-                    _reread_past_runs(got, from_, past, lo_ - tol, hi_ + tol, follow=gas)
-                    return got
-                got = settled(args)
-                # a wrap under the scale drawn (out of the low edge, in at the
-                # top) can be trusted to stay under while the line moves along:
-                # where reading so brings the line into its scale (another line
-                # crossing the track draws the same by chance)
-                if past(got) > 0.05:
-                    alt = settled(dict(args, drawn_wraps=True))
-                    if past(alt) < 0.6 * past(got):          # (its dives to the null are under the scale too)
-                        got = alt
-            for k, r in enumerate(got):
-                if r is None:
+        def read_as(onto_main, moved, how):
+            """the curve read with its main line's corners put on the readings
+            as onto_main says (how and the step it found: _onto_readings'), or
+            as drawn (onto_main empty) -> the curve, or why it is left out"""
+            # (another line of the colour too few to tell: moved as the main one)
+            onto = {wmain: onto_main}
+            dashed = _dash_step(drawn[wmain], top, row)
+            for w, sg in drawn.items():
+                if w != wmain:
+                    onto[w] = _onto_readings(sg, top, step, row, cuts, like=how)[0] if how else {}
+            groups = {w: _moved(sg, onto[w]) for w, sg in drawn.items()}
+            if _inside(groups[wmain]) < 0.05 * (bottom - top):
+                return "its line runs %.0f m of the log's %.0f m" % (_inside(groups[wmain]), bottom - top)
+            main = _in_track(_series(groups[wmain], top, n, step))
+            # the line where it runs out of the track, past the scale: the
+            # strokes with one end inside it (other marks of the colour beyond
+            # the track, another column's lines, are not the curve)
+            e = wscale.EDGE
+            # for a curve drawn with one line: the line without straight runs
+            # along the track's edges (a box's sides; a pinned line says nothing
+            # the reader can write), and where it runs out of the track
+            line = [sg for sg in groups[wmain] if not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 0.3
+                                                      and (abs(sg[1]) < 0.003 or abs(sg[1] - 1) < 0.003))
+                    and not (abs(sg[1] - sg[3]) < 1e-4 and abs(sg[2] - sg[0]) > 3.0)]   # one straight stroke over
+            #                                                    3 m is a legend's sample line, not readings
+            crossing = [sg for sg in line if (-e <= sg[1] <= 1 + e) != (-e <= sg[3] <= 1 + e)]
+            whole = [ms + [p for p in ps if p < -e or p > 1 + e]
+                     for ms, ps in zip(_in_track(_series(line, top, n, step)), _series(crossing, top, n, step))]
+            flat = [sg for sg in _relative(strokes.of(colour, flats=True).get(wmain, []), x0, x1)
+                    if -0.5 < sg[1] < 1.5 and -0.5 < sg[3] < 1.5]
+            if onto.get(wmain):
+                # (one at a corner put just below the reading it is put on: the
+                # line leaving that reading, its jump across to the line's next
+                # stretch, past a wrap maybe; on the reading's own depth it falls
+                # between no two readings, for _moves)
+                o = onto[wmain]
+                flat = [(o[da] + 1e-6, pa, o[da] + 1e-6, pb) if da in o else (da, pa, db, pb) for da, pa, db, pb in flat]
+                flat += _jumps(drawn[wmain], onto[wmain])
+            moves = _moves(line + flat, top, n, step)
+            wrap = [[] for _ in range(n)]
+            for w, sg in groups.items():
+                if w == wmain:
                     continue
-                if r[1]:
-                    values[i0 + k] = round(r[0], 4)
-                else:
-                    pinned[i0 + k] = round(r[0], 4)
-                    unsure += 1
-        # a line along the edge where the scale is nothing (gas 0 - 500): a
-        # reading of nothing, not one past the scale (it cannot go below)
-        for j, (d_from, left, right) in enumerate(secs):
-            zero = 0.0 if left == 0 else 1.0 if right == 0 else None
-            if zero is None:
-                continue
-            d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
-            for i in range(max(0, int(round((d_from - top) / step))), min(n, int(round((d_to - top) / step)))):
-                # (with, on the other edge, the line one width on: a reading
-                # of nothing is drawn on both)
-                # (not where the line came to both edges from by the top:
-                # pegged at the top, read so)
-                if values[i] is None and i not in pinned and main[i] and any(abs(p - zero) < 0.01 for p in main[i]) \
-                        and all(abs(p - zero) < 0.01 or abs(abs(p - zero) - 1) < 0.01 for p in main[i]):
-                    values[i] = 0.0
-        # a line along the scale's end otherwise is the reading there or past
-        # it: the end is written (a detector pegged at its top reads its top),
-        # and counted as past the scale
-        for i, v in pinned.items():
-            if values[i] is None:
-                values[i] = v
-        # a scale from above nothing over a thousandfold (a resistivity's over a
-        # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
-        # place is the reading's logarithm between the ends; a gas scale
-        # 10 - 1000 is not
-        logs = []
-        resist = "resistivity" in (first.kind or V.curve(first.name)["key"] or "")
-        if off_page and any(l_ > 0 and r_ > 0 and (fitted or max(l_, r_) / min(l_, r_) >= (100 if resist else 1000))
-                            for _d, l_, r_ in secs):
-            dropped.append((first.name, "its logarithmic scale runs off the page"))
-            continue
-        for j, (d_from, left, right) in enumerate(secs):
-            # (a scale fitted to its track's log grid is logarithmic whatever
-            # it spans: 2 - 20 too)
-            if left > 0 and right > 0 and (fitted or max(left, right) / min(left, right) >= (100 if resist else 1000)):
+                # (a grid drawn in the curve's colour at another width: its
+                # straight runs down the track are not the line)
+                sg = [x for x in sg if not (abs(x[1] - x[3]) < 1e-4 and x[2] - x[0] > 3.0)]
+                ser = _series(sg, top, n, step)
+                k = _offset(main, ser)
+                if k == 0:
+                    for i, ps in enumerate(_in_track(ser)):
+                        main[i] += ps
+                        whole[i] += ps
+                elif k == 1:
+                    for i, ps in enumerate(ser):
+                        wrap[i] += ps
+            two_lines = any(wrap)
+            values, unsure, pinned = [None] * n, 0, {}
+            for j, (d_from, left, right) in enumerate(secs):
                 d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
                 i0 = max(0, int(round((d_from - top) / step)))
                 i1 = min(n, int(round((d_to - top) / step)))
-                for i in range(i0, i1):
-                    if values[i] is not None:
-                        pos = (values[i] - left) / (right - left)
-                        values[i] = round(left * (right / left) ** pos, 4)
-                logs.append(round(d_from, 3))
-        values = _fill(values, top, step)
-        if sum(v is not None for v in values) < 10:
-            dropped.append((first.name, "fewer than 10 readings"))
-            continue
-        # LogViewer draws a reading half its recorded step shallower than
-        # its depth; the step is the spacing of the line's corners down the
-        # log. The readings are put back where the log has them.
-        # (from the strokes in this track only: a curve of the same colour
-        # in another track is no part of this one's line)
-        own = [sg for sg in drawn[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
-        rec = moved or _recorded_step(own) or _coarse_step(own, row)
-        half = rec / 2 if rec else 0.0
-        if dashed and dashed[0] != rec:
-            # a dashed line: its dash ends are no readings (they fit a
-            # finer step), its corners mostly in the gaps; its step from
-            # where its dashes lie, the readings moved down from where it
-            # bends (its corners put on a finer step's readings already:
-            # the rest of half its step)
-            values = _shift(values, ((dashed[0] - moved) / 2 if moved else dashed[1]) / step)
-            values = _hold(values, top, step, dashed[0])
-        elif moved:
-            values = _hold(values, top, step, rec)      # (its corners already put back on the readings)
-        elif half >= step / 4:
-            long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]
-            steps = long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.5 * len(long_)
-            values = _shift(values, half / step, blend=not steps)     # a step drawn flat is not blended
-            # each reading held from half way to the reading before to half
-            # way to the next, as the log's own LAS holds it (the line drawn
-            # between readings is LogViewer's, not a reading)
-            values = _hold(values, top, step, rec)
-        elif _row_shift(own, row, step, rec):
-            values = _shift(values, _row_shift(own, row, step, rec), blend=False)
-        vc = V.curve(first.name)
-        out.append({"name": first.name, "kind": first.kind or vc["key"], "units": first.unit,
+                if two_lines:
+                    got = read_line(main[i0:i1], wrap[i0:i1], left, right)
+                else:
+                    # a linear scale that starts above nothing (gamma 50 - 150)
+                    # can be run under: the line wraps in from the top there
+                    under = left != 0 and not (left > 0 and right > 0 and max(left, right) / min(left, right) >= 100)
+                    args = dict(under=under,
+                                nulls={i - i0 for i in _null_dips(line, top, step, left, right) if i0 <= i < i1},
+                                dives={i - i0 for i in _junk_dives(line, top, step, left, right) if i0 <= i < i1},
+                                junk={i - i0 for i in _junk_flats(line, top, step, left, right) if i0 <= i < i1})
+                    lo_, hi_ = min(left, right), max(left, right)
+                    tol = 0.02 * (hi_ - lo_)
+
+                    def past(g):
+                        rs = [r[0] for r in g if r is not None and r[1]]
+                        return sum(1 for v in rs if v < lo_ - tol or v > hi_ + tol) / len(rs) if rs else 0.0
+
+                    def settled(args):
+                        got = read_one_line(whole[i0:i1], left, right, moves[i0:i1], **args)
+                        # a curve is in its scale most of the way (it is printed on it):
+                        # one read past it for most of the log started a width off (a
+                        # reading under the scale at the top, drawn in from the top)
+                        if past(got) > 0.5:
+                            for k0 in ((-1, 1) if under else (1,)):
+                                alt = read_one_line(whole[i0:i1], left, right, moves[i0:i1], k0=k0, **args)
+                                if past(alt) < 0.5 * past(got):
+                                    got = alt
+                        # the same for a stretch the line starts afresh in after a
+                        # long gap (it can start there a width off too)
+                        got = list(got)
+                        for a_, b_ in _stretches(got):
+                            if b_ - a_ < 50 or past(got[a_:b_]) <= 0.2:
+                                continue
+                            sub = {kk: ({j - a_ for j in vv if a_ <= j < b_} if isinstance(vv, set) else vv)
+                                   for kk, vv in args.items()}
+                            for k0 in ((-1, 1) if under else (1,)):
+                                alt = read_one_line(whole[i0 + a_:i0 + b_], left, right, moves[i0 + a_:i0 + b_], k0=k0, **sub)
+                                if past(alt) < 0.5 * past(got[a_:b_]):
+                                    got[a_:b_] = alt
+                                    break
+
+                        # and for a line back a width off after a short gap
+                        def from_(s_, k0):
+                            sub = {kk: ({j - s_ for j in vv if s_ <= j} if isinstance(vv, set) else vv)
+                                   for kk, vv in args.items()}
+                            return read_one_line(whole[i0 + s_:i1], left, right, moves[i0 + s_:i1], k0=k0, **sub)
+                        _reread_after_short_gaps(got, from_, past, (-1, 1) if under else (1,))
+                        kind = first.kind or V.curve(first.name)["key"]
+                        gas = kind in _GAS_KINDS or (not kind and "gas" in first.name.lower())
+                        _reread_past_runs(got, from_, past, lo_ - tol, hi_ + tol, follow=gas)
+                        return got
+                    got = settled(args)
+                    # a wrap under the scale drawn (out of the low edge, in at the
+                    # top) can be trusted to stay under while the line moves along:
+                    # where reading so brings the line into its scale (another line
+                    # crossing the track draws the same by chance)
+                    if past(got) > 0.05:
+                        alt = settled(dict(args, drawn_wraps=True))
+                        if past(alt) < 0.6 * past(got):          # (its dives to the null are under the scale too)
+                            got = alt
+                for k, r in enumerate(got):
+                    if r is None:
+                        continue
+                    if r[1]:
+                        values[i0 + k] = round(r[0], 4)
+                    else:
+                        pinned[i0 + k] = round(r[0], 4)
+                        unsure += 1
+            # a line along the edge where the scale is nothing (gas 0 - 500): a
+            # reading of nothing, not one past the scale (it cannot go below)
+            for j, (d_from, left, right) in enumerate(secs):
+                zero = 0.0 if left == 0 else 1.0 if right == 0 else None
+                if zero is None:
+                    continue
+                d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
+                for i in range(max(0, int(round((d_from - top) / step))), min(n, int(round((d_to - top) / step)))):
+                    # (with, on the other edge, the line one width on: a reading
+                    # of nothing is drawn on both)
+                    # (not where the line came to both edges from by the top:
+                    # pegged at the top, read so)
+                    if values[i] is None and i not in pinned and main[i] and any(abs(p - zero) < 0.01 for p in main[i]) \
+                            and all(abs(p - zero) < 0.01 or abs(abs(p - zero) - 1) < 0.01 for p in main[i]):
+                        values[i] = 0.0
+            # a line along the scale's end otherwise is the reading there or past
+            # it: the end is written (a detector pegged at its top reads its top),
+            # and counted as past the scale
+            for i, v in pinned.items():
+                if values[i] is None:
+                    values[i] = v
+            # a scale from above nothing over a thousandfold (a resistivity's over a
+            # hundredfold: 0.2 - 2000, 1 - 100) is drawn logarithmic: the line's
+            # place is the reading's logarithm between the ends; a gas scale
+            # 10 - 1000 is not
+            logs = []
+            resist = "resistivity" in (first.kind or V.curve(first.name)["key"] or "")
+            if off_page and any(l_ > 0 and r_ > 0 and (fitted or max(l_, r_) / min(l_, r_) >= (100 if resist else 1000))
+                                for _d, l_, r_ in secs):
+                return "its logarithmic scale runs off the page"
+            for j, (d_from, left, right) in enumerate(secs):
+                # (a scale fitted to its track's log grid is logarithmic whatever
+                # it spans: 2 - 20 too)
+                if left > 0 and right > 0 and (fitted or max(left, right) / min(left, right) >= (100 if resist else 1000)):
+                    d_to = secs[j + 1][0] if j + 1 < len(secs) else bottom + step
+                    i0 = max(0, int(round((d_from - top) / step)))
+                    i1 = min(n, int(round((d_to - top) / step)))
+                    for i in range(i0, i1):
+                        if values[i] is not None:
+                            pos = (values[i] - left) / (right - left)
+                            values[i] = round(left * (right / left) ** pos, 4)
+                    logs.append(round(d_from, 3))
+            values = _fill(values, top, step)
+            if sum(v is not None for v in values) < 10:
+                return "fewer than 10 readings"
+            # LogViewer draws a reading half its recorded step shallower than
+            # its depth; the step is the spacing of the line's corners down the
+            # log. The readings are put back where the log has them.
+            # (from the strokes in this track only: a curve of the same colour
+            # in another track is no part of this one's line)
+            own = [sg for sg in drawn[wmain] if -0.02 <= sg[1] <= 1.02 and -0.02 <= sg[3] <= 1.02]
+            rec = moved or _recorded_step(own) or _coarse_step(own, row)
+            half = rec / 2 if rec else 0.0
+            if dashed and dashed[0] != rec:
+                # a dashed line: its dash ends are no readings (they fit a
+                # finer step), its corners mostly in the gaps; its step from
+                # where its dashes lie, the readings moved down from where it
+                # bends (its corners put on a finer step's readings already:
+                # the rest of half its step)
+                values = _shift(values, ((dashed[0] - moved) / 2 if moved else dashed[1]) / step)
+                values = _hold(values, top, step, dashed[0])
+            elif moved:
+                values = _hold(values, top, step, rec)      # (its corners already put back on the readings)
+            elif half >= step / 4:
+                long_ = [sg for sg in own if abs(sg[2] - sg[0]) >= 0.08]
+                steps = long_ and sum(abs(sg[1] - sg[3]) < 1e-4 for sg in long_) > 0.5 * len(long_)
+                values = _shift(values, half / step, blend=not steps)     # a step drawn flat is not blended
+                # each reading held from half way to the reading before to half
+                # way to the next, as the log's own LAS holds it (the line drawn
+                # between readings is LogViewer's, not a reading)
+                values = _hold(values, top, step, rec)
+            elif _row_shift(own, row, step, rec):
+                values = _shift(values, _row_shift(own, row, step, rec), blend=False)
+            vc = V.curve(first.name)
+            return {"name": first.name, "kind": first.kind or vc["key"], "units": first.unit,
                     "unit": V.unit(first.unit)["key"] if first.unit else None,
                     "top": round(top, 3), "step": step, "values": values,
                     "scale": [[round(d, 3), l, r] for d, l, r in secs], "colour": "#%06x" % colour,
                     "track_pt": [round(x0, 1), round(x1, 1)], "past_scale": unsure,
                     "recorded_step": rec, "shifted_m": round(half, 3) if half >= step / 4 else 0.0,
-                    "log_scale_from": logs, "lines": 2 if two_lines else 1})
+                    "log_scale_from": logs, "lines": 2 if two_lines else 1}
+        # each line's corners put back on the readings they were drawn for
+        drawn = groups
+        onto0, moved0, how0 = _onto_readings(drawn[wmain], top, step, row, cuts)
+        got = read_as(onto0, moved0, how0)
+        # a curve is in its scale most of the way: one past it over twice as
+        # often with its corners put back as read as drawn (and on a
+        # fiftieth more of its readings) was moved where a wrap was read
+        # another way (the line crossing an edge met between other
+        # readings): read as drawn. (A line really past its scale for
+        # stretches is read past it more where its corners are put back,
+        # but not so much more)
+        if onto0 and (isinstance(got, str) or _past_share(got) > 0.02):
+            alt = read_as({}, None, None)
+            if isinstance(alt, dict) and (isinstance(got, str) or (
+                    _past_share(got) > max(2 * _past_share(alt), _past_share(alt) + 0.02))):
+                got = alt
+        if isinstance(got, str):
+            dropped.append((first.name, got))
+            continue
+        out.append(got)
     return out
 
 

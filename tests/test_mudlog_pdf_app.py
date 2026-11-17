@@ -385,6 +385,20 @@ class OneLine(unittest.TestCase):
         got = [r and r[0] for r in M.read_one_line(series, 0.0, 1000.0)]
         self.assertAlmostEqual(got[3], 987, delta=1)
 
+    def test_a_wrapped_line_drawn_rising_fast_stays_wrapped(self):
+        # gamma 0 - 150 rising past the top to 255: wrapped (the pair), then
+        # up the track faster than a third of a width a step, drawn up from
+        # where it was: still wrapped. With nothing drawn across between
+        # the two, a jump up that far is the wrapped line back in the scale
+        series = [[0.5], [0.7], [0.9], [0.05, 1.05], [0.45], [0.7], [0.7], [0.7]]
+        moves = [[(0.5, 0.5)], [(0.5, 0.7)], [(0.7, 0.9)], [(0.9, 1.05), (-0.1, 0.05)], [(0.05, 0.45)],
+                 [(0.45, 0.7)], [(0.7, 0.7)], [(0.7, 0.7)]]
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 150.0, moves)]
+        self.assertAlmostEqual(got[4], 217.5, delta=0.5)
+        self.assertAlmostEqual(got[-1], 255, delta=0.5)
+        got = [r and r[0] for r in M.read_one_line(series, 0.0, 150.0, [[]] * len(series))]
+        self.assertAlmostEqual(got[4], 67.5, delta=0.5)
+
     def test_a_dive_to_the_null_drawn_down_fast(self):
         # gas 0 - 1000 diving to the null (-999.25, one width under): drawn
         # down past the low edge faster than a quarter width a step, its
@@ -1007,6 +1021,106 @@ class Corners(unittest.TestCase):
             got = ser[int(round((d - 1000.0) / 0.1))]
             self.assertEqual(len(got), 1)
             self.assertAlmostEqual(got[0], p, places=6)
+
+    def test_corners_of_readings_half_a_metre_apart_put_back(self):
+        # five corners in 2.5 m: judged over a longer stretch
+        row = 0.72 / 11.8079
+        reads, segs = self.drawn(0.5, row, 1000.0, 120)
+        onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertEqual(rec, 0.5)
+        ser = M._series(M._moved(segs, onto), 1000.0, 601, 0.1)
+        for d, p in reads[13:-13]:
+            got = ser[int(round((d - 1000.0) / 0.1))]
+            self.assertEqual(len(got), 1)
+            self.assertAlmostEqual(got[0], p, places=6)
+
+    def test_a_line_with_readings_repeated_put_back(self):
+        # many strokes straight down the track (a reading the same as the
+        # one before), the line still drawn whole: not a line in steps
+        import math
+        import random
+        rnd = random.Random(5)
+        row = 0.72 / 11.8079
+        reads, p = [], 0.5
+        for i in range(300):
+            if rnd.random() > 0.45:
+                p = rnd.uniform(0.1, 0.9)
+            reads.append((round(1000.0 + 0.2 * i, 6), p))
+        corners = [(math.floor((d - 0.1) / row) * row, q) for d, q in reads]
+        segs = [(a, pa, b, pb) for (a, pa), (b, pb) in zip(corners, corners[1:])]
+        self.assertGreater(sum(1 for sg in segs if sg[1] == sg[3]), 0.3 * len(segs))
+        onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertEqual(rec, 0.2)
+        ser = M._series(M._moved(segs, onto), 1000.0, 601, 0.1)
+        for d, q in reads[15:-15]:
+            got = ser[int(round((d - 1000.0) / 0.1))]
+            self.assertAlmostEqual(got[0], q, places=6)
+
+    def test_a_tenth_of_a_metre_line_with_readings_repeated_put_back(self):
+        # 0.1 m readings on a 1:240 page's 0.061 m rows: strokes a row or
+        # two long, many straight down (readings repeated), drawn whole
+        import math
+        import random
+        rnd = random.Random(9)
+        row = 0.72 / 11.8079
+        reads, p = [], 0.5
+        for i in range(400):
+            if rnd.random() > 0.5:
+                p = rnd.uniform(0.1, 0.9)
+            reads.append((round(1000.0 + 0.1 * i, 6), p))
+        corners = [(math.floor((d - 0.05) / row) * row + 0.028, q) for d, q in reads]
+        segs = [(a, pa, b, pb) for (a, pa), (b, pb) in zip(corners, corners[1:])]
+        self.assertIsNone(M._recorded_step(segs))
+        onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertEqual(rec, 0.1)
+        ser = M._series(M._moved(segs, onto), 1000.0, 401, 0.1)
+        for d, q in reads[10:-10]:
+            got = ser[int(round((d - 1000.0) / 0.1))]
+            self.assertAlmostEqual(got[0], q, places=6)
+
+    def test_a_step_drawn_with_its_jump_across_a_row_is_left(self):
+        # each reading a stroke straight down the step, joined to the next
+        # by one a row long across the track: drawn whole, but in steps
+        import random
+        rnd = random.Random(4)
+        row = 0.72 / 11.8079
+        segs, d, p = [], 1000.0, 0.5
+        for i in range(120):
+            q = rnd.uniform(0.1, 0.9)
+            segs.append((d, p, d + 0.5 - row, p))
+            segs.append((d + 0.5 - row, p, d + 0.5, q))
+            d, p = d + 0.5, q
+        self.assertFalse(M._solid(segs))
+        self.assertEqual(M._onto_readings(segs, 1000.0, 0.1, row)[0], {})
+
+    def test_a_metre_line_is_not_put_on_a_finer_step(self):
+        # readings every metre on whole metres, the line bent between some
+        # (a corner part way along): too many such corners in its stretches
+        # to fit them on its own step, but its readings' corners stand on
+        # the grid of 0.2 m too, the odd ones fit that by chance
+        import math
+        import random
+        row = 0.72 / 11.8079
+        rnd, r2 = random.Random(3), random.Random(5)
+        reads = [(1000.0 + i, rnd.uniform(0.1, 0.9)) for i in range(120)]
+        corners = [(math.floor((d - 0.5) / row) * row, p) for d, p in reads]
+        segs = []
+        for (a, pa), (b, pb) in zip(corners, corners[1:]):
+            if r2.random() < 0.3:
+                f = r2.uniform(0.2, 0.8)
+                m, pm = a + f * (b - a), pa + f * (pb - pa) + r2.uniform(-0.05, 0.05)
+                segs += [(a, pa, m, pm), (m, pm, b, pb)]
+            else:
+                segs.append((a, pa, b, pb))
+        self.assertEqual(M._recorded_step(segs), 1.0)
+        _onto, rec, _how = M._onto_readings(segs, 1000.0, 0.1, row)
+        self.assertIn(rec, (None, 1.0))
+
+    def test_the_share_of_readings_past_the_scale(self):
+        # (by more than a fiftieth of its width: 0 - 100 then 0 - 1000)
+        curve = {"top": 100.0, "step": 0.1, "scale": [[100.0, 0.0, 100.0], [100.4, 0.0, 1000.0]],
+                 "values": [50.0, 101.0, 103.0, None, 990.0, 1030.0, -30.0, 500.0]}
+        self.assertAlmostEqual(M._past_share(curve), 3 / 7)
 
     def test_two_corners_on_one_reading_keep_the_line_s_jump(self):
         # a line run out of the track in one row, its corners both put on
