@@ -10,8 +10,11 @@ each entry.
 ## Done
 
 - **Saskatchewan WellSight logs: rock type, porosity, oil shows and curves**
-  (2026-11-17, LOCAL ONLY: the logs are not public data, so nothing is in the
-  repo or on the live site). `web/scripts/build_sk.py` turns the WellSight
+  (2026-11-17; LIVE for every signed-in account since 2026-11-17, Chris's call.
+  The logs are not public data, so they are never in the repo: the live copy
+  is deployed from a folder outside it. **Deploying from web/ alone drops the
+  Saskatchewan set from the live site**; deploy from a copy with
+  public/data/sk added, see the recipe below.) `web/scripts/build_sk.py` turns the WellSight
   conversion (~/dev/wellsight-converted) plus the drive's raw logs (Porosity
   cells) and SaskGrid 2015 sections into a Saskatchewan set in
   ~/dev/fracview-sk (2,567 wells, 2,318 pads); `scripts/serve.py 8793 --mount
@@ -30,6 +33,13 @@ each entry.
   Left out: 478 horizontal logs with no path at all, 115 with no legal
   location, 38 with no MD log, 22 with MD/TVD only and no bottom hole. Tests:
   tests/test_stratum_logs.js, tests/test_stratum_sk_build.py.
+  Deploy recipe (web/ is in iCloud and its data files download one by one, so
+  copy from a fresh clone instead): `git clone --depth 1 --filter=blob:none
+  --sparse --branch stratum-grid-and-gundywest <repo> ~/dev/fracview-src`,
+  `git sparse-checkout set web`; rsync its web/ to ~/dev/fracview-deploy2, add
+  web/.vercel, the git-ignored public/data/engineering-source/*.csv, and
+  ~/dev/fracview-sk as public/data/sk; then `npx vercel --prod --yes --scope
+  chrisjayharder-2305s-projects` there.
 - **Gamma-coloured wells** (2026-10-03). Underground view, Colour: Pad | Gamma.
   `web/scripts/build_gamma.py` → `data/gamma.json` from the eLibrary LAS files;
   46 of 76 Gundy wells have a gamma log, the other 30 draw dashed.
