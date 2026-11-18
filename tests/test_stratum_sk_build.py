@@ -113,6 +113,21 @@ class Paths(unittest.TestCase):
         self.assertAlmostEqual(math.hypot(ns, ew), 1000 + r, delta=5)
         self.assertTrue(all(b[0] > a[0] for a, b in zip(t, t[1:])), "MD only grows")
 
+    def test_a_survey_that_starts_in_the_build_keeps_its_own_depths(self):
+        # the first station is already at 60 degrees, 1500 m along the hole and 1300 m down:
+        # the hole above it goes down and builds to it, it is not curved from the surface
+        stations = [(1500, 1300, 60, 90), (1600, 1340, 75, 90), (1700, 1360, 88, 90), (2700, 1375, 90, 90)]
+        t = B.min_curvature(stations)
+        at = {round(x[0]): x for x in t}
+        self.assertAlmostEqual(at[1500][1], 1300, places=6)
+        self.assertAlmostEqual(at[2700][1], 1375, places=6, msg="each station's own TVD")
+        self.assertTrue(all(b[1] >= a[1] - 1e-6 for a, b in zip(t, t[1:])), "down all the way to the lateral")
+        self.assertGreater(at[2700][3], 1000, "the lateral runs east")
+        self.assertAlmostEqual(at[2700][2], 0, delta=1)
+        # straight down to 343 m, then an arc of 1105 m radius to 60 degrees: 552 m east at the
+        # first station (curving from the surface would put it 716 m east)
+        self.assertAlmostEqual(at[1500][3], 552, delta=3)
+
     def test_heel(self):
         traj = [(0, 0, 0, 0, 0, 0), (1000, 1000, 0, 0, 0, 0), (1500, 1300, 0, 400, 85, 90), (2500, 1305, 0, 1400, 90, 90)]
         self.assertEqual(B.heel_of(traj), 1500, "the station the hole levels out from (past 80 degrees)")
@@ -155,8 +170,68 @@ class Sections(unittest.TestCase):
         self.assertIn("surface coordinates", how)
 
 
+class StatedDepths(unittest.TestCase):
+    def test_offsets_beside_a_stated_point(self):
+        self.assertEqual(B.text_coords("TOE TOTAL DEPTH: 1520.0 m MD // 812.5 m TVD | TOE COORDINATES: 12.5 m S;  905.5 m E;"), (-12.5, 905.5))
+        self.assertEqual(B.text_coords("Final Coordinates: 1104.5 m N; 8.5 m E"), (1104.5, 8.5))
+
+    def test_a_minus_before_a_direction_is_the_direction(self):
+        self.assertEqual(B.text_coords("ICP: 905.0 m MD, 742.5m TVD, -55.5 m SS, -95.5 m South, -210.5 m West"), (-95.5, -210.5))
+
+    def test_offsets_from_a_section_corner_are_passed_over(self):
+        t = "Coordinates: 410.5m S ; 285.5m W ; NE corner of Sec 14-21-11W2; 188.5m S & 4.5m W of well centre"
+        self.assertEqual(B.text_coords(t), (-188.5, -4.5))
+        self.assertIsNone(B.text_coords("375 m North of South Boundary, 60 m West of East Boundary"))
+        self.assertIsNone(B.text_coords("Coordinates: 410.5m S; 285.5m W; NE corner of Sec 14-21-11W2"))
+        self.assertIsNone(B.text_coords("SAND TOP @ 865.5 m MD // 801.5 m TVD (-12.5 m Subsea)"))
+
+    def test_a_path_through_the_stated_points(self):
+        # heel 850 m MD at 745 m TVD, 180 m east; toe 1390 m MD at 746 m TVD, 720 m east
+        pts = [(800, 740, None, None), (850, 745, 0.0, 180.0), (1390, 746, 0.0, 720.0)]
+        t = B.station_path(pts)
+        end = t[-1]
+        self.assertAlmostEqual(end[1], 746, places=6)
+        self.assertAlmostEqual(end[3], 720, delta=1)
+        self.assertAlmostEqual(end[2], 0, delta=1)
+        heel = [x for x in t if abs(x[0] - 850) < 1e-6][0]
+        self.assertAlmostEqual(heel[3], 180, delta=1)
+
+    def test_an_offset_further_than_the_hole_ran_is_left_out(self):
+        # 300 m of lateral cannot end 2 km away: the heading comes from the bottom hole instead
+        pts = [(1000, 900, None, None), (1300, 905, 0.0, 2000.0)]
+        t = B.station_path(pts, az=0.0)
+        self.assertLess(abs(t[-1][3]), 50)
+        self.assertGreater(t[-1][2], 100)
+
+    def test_no_offsets_and_no_heading_is_no_path(self):
+        self.assertIsNone(B.station_path([(1000, 900, None, None), (1300, 905, None, None)]))
+
+    def test_mirrored_offsets_give_way_to_the_bottom_hole_location(self):
+        pts = [(1000, 900, None, None), (1050, 905, 0.0, 200.0), (2400, 910, 0.0, 1500.0)]
+        surface = (50.0, -104.0)
+        k = math.cos(math.radians(50.0))
+        west = (50.0, -104.0 - 1500 / (111320 * k))        # the bottom hole's own location is to the west
+        t, how = B.stated_path(pts, None, surface, west)
+        self.assertLess(t[-1][3], -1000)
+        self.assertIn("toward the bottom hole location", how)
+        east = (50.0, -104.0 + 1500 / (111320 * k))
+        t, how = B.stated_path(pts, None, surface, east)
+        self.assertGreater(t[-1][3], 1000)
+        self.assertEqual(how, "the depths and offsets its log states")
+
+    def test_nothing_to_point_it_by(self):
+        self.assertEqual(B.stated_path([(1000, 900, None, None)], None, None, None)[0], None)
+
+
 @unittest.skipUnless(HAS_LAB, "needs the frac2csv wellsight branch's modules")
 class BinALog(unittest.TestCase):
+    def test_stated_points_read_from_the_whole_annotation(self):
+        B.use_lab(LAB)
+        tail = " " * 130 + "TOE COORDINATES: 12.5 m S; 905.5 m E"
+        pts = B.stated_points([{"annotations": [{"text": "TOE TOTAL DEPTH: 1520.0 m MD // 812.5 m TVD" + tail},
+                                                {"text": "SAND TOP @ 865.5 m MD // 801.5 m TVD"}]}])
+        self.assertEqual(pts, [(865.5, 801.5, None, None), (1520.0, 812.5, -12.5, 905.5)])
+
     def test_curves_rock_and_shows_on_md_bins(self):
         B.use_lab(LAB)
         with tempfile.TemporaryDirectory() as d:

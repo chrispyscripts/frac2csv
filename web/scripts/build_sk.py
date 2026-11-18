@@ -442,6 +442,164 @@ def md_tvd_path(points, az):
     return out
 
 
+# a stated point's offset from the surface hole, in the text beside it:
+# "TOE COORDINATES: 12.50 m S;  905.50 m E", "-0.5 m South, 310.5 m East",
+# "Final Coordinates: 1104.50 m N; 8.50 m E"
+COORD_NUM = re.compile(r"(-?)(\d+(?:\.\d+)?)\s*(?:m(?:etres|eters)?\.?)?\s*(NORTH|SOUTH|EAST|WEST|N|S|E|W)\b(?!\s*(?:of\s+(?:the\s+)?(?:north|south|east|west|n|s|e|w)\b|bound|bdy|bdry))", re.I)
+
+
+def text_coords(text):
+    """(metres north, metres east) a stated point's text gives it from the
+    well, or None. A minus before a direction is the direction written twice
+    ("-310.50m South" is south). Offsets measured from a section's corner or
+    edge are passed over for the ones from the well ("410.5m S; 285.5m W; NE
+    corner of Sec 14 ...; 188.5m S & 4.5m W of well centre")."""
+    text = str(text or "").replace("\n", " ")
+    ms = list(COORD_NUM.finditer(text))
+    pairs = []
+    for x, y in zip(ms, ms[1:]):
+        dx, dy = x.group(3)[0].upper(), y.group(3)[0].upper()
+        if (dx in "NS") == (dy in "NS") or y.start() - x.end() > 40:
+            continue
+        ns, ew = (x, y) if dx in "NS" else (y, x)
+        n = float(ns.group(2)) * (1 if ns.group(3)[0].upper() == "N" else -1)
+        e = float(ew.group(2)) * (1 if ew.group(3)[0].upper() == "E" else -1)
+        after = text[y.end():y.end() + 45]
+        if re.match(r"[\s;,.:()&-]*(?:as measured from\s+)?(?:the\s+)?(?:[NS][EW]\s+corner|corner|bound|bdy|bdry|of\s+sec|sec(?:tion)?\b)", after, re.I):
+            continue
+        rank = 0 if re.match(r"[\s;,.:()&-]*(?:of|from)?\s*(?:the\s+)?(?:well|surface|w/?c\b|wellhead)", after, re.I) else 1
+        if math.hypot(n, e) < 6000:
+            pairs.append((rank, n, e))
+    if not pairs:
+        return None
+    best = min(pairs, key=lambda p: p[0])
+    return best[1], best[2]
+
+
+def station_path(points, az=None):
+    """[(md, tvd, north or None, east or None)] -> [(md, tvd, ns, ew, inc, az)]
+    from the surface, for a well whose log states depths and offsets but has no
+    survey. Each step's sideways run is what its MD has over its TVD (above the
+    first point the hole goes down, then builds on an arc to it, as in
+    md_tvd_path); the run follows the line between the points whose offsets are
+    known (the surface is one), and past the last of them carries on its way,
+    or heads `az` degrees where no offset is known. None if there is no way to
+    point it."""
+    pts = sorted((p for p in points if p[0] is not None and p[1] is not None and p[1] <= p[0] + 1), key=lambda p: p[0])
+    clean = []
+    for p in pts:
+        if clean and p[0] <= clean[-1][0] + 1e-6:
+            if p[2] is not None and clean[-1][2] is None:
+                clean[-1] = p
+            continue
+        if clean and p[1] < clean[-1][1] - 50:          # a TVD that goes back up by much: a typo
+            continue
+        clean.append(p)
+    if not clean:
+        return None
+    known = [p for p in clean if p[2] is not None]
+    if not known and az is None:
+        return None
+    base = md_tvd_path([(p[0], p[1]) for p in clean], 0.0)
+    if base is None:                                     # one point: down, then the arc to it
+        m1, t1 = clean[0][0], clean[0][1]
+        base = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (m1, t1, math.sqrt(max(0, m1 * m1 - t1 * t1)), 0.0, 90.0, 0.0)]
+    # the run sideways along the hole at each station (md_tvd_path heads north)
+    h = {round(b[0], 3): b[2] for b in base}
+    # an offset further from the surface than the hole has run sideways by then
+    # cannot be: a misread or mistyped one, left out
+    anchors = [(0.0, 0.0, 0.0)] + [(h[round(p[0], 3)], p[2], p[3]) for p in known
+                                   if math.hypot(p[2], p[3]) <= h[round(p[0], 3)] + max(50.0, .1 * h[round(p[0], 3)])]
+    if len(anchors) == 1 and az is None:
+        known_az = [p for p in known]
+        if not known_az:
+            return None
+        az = math.degrees(math.atan2(known_az[-1][3], known_az[-1][2]))
+    out = []
+    for md, tvd, run, _e, inc, _a in base:
+        prev = max((a for a in anchors if a[0] <= run + 1e-6), key=lambda a: a[0])
+        nxt = [a for a in anchors if a[0] > run + 1e-6]
+        if nxt:
+            b = min(nxt, key=lambda a: a[0])
+            f = (run - prev[0]) / (b[0] - prev[0])
+            n, e = prev[1] + f * (b[1] - prev[1]), prev[2] + f * (b[2] - prev[2])
+        else:
+            # past the last known offset: on in the last leg's direction (or `az`)
+            last = anchors[-1]
+            before = anchors[-2] if len(anchors) > 1 else None
+            if before and math.hypot(last[1] - before[1], last[2] - before[2]) > 1:
+                th = math.atan2(last[2] - before[2], last[1] - before[1])
+            elif az is not None:
+                th = math.radians(az)
+            else:
+                th = math.atan2(last[2], last[1]) if math.hypot(last[1], last[2]) > 1 else 0.0
+            n, e = last[1] + (run - last[0]) * math.cos(th), last[2] + (run - last[0]) * math.sin(th)
+        out.append((md, tvd, n, e, inc, 0.0))
+    # each station's heading, from the step that reaches it
+    res = [out[0]]
+    for a, b in zip(out, out[1:]):
+        hdg = math.degrees(math.atan2(b[3] - a[3], b[2] - a[2])) % 360 if math.hypot(b[2] - a[2], b[3] - a[3]) > .01 else res[-1][5]
+        res.append(b[:5] + (hdg,))
+    return res
+
+
+def stated_points(logs_json):
+    """the MD/TVD points a well's logs state in their text ("1793.6 m MD //
+    1793.5 m TVD", the decoder's own pattern), each with the offset its text
+    gives it: [(md, tvd, north, east)], north/east None where not given. Read
+    from the whole annotation, which the conversion's md_tvd_points_from_text
+    cuts at 120 characters, often before the offsets."""
+    out = {}
+    for j in logs_json:
+        for a in j.get("annotations") or []:
+            text = a.get("text") or ""
+            for m in ws._MDTVD_TEXT.finditer(text):
+                md, tvd = float(m.group(1)), float(m.group(2))
+                if not 0 < tvd <= md + 0.5:
+                    continue
+                c = text_coords(text[m.start():]) or text_coords(text)
+                k = round(md, 1)
+                if k not in out or (out[k][2] is None and c):
+                    out[k] = (md, tvd, c[0] if c else None, c[1] if c else None)
+    return [out[k] for k in sorted(out)]
+
+
+def stated_path(pts, rel=None, surface=None, target=None):
+    """a path for a horizontal well with no survey, from the depths (and
+    offsets) its logs state: (traj, how), or (None, why). rel: the header's
+    bottom hole offset from the surface (metres north, east); surface: the
+    surface hole (lat, lon); target: the bottom hole's own location (lat,
+    lon). Stated offsets are sometimes mirrored (on wells with a survey too,
+    the survey and the bottom hole's location agree against them 38 times to
+    7), so where the path's end misses the bottom hole's location by far
+    more than heading straight for it would, it heads for it instead."""
+    if not pts:
+        return None, "no stated depths"
+    az = math.degrees(math.atan2(rel[1], rel[0])) if rel else None
+    traj = station_path(pts, az=az)
+    how = ("the depths and offsets its log states" if any(p[2] is not None for p in pts)
+           else "the depths its log states, toward the bottom hole coordinates" if az is not None else None)
+    to_target = None
+    if surface and target:
+        k = math.cos(math.radians(surface[0]))
+        dn, de = (target[0] - surface[0]) * 111320, (target[1] - surface[1]) * 111320 * k
+        if math.hypot(dn, de) > 150:
+            to_target = (math.degrees(math.atan2(de, dn)), math.hypot(dn, de))
+    if traj and to_target:
+        k = math.cos(math.radians(surface[0]))
+        end = traj[-1]
+        miss = _dist((surface[1] + end[3] / (111320 * k), surface[0] + end[2] / 111320), (target[1], target[0]))
+        run = math.hypot(end[2], end[3])
+        if miss > max(600.0, .5 * run) and abs(to_target[1] - run) < max(600.0, .5 * run):
+            traj, how = None, None
+    if traj is None and to_target:
+        traj = station_path([(p[0], p[1], None, None) for p in pts], az=to_target[0])
+        how = "the depths its log states, toward the bottom hole location"
+    if traj is None:
+        return None, "stated depths, but nothing to say which way the well heads"
+    return traj, how
+
+
 def dls_text(k):
     """(sec, twp, rge, mer, lsd) -> 7-14-21-11W2"""
     if not k:
@@ -453,25 +611,54 @@ def dls_text(k):
 
 def min_curvature(stations):
     """[(md, tvd, inc, az)] -> [(md, tvd, ns, ew, inc, az)] from the surface,
-    from the stations that have an inclination and azimuth"""
-    st = sorted(((s[0], s[2], s[3]) for s in stations if s[0] is not None and s[2] is not None and s[3] is not None), key=lambda s: s[0])
-    if not st or st[0][0] > 0:
-        st.insert(0, (0.0, 0.0, st[0][2] if st else 0.0))
-    out = [(st[0][0], 0.0, 0.0, 0.0, st[0][1], st[0][2])]
-    for a, b in zip(st, st[1:]):
-        dm = b[0] - a[0]
+    from the stations that have an inclination and azimuth. Many surveys
+    start deep, already in the build: above the first station the hole goes
+    straight down and then builds on an arc that reaches that station at its
+    own TVD and inclination (curving all the way from the surface would put
+    the lateral hundreds of metres too shallow)."""
+    st = sorted(((s[0], s[1], s[2], s[3]) for s in stations if s[0] is not None and s[2] is not None and s[3] is not None),
+                key=lambda s: s[0])
+    st = [s for i, s in enumerate(st) if i == 0 or s[0] > st[i - 1][0]]
+    if not st:
+        return [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+    m1, t1, i1, a1 = st[0]
+    out = [(0.0, 0.0, 0.0, 0.0, 0.0, a1)]
+    if m1 > 1 and t1 is not None and t1 < m1 - 0.5 and i1 > 0.5:
+        th, az = math.radians(i1), math.radians(a1)
+        k = (m1 * math.sin(th) - t1 * th) / (math.sin(th) - th)
+        if 0 <= k < t1:
+            r = (t1 - k) / math.sin(th)
+            out.append((k, k, 0.0, 0.0, 0.0, a1))
+            for f in (.25, .5, .75):
+                q = th * f
+                out.append((k + r * q, k + r * math.sin(q), r * (1 - math.cos(q)) * math.cos(az), r * (1 - math.cos(q)) * math.sin(az), math.degrees(q), a1))
+            h = r * (1 - math.cos(th))
+        else:
+            h = math.sqrt(max(0.0, m1 * m1 - t1 * t1))
+        out.append((m1, t1, h * math.cos(az), h * math.sin(az), i1, a1))
+        rest = st[1:]
+    else:
+        out[0] = (0.0, 0.0, 0.0, 0.0, 0.0, a1)
+        rest = st if m1 > 0 else st[1:]
+        if m1 <= 0:
+            out[0] = (0.0, 0.0, 0.0, 0.0, i1, a1)
+    for b in rest:
+        md0, tvd, ns, ew, inc0, az0 = out[-1]
+        dm = b[0] - md0
         if dm <= 0:
             continue
-        i1, i2, a1, a2 = (math.radians(x) for x in (a[1], b[1], a[2], b[2]))
-        cosd = math.cos(i2 - i1) - math.sin(i1) * math.sin(i2) * (1 - math.cos(a2 - a1))
+        i1_, i2, a1_, a2 = (math.radians(x) for x in (inc0, b[2], az0, b[3]))
+        cosd = math.cos(i2 - i1_) - math.sin(i1_) * math.sin(i2) * (1 - math.cos(a2 - a1_))
         dl = math.acos(max(-1.0, min(1.0, cosd)))
         rf = 1.0 if dl < 1e-9 else 2 / dl * math.tan(dl / 2)
-        _, tvd, ns, ew, _, _ = out[-1]
-        ns += dm / 2 * (math.sin(i1) * math.cos(a1) + math.sin(i2) * math.cos(a2)) * rf
-        ew += dm / 2 * (math.sin(i1) * math.sin(a1) + math.sin(i2) * math.sin(a2)) * rf
-        tvd += dm / 2 * (math.cos(i1) + math.cos(i2)) * rf
-        out.append((b[0], tvd, ns, ew, b[1], b[2]))
-    return out
+        ns += dm / 2 * (math.sin(i1_) * math.cos(a1_) + math.sin(i2) * math.cos(a2)) * rf
+        ew += dm / 2 * (math.sin(i1_) * math.sin(a1_) + math.sin(i2) * math.sin(a2)) * rf
+        tvd += dm / 2 * (math.cos(i1_) + math.cos(i2)) * rf
+        out.append((b[0], tvd, ns, ew, b[2], b[3]))
+    # a station's TVD as the survey states it (the log's own TVD curve), where it does:
+    # the minimum curvature places the hole sideways
+    told = {s[0]: s[1] for s in st if s[1] is not None}
+    return [(x[0], told.get(x[0], x[1])) + x[2:] for x in out]
 
 
 def read_survey(conv, log):
@@ -732,15 +919,19 @@ def build(args):
         header = (binned.get(head_log["file"]) or {}).get("header") or json.load(open(os.path.join(conv, head_log["file"] + ".json"))).get("header") or {}
         name = header.get("well_name") or head_log["well_name"]
         vertical = not survey and not hz and not HZ_NAME.search(name or "")
+        stated = None
         if not survey and not vertical:
-            skipped["horizontal, no drilled path in its logs"] += 1
-            continue
-        plan.append((key, logs, hz, survey, path_log, mds, header, name, vertical))
+            # no survey: the depths (and offsets) its logs state in their text
+            stated = stated_points([json.load(open(os.path.join(conv, r["file"] + ".json"))) for r in logs])
+            if not stated:
+                skipped["horizontal, no survey and no depths stated in its logs"] += 1
+                continue
+        plan.append((key, logs, hz, survey, path_log, mds, header, name, vertical, stated))
     print("reading the SaskGrid sections", file=sys.stderr)
     grid.load_all()
-    checks = []
+    checks, est_checks = [], []
 
-    for key, logs, hz, survey, path_log, mds, header, name, vertical in plan:
+    for key, logs, hz, survey, path_log, mds, header, name, vertical, stated in plan:
         heads = [header] + [(binned.get(r["file"]) or {}).get("header") or {} for r in logs]
         # the path: the survey; or, where it has only MD and TVD, those heading
         # for the bottom hole the header gives
@@ -752,6 +943,9 @@ def build(args):
         elif survey and rel:
             traj0 = md_tvd_path([(q[0], q[1]) for q in survey], math.degrees(math.atan2(rel[1], rel[0])))
             path_how, bh_off = "MD and TVD, toward the bottom hole coordinates", (traj0[-1][2], traj0[-1][3]) if traj0 else rel
+        elif stated:
+            toe = [p for p in stated if p[2] is not None]
+            bh_off = (toe[-1][2], toe[-1][3]) if toe else None
         placed = None
         for h, r in zip(heads, [path_log or logs[0]] + logs):
             placed = place_surface(h, r["location"], grid, rel or bh_off)
@@ -778,6 +972,11 @@ def build(args):
             if math.hypot(dn, de) > 150:
                 traj0 = md_tvd_path([(q[0], q[1]) for q in survey], math.degrees(math.atan2(de, dn)))
                 path_how = "MD and TVD, toward the bottom hole location"
+        if stated:
+            traj0, path_how = stated_path(stated, rel, (lat0, lon0), tgt)
+            if not traj0:
+                skipped["horizontal, no survey, stated depths but no way to tell which way it heads"] += 1
+                continue
         if survey and not traj0:
             skipped["horizontal, MD and TVD only, no bottom hole to head for"] += 1
             if args.debug:
@@ -820,7 +1019,8 @@ def build(args):
                 if rel and math.hypot(rel[0] - n_, rel[1] - e_) > 300 and math.hypot(rel[0] - n_, rel[1] - e_) < dm * 1.05:
                     # the survey stops short of the bottom hole the header gives: on to it, level
                     traj.append((bottom, tvd, rel[0], rel[1], 90.0, math.degrees(math.atan2(rel[1] - e_, rel[0] - n_)) % 360))
-                    path_how += ", then on to the bottom hole coordinates"
+                    if "bottom hole coordinates" not in path_how:
+                        path_how += ", then on to the bottom hole coordinates"
                 else:                                # hold the last station's line
                     i, a = math.radians(inc), math.radians(az)
                     traj.append((bottom, tvd + dm * math.cos(i), n_ + dm * math.sin(i) * math.cos(a), e_ + dm * math.sin(i) * math.sin(a), inc, az))
@@ -828,10 +1028,10 @@ def build(args):
             traj = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (td, td, 0.0, 0.0, 0.0, 0.0)]
         # the check: the bottom hole, from the surface and the path, against the
         # location the header gives it (where neither was made from the other)
-        if traj0 and tgt and path_how != "MD and TVD, toward the bottom hole location" and not how.startswith("bottom hole"):
+        if traj0 and tgt and not path_how.endswith("toward the bottom hole location") and not how.startswith("bottom hole"):
             k = math.cos(math.radians(lat0))
             miss = _dist((lon0 + traj[-1][3] / (111320 * k), lat0 + traj[-1][2] / 111320), (tgt[1], tgt[0]))
-            checks.append(miss)
+            (est_checks if stated else checks).append(miss)
             if args.debug and miss > 1000:
                 with open(args.debug, "a") as dbg:
                     dbg.write(json.dumps({"miss": round(miss), "how": how, "path": path_how, "end": [round(traj[-1][2]), round(traj[-1][3])],
@@ -850,17 +1050,19 @@ def build(args):
                      "year": year_of(header.get("spud_date"), header.get("completion_date")),
                      "lat": round(lat0, 6), "lon": round(lon0, 6), "elev_m": metres(header.get("kb_elevation")),
                      "ground_m": metres(header.get("ground_elevation")),
-                     "surface_loc": dls_text(skey), "placed_by": how, "path_from": path_how or ("vertical" if vertical else None), "operator": header.get("operator") or "",
+                     "surface_loc": dls_text(skey), "placed_by": how, "path_from": path_how or ("vertical" if vertical else None),
+                     "path_estimated": bool(stated), "operator": header.get("operator") or "",
                      "formation": header.get("formation") or "", "curves": 0, "logs": 1, "vertical": vertical},
             "trajectory": trajectory, "stages": [], "depth_intervals": [], "logs": logs_out})
     print("%d wells placed; left out: %s" % (len(wells), dict(skipped)), file=sys.stderr)
-    if checks:
-        checks.sort()
-        print("bottom hole vs its own location's LSD centre, %d wells: median %.0f m, 90th %.0f m, %d over 1 km"
-              % (len(checks), checks[len(checks) // 2], checks[int(.9 * (len(checks) - 1))], sum(1 for c in checks if c > 1000)), file=sys.stderr)
-    skipped_checks = {"bottom_hole_check_m": {"wells": len(checks), "median": round(checks[len(checks) // 2]) if checks else None,
-                                              "p90": round(checks[int(.9 * (len(checks) - 1))]) if checks else None,
-                                              "over_1km": sum(1 for c in checks if c > 1000)}}
+    for label, cs in (("surveyed", checks), ("estimated from stated depths", est_checks)):
+        if cs:
+            cs.sort()
+            print("bottom hole vs its own location's LSD centre, %d %s wells: median %.0f m, 90th %.0f m, %d over 1 km"
+                  % (len(cs), label, cs[len(cs) // 2], cs[int(.9 * (len(cs) - 1))], sum(1 for c in cs if c > 1000)), file=sys.stderr)
+    stat = lambda cs: {"wells": len(cs), "median": round(cs[len(cs) // 2]) if cs else None,
+                       "p90": round(cs[int(.9 * (len(cs) - 1))]) if cs else None, "over_1km": sum(1 for c in cs if c > 1000)}
+    skipped_checks = {"bottom_hole_check_m": stat(checks), "bottom_hole_check_estimated_m": stat(est_checks)}
     skipped = dict(skipped, **skipped_checks)
     write(args.out, wells, skipped)
 

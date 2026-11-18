@@ -30,8 +30,18 @@ each entry.
   `stratum.logType`, every window); BC areas still have gamma only. The section
   shows the kind under the hole and every reading at a depth on hover; a
   Saskatchewan pad in 3D opens its well's section (no pad page, no stages).
-  Left out: 478 horizontal logs with no path at all, 115 with no legal
-  location, 38 with no MD log, 22 with MD/TVD only and no bottom hole. Tests:
+  Wells with no survey (2026-11-17, later): 438 more get a path estimated
+  from the depths their logs state in the text ("1520.0 m MD // 812.5 m TVD",
+  with offsets like "TOE COORDINATES 12.5 m S; 905.5 m E"), heading for the
+  header's bottom hole where no offsets are stated; marked as estimated in 3D
+  and the section. Tried on 1,294 wells that do have surveys: 81 % end within
+  100 m when offsets are stated, 72 % when heading for the bottom hole
+  coordinates. A survey that starts deep in the build is now drawn down and
+  then built to its first station, at the survey's own TVDs (it had put 226
+  laterals up to hundreds of metres too shallow). Now 3,005 wells on 2,625
+  pads. Left out: 132 with no legal location, 38 with no MD log, 22 with
+  MD/TVD only and no bottom hole, 16 with stated depths but no direction, 7
+  with no survey and no stated depths. Tests:
   tests/test_stratum_logs.js, tests/test_stratum_sk_build.py.
   Deploy recipe (web/ is in iCloud and its data files download one by one, so
   copy from a fresh clone instead): `git clone --depth 1 --filter=blob:none

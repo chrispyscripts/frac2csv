@@ -806,7 +806,8 @@ function header() {
   const n = W.stages.length;
   $('ws-sub').textContent = [SL ? SL.wellId(w) : `WA ${WA}`, w.uwi, w.surface_loc && W.logs ? 'surface ' + w.surface_loc : null, w.operator, w.formation, W.td ? `TD ${fmt(W.td)} m MD` : null,
     w.tvd_m ? `${fmt(w.tvd_m)} m TVD` : null, w.lateral_m ? `lateral ${fmt(w.lateral_m)} m` : null,
-    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : W.logs ? 'WellSight mud log' : null].filter(Boolean).join(' · ');
+    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : W.logs ? 'WellSight mud log' : null,
+    w.path_estimated ? 'path estimated from the depths its log states (no survey)' : null].filter(Boolean).join(' · ');
   $('ws-sub').title = $('ws-sub').textContent;
   const gb = document.querySelector('[data-color=gamma]');
   gb.disabled = !W.gamma && !W.logs;
