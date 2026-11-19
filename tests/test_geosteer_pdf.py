@@ -157,6 +157,114 @@ class Rows(unittest.TestCase):
 
 
 @unittest.skipUnless(fitz, "needs PyMuPDF")
+class RowWords(unittest.TestCase):
+    """the row captions' words as some printouts print them"""
+
+    def doc(self, caption="TG (Total Gas) (units)", words=None):
+        d = fitz.open()
+        h = page(d, labels=False)
+        h.insert_text((X0 + 20, 62), caption, fontsize=7, color=BLACK)
+        # 0 at the band's low edge (X1), 1500 at its high edge (X0)
+        words = words or [("1500", X0), ("1000", None), ("500", None), ("0", X1)]
+        width = X1 - X0
+        for i, (w, at) in enumerate(words):
+            if at is None:
+                v = float(w)
+                at = X1 - v / 1500.0 * width - fitz.get_text_length(w, fontsize=7) / 2
+            elif at == X1:
+                at = X1 - fitz.get_text_length(w, fontsize=7)
+            h.insert_text((at, 54), w, fontsize=7, color=RED)
+        p = page(d)
+        mds = [TOP + 0.1 * i for i in range(10, 600)]
+        line(p, [(x_of(400 + 300 * math.sin(m / 4.0), 0, 1500, X1, X0), y_of(m)) for m in mds], RED)
+        return d
+
+    def gas(self, d):
+        cs = [c for c in GS.read_curves(d, TOP, TOP + 62) if c["kind"] == "total_gas"]
+        self.assertEqual(len(cs), 1)
+        return cs[0]
+
+    def test_a_name_with_brackets_of_its_own(self):
+        g = self.gas(self.doc())
+        self.assertEqual(g["name"], "TG (Total Gas)")
+        self.assertEqual(sorted(g["scale"][0][1:]), [0.0, 1500.0])
+        m = 1020.0
+        self.assertAlmostEqual(g["values"][int(round((m - TOP) / 0.1))], 400 + 300 * math.sin(m / 4.0), delta=15)
+
+    def test_two_numbers_printed_as_one_word(self):
+        # "1200" and "1500" run together at the band's edge: "15001200"
+        # where the text runs from the high end
+        w = X1 - X0
+        words = [("15001200", X0), ("900", None), ("600", None), ("300", None), ("0", X1)]
+        g = self.gas(self.doc("Total Gas (units)", words))
+        self.assertEqual(sorted(g["scale"][0][1:]), [0.0, 1500.0])
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class Frames(unittest.TestCase):
+    """a page's depths from its MD labels"""
+
+    def two_pages(self, first):
+        d = fitz.open()
+        p = first(d)
+        p.insert_text((X0 + 1, 52), "150 Gamma (API)", fontsize=7, color=GREEN)
+        p.insert_text((X1 - fitz.get_text_length("50", fontsize=7), 52), "50", fontsize=7, color=GREEN)
+        mds = [TOP + 0.1 * i for i in range(10, 600)]
+        line(p, [(x_of(gamma(m), 50, 150), y_of(m)) for m in mds], GREEN)
+        # the next page goes on from 1060 m, its own labels down it
+        top2 = TOP + 60.0
+        q = d.new_page(width=612, height=792)
+        md = top2
+        while Y0 + (md - top2) / PT_M < 780:
+            q.insert_text((410, Y0 + (md - top2) / PT_M + 3), "%g" % md, fontsize=8)
+            md += 5.0
+        for x in (X0, X1):
+            q.draw_line((x, 30), (x, 790), color=BLACK, width=0.5)
+        line(q, [(x_of(gamma(m), 50, 150), Y0 + (m - top2) / PT_M) for m in (top2 + 0.1 * i for i in range(10, 600))], GREEN)
+        return d
+
+    def check(self, d, mds):
+        cs = GS.read_curves(d, TOP, TOP + 120)
+        g = next(c for c in cs if c["kind"] == "gamma")
+        for m in mds:
+            self.assertAlmostEqual(g["values"][int(round((m - TOP) / 0.1))], gamma(m), delta=1.0, msg="at %.1f m" % m)
+
+    def test_a_cross_sections_labels_in_the_logs_range(self):
+        # the first page also prints a TVD scale down it: more labels than
+        # its MD's, their values in the log's range, on another scale
+        def first(d):
+            p = page(d)
+            for i in range(16):
+                p.insert_text((300, 60 + 45 * i), "%g" % (TOP + 2 + i), fontsize=8)
+            return p
+        self.check(self.two_pages(first), (1005.0, 1030.0, 1050.0))
+
+    def test_a_page_with_four_labels(self):
+        # the log starts low on its first page: four MD labels on it
+        def first(d):
+            p = d.new_page(width=612, height=792)
+            for md in (1040.0, 1045.0, 1050.0, 1055.0):
+                p.insert_text((410, y_of(md) + 3), "%g" % md, fontsize=8)
+            for x in (X0, X1):
+                p.draw_line((x, 30), (x, 790), color=BLACK, width=0.5)
+            return p
+        self.check(self.two_pages(first), (1042.0, 1052.0))
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
+class HasRows(unittest.TestCase):
+    def test_rows_and_ends(self):
+        self.assertTrue(GS.has_rows(Rows().doc(), TOP, TOP + 62))
+        self.assertFalse(GS.has_rows(Ends().doc(), TOP, TOP + 62))
+
+    def test_the_printout_reader_says_which(self):
+        import mudlog_pdf as M
+        r = M.read(Rows().doc().tobytes(), parts={"curves"})
+        self.assertEqual(sorted(c["kind"] for c in r["curves"]), ["gamma", "rop"])
+        self.assertTrue(any("row of numbers" in n for n in r["notes"]))
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
 class Printout(unittest.TestCase):
     def test_mudlog_pdf_reads_them_when_it_finds_no_captions_of_its_own(self):
         import mudlog_pdf as M

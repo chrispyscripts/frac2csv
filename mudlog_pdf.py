@@ -2695,14 +2695,23 @@ def read(pdf, parts=None, library=None):
     if "curves" in parts:
         dropped = []
         out["curves"] = read_curves(doc, pages, info.get("lines_pt") or [], top, bottom, dropped=dropped)
-        if not out["curves"]:
-            # a geosteering printout's captions ("150 Gamma (API)" at one
-            # edge of the curves' band, its other end across it)
-            import geosteer_pdf as GS
-            out["curves"] = GS.read_curves(doc, top, bottom)
-            if out["curves"]:
-                out["notes"].append("curves read as a geosteering printout's: each scale from its caption "
-                                    "and the number across the band from it")
+        mine = {c.get("kind") for c in out["curves"]} - {None}
+        import geosteer_pdf as GS
+        gs = GS.read_curves(doc, top, bottom) if not mine or GS.has_rows(doc, top, bottom) else []
+        theirs = {c.get("kind") for c in gs} - {None}
+        # a geosteering printout's captions: "150 Gamma (API)" at one edge of
+        # the curves' band, its other end across it; or a black caption with
+        # its scale a row of numbers in the curve's colour. Read as a
+        # WellSight log's, a printout captioned with rows takes another
+        # curve's numbers for its scale (a gamma on 0 - 15, a drill rate's),
+        # so its rows go first. A WellSight log's own captions stay first:
+        # its gas past the scale is read exactly off the line it draws there
+        rows = any(c.get("captions") == "rows" for c in gs)
+        if gs and (not mine or (rows and len(theirs) >= len(mine))):
+            out["curves"] = gs
+            dropped = []
+            out["notes"].append("curves read as a geosteering printout's: each scale from its caption "
+                                + ("and the row of numbers beside it" if rows else "and the number across the band from it"))
         if not out["curves"]:
             out["notes"].append("no curve captions found")
         for name, why in dropped:

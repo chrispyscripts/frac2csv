@@ -32,8 +32,11 @@ import math
 import re
 
 STEP = 0.1              # m, as mudlog_pdf's curves
-CAPTION = re.compile(r"^\s*(-?\d[\d,]*(?:\.\d+)?)\s+([A-Za-z][^()]*?\([^)]*\))\s*$")     # "150 Gamma (API)"
-NAMED = re.compile(r"^\s*([A-Za-z][^()]*?\([^)]*\))\s*$")                               # "Gamma Ray (gapi)"
+# a curve's name, its unit last in brackets; the name can hold brackets of its
+# own ("TG (Total Gas) (units)")
+_NAME = r"[A-Za-z](?:[^()]|\([^)]*\))*?\([^)]*\)"
+CAPTION = re.compile(r"^\s*(-?\d[\d,]*(?:\.\d+)?)\s+(" + _NAME + r")\s*$")       # "150 Gamma (API)"
+NAMED = re.compile(r"^\s*(" + _NAME + r")\s*$")                                      # "Gamma Ray (gapi)"
 NUMBER = re.compile(r"^\s*-?\d[\d,]*(?:\.\d+)?\s*$")
 GAP_M = 2.0             # corners further apart than this along the log are not joined
 COLOUR_TOL = 0.03       # a line's colour as its caption's, channel by channel
@@ -92,16 +95,23 @@ class _Frame:
         return y0, y1, x0, x1
 
 
-def _frame(pg, top=None, bottom=None):
+def _frame(pg, top=None, bottom=None, need=5, like=None):
     """the page's depths, from its MD labels; None on a page with none (or,
-    given the log's range, with none in it)"""
+    given the log's range, with none in it). like: another page's frame,
+    whose scale a page with fewer labels (need) must have to be read on"""
     import wellsight_print as wp
-    ax = wp.page_axis(pg, 1, 99999, whole=True)
-    if not ax or len(ax[3]) < 5:
-        return None
-    if top is not None and not any(top - 20 <= d <= bottom + 20 for _c, d in ax[3]):
-        return None
-    return _Frame(ax[0], ax[1], ax[2])
+    for whole in (True, False):
+        # (the row of most labels can be a cross-section's TVD scale: then
+        # the page's MD labels, if any are in the log's range)
+        ax = wp.page_axis(pg, 1, 99999, whole=whole)
+        if not ax or len(ax[3]) < need:
+            continue
+        if top is not None and not any(top - 20 <= d <= bottom + 20 for _c, d in ax[3]):
+            continue
+        if like is not None and (ax[0] != like.axis or abs(ax[1] - like.a) > 0.005 * abs(like.a)):
+            continue
+        return _Frame(ax[0], ax[1], ax[2])
+    return None
 
 
 def _long_lines(pg, f, min_len=200.0):
@@ -215,6 +225,50 @@ def _rows(spans, f, lines):
     return _pair(names, rows)
 
 
+def _fit(g):
+    """a row's straight scale: (p, q, at) with value = p * across + q, or None"""
+    if len(g) < 2 or len({x[1] for x in g}) < 2:
+        return None
+    # where each number stands for its value: the end ones by their outer
+    # edges (printed inside the band's edges), the others centred
+    at = [g[0][0][2]] + [(b[2] + b[3]) / 2 for b, _v, _t in g[1:-1]] + [g[-1][0][3]]
+    vs = [v for _b, v, _t in g]
+    n = len(at)
+    ma, mv = sum(at) / n, sum(vs) / n
+    sxx = sum((a - ma) ** 2 for a in at)
+    if not sxx:
+        return None
+    p = sum((a - ma) * (v - mv) for a, v in zip(at, vs)) / sxx
+    q = mv - p * ma
+    if not p or max(abs(p * a + q - v) for a, v in zip(at, vs)) > 0.05 * (max(vs) - min(vs)):
+        return None                                      # not a straight scale
+    return p, q, at
+
+
+def _split_one(g):
+    """a row whose last two numbers were printed as one word ("12001500"
+    for 1200 and 1500): the row with that word split where both halves keep
+    to its scale, or None"""
+    for i, (b, v, t) in enumerate(g):
+        if not t.isdigit() or len(t) < 2:
+            continue
+        rest = g[:i] + g[i + 1:]
+        for k in range(1, len(t)):
+            x, y = t[:k], t[k:]
+            if len(y) > 1 and y[0] == "0":
+                continue
+            mid = b[2] + (b[3] - b[2]) * k / len(t)
+            # (the word read either way across: text can run backwards)
+            for lo_part, hi_part in ((x, y), (y, x)):
+                cut = mid if lo_part == x else b[3] - (b[3] - b[2]) * k / len(t)
+                parts = [((b[0], b[1], b[2], cut), float(lo_part), lo_part),
+                         ((b[0], b[1], cut, b[3]), float(hi_part), hi_part)]
+                h = sorted(rest + parts, key=lambda e: e[0][2])
+                if _fit(h):
+                    return h
+    return None
+
+
 def _number_rows(spans, f, lines):
     """rows of numbers: numbers of one colour level with each other along
     the log, spread across (two or more places) on a straight scale"""
@@ -222,7 +276,7 @@ def _number_rows(spans, f, lines):
     for bb, t, col in spans:
         if NUMBER.match(t):
             b = f.box(bb)
-            groups.setdefault((col, round((b[0] + b[1]) / 2 / 4)), []).append((b, _num(t)))
+            groups.setdefault((col, round((b[0] + b[1]) / 2 / 4)), []).append((b, _num(t), t.strip()))
     # (a row is numbers near each other across: another scale level with it
     # elsewhere on the page, a cross-section's, is a row of its own)
     runs = []
@@ -242,22 +296,17 @@ def _number_rows(spans, f, lines):
         runs.append((col, cur))
     rows = []
     for col, g in runs:
-        if len(g) < 2 or g[-1][0][2] - g[0][0][3] < 40 or len({v for _b, v in g}) < 2:
+        if len(g) < 2 or g[-1][0][2] - g[0][0][3] < 40 or len({x[1] for x in g}) < 2:
             continue
-        # where each number stands for its value: the end ones by their
-        # outer edges (printed inside the band's edges), the others centred
-        at = [g[0][0][2]] + [(b[2] + b[3]) / 2 for b, _v in g[1:-1]] + [g[-1][0][3]]
-        vs = [v for _b, v in g]
-        n = len(at)
-        ma, mv = sum(at) / n, sum(vs) / n
-        sxx = sum((a - ma) ** 2 for a in at)
-        if not sxx:
+        fit = _fit(g)
+        if fit is None and len(g) >= 3:
+            g = _split_one(g) or g
+            fit = _fit(g)
+        if fit is None:
             continue
-        p = sum((a - ma) * (v - mv) for a, v in zip(at, vs)) / sxx
-        q = mv - p * ma
-        if not p or max(abs(p * a + q - v) for a, v in zip(at, vs)) > 0.05 * (max(vs) - min(vs)):
-            continue                                     # not a straight scale
-        along = (min(b[0] for b, _v in g), max(b[1] for b, _v in g))
+        p, q, at = fit
+        vs = [v for _b, v, _t in g]
+        along = (min(x[0][0] for x in g), max(x[0][1] for x in g))
         rows.append({"col": col, "along": along, "p": p, "q": q, "across": (g[0][0][2], g[-1][0][3]),
                      "band": (_snap(at[0], lines), _snap(at[-1], lines)), "lo": min(vs), "hi": max(vs)})
     return rows
@@ -287,15 +336,23 @@ def _pair(names, rows):
     return best[2]
 
 
-def _captions(pg, f):
-    """the curves a page captions: [curve], or []"""
-    # (not text cut off by the page's edge: "150 Gamma" there reads "50 Gamma")
+def _page_spans(pg, f):
+    """the page's text, less what the page's edge cuts off ("150 Gamma"
+    there reads "50 Gamma")"""
     w, h = (pg.rect.height, pg.rect.width) if pg.rotation in (90, 270) else (pg.rect.width, pg.rect.height)
     length = w if f.axis == 1 else h
-    spans = [sp for sp in _spans(pg) if f.box(sp[0])[0] >= -0.5 and f.box(sp[0])[1] <= length + 0.5]
+    return [sp for sp in _spans(pg) if f.box(sp[0])[0] >= -0.5 and f.box(sp[0])[1] <= length + 0.5]
+
+
+def _captions(pg, f):
+    """the curves a page captions: [curve], or []"""
+    spans = _page_spans(pg, f)
     lines = _long_lines(pg, f)
     ends, rows = _ends(spans, f, lines), _rows(spans, f, lines)
-    return ends if len({_key(c) for c in ends}) >= len({_key(c) for c in rows}) else rows
+    got, style = (ends, "ends") if len({_key(c) for c in ends}) >= len({_key(c) for c in rows}) else (rows, "rows")
+    for c in got:
+        c["captions"] = style
+    return got
 
 
 def _paths(pg, f, band):
@@ -444,6 +501,36 @@ def _follow(cands, n):
     return vals
 
 
+def _frames(doc, top, bottom):
+    """each page's frame (None for a page with no depths of the log's), and
+    the axis most pages run the log along"""
+    frames = [_frame(pg, top, bottom) for pg in doc]
+    axes = [f.axis for f in frames if f]
+    axis = max(set(axes), key=axes.count) if axes else None
+    if axis is not None:
+        # a page with fewer labels (the log's first or last, part of a page
+        # of it) is read on them when they are on the other pages' scale;
+        # so is a page whose labels are another scale's (a cross-section's
+        # TVD in the log's range, more of them than its MD labels)
+        scales = sorted(f.a for f in frames if f and f.axis == axis)
+        like = _Frame(axis, scales[len(scales) // 2], 0.0)
+        odd = lambda f: f.axis != like.axis or abs(f.a - like.a) > 0.005 * abs(like.a)
+        frames = [f if f and not odd(f) else _frame(pg, top, bottom, need=3, like=like)
+                  for pg, f in zip(doc, frames)]
+    return frames, axis
+
+
+def has_rows(doc, top, bottom):
+    """whether a page captions curves with rows of numbers (from its text
+    alone: quick, for a printout read another way first)"""
+    frames, axis = _frames(doc, top, bottom)
+    for pg, f in zip(doc, frames):
+        f = f or (_Frame(axis, 1.0, 0.0) if axis is not None else None)
+        if f is not None and _rows(_page_spans(pg, f), f, []):
+            return True
+    return False
+
+
 def read_curves(doc, top, bottom, step=STEP):
     """-> [{name, kind, units, unit, top, step, values, scale, colour,
     track_pt, past_scale, recorded_step, shifted_m, log_scale_from, lines}]"""
@@ -453,9 +540,7 @@ def read_curves(doc, top, bottom, step=STEP):
     last = []                   # the scales a page goes on with when it prints none
     # a page's depths are the log's (not a cross-section's TVD scale: a
     # header page's numbers can make a line of their own)
-    frames = [_frame(pg, top, bottom) for pg in doc]
-    axes = [f.axis for f in frames if f]
-    axis = max(set(axes), key=axes.count) if axes else None
+    frames, axis = _frames(doc, top, bottom)
     for pg, f in zip(doc, frames):
         if f is None:
             # a page of the log's header can print the scales (a page with
@@ -552,5 +637,5 @@ def read_curves(doc, top, bottom, step=STEP):
                     "scale": sorted(cur["scales"]), "colour": "#%06x" % c["colour"],
                     "track_pt": [round(c["band"][0], 1), round(c["band"][1], 1)], "past_scale": len(cur["past"]),
                     "recorded_step": step, "shifted_m": 0.0, "log_scale_from": None, "lines": 1,
-                    "from": "geosteering"})
+                    "from": "geosteering", "captions": c.get("captions")})
     return out
