@@ -68,7 +68,7 @@ def _depth_range(doc):
     import wellsight_print as wp
     lines = []
     for pg in doc:
-        ax = wp.page_axis(pg, 1, 99999)
+        ax = wp.page_axis(pg, 1, 99999, whole=len(doc) == 1)
         if ax and len(ax[3]) >= 5:
             lines.append((abs(ax[1]), [d for _c, d in ax[3]]))
     if not lines:

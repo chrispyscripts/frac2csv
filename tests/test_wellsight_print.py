@@ -117,6 +117,15 @@ class Scale(unittest.TestCase):
         tvd = [(100.0 + i * 40, 1000.0 + 2 * i) for i in range(10)]
         self.assertGreater(wp._axis_key(depth_row), wp._axis_key(tvd))
 
+    def test_one_page_the_row_of_most_labels(self):
+        # a printout stitched into one page, its header's plot axis
+        # (200 400 ... 1000, five labels) covering more depth than the
+        # log's 137 labels (805 - 1485): on one page the log's row wins
+        plot = [(9211.0 + i * 12, 200.0 * (i + 1)) for i in range(5)]
+        depth_row = [(12355.0 + i * 9.36, 805.0 + 5 * i) for i in range(137)]
+        self.assertGreater(wp._axis_key(plot), wp._axis_key(depth_row))          # a page of many
+        self.assertGreater(wp._axis_key(depth_row, whole=True), wp._axis_key(plot, whole=True))
+
 
 @unittest.skipUnless(fitz, "needs PyMuPDF")
 class Stitch(unittest.TestCase):

@@ -121,17 +121,22 @@ def page_lines(pg, lo, hi):
 AXIS_MIN_LABELS = 5     # a row of fewer numbers is a track's scale before it is a depth line
 
 
-def _axis_key(on):
+def _axis_key(on, whole=False):
     """how likely a row of numbers is the depth line: one of five or more
     labels first, then the depth its labels cover, then how many. A track's
     scale (250 500 750 1000) can cover more depth than a short log's labels
     do; on a paged printout the other pages outvote the one that prints it,
-    but a printout stitched into one page has that page alone."""
+    but a printout stitched into one page has that page alone. On that one
+    page (whole) the row of most labels is the log's: its depth labels run
+    the length of the log, where a plot's axis in the header (0 200 ...
+    1000) or a TVD scale holds a handful."""
     span = max(p[1] for p in on) - min(p[1] for p in on)
+    if whole:
+        return (len(on) >= AXIS_MIN_LABELS, len(on), round(span, 1))
     return (len(on) >= AXIS_MIN_LABELS, round(span, 1), len(on))
 
 
-def page_axis(pg, lo, hi):
+def page_axis(pg, lo, hi, whole=False):
     """The page's depth line on its own: of its rows and columns of numbers,
     the one whose labels cover the most depth (the cross-section's TVD scale
     on a horizontal log can fall inside the log's MD range and hold as many
@@ -140,7 +145,7 @@ def page_axis(pg, lo, hi):
     -> (axis, a, b, on) or None. stitch() chooses across all the pages."""
     best = None
     for axis, key, a, b, on in page_lines(pg, lo, hi):
-        k = _axis_key(on)
+        k = _axis_key(on, whole)
         if best is None or k > best[0]:
             best = (k, axis, a, b, on)
     return None if best is None else best[1:]
@@ -187,7 +192,7 @@ def stitch(pdf, top, bottom):
     # widest-spanning line votes. LogViewer prints at one scale throughout.
     votes = {}
     for pno, ls in cands.items():
-        axis_, _k, a_, _b, on = max(ls, key=lambda l: _axis_key(l[4]))
+        axis_, _k, a_, _b, on = max(ls, key=lambda l: _axis_key(l[4], len(doc) == 1))
         votes[pno] = (axis_, a_, len(on))
     axis = collections.Counter(v[0] for v in votes.values()).most_common(1)[0][0]
     a = common_scale([(v[1], v[2]) for v in votes.values() if v[0] == axis])
