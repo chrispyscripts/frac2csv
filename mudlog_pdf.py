@@ -405,9 +405,46 @@ LITH_WORDS = [
     (r"chert|cht", "chert"), (r"marl(?:stone)?", "marlstone"), (r"gyp(?:sum)?", "gypsum"),
 ]
 # (not a depth by it: "SS -27.3m" is sub-sea, "TVD 740.2m" a depth)
-_LITH = re.compile(r"^\s*(?:\d+\s*%\s*)?(" + "|".join(w for w, _r in LITH_WORDS) + r")\b(?!\s*:?\s*[-+]?\d+(?:\.\d+)?\s*m\b)(?!\s*:?\s*[-+]\s*\d)\.?\s*:?\s*(?:\(\s*~?\s*(\d{1,3})\s*%\s*\)|~?\s*(\d{1,3})\s*%)?", re.I)
+# (a share can come first: "60 Shale dark gray", "60% SH", or a range of
+# them, "14-29 Claystone", which is not taken as the share)
+_LITH = re.compile(r"^\s*(?:(?P<pre>\d{1,3})\s*%?\s+|\d{1,3}\s*-\s*\d{1,3}\s*%?\s+)?(?P<rock>" + "|".join(w for w, _r in LITH_WORDS)
+                   + r")\b(?!\s*:?\s*[-+]?\d+(?:\.\d+)?\s*m\b)(?!\s*:?\s*[-+]\s*\d)\.?\s*:?\s*(?:\(\s*~?\s*(?P<p1>\d{1,3})\s*%\s*\)|~?\s*(?P<p2>\d{1,3})\s*%)?", re.I)
 _CAPTIONS = re.compile(r"\((?:API|gAPI|units?|min/m|m/hr|m/h|cps|kdaN|kPa|%|ppm)\)", re.I)
-_SURVEY_NOTE = re.compile(r"\b(?:DS|INC|INCL|AZ|AZI|AZM)\s*:?\s*[\d.]+\s*°?|\bMD\s*:?\s*[\d.]+\s*m?\s*(?:TVD|INC)|\bTVD\s*:?\s*[\d.]+\s*m?\s*(?:SSL|SS|VS)\b", re.I)
+_SURVEY_NOTE = re.compile(r"\b(?:DS|INC|INCL|AZ|AZI|AZM)\s*:?\s*[\d.]+\s*°?|\bMD\s*:?\s*[\d.]+\s*m?\s*(?:TVD|INC)|\bTVD\s*:?\s*[\d.]+\s*m?\s*(?:SSL|SS|VS)\b"
+                          r"|\bsub\s*sea\s*\(|\bTVD\s*\(m\)", re.I)
+
+
+# a header box's fields ("Well Name: ...", "Spud Date: ...", "Bottom Hole
+# Coordinates:"): the well's particulars, not a remark along it
+_HEADER_FIELD = re.compile(r"^\s*(?:well\s*name|location|surface\s*location|licen[cs]e(?:\s*(?:number|no\.?|#))?|spud(?:\s*date)?|"
+                           r"drilling\s*(?:completed|commenced|fluid)|type\s*of\s*drilling\s*fluid|rig(?:\s*release)?|company|operator|"
+                           r"formation|ground\s*elev\w*|g\.?l\.?|k\.?b\.?(?:\s*elev\w*)?|elevations?|logged\s*interval|logged\s*by|"
+                           r"(?:surface|bottom\s*hole|bh|lp|landing\s*point)\s*coord\w*|region|field|pool|area|province|contractor|"
+                           r"(?:wellsite\s*)?geologists?|mud\s*loggers?|loggers?|uwi|total\s*depth|td|date|scale|units|"
+                           r"(?:hole|casing|bit)\s*size|mud\s*type|cwi)\b[^:]{0,24}:", re.I)
+
+
+def keep_remark(t):
+    """a remark worth keeping: not a header field, a label with nothing after
+    it, a survey station's label or curves' captions"""
+    t = t.strip()
+    if _HEADER_FIELD.match(t) or t.endswith(":") or re.search(r"\b(?:spud|g\.l\.|k\.b\.|licen[cs]e\s*(?:no\.?|number|#)?)\s*:", t, re.I):
+        return False
+    if _SURVEY_NOTE.search(t) or len(re.findall(r"[A-Za-z]", t)) < 12:
+        return False
+    return not (len(_CAPTIONS.findall(t)) >= 2 or (_CAPTIONS.search(t) and len(t) < 40))
+
+
+def classify_comment(t):
+    """(kind, rocks) for a piece of the geologist's text, or None to leave
+    it out: a description names a rock; anything else is a remark if
+    keep_remark keeps it"""
+    rocks = lith_mix(t)
+    if rocks and _SURVEY_NOTE.search(t) and len(t) < 80:
+        rocks = {}                         # "SS +3.75 INC 90.48 AZ 90.44 MD ...": a station's label
+    if rocks:
+        return "description", rocks
+    return ("note", {}) if keep_remark(t) else None
 
 
 def _rock_of(word):
@@ -429,8 +466,8 @@ def lith_mix(text):
         m = _LITH.match(part)
         if not m:
             continue
-        r = _rock_of(m.group(1))
-        pct = m.group(2) or m.group(3)
+        r = _rock_of(m.group("rock"))
+        pct = m.group("p1") or m.group("p2") or m.group("pre")
         if not r:
             continue
         if pct and 0 < int(pct) <= 100:
@@ -549,7 +586,10 @@ def read_descriptions(doc, pages, top=None, bottom=None):
         for t in pieces:
             if len(t) < 20 or not re.search(r"[A-Za-z]{3}", t):
                 continue
-            rocks = lith_mix(t)
+            got = classify_comment(t)
+            if got is None:
+                continue      # a header field, a survey station's label, curves' captions: not a remark
+            kind, rocks = got
             m = DESC_RANGE.match(t)
             if m:
                 a, z = float(m.group(1)), float(m.group(2))
@@ -559,13 +599,7 @@ def read_descriptions(doc, pages, top=None, bottom=None):
                 at, td, bd = "range", a, z
             else:
                 at, td, bd = "position", round(para["d0"], 2), round(max(para["d1"], para["d0"] + 0.1), 2)
-            if rocks and _SURVEY_NOTE.search(t) and len(t) < 80:
-                rocks = {}                     # "SS +3.75 INC 90.48 AZ 90.44 MD ...": a station's label
-            if not rocks and (_SURVEY_NOTE.search(t) or len(re.findall(r"[A-Za-z]", t)) < 12
-                              or len(_CAPTIONS.findall(t)) >= 2 or (_CAPTIONS.search(t) and len(t) < 40)):
-                continue      # a survey station's label, curves' captions, a scale: not a remark
-            out.append({"top": td, "base": bd, "text": t, "kind": "description" if rocks else "note",
-                        "rocks": rocks, "at": at})
+            out.append({"top": td, "base": bd, "text": t, "kind": kind, "rocks": rocks, "at": at})
     out.sort(key=lambda d: (d["top"], d["base"]))
     # one text read twice (a page's overlap with the next): kept once
     seen, keep = set(), []
