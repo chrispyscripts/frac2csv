@@ -19,6 +19,9 @@
 .legend .gridtoggle button:hover { color:var(--g-btn-hover); }
 .legend .gridtoggle button[data-fam="nts"].on { color:var(--g-on-ink); background:var(--g-nts); border-color:var(--g-nts); }
 .legend .gridtoggle button[data-fam="dls"].on { color:var(--g-on-ink); background:var(--g-dls); border-color:var(--g-dls); }
+/* ISC's source notice for the Saskatchewan grid (grids.js), under the toggle */
+.legend .gridsrc { margin-top:5px; max-width:230px; font-size:10.5px; line-height:1.35; color:var(--mut, #93a3b3); }
+.legend .gridsrc[hidden] { display:none; }
 .gridread { position:absolute; left:50%; transform:translateX(-50%); bottom:14px; z-index:6;
             display:flex; gap:14px; align-items:center; pointer-events:none;
             background:var(--g-read); border:1px solid var(--line, #243040);

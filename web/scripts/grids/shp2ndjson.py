@@ -61,6 +61,48 @@ def shp_reader(path):
         yield rings
     f.close()
 
+def to_feature(rings, props):
+    """One shapefile record's rings -> a GeoJSON Feature, or None if it has no
+    usable ring. `props` gains cx/cy (the cell's centroid) and is used as is."""
+    # Shapefile rings: clockwise is an outer ring, counter-clockwise a
+    # hole in the one before it. Grid cells are single-ring in
+    # practice, but a township clipped by the province edge is not.
+    polys = []
+    for r in rings:
+        if len(r) < 4:
+            continue
+        if ring_area(r) < 0 or not polys:
+            polys.append([r])
+        else:
+            polys[-1].append(r)
+    if not polys:
+        return None
+    geom = ({"type": "Polygon", "coordinates": polys[0]} if len(polys) == 1
+            else {"type": "MultiPolygon", "coordinates": polys})
+    # The cell's own centroid, carried as a property. A cell that
+    # straddles a tile boundary arrives at the client in two pieces,
+    # and a label placed on a piece's centre lands off the cell and
+    # lands twice; this rides along on every piece and is the same
+    # point for both, so the client can place one label, correctly.
+    # Area-weighted over the outer rings (holes are rare here and a
+    # township clipped by the province edge still labels sensibly).
+    cx = cy = wsum = 0.0
+    for poly in polys:
+        r = poly[0]
+        a2 = 0.0; fx = 0.0; fy = 0.0
+        for i in range(len(r) - 1):
+            cr = r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1]
+            a2 += cr
+            fx += (r[i][0] + r[i + 1][0]) * cr
+            fy += (r[i][1] + r[i + 1][1]) * cr
+        if a2:
+            w = abs(a2) / 2.0
+            cx += (fx / (3.0 * a2)) * w; cy += (fy / (3.0 * a2)) * w
+            wsum += w
+    if wsum:
+        props["cx"] = round(cx / wsum, 6); props["cy"] = round(cy / wsum, 6)
+    return {"type": "Feature", "properties": props, "geometry": geom}
+
 def convert(shp_path, out_path, level):
     dbf = shp_path[:-4] + ".dbf"
     n = 0
@@ -68,46 +110,10 @@ def convert(shp_path, out_path, level):
         for rings, attrs in zip(shp_reader(shp_path), dbf_reader(dbf, {"LABELTEXT"})):
             if not rings:
                 continue
-            # Shapefile rings: clockwise is an outer ring, counter-clockwise a
-            # hole in the one before it. Grid cells are single-ring in
-            # practice, but a township clipped by the province edge is not.
-            polys = []
-            for r in rings:
-                if len(r) < 4:
-                    continue
-                if ring_area(r) < 0 or not polys:
-                    polys.append([r])
-                else:
-                    polys[-1].append(r)
-            if not polys:
+            f = to_feature(rings, {"label": attrs.get("LABELTEXT", ""), "level": level})
+            if f is None:
                 continue
-            geom = ({"type": "Polygon", "coordinates": polys[0]} if len(polys) == 1
-                    else {"type": "MultiPolygon", "coordinates": polys})
-            # The cell's own centroid, carried as a property. A cell that
-            # straddles a tile boundary arrives at the client in two pieces,
-            # and a label placed on a piece's centre lands off the cell and
-            # lands twice; this rides along on every piece and is the same
-            # point for both, so the client can place one label, correctly.
-            # Area-weighted over the outer rings (holes are rare here and a
-            # township clipped by the province edge still labels sensibly).
-            cx = cy = wsum = 0.0
-            for poly in polys:
-                r = poly[0]
-                a2 = 0.0; fx = 0.0; fy = 0.0
-                for i in range(len(r) - 1):
-                    cr = r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1]
-                    a2 += cr
-                    fx += (r[i][0] + r[i + 1][0]) * cr
-                    fy += (r[i][1] + r[i + 1][1]) * cr
-                if a2:
-                    w = abs(a2) / 2.0
-                    cx += (fx / (3.0 * a2)) * w; cy += (fy / (3.0 * a2)) * w
-                    wsum += w
-            props = {"label": attrs.get("LABELTEXT", ""), "level": level}
-            if wsum:
-                props["cx"] = round(cx / wsum, 6); props["cy"] = round(cy / wsum, 6)
-            out.write(json.dumps({"type": "Feature", "properties": props,
-                                  "geometry": geom}, separators=(",", ":")) + "\n")
+            out.write(json.dumps(f, separators=(",", ":")) + "\n")
             n += 1
     return n
 

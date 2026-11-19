@@ -9,3 +9,8 @@ build/
 *.png
 # ...except the bundled example chart (test data provided for this purpose)
 !examples/example-flattened-chart.png
+
+# ISC SaskGrid (licence: not to be published) -- built outside the repo, never in it
+web/public/data/skgrid/
+web/public/data/grids/sk_*
+*.skgrid.geojsonl

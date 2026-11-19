@@ -4,6 +4,13 @@
 // Levels are separate archives so each can be tiled only over the zooms where it
 // is legible; MapLibre overzooms past an archive's max, so a level stays drawn
 // once it switches on.
+//
+// The Saskatchewan DLS (sk_*) is ISC's SaskGrid, whose licence does not allow it
+// to be published: it is never in this repo or on the live site. A local copy
+// builds it outside the repo (scripts/grids/build_skgrid.sh) and the local
+// server mounts it at data/skgrid/ (scripts/serve.py --mount). Where it is not
+// there the levels simply don't load and the map goes on without them; where it
+// is, they draw as part of the DLS, under ISC's source notice.
 
 // MapLibre 4 wants a promise-returning protocol handler. pmtiles 3 still exposes
 // `.tile`, but that is the v3 callback shim (it returns {cancel}, not a promise)
@@ -22,6 +29,12 @@ const lineOpacity = L => L.op * (dark() ? 1 : 0.6);
 // deg: nominal cell size [lon, lat], used to gate labelling on on-screen size.
 // A cell split across a tile boundary arrives in pieces, so its drawn size is
 // not its real size -- the nominal size is what decides whether it gets a label.
+// (A DLS cell's width in degrees grows northward; the BC sizes are taken at 56N,
+// the SK ones at 52N, the middle of the province's oil country.)
+// sk: from the Saskatchewan set, which lives at data/skgrid/ where it is at all.
+const SK_DIR = 'data/skgrid/';
+const SK_NOTICE = 'Source: Information Services Corporation, SaskGrid Township Fabric Map.';
+const SK_DISCLAIMER = 'The incorporation of data sourced from the Information Services Corporation within this product shall not be construed as constituting an endorsement by the Information Services Corporation of such product.';
 const LEVELS = [
   { id:'nts_pri',  fam:'nts', z:4,    w:2.4, op:.85, deg:[8, 4]            },
   { id:'nts_ltr',  fam:'nts', z:5,    w:1.9, op:.78, deg:[2, 1]            },
@@ -32,8 +45,15 @@ const LEVELS = [
   { id:'dls_twp',  fam:'dls', z:8,    w:1.6, op:.72, deg:[0.155, 0.0872]   },
   { id:'dls_sec',  fam:'dls', z:11,   w:1.0, op:.5,  deg:[0.0255, 0.01446] },
   { id:'dls_lsd',  fam:'dls', z:13,   w:0.7, op:.34, deg:[0.0064, 0.0036]  },
+  // Saskatchewan: the BC levels' zooms and weights, plus the quarter section
+  // between section and LSD -- the unit SK land is held and described by.
+  { id:'sk_twp',   fam:'dls', z:8,    w:1.6, op:.72, deg:[0.141, 0.0869],   sk:true },
+  { id:'sk_sec',   fam:'dls', z:11,   w:1.0, op:.5,  deg:[0.0235, 0.01447], sk:true },
+  { id:'sk_qtr',   fam:'dls', z:12,   w:0.85,op:.42, deg:[0.01174, 0.00724],sk:true },
+  { id:'sk_lsd',   fam:'dls', z:13,   w:0.7, op:.34, deg:[0.00587, 0.00362],sk:true },
 ];
 const BY_ID = Object.fromEntries(LEVELS.map(l => [l.id, l]));
+const archive = L => (L.sk ? SK_DIR : 'data/grids/') + L.id + '.pmtiles';
 
 const MIN_LABEL_PX = 46;    // smaller than this and the text does not fit the cell
 const MAX_LABEL_PX = 2600;  // bigger than this and the level's label is off-screen anyway
@@ -47,11 +67,30 @@ if (window.StratumSession) StratumSession.provide(() => ({ [GRID_KEY]: JSON.stri
 let available = [];         // levels whose archive actually loaded
 
 // ---------------------------------------------------------------- layer setup
+// An archive counts only if it is really there: a 200 that is not a pmtiles
+// archive (an HTML fallback page, say) would otherwise fail on every tile. Only
+// the first chunk is read, so a server that ignores Range costs nothing either.
 async function probe(L) {
   try {
-    const r = await fetch('data/grids/' + L.id + '.pmtiles', { headers: { Range: 'bytes=0-15' } });
-    return r.ok ? L : null;
+    const r = await fetch(archive(L), { headers: { Range: 'bytes=0-15' } });
+    if (!r.ok || !r.body) return null;
+    const rd = r.body.getReader();
+    const { value } = await rd.read();
+    rd.cancel().catch(() => {});
+    return value && value.length >= 7 && String.fromCharCode(...value.subarray(0, 7)) === 'PMTiles' ? L : null;
   } catch (e) { return null; }
+}
+
+// The SK set is all there or not at all, and on the live site it is never there:
+// ask for its township archive once, and the rest only if that one came back.
+async function probeAll() {
+  const bc = LEVELS.filter(L => !L.sk), sk = LEVELS.filter(L => L.sk);
+  const [found, first] = await Promise.all([Promise.all(bc.map(probe)), probe(sk[0])]);
+  const skFound = first ? [first, ...await Promise.all(sk.slice(1).map(probe))] : [];
+  const missing = bc.filter((L, i) => !found[i]).map(L => L.id);
+  if (first) missing.push(...sk.filter(L => !skFound.includes(L)).map(L => L.id));
+  if (missing.length) console.warn('survey grid: no archive for ' + missing.join(', '));
+  return LEVELS.filter(L => found.includes(L) || skFound.includes(L));
 }
 
 function addLayers(levels) {
@@ -60,7 +99,9 @@ function addLayers(levels) {
   const before = (map.getStyle().layers || []).map(l => l.id).find(id => overlay.includes(id));
   // finest first, so the coarser, heavier lines draw over shared borders
   for (const L of [...levels].reverse()) {
-    map.addSource(L.id, { type: 'vector', url: 'pmtiles://data/grids/' + L.id + '.pmtiles' });
+    // the attribution control shows a source's notice while its layers are drawn
+    map.addSource(L.id, Object.assign({ type: 'vector', url: 'pmtiles://' + archive(L) },
+                                      L.sk ? { attribution: SK_NOTICE } : {}));
     // An invisible fill per level, purely to hit-test against: these are LINE
     // layers, so querying a point only finds a cell when the cursor is on its
     // boundary -- the readout needs the cell the cursor is INSIDE.
@@ -182,15 +223,21 @@ function describe(s) {
     else if (blk)                   loc = `${blk}/`;
     rows.push(['NTS', loc + map_]);
   }
-  const twp = s.dls_twp && s.dls_twp.label, sec = s.dls_sec && s.dls_sec.label,
-        lsd = s.dls_lsd && s.dls_lsd.n;
+  // BC and SK never overlap, so whichever province is under the cursor answers.
+  // SK adds the quarter section, shown until the LSD level is drawn; a few SK
+  // townships, ranges and sections carry a letter (a fractional survey), kept.
+  const dl = id => s['dls_' + id] || s['sk_' + id] || {};
+  const twp = dl('twp').label, sec = dl('sec').label, lsd = dl('lsd').n,
+        quarter = s.sk_qtr && s.sk_qtr.label;
+  const padn = (v, n) => String(v).replace(/^\d+/, d => d.padStart(n, '0'));
   if (twp) {
-    const m = /^(\d+)-(\d+)W(\d+)$/.exec(twp);
+    const m = /^(\d+[A-Z]?)-(\d+[A-Z]?)W(\d+)$/.exec(twp);
     if (m) {
       let loc = '';
-      if (lsd != null && sec) loc = `${pad(lsd, 2)}-${pad(sec, 2)}-`;
-      else if (sec)           loc = `${pad(sec, 2)}-`;
-      rows.push(['DLS', `${loc}${pad(m[1], 3)}-${pad(m[2], 2)}W${m[3]}`]);
+      if (lsd != null && sec) loc = `${pad(lsd, 2)}-${padn(sec, 2)}-`;
+      else if (quarter && sec) loc = `${quarter}-${padn(sec, 2)}-`;
+      else if (sec)           loc = `${padn(sec, 2)}-`;
+      rows.push(['DLS', `${loc}${padn(m[1], 3)}-${padn(m[2], 2)}W${m[3]}`]);
     }
   }
   return rows;
@@ -220,10 +267,22 @@ function control() {
     <button type="button" data-fam="nts" class="${on.nts ? 'on' : ''}">NTS</button>
     <button type="button" data-fam="dls" class="${on.dls ? 'on' : ''}">DLS</button></span>`;
   box.append(row);
+  // ISC's licence asks for its notice wherever SaskGrid is shown: here while the
+  // DLS is on, and in the map's attribution while an SK level is drawn.
+  let note = null;
+  if (available.some(L => L.sk)) {
+    note = document.createElement('div');
+    note.className = 'gridsrc';
+    note.textContent = SK_NOTICE;
+    note.title = SK_DISCLAIMER;
+    note.hidden = !on.dls;
+    box.append(note);
+  }
   row.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
     const fam = b.dataset.fam;
     on[fam] = !on[fam]; saveGrids();
     b.classList.toggle('on', on[fam]);
+    if (note) note.hidden = !on.dls;
     for (const L of available) if (L.fam === fam) for (const pre of ['grid-', 'grid-hit-'])
       if (map.getLayer(pre + L.id))
         map.setLayoutProperty(pre + L.id, 'visibility', on[fam] ? 'visible' : 'none');
@@ -233,10 +292,8 @@ function control() {
 
 // ------------------------------------------------------------------------ wire
 async function start() {
-  const levels = (await Promise.all(LEVELS.map(probe))).filter(Boolean);
+  const levels = await probeAll();
   if (!levels.length) return;
-  const missing = LEVELS.filter(L => !levels.includes(L)).map(L => L.id);
-  if (missing.length) console.warn('survey grid: no archive for ' + missing.join(', '));
   addLayers(levels);
   control();
   map.on('moveend', relabel);
