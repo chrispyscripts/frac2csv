@@ -214,8 +214,40 @@ def wws_all(block):
     return [w[4] for _, ws in block for w in ws if _isnum(w[4])]
 
 
-def _page_tables(page):
-    """The station tables on one page: [{fields: {col: field}, rows: [...]}]"""
+OCR_DPI = 300
+
+
+def _ocr_words(page, dpi=OCR_DPI):
+    """the page's words read off its picture by Tesseract (a PDF whose text
+    has no usable characters, or a scan with none): PyMuPDF's word tuples,
+    in points, in the page's upright frame (the picture is drawn turned as
+    the page is shown). [] when Tesseract is not to be found."""
+    import fitz
+    import numpy as np
+    import auto_raster as ar
+    if not ar.available():
+        return []
+    pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY, alpha=False)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    k = 72.0 / dpi
+    return [(w["x0"] * k, w["y0"] * k, w["x1"] * k, w["y1"] * k, w["text"]) + tuple(w["line"])
+            for w in ar.ocr_boxes(img, psm=6, whitelist="") if w["text"].strip()]
+
+
+def _ocr_text(words):
+    """the words as lines of text (for the UWI, well name and the like)"""
+    lines = {}
+    for w in words:
+        lines.setdefault(tuple(w[5:8]), []).append(w)
+    return "\n".join(" ".join(x[4] for x in sorted(ws, key=lambda x: x[0]))
+                     for _k, ws in sorted(lines.items(), key=lambda kv: (kv[1][0][1], kv[1][0][0])))
+
+
+def _page_tables(page, words=None):
+    """The station tables on one page: [{fields: {col: field}, rows: [...]}].
+    words: the page's words read some other way (OCR), upright already."""
+    if words is not None:
+        return _tables_from_words(words)
     words = [w for w in page.get_text("words") if w[4].strip()]
     if page.rotation:
         # a page printed turned: its words in the page's upright frame
@@ -226,6 +258,10 @@ def _page_tables(page):
             r = fitz.Rect(w[:4]) * m
             turned.append((r.x0, r.y0, r.x1, r.y1) + tuple(w[4:]))
         words = turned
+    return _tables_from_words(words)
+
+
+def _tables_from_words(words):
     rows = _rows(words)
     out = []
     i = 0
@@ -334,27 +370,115 @@ def _first(rx, text):
     return m.group(1).strip() if m else None
 
 
+_BORE = re.compile(r"^[ \t]*(?:Wellbore|Well[ \t]*bore)[ \t]*:?[ \t]*(\S.*?)[ \t]*(?:Survey Calculation|"
+                   r"North Reference|MD Reference|TVD Reference|Database|Local Co-?ordinate|$)", re.I | re.M)
+
+
+def _bore(text):
+    """the wellbore a page's header names, on the label's own line (a
+    sidetrack's pages name theirs); None where the label stands alone or
+    is followed by another label"""
+    m = _BORE.search(text or "")
+    if not m:
+        return None
+    v = re.sub(r"\s+", " ", m.group(1)).strip()
+    return None if not re.search(r"[A-Za-z0-9]", v) or re.match(r"^[A-Za-z ]+:$", v) else v
+
+
+def _same_bores(tables):
+    """tables' wellbore names put together where they are one wellbore:
+    names that differ only in spacing or punctuation, or whose tables do
+    not cover the same depths (a table that carries on under a header
+    worded another way). Two wellbores list the same depths over again: a
+    sidetrack's report repeats the hole above its kick-off."""
+    key = lambda b: re.sub(r"[^a-z0-9]", "", b.lower()) if b else ""     # "": pages before any name
+    mds = {}
+    for t in tables:
+        mds.setdefault(key(t["bore"]), []).extend(r["md"] for r in t["rows"])
+    names = [b for b in mds if mds[b]]
+    same = {b: b for b in names}
+    def root(b):
+        while same[b] != b:
+            b = same[b]
+        return b
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            lo_a, hi_a, lo_b, hi_b = min(mds[a]), max(mds[a]), min(mds[b]), max(mds[b])
+            inside = sum(1 for m in mds[b] if lo_a < m < hi_a) + sum(1 for m in mds[a] if lo_b < m < hi_b)
+            if inside <= 3:
+                same[root(b)] = root(a)
+    label = {}
+    for t in tables:
+        k = key(t["bore"])
+        if k in same and (t["bore"] or root(k) not in label):
+            label[root(k)] = label.get(root(k)) or t["bore"]
+    for t in tables:
+        k = key(t["bore"])
+        t["bore"] = label.get(root(k)) if k in same else t["bore"]
+    return tables
+
+
+def _tables_by_bore(doc, texts, words=None):
+    """every page's station tables, each tagged with the wellbore its page
+    names (a page that names none goes on with the one before it)"""
+    out, bore = [], None
+    for i, p in enumerate(doc):
+        bore = _bore(texts[i]) or bore
+        for t in _page_tables(p, words[i] if words is not None else None):
+            t["bore"] = bore
+            out.append(t)
+    return _same_bores(out)
+
+
+def _ocr_ready():
+    try:
+        import auto_raster as ar
+        return ar.available()
+    except Exception:  # noqa: BLE001 - no numpy / Pillow: no OCR
+        return False
+
+
 def read_pdf(data, name="survey.pdf"):
     """A survey report PDF -> the survey (see read())."""
     import fitz
     doc = fitz.open(stream=bytes(data), filetype="pdf")
-    text = "\n".join(p.get_text() for p in doc)
-    tables = []
-    for p in doc:
-        tables.extend(_page_tables(p))
+    texts = [p.get_text() for p in doc]
+    text = "\n".join(texts)
+    tables = _tables_by_bore(doc, texts)
     warnings = []
+    ocr_read = False
+    scrambled = _scrambled(text)
+    textless = len(text.split()) < 20 * len(doc)          # a scan: next to no text of its own
+    if not tables and (scrambled or textless):
+        # the pages' pictures read instead (the EXE carries Tesseract)
+        ocr = [_ocr_words(p) for p in doc]
+        tables = _tables_by_bore(doc, [_ocr_text(w) for w in ocr], ocr)
+        if tables:
+            ocr_read = True
+            text = "\n".join(_ocr_text(words) for words in ocr)
+            warnings.append("The PDF's text " + ("is in a font with no readable characters" if scrambled
+                            else "is a picture (a scan)") + ", so its table was read by OCR: "
+                            "check the stations against the report.")
     if not tables:
-        if _scrambled(text):
+        if scrambled:
             raise NotASurvey("The PDF's text is in a font with no readable characters, so its "
-                             "table cannot be read (it would need OCR).")
+                             "table cannot be read" + ("." if _ocr_ready() else " (it would need OCR)."))
         raise NotASurvey("No survey station table (MD, inclination, azimuth) found in the PDF.")
     # the family of tables with the most rows (the station table on every
-    # page), not the short annotation tables beside a plot
+    # page), not the short annotation tables beside a plot; a report of
+    # more than one wellbore (an original hole and its sidetrack) keeps
+    # each one's tables apart
     fam = {}
     for t in tables:
-        fam.setdefault(t["sig"], []).append(t)
+        fam.setdefault((t["sig"], t["bore"]), []).append(t)
     best = max(fam.values(), key=lambda ts: (sum(len(t["rows"]) for t in ts),
                                              len(ts[0]["sig"])))
+    bore = best[0]["bore"]
+    bores = sorted({t["bore"] for t in tables if t["bore"] and len(t["rows"]) >= 5})
+    if len(bores) > 1:
+        warnings.append("The report holds the surveys of %d wellbores (%s): the one with the most "
+                        "stations (%s) is used." % (len(bores), "; ".join(bores), bore))
+    tables = [t for t in tables if t["bore"] == bore]
     units = best[0]["units"]
     rows = sorted((r for t in best for r in t["rows"]), key=lambda r: r["md"])
     # a page whose table came out with other columns (no header above it,
@@ -386,7 +510,7 @@ def read_pdf(data, name="survey.pdf"):
     if any(t["guessed"] for t in best):
         warnings.append("Some pages had no column names above the table: their columns were "
                         "taken as MD, inclination, azimuth, TVD.")
-    uwi = find_uwi(text)
+    uwi = find_uwi(bore or "") or find_uwi(text)         # a sidetrack's label carries its own UWI
     in_name = find_uwi(os.path.basename(name))
     if uwi and in_name and uwi != in_name:
         warnings.append(f"The report's UWI ({uwi}) is not the one in the file name ({in_name}): "
@@ -396,7 +520,7 @@ def read_pdf(data, name="survey.pdf"):
     vs_az = _first(r"Vertical Section (?:at|Azimuth\s*:?)\s*([\d.]+)", text)
     final = re.search(r"\bfinal\b", text[:3000], re.I) is not None
     return _finish(stations, units, name, uwi, well, "pdf", warnings,
-                   report_vs_azimuth=float(vs_az) if vs_az else None, final=final)
+                   report_vs_azimuth=float(vs_az) if vs_az else None, final=final, ocr=ocr_read)
 
 
 def read_table(text, name="survey.csv"):
@@ -460,7 +584,7 @@ class NotASurvey(ValueError):
 
 
 def _finish(stations, units, name, uwi, well, source, warnings, report_vs_azimuth=None,
-            final=None):
+            final=None, ocr=False):
     # feet to metres
     for f, u in units.items():
         if u == "ft" and f in ("md", "tvd", "ns", "ew", "vs", "ss"):
@@ -488,6 +612,19 @@ def _finish(stations, units, name, uwi, well, source, warnings, report_vs_azimut
     add_vertical_section(path, az)
     for s, r in zip(path, rep):
         s["rep"] = {k: v for k, v in r.items() if v is not None}
+    if ocr:
+        # OCR drops a thin minus sign now and then: a report's offset that is
+        # the path's own with the sign turned is that, not a disagreement
+        signs = 0
+        for s in path:
+            for k in ("ns", "ew", "vs"):
+                v = s["rep"].get(k)
+                if v is not None and abs(s[k]) > 0.05 and abs(v - s[k]) > 0.05 and abs(v + s[k]) <= 0.02:
+                    s["rep"][k] = -v
+                    signs += 1
+        if signs:
+            warnings.append(f"OCR left the minus sign off {signs} of the report's offsets: they are "
+                            "put back where the path agrees with them but for the sign.")
     diffs = [s["tvd"] - s["rep"]["tvd"] for s in path if "tvd" in s["rep"]]
     hd = [math.hypot(s["ns"] - s["rep"]["ns"], s["ew"] - s["rep"]["ew"]) for s in path
           if "ns" in s["rep"] and "ew" in s["rep"]]

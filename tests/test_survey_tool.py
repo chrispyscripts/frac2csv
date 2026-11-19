@@ -229,5 +229,94 @@ class ReportPdf(unittest.TestCase):
         self.assertTrue(out["csv"].startswith("UWI,MD (m)"))
 
 
+def _two_bores_pdf(oh_rows, st_rows):
+    """a report of two wellbores, each table page naming its own"""
+    import fitz
+    out = fitz.open()
+    for label, rows in (("100/06-07-008-09W4/00 OH", oh_rows), ("102/06-07-008-09W4/00 ST", st_rows)):
+        d = fitz.open(stream=_report_pdf(rows, plot_page=False, header_on_page2=True), filetype="pdf")
+        for p in d:
+            p.insert_text((72, 60), f"Wellbore: UWI: {label}", fontsize=8)
+            p.insert_text((330, 60), "Survey Calculation Method: Minimum Curvature", fontsize=8)
+        out.insert_pdf(d)
+    return out.tobytes()
+
+
+def _scanned(pdf_bytes, dpi=200):
+    """the report as a scan: each page a picture, no text of its own"""
+    import fitz
+    src, out = fitz.open(stream=pdf_bytes, filetype="pdf"), fitz.open()
+    for p in src:
+        pix = p.get_pixmap(dpi=dpi)
+        q = out.new_page(width=p.rect.width, height=p.rect.height)
+        q.insert_image(q.rect, pixmap=pix)
+    return out.tobytes()
+
+
+def _ocr():
+    try:
+        import auto_raster
+        return auto_raster.available()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class Wellbores(unittest.TestCase):
+    def test_a_sidetrack_is_kept_apart_from_its_original_hole(self):
+        rows = _made_up_path()
+        # the original hole: the same build, its stations half a metre off
+        # the sidetrack's and shallower by a metre (they part below 600 m)
+        oh = [(r[0] + 0.57,) + r[1:3] + (r[3] - (1.0 if r[0] > 600 else 0.0),) + r[4:] for r in rows[:-6]]
+        s = st.read(_two_bores_pdf(oh, rows), "two-bores.pdf")
+        self.assertEqual([round(p["md"], 2) for p in s["stations"]], [round(r[0], 2) for r in rows])
+        self.assertLess(s["check"]["tvd_max"], 0.01)
+        self.assertTrue(any("2 wellbores" in w and "ST" in w for w in s["warnings"]))
+        self.assertEqual(s["uwi"], "102/06-07-008-09W4/00")      # the sidetrack's own
+
+
+    def test_one_wellbore_named_two_ways_is_one(self):
+        T = lambda bore, mds: {"bore": bore, "rows": [{"md": m} for m in mds], "sig": ("md",)}
+        # a nameless first page, then the header worded two ways: the table
+        # carries on down, so it is one wellbore
+        ts = st._same_bores([T(None, range(0, 300, 30)), T("A Lic.#1", range(300, 900, 30)),
+                             T("A Lic.# 1", range(900, 1500, 30))])
+        self.assertEqual({t["bore"] for t in ts}, {"A Lic.#1"})
+        # an original hole and its sidetrack both list the hole from surface
+        ts = st._same_bores([T("OH", range(0, 1200, 30)), T("ST", range(0, 1500, 30))])
+        self.assertEqual([t["bore"] for t in ts], ["OH", "ST"])
+
+    def test_a_label_alone_names_no_wellbore(self):
+        self.assertIsNone(st._bore("Wellbore:\nDesign:\n100/01-01-001-01W4/00"))
+        self.assertIsNone(st._bore("Wellbore: Design:"))
+        self.assertEqual(st._bore("Wellbore: OH   Survey Calculation Method: Minimum Curvature"), "OH")
+
+
+@unittest.skipUnless(_ocr(), "needs Tesseract")
+class Scanned(unittest.TestCase):
+    def test_a_scanned_report_is_read_by_ocr(self):
+        rows = _made_up_path()
+        s = st.read(_scanned(_report_pdf(rows)), "scanned-report.pdf")
+        self.assertEqual(len(s["stations"]), len(rows))
+        self.assertLess(s["check"]["tvd_max"], 0.05)
+        self.assertTrue(any("read by OCR" in w for w in s["warnings"]))
+
+    def test_a_lost_minus_sign_is_put_back(self):
+        # a well heading west: its report's E/W are negative; OCR read one
+        # without its sign. The path agrees with it but for the sign.
+        raw = [(0, 0, 270), (300, 0, 270)] + [(300 + 30 * k, min(90, 5 * k), 270) for k in range(1, 19)]
+        true = st.min_curvature(stations(raw))
+        def report(flip_last):
+            return [dict(md=p["md"], inc=p["inc"], azi=p["azi"], tvd=p["tvd"], ns=p["ns"],
+                         ew=(-p["ew"] if flip_last and i == len(true) - 1 else p["ew"]))
+                    for i, p in enumerate(true)]
+        self.assertLess(true[-1]["ew"], -100)
+        warnings = []
+        out = st._finish(report(True), {}, "west.pdf", None, None, "pdf", warnings, ocr=True)
+        self.assertLess(out["check"]["offset_max"], 0.01)
+        self.assertTrue(any("minus sign off 1 " in w for w in warnings))
+        # read from the PDF's own text, a sign that disagrees is a disagreement
+        out = st._finish(report(True), {}, "west.pdf", None, None, "pdf", [])
+        self.assertGreater(out["check"]["offset_max"], 100)
+
 if __name__ == "__main__":
     unittest.main()
