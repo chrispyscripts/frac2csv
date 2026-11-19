@@ -43,6 +43,11 @@ const plain = o => JSON.parse(JSON.stringify(o));
   assert.equal(L.wellUrl('28744'), 'data/wells/28744.json');
   assert.equal(L.wellId({ wa: 'SK10X001', licence: '10X001' }), 'Licence 10X001');
   assert.equal(L.wellId({ wa: '28744' }), 'WA 28744');
+  // a pad and a well from a file dropped on the map: kept in the browser (drop-store.js answers data/drop/)
+  assert.equal(L.padUrl('drop-2-361441'), 'data/drop/pads/drop-2-361441.json');
+  assert.equal(L.wellUrl('DR2-361441'), 'data/drop/wells/DR2-361441.json');
+  assert.ok(L.isLocalPad('drop-2-361441') && L.isLocalWell('DR2-361441') && !L.isSkPad('drop-2-361441'));
+  assert.equal(L.wellId({ wa: 'DR1-W3', uwi: '100/01-01-001-01W4/00' }), '100/01-01-001-01W4/00');
 
   // a WellSight well's runs, and a BC well's LAS gamma
   const sk = { logs: { md0: 1000, bin: 2, types: { rock: [0, 0, 1, null, 2], por: [9, 12, null, 3, 24], show: [null, 1, 4, 0, null],

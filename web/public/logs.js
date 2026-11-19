@@ -36,12 +36,18 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 // ---------- the Saskatchewan set, where it is ----------
 let SK = null;
 const skReady = fetch('data/sk/index.json').then(r => (r.ok ? r.json() : null)).then(d => { SK = d && Array.isArray(d.pads) ? d : null; return SK; }).catch(() => null);
-const isLocalPad = id => /^sk-/.test(String(id || ''));
-const isLocalWell = wa => /^SK/.test(String(wa || ''));
-const padUrl = id => (isLocalPad(id) ? 'data/sk/pads/' : 'data/region/pads/') + encodeURIComponent(id) + '.json';
-const wellUrl = wa => (isLocalWell(wa) ? 'data/sk/wells/' : 'data/wells/') + encodeURIComponent(wa) + '.json';
+// (a pad or well from a file dropped on the map is kept in this browser:
+// drop-store.js answers data/drop/ out of IndexedDB. It opens as a
+// Saskatchewan pad does: a survey and stages, no BCER pad page)
+const isSkPad = id => /^sk-/.test(String(id || ''));
+const isDropPad = id => /^drop-/.test(String(id || ''));
+const isDropWell = wa => /^DR\d+-/.test(String(wa || ''));
+const isLocalPad = id => isSkPad(id) || isDropPad(id);
+const isLocalWell = wa => /^SK/.test(String(wa || '')) || isDropWell(wa);
+const padUrl = id => (isDropPad(id) ? 'data/drop/pads/' : isSkPad(id) ? 'data/sk/pads/' : 'data/region/pads/') + encodeURIComponent(id) + '.json';
+const wellUrl = wa => (isDropWell(wa) ? 'data/drop/wells/' : /^SK/.test(String(wa || '')) ? 'data/sk/wells/' : 'data/wells/') + encodeURIComponent(wa) + '.json';
 // how a well is named: its BCER well authorisation, or a Saskatchewan licence
-const wellId = w => (w && w.licence ? 'Licence ' + w.licence : 'WA ' + (w ? w.wa : '?'));
+const wellId = w => (w && w.licence ? 'Licence ' + w.licence : w && isDropWell(w.wa) ? (w.uwi || 'From your file') : 'WA ' + (w ? w.wa : '?'));
 
 // ---------- the types ----------
 // a curve type's name, unit and scale come from the set's index
@@ -246,7 +252,7 @@ if (!document.getElementById('lg-style')) {
   (document.head || document.documentElement).append(st);
 }
 
-window.StratumLogs = { BASE, KEY, skReady, sk: () => SK, isLocalPad, isLocalWell, padUrl, wellUrl, wellId,
+window.StratumLogs = { BASE, KEY, skReady, sk: () => SK, isLocalPad, isLocalWell, isSkPad, isDropPad, isDropWell, padUrl, wellUrl, wellId,
   def, current, set, track, at, has, available, pick, scale, ink, height, words, menu, stepKey, keyHtml, rocksIn, about,
   rockName, rockInk, rockTerm, SHOW_NAMES };
 })();

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="theme.js"></script>
+<script src="drop-store.js"></script>
 <script src="logs.js"></script>
 <title>FracView — Pad map</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
@@ -171,6 +172,7 @@ const MARK = () => dark()
   ? { halo: "#000", haloOp: .35, toeRing: "#0b1015", padFill: "#ffffff", areaFill: "#ffffff", areaOp: .07, areaLine: "#c9d3dc", quake: "#ff5fa2", hl: "#ffffff", sel: "#5ee2d0" }
   : { halo: "#ffffff", haloOp: .8, toeRing: "#ffffff", padFill: "#ffffff", areaFill: "#0d8577", areaOp: .06, areaLine: "#5b7f8f", quake: "#d6336c", hl: "#14212b", sel: "#0d8577" };
 const fmt = (v, d = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString(undefined, { maximumFractionDigits: d });
+const escHtml = t => String(t == null ? "" : t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const map = new maplibregl.Map({
   container: "map",
@@ -231,12 +233,27 @@ async function load() {
       for (const p of sk.pads) PAD_INFO[p.id] = p;
     }
   } catch (e) {}
+  // wells from files dropped on the map, kept in this browser (drop-store.js)
+  try { if (window.StratumDrop) setDropped(await StratumDrop.ready); } catch (e) {}
   // operator, field and years per pad, from the region index the 3D view also reads
   try { for (const p of (await (await fetch("data/region/index.json")).json()).pads) PAD_INFO[p.id] = p; } catch (e) {}
   try { demoAreas((await (await fetch("data/region/featured.json")).json()).areas); } catch (e) {}
   applyFilter();
   render();
 }
+
+// the wells of the files dropped on the map: one set, "Your files", in the
+// colours the pads after it take; it follows every drop and removal, in any window
+function setDropped(st) {
+  const i = ALL_SETS.findIndex(S => S.set === "drop");
+  if (i >= 0) ALL_SETS.splice(i, 1);
+  if (!st || !st.mapPads.length) return;
+  const pads = structuredClone(st.mapPads);
+  pads.forEach((p, j) => { p.ci = j + 3; p.color = padColor(p.ci); p.set = "drop"; PAD_BY_ID[p.id] = p; for (const w of p.wells) { w.pad = p; WELL_BY_WA[w.wa] = w; } });
+  for (const p of st.indexPads) PAD_INFO[p.id] = p;
+  ALL_SETS.push({ set: "drop", name: "Your files", pads });
+}
+addEventListener("stratum:dropped", e => { setDropped(e.detail); if (map.getSource("laterals")) refresh(); });
 
 // For now the map keeps to wells whose treatment charts are in, so every well
 // shown opens onto its full data; unticking the legend's box shows every well.
@@ -245,7 +262,8 @@ let chartedOnly = true;
 try { chartedOnly = localStorage.getItem("stratum.allWells") !== "1"; } catch (e) {}
 window.stratumWells = { chartedOnly: () => chartedOnly };
 function applyFilter() {
-  SETS = ALL_SETS.map(S => ({ ...S, pads: !chartedOnly ? S.pads
+  // (a dropped file's wells are all shown: they are what was asked for)
+  SETS = ALL_SETS.map(S => ({ ...S, pads: !chartedOnly || S.set === "drop" ? S.pads
     : S.pads.map(p => ({ ...p, wells: p.wells.filter(w => w.stages || w.ws) })).filter(p => p.wells.length) }));
   for (const S of SETS) for (const p of S.pads) PAD_BY_ID[p.id] = p;
   document.getElementById("charted").checked = chartedOnly;
@@ -616,7 +634,8 @@ function openPad(p, lngLat) {
   const info = PAD_INFO[p.id] || {};
   const yrs = info.years ? (info.years[0] === info.years[1] ? info.years[0] : info.years.join("–")) : null;
   const skLogs = p.wells.filter(w => w.ws).length, skFrac = p.wells.filter(w => w.stages).length;
-  const facts = (/^sk-/.test(p.id) ? [`${p.wells.length} well${p.wells.length > 1 ? "s" : ""}`, skLogs ? `${skLogs} with a mud log` : null, skFrac ? `${skFrac} with frac stages` : null, info.operator, yrs]
+  const facts = (/^drop-/.test(p.id) ? [`${p.wells.length} well${p.wells.length > 1 ? "s" : ""} from your file`, skFrac ? `${skFrac} with frac stages` : null, info.operator, yrs]
+    : /^sk-/.test(p.id) ? [`${p.wells.length} well${p.wells.length > 1 ? "s" : ""}`, skLogs ? `${skLogs} with a mud log` : null, skFrac ? `${skFrac} with frac stages` : null, info.operator, yrs]
     : chartedOnly
     ? [`${p.wells.length} wells with charts${info.wells > p.wells.length ? ` (of ${info.wells})` : ""}`, info.operator, yrs]
     : [`${p.wells.length} wells`, info.operator, yrs, info.curves ? `${info.curves} with treatment curves` : null]).filter(Boolean);
@@ -638,7 +657,8 @@ function openPad(p, lngLat) {
 let popup = null;
 function openWell(p, lngLat) {
   if (popup) popup.remove();
-  const sk = /^SK/.test(String(p.wa));
+  const sk = /^SK/.test(String(p.wa)), dropped = /^DR\d+-/.test(String(p.wa));
+  if (dropped) return openDropped(p, lngLat);
   const facts = [
     p.pad, p.td ? `TD ${fmt(p.td)} m` : null, p.tvd ? `TVD ${fmt(p.tvd)} m` : null,
     p.lateral ? `lateral ${fmt(p.lateral)} m` : null,
@@ -670,6 +690,26 @@ function openWell(p, lngLat) {
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
   const a = document.querySelector(`.pad li a[data-wa="${p.wa}"]`);
   if (a) { a.classList.add("on"); a.closest(".pad").classList.add("open"); }
+}
+
+// a well from a dropped file: what the export says of it, and its well section
+function openDropped(p, lngLat) {
+  const facts = [p.pad, p.td ? `TD ${fmt(p.td)} m` : null, p.tvd ? `TVD ${fmt(p.tvd)} m` : null, p.lateral ? `lateral ${fmt(p.lateral)} m` : null,
+    p.est ? "path estimated from the surface and bottom hole (no survey in the file)" : p.stations ? `${p.stations} survey stations` : null,
+    p.stages ? `${p.stages} frac stages` : null].filter(Boolean);
+  popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat)
+    .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts"><button type="button" class="view">View well</button></div></div>`).addTo(map);
+  const el = popup.getElement();
+  el.querySelector(".pop > b").textContent = p.name;
+  el.querySelector(".facts").textContent = (p.uwi ? p.uwi + " · " : "") + facts.join(" · ");
+  const view = () => {
+    if (!window.stratumSection) return;
+    window.stratumSection.view(p.wa);
+    const pt = map.project(lngLat), h = map.getContainer().clientHeight;
+    if (pt.y > h - 70) map.panBy([0, pt.y - h * 0.55], { duration: 350 });
+  };
+  el.querySelector(".view").addEventListener("click", view);
+  view();
 }
 
 // the demo's prepared areas: each opens straight into its pads in 3D
@@ -713,9 +753,9 @@ function sidebar() {
   const shown = inView.slice(0, LIST_MAX);
   el.innerHTML = `<div class="inview">${inView.length ? `${inView.length} pad${inView.length > 1 ? "s" : ""} in view${inView.length > LIST_MAX ? ` · nearest ${LIST_MAX} listed` : ""}` : "No pads in view"}</div>` + shown.map(p => `
     <div class="pad${openPads.has(p.id) ? " open" : ""}" data-id="${p.id}">
-      <button type="button"><span><span class="sw" style="background:${p.color}"></span>${p.name}</span>
-        <span class="n">${p.wells.length} wells${/^sk-/.test(p.id) ? [p.wells.some(w => w.ws) ? ` · ${p.wells.filter(w => w.ws).length} mud logs` : "", p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} with frac stages` : ""].join("") : p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} curves` : ""}</span></button>
-      <ul>${p.wells.map(w => `<li><a href="#" data-wa="${w.wa}">${w.name.replace(/^\S+(\s+\S+)?\s+HZ\s+/i, "")}
+      <button type="button"><span><span class="sw" style="background:${p.color}"></span>${escHtml(p.name)}</span>
+        <span class="n">${p.wells.length} wells${/^(sk|drop)-/.test(p.id) ? [p.wells.some(w => w.ws) ? ` · ${p.wells.filter(w => w.ws).length} mud logs` : "", p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} with frac stages` : ""].join("") : p.wells.some(w => w.stages) ? ` · ${p.wells.filter(w => w.stages).length} curves` : ""}</span></button>
+      <ul>${p.wells.map(w => `<li><a href="#" data-wa="${escHtml(w.wa)}">${escHtml(String(w.name || w.wa).replace(/^\S+(\s+\S+)?\s+HZ\s+/i, ""))}
           <span class="m">${fmt(w.lateral)} m${w.ports ? ` · ${w.ports} stg` : ""}${w.stages ? ` · <b>curves</b>` : ""}${w.ws ? " · <b>mud log</b>" : w.logs ? " · GR" : ""}</span></a></li>`).join("")}</ul>
     </div>`).join("");
   el.querySelectorAll(".pad > button").forEach(b => b.addEventListener("click", () => {
@@ -759,5 +799,6 @@ if (new URLSearchParams(location.search).get("show") === "1") {
 <script src="menu.js"></script>
 <script src="groupmode.js"></script>
 <script src="map-extras.js"></script>
+<script src="drop.js"></script>
 </body>
 </html>

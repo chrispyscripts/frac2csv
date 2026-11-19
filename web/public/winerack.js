@@ -97,7 +97,8 @@ async function loadPad(id) {
   const r = await fetch(SL ? SL.padUrl(id) : 'data/region/pads/' + encodeURIComponent(id) + '.json');
   if (!r.ok) throw Error(r.status === 404 ? 'This pad is not in FracView.' : 'Unable to load this pad.');
   const p = await r.json();
-  if (chartedOnly()) p.wells = p.wells.filter(w => w.well.curves || w.well.logs);
+  // (a dropped file's wells are all shown: they are what was asked for)
+  if (chartedOnly() && !(SL && SL.isDropPad && SL.isDropPad(id))) p.wells = p.wells.filter(w => w.well.curves || w.well.logs);
   if (!p.wells.length) throw Error('No wells with treatment charts on this pad. Untick “only wells with treatment charts” on the map to see them all.');
   const k = Math.cos(p.lat * Math.PI / 180), xy = (lon, lat) => [(lon - p.lon) * 111320 * k, (lat - p.lat) * 111320];
   p.wells.forEach(w => {
@@ -572,7 +573,7 @@ function head() {
   $('wr-empty').hidden = racks.length > 0;
   $('wr-sub').textContent = !racks.length ? 'No pads yet' : `${racks.length} pad${racks.length > 1 ? 's' : ''}`
     + (ok.length ? ` · ${ok.reduce((n, R) => n + R.p.wells.length, 0)} wells` : '') + ' · newest at the bottom'
-    + (chartedOnly() ? (ok.length && ok.every(R => R.p.wells.every(w => w.logs)) ? ' · wells with mud logs' : ' · wells with treatment charts') : '');
+    + (ok.length && SL && SL.isDropPad && ok.every(R => SL.isDropPad(R.p.id)) ? ' · wells from your files' : chartedOnly() ? (ok.length && ok.every(R => R.p.wells.every(w => w.logs)) ? ' · wells with mud logs' : ' · wells with treatment charts') : '');
   document.title = 'FracView — ' + (ok.length === 1 ? ok[0].p.name + ' · Wine rack' : `Wine racks${racks.length ? ' · ' + racks.length + ' pads' : ''}`);
   const gb = document.querySelector('[data-color=gamma]');
   const sk = SL && SL.sk();
