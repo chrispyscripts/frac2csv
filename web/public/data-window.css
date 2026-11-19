@@ -1,0 +1,69 @@
+/* the map's Data window (data-window.js) and the stage dots' tip (map-stages.js).
+   The datasets inside are stage-datasets.css's, drawn in the stage charts page's
+   tokens, given here for the map: light by default, dark under [data-theme=dark] */
+:root{--accent:#0d8577;--on-accent:#ffffff;
+  --sd-grid:#e8eef2;--sd-stage:rgba(13,133,119,.15);--sd-stage-edge:rgba(13,133,119,.75);--sd-cursor:rgba(20,33,43,.55);
+  --sd-note:#d9480f;--sd-desc:#8a7f6a;
+  --sd-c1:#b4690e;--sd-c2:#1f6feb;--sd-c3:#c2255c;--sd-c4:#7048e8;--sd-c5:#2b8a3e;--sd-c6:#5c6b77;--sd-c7:#0b7f8a;--sd-c8:#9a6b00}
+:root[data-theme=dark]{--accent:#5ee2d0;--on-accent:#06231f;
+  --sd-grid:#1a2e3a;--sd-stage:rgba(94,226,208,.16);--sd-stage-edge:rgba(94,226,208,.8);--sd-cursor:rgba(231,244,250,.6);
+  --sd-note:#ff8a4d;--sd-desc:#b3a68c;
+  --sd-c1:#f0a04b;--sd-c2:#5b9cf8;--sd-c3:#f06595;--sd-c4:#a78bfa;--sd-c5:#69db7c;--sd-c6:#a3b4bf;--sd-c7:#39c5cf;--sd-c8:#f2c94c}
+
+/* the button, under the legend (where Change View was) */
+.dw-btn{position:absolute;right:12px;z-index:6;display:flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 14px;
+  background:var(--panel);color:var(--ink);border:1px solid var(--btn-line);border-radius:10px;box-shadow:0 6px 20px var(--shadow);
+  font:600 13.5px -apple-system,Segoe UI,Roboto,sans-serif;cursor:pointer}
+.dw-btn:hover,.dw-btn:focus-visible{border-color:var(--hov);box-shadow:0 6px 20px var(--shadow),0 0 0 3px var(--glow);outline:none}
+.dw-btn svg{color:var(--hov)}
+
+/* the window */
+.dw{position:fixed;z-index:8;display:flex;flex-direction:column;max-height:calc(100vh - var(--dw-top, 12px) - 12px);
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 36px var(--shadow),0 2px 8px var(--shadow);
+  font:13px/1.4 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
+.dw[hidden],.dw [hidden]{display:none!important}
+body.ws-docked .dw{max-height:calc(100vh - var(--dw-top, 12px) - var(--ws-h, 42vh) - 12px)}
+.dw-h{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line);cursor:grab;user-select:none;touch-action:none}
+.dw.dw-drag .dw-h{cursor:grabbing}
+.dw-id{flex:1;min-width:0;display:flex;flex-direction:column}
+.dw-t{font-size:14px}
+.dw-s{color:var(--mut);font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dw-s:empty{display:none}
+.dw button{background:var(--btn);border:1px solid var(--btn-line);border-radius:8px;color:var(--ink);padding:4px 10px;font:inherit;font-size:12.5px;cursor:pointer;line-height:1.3}
+.dw button:hover{border-color:var(--accent)}
+.dw button:disabled{opacity:.4;cursor:default;border-color:var(--btn-line)}
+.dw button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dw .dw-follow{background:var(--go);border-color:var(--go-line);color:var(--go-ink);font-weight:600}
+.dw .dw-x{font-size:17px;line-height:1;padding:3px 9px}
+.dw-hint{margin:0;padding:8px 14px 0;color:var(--mut);font-size:12.5px}
+.dw-hint[hidden]{display:none}
+.dw-body{overflow:auto;min-height:0}
+.dw-body .sd{border-top:0}
+.dw .sd-add{background:transparent}
+.dw .sd-add:hover,.dw .sd-add.on{background:var(--btn)}
+.dw .sd-pick{background:var(--page)}
+.dw .sd-opts{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+.dw .sd-opt{background:var(--panel)}
+/* while the next well is read, the last one's strips stay, faded */
+.dw .sd-busy .sd-list,.dw .sd-busy .sd-axis{opacity:.45;transition:opacity .15s}
+/* a dataset the well in view lacks: its name and why, no strip */
+.sd-missing{background:transparent;border-style:dashed}
+.sd-missing .sd-src{color:var(--mut)}
+/* a phone: a sheet along the bottom */
+.dw.dw-sheet{left:8px!important;right:8px!important;bottom:8px;top:auto!important;width:auto!important;max-height:58vh}
+.dw.dw-sheet .dw-h{cursor:default}
+body.dw-on .dw-btn{display:none}
+@media(max-width:640px){.dw-btn{top:auto!important;bottom:76px;width:auto!important}}
+
+/* a stage on the map under the pointer */
+.stg-tip{position:absolute;z-index:7;pointer-events:none;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;
+  padding:4px 8px;font:12px/1.35 -apple-system,Segoe UI,Roboto,sans-serif;box-shadow:0 4px 14px var(--shadow);white-space:nowrap}
+.stg-tip b{font-weight:650}
+.stg-tip span{color:var(--mut);font-family:var(--mono);font-size:11.5px}
+.pop .stg-facts{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;margin:6px 0 2px;font-size:12px}
+.pop .stg-facts dt{color:var(--mut)}
+.pop .stg-facts dd{margin:0;font-family:var(--mono)}
+/* a narrow window: a strip's name gives way (with an ellipsis) before its readout and buttons wrap */
+.dw .sd-ph{flex-wrap:nowrap}
+.dw .sd-pt{flex:1 1 0;min-width:0}
+.dw .sd-read{flex:none;max-width:45%}

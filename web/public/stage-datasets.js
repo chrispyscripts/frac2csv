@@ -13,6 +13,14 @@
 // Both are stratum.* keys, so a saved session (session.js) carries them.
 //
 //   StageDatasets.attach({wa, label, mount}) -> {setStage(label), destroy()}
+//
+// A solo stack (the map's Data window, data-window.js) is one card that moves
+// from well to well: attach({solo: true, mount, stack, onChange}) ->
+// {setTarget(wa, label), ...}. Its stack is the datasets asked for, kept by
+// the caller (onChange), and stays as it is from well to well: a dataset the
+// well in view lacks shows as "not on file" in its place. It takes no part in
+// the stage page's default or its saved cards. With no stage (label null) it
+// shows the lateral.
 (() => {
 'use strict';
 const C = window.StageDatasetsCore;
@@ -36,21 +44,26 @@ try {
   const a = parse(sessionStorage.getItem(CARDS_KEY));
   if (Array.isArray(a)) RESTORE = a.filter(r => r && r.wa != null && r.label != null).map(r => ({ wa: String(r.wa), label: String(r.label), ...(C.sanitizeStack(r) || { kinds: [], win: 'stage' }) }));
 } catch (e) { /* private mode */ }
-const ctls = [];
+const ctls = [], solos = [];
+const every = () => ctls.concat(solos);
 let lastEdited = null;
 const cardsJson = () => JSON.stringify(ctls.map(c => ({ wa: c.wa, label: c.label, kinds: (c.pending ? c.pending.kinds : c.kinds).slice(), win: c.win })));
 function persist() {
   RESTORE = [];
+  if (solos.length && !ctls.length) return;      // (the map's Data window: no stage cards to keep)
   try { sessionStorage.setItem(CARDS_KEY, cardsJson()); } catch (e) { /* private mode: this page only */ }
 }
-if (window.StratumSession) StratumSession.provide(() => ({ [CARDS_KEY]: cardsJson() }));
+if (window.StratumSession) StratumSession.provide(() => (ctls.length ? { [CARDS_KEY]: cardsJson() } : {}));
 
 // ---------- the wells ----------
-const wells = new Map();
+// (kept for the last few wells: the Data window reads one well after another as the pointer moves)
+const wells = new Map(), KEEP = 40;
 let gammaP = null;
 const getJSON = u => fetch(u).then(r => { if (!r.ok) throw Error(String(r.status)); return r.json(); });
 const gammaFile = () => gammaP || (gammaP = getJSON('data/gamma.json').catch(() => null));
 function model(wa) {
+  if (wells.has(wa)) { const p = wells.get(wa); wells.delete(wa); wells.set(wa, p); return p; }
+  while (wells.size >= KEEP) wells.delete(wells.keys().next().value);
   if (!wells.has(wa)) wells.set(wa, (async () => {
     const S = SL();
     let file;
@@ -95,11 +108,20 @@ const catWords = (k, v) => (SL() ? SL().words(k, v) : String(v));
 
 // ---------- a card's datasets ----------
 function attach(o) {
-  const c = { id: 'sd' + (++uid), wa: String(o.wa), label: String(o.label), kinds: [], win: 'stage', pending: null, m: null, mP: null,
-              cursor: null, hot: -1, panels: new Map(), open: false, W: null, raf: 0, liveT: 0 };
-  const i = RESTORE.findIndex(r => r.wa === c.wa && r.label === c.label);
-  if (i >= 0) { const r = RESTORE.splice(i, 1)[0]; c.kinds = r.kinds; c.win = r.win; }
-  else if (DEF && DEF.kinds.length) { c.pending = DEF; c.win = DEF.win; }
+  const solo = !!o.solo;
+  const c = { id: 'sd' + (++uid), wa: o.wa == null ? '' : String(o.wa), label: o.label == null ? null : String(o.label), kinds: [], win: 'stage', pending: null, m: null, mP: null,
+              cursor: null, hot: -1, panels: new Map(), open: false, W: null, raf: 0, liveT: 0,
+              solo, want: [], names: {}, onChange: o.onChange || null };
+  if (solo) {
+    const s = C.sanitizeStack(o.stack);
+    if (s) { c.want = s.kinds; c.win = s.win; }
+    const n = o.stack && o.stack.names;
+    if (n && typeof n === 'object') for (const k of c.want) if (n[k] && typeof n[k].t === 'string') c.names[k] = { t: n[k].t.slice(0, 80), u: String(n[k].u || '').slice(0, 20) };
+  } else {
+    const i = RESTORE.findIndex(r => r.wa === c.wa && r.label === c.label);
+    if (i >= 0) { const r = RESTORE.splice(i, 1)[0]; c.kinds = r.kinds; c.win = r.win; }
+    else if (DEF && DEF.kinds.length) { c.pending = DEF; c.win = DEF.win; }
+  }
 
   const root = c.root = el('div', 'sd');
   // (the page's list is a live region: the readouts change as a pointer moves, so they are kept quiet,
@@ -130,59 +152,86 @@ function attach(o) {
   o.mount.append(root);
   if (ro) ro.observe(c.list);
 
-  ctls.push(c);
-  if (c.kinds.length || c.pending) ensure(c);
+  (solo ? solos : ctls).push(c);
+  if (c.wa && (c.kinds.length || c.pending || c.want.length)) ensure(c);
   render(c);
-  later(() => { persist(); refreshSave(); });
+  if (!solo) later(() => { persist(); refreshSave(); });
   return {
-    setStage(label) { label = String(label); if (label === c.label) return; c.label = label; c.cursor = null; c.hot = -1; render(c); persist(); refreshSave(); },
+    setStage(label) { label = label == null ? null : String(label); if (label === c.label) return; c.label = label; c.cursor = null; c.hot = -1; render(c); persist(); refreshSave(); },
+    // (solo) the well and stage to show: the stack stays, the well's datasets fill it
+    setTarget(wa, label) {
+      wa = wa == null ? '' : String(wa); label = label == null ? null : String(label);
+      if (wa === c.wa) { this.setStage(label); return; }
+      c.wa = wa; c.label = label; c.m = null; c.mP = null; c.cursor = null; c.hot = -1;
+      if (c.wa && (c.want.length || c.open)) ensure(c);
+      if (c.open) renderPick(c, false);
+      render(c);
+    },
+    get target() { return { wa: c.wa, label: c.label, name: c.m && c.m.ok ? c.m.name : '' }; },
     destroy() {
-      const k = ctls.indexOf(c); if (k >= 0) ctls.splice(k, 1);
+      for (const l of [ctls, solos]) { const k = l.indexOf(c); if (k >= 0) l.splice(k, 1); }
       if (lastEdited === c) lastEdited = null;
       if (ro) ro.unobserve(c.list);
-      persist(); refreshSave();
+      if (!solo) { persist(); refreshSave(); }
     },
-    get stack() { return { kinds: c.kinds.slice(), win: c.win }; },
+    get stack() { return stackOf(c); },
   };
 }
+const stackOf = c => (c.solo ? { kinds: c.want.slice(), win: c.win, names: { ...c.names } } : { kinds: c.kinds.slice(), win: c.win });
 // read the well, and settle a stack waiting on it (the default: only the kinds this well has)
 function ensure(c) {
   if (c.m) { settle(c); return; }
-  if (c.mP) return;
-  c.mP = model(c.wa).then(m => {
+  if (c.mP || !c.wa) return;
+  const wa = c.wa;
+  c.mP = model(wa).then(m => {
+    if (c.wa !== wa) return;                 // (a solo stack moved on to another well meanwhile)
     c.m = m; settle(c);
     if (c.open) renderPick(c, c.pick.contains(document.activeElement) || document.activeElement === c.add);
-    render(c); persist(); refreshSave();
+    render(c);
+    if (!c.solo) { persist(); refreshSave(); }
   });
 }
 function settle(c) {
   if (!c.m) return;
+  if (c.solo) { c.kinds = c.want.filter(k => c.m.sets.has(k)); return; }
   if (c.pending) { c.kinds = C.resolve(c.pending.kinds, c.m); c.win = c.pending.win; c.pending = null; }
   else c.kinds = C.resolve(c.kinds, c.m);
 }
-function edited(c) { lastEdited = c; render(c); persist(); refreshSave(); }
+function edited(c) {
+  if (c.solo) { settle(c); render(c); if (c.onChange) c.onChange(stackOf(c)); return; }
+  lastEdited = c; render(c); persist(); refreshSave();
+}
+// the stack's own order: a solo stack's asked-for datasets, else the card's
+const order = c => (c.solo ? c.want : c.kinds);
 
 function addKind(c, kind) {
-  if (!c.m || !c.m.sets.has(kind) || c.kinds.includes(kind)) return;
-  c.kinds.push(kind);
+  const L = order(c);
+  if (L.includes(kind)) return;
+  if (c.solo) {
+    const o = offers(c).find(x => x.kind === kind);
+    if (!o) return;
+    c.names[kind] = { t: o.t, u: o.u || '' };
+  } else if (!c.m || !c.m.sets.has(kind)) return;
+  L.push(kind);
   openPick(c, false);
   edited(c);
   c.add.focus();
 }
 function removeKind(c, kind) {
-  const i = c.kinds.indexOf(kind);
+  const L = order(c), i = L.indexOf(kind);
   if (i < 0) return;
-  c.kinds.splice(i, 1);
+  L.splice(i, 1);
+  if (c.solo) delete c.names[kind];
   const p = c.panels.get(kind); if (p) { p.sec.remove(); c.panels.delete(kind); }
   edited(c);
   if (c.open) renderPick(c, false);
-  const next = c.panels.get(c.kinds[Math.min(i, c.kinds.length - 1)]);
+  const next = c.panels.get(L[Math.min(i, L.length - 1)]);
   (next ? next.sec.querySelector('.sd-x') : c.add).focus();
 }
 function moveKind(c, kind, d, btn) {
-  const i = c.kinds.indexOf(kind), j = i + d;
-  if (i < 0 || j < 0 || j >= c.kinds.length) return;
-  [c.kinds[i], c.kinds[j]] = [c.kinds[j], c.kinds[i]];
+  const L = order(c), i = L.indexOf(kind), j = i + d;
+  if (i < 0 || j < 0 || j >= L.length) return;
+  [L[i], L[j]] = [L[j], L[i]];
   edited(c);
   if (btn.disabled) { const p = c.panels.get(kind); if (p) p.sec.querySelector(d < 0 ? '.sd-dn' : '.sd-up').focus(); }
   else btn.focus();
@@ -198,17 +247,68 @@ function openPick(c, on) {
   ensure(c);
   renderPick(c, true);
 }
+// a panel's ↑ ↓ × buttons
+function actions(c, kind, t) {
+  const pa = el('div', 'sd-pa');
+  const btn = (cls, txt, label) => { const b = el('button', cls, txt); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label; return b; };
+  const up = btn('sd-up', '↑', `Move ${t} up`), dn = btn('sd-dn', '↓', `Move ${t} down`), x = btn('sd-x', '×', `Remove ${t}`);
+  up.onclick = () => moveKind(c, kind, -1, up); dn.onclick = () => moveKind(c, kind, 1, dn); x.onclick = () => removeKind(c, kind);
+  pa.append(up, dn, x);
+  return pa;
+}
+// (solo) a dataset asked for that the well in view lacks: its name, and why there is no strip
+function missingFor(c, kind, why) {
+  let p = c.panels.get(kind);
+  if (p && p.missing && p.why === why) return p;
+  if (p) { p.sec.remove(); c.panels.delete(kind); }
+  const nm = c.names[kind] || { t: kind.replace(/^(las|c|x):/, ''), u: '' };
+  const sec = el('section', 'sd-p sd-missing'); sec.dataset.kind = kind;
+  sec.setAttribute('aria-label', `${nm.t}: ${why}`);
+  const ph = el('div', 'sd-ph'), pt = el('div', 'sd-pt');
+  pt.append(el('b', '', nm.t));
+  if (nm.u) pt.append(el('span', 'sd-u', nm.u));
+  pt.append(el('span', 'sd-src', why));
+  ph.append(pt, actions(c, kind, nm.t));
+  sec.append(ph);
+  p = { kind, sec, missing: true, why, m: c.m };
+  c.panels.set(kind, p);
+  return p;
+}
 const GROUPS = [['log', 'Logs'], ['mud', 'Mud log'], ['notes', 'Notes']];
+// (solo) the usual datasets, offered whichever well is in view: a stack that follows the pointer keeps them for the wells that have them
+function usual() {
+  const S = SL(), d = k => (S && S.def(k)) || null;
+  const mud = k => { const x = d(k) || {}; return { kind: k, t: x.t || k, u: x.u || '', group: ['rock', 'por', 'show'].includes(k) ? 'mud' : 'log' }; };
+  return [{ kind: 'gamma', t: 'Gamma ray', u: 'API', group: 'log' },
+    ...C.LAS_COMMON.map(n => ({ kind: 'las:' + n, t: n, u: (C.LAS_UNITS || {})[n] || '', group: 'log' })),
+    ...['rock', 'por', 'show', 'c:rop', 'c:total_gas'].map(mud),
+    { kind: 'comments', t: 'Comments', u: '', group: 'notes' }];
+}
+// what the picker lists: the well's datasets (and the usual ones it lacks, disabled); a solo stack can take any of them
+function offers(c) {
+  const have = order(c), ready = !!(c.m && c.m.ok);
+  const base = ready ? C.catalogue(c.m, have) : [];
+  if (!c.solo) return base;
+  const seen = new Set(base.map(o => o.kind));
+  const later = 'shown for the wells that have it';
+  return [...base.map(o => (o.ok || o.added ? o : { ...o, ok: true, note: `${o.note} · ${later}` })),
+    ...usual().filter(o => !seen.has(o.kind)).map(o => {
+      const added = have.includes(o.kind);
+      return { ...o, added, ok: !added, note: added ? 'In this stack' : ready ? `${C.NO_FILE} · ${later}` : `Shown for each well you point at that has it` };
+    })];
+}
 function renderPick(c, focus) {
   const p = c.pick;
   p.replaceChildren();
   const h = el('div', 'sd-pick-h');
-  h.append(el('b', '', 'Add a dataset'), el('span', '', c.m && c.m.ok ? 'drawn along the well’s MD, around the stage' : ''));
+  const sub = c.solo ? (c.m && c.m.ok ? `what ${c.m.name || 'this well'} has first` : c.wa ? 'reading this well…' : 'point at a well or a stage on the map to see what it has')
+    : c.m && c.m.ok ? 'drawn along the well’s MD, around the stage' : '';
+  h.append(el('b', '', 'Add a dataset'), el('span', '', sub));
   const x = el('button', 'sd-pick-x', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Close the list of datasets');
   h.append(x); p.append(h);
-  if (!c.m) { p.append(el('p', 'sd-pick-wait', 'Reading this well’s logs…')); if (focus) x.focus(); return; }
-  if (!c.m.ok) { p.append(el('p', 'sd-pick-wait', c.m.err)); if (focus) x.focus(); return; }
-  const opts = C.catalogue(c.m, c.kinds);
+  if (!c.solo && !c.m) { p.append(el('p', 'sd-pick-wait', 'Reading this well’s logs…')); if (focus) x.focus(); return; }
+  if (!c.solo && !c.m.ok) { p.append(el('p', 'sd-pick-wait', c.m.err)); if (focus) x.focus(); return; }
+  const opts = offers(c);
   for (const [g, name] of GROUPS) {
     const list = opts.filter(o => o.group === g);
     if (!list.length) continue;
@@ -240,8 +340,10 @@ function pickKey(c, e) {
 // ---------- the panels ----------
 function panelFor(c, kind) {
   let p = c.panels.get(kind);
-  if (p) return p;
+  if (p && !p.missing && p.m === c.m) return p;
+  if (p) { p.sec.remove(); c.panels.delete(kind); }       // (a solo stack's: the well in view changed)
   const ds = c.m.sets.get(kind);
+  if (c.solo) c.names[kind] = { t: ds.t, u: ds.u || '' };
   const sec = el('section', 'sd-p sd-' + ds.style); sec.dataset.kind = kind;
   sec.setAttribute('aria-label', ds.t + (ds.u ? `, ${ds.u}` : ''));
   const ph = el('div', 'sd-ph'), pt = el('div', 'sd-pt');
@@ -254,15 +356,10 @@ function panelFor(c, kind) {
   const sc = el('span', 'sd-scale');
   pt.append(src, sc);
   const read = el('div', 'sd-read');
-  const pa = el('div', 'sd-pa');
-  const btn = (cls, txt, label) => { const b = el('button', cls, txt); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label; return b; };
-  const up = btn('sd-up', '↑', `Move ${ds.t} up`), dn = btn('sd-dn', '↓', `Move ${ds.t} down`), x = btn('sd-x', '×', `Remove ${ds.t}`);
-  up.onclick = () => moveKind(c, kind, -1, up); dn.onclick = () => moveKind(c, kind, 1, dn); x.onclick = () => removeKind(c, kind);
-  pa.append(up, dn, x);
-  ph.append(pt, read, pa);
+  ph.append(pt, read, actions(c, kind, ds.t));
   const cv = el('canvas', 'sd-c'); cv.tabIndex = 0; cv.setAttribute('role', 'img');
   sec.append(ph, cv);
-  p = { kind, ds, sec, cv, read, sw, sc, wkey: '' };
+  p = { kind, ds, sec, cv, read, sw, sc, wkey: '', m: c.m };
   if (ds.style === 'cat') { p.key = el('div', 'sd-key'); sec.append(p.key); }
   if (ds.style === 'notes') {
     p.count = el('div', 'sd-cm-n'); p.rows = el('ol', 'sd-cm'); sec.append(p.count, p.rows);
@@ -332,19 +429,30 @@ function schedule(c) { if (!c.raf) c.raf = requestAnimationFrame(() => { c.raf =
 
 function render(c) {
   const ready = !!(c.m && c.m.ok), show = ready && c.kinds.length > 0;
-  c.bar.hidden = c.axis.hidden = !show;
+  // (a solo stack, while the next well is read: the last one's strips stay, dimmed)
+  const reading = c.solo && !!c.wa && !c.m && c.want.length > 0;
+  c.root.classList.toggle('sd-busy', reading);
+  if (!reading) c.bar.hidden = c.axis.hidden = !show;
   c.bar.querySelectorAll('[data-win]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.win === c.win)));
   // the panels, in the stack's order
-  for (const [k, p] of c.panels) if (!c.kinds.includes(k)) { p.sec.remove(); c.panels.delete(k); }
-  if (ready) c.kinds.forEach((k, i) => {
-    const p = panelFor(c, k);
+  const L = order(c);
+  for (const [k, p] of c.panels) if (!L.includes(k) || (!c.solo && !c.kinds.includes(k))) { p.sec.remove(); c.panels.delete(k); }
+  const place = (p, i, n) => {
     if (c.list.children[i] !== p.sec) c.list.insertBefore(p.sec, c.list.children[i] || null);
     p.sec.querySelector('.sd-up').disabled = i === 0;
-    p.sec.querySelector('.sd-dn').disabled = i === c.kinds.length - 1;
+    p.sec.querySelector('.sd-dn').disabled = i === n - 1;
+  };
+  if (c.solo && !reading) L.forEach((k, i) => {
+    const why = !c.wa ? 'Point at a well or a stage on the map' : !ready ? (c.m && c.m.err) || C.NO_FILE
+      : ((c.m.offer.find(o => o.kind === k) || {}).why || C.NO_FILE);
+    place(ready && c.m.sets.has(k) ? panelFor(c, k) : missingFor(c, k, why), i, L.length);
   });
-  c.add.title = c.kinds.length ? 'Stack another dataset under this one: gamma, porosity, the mud log, comments…' : 'Stack the well’s gamma, porosity, mud log, comments… under this stage’s chart, along MD';
+  else if (!c.solo && ready) c.kinds.forEach((k, i) => place(panelFor(c, k), i, c.kinds.length));
+  c.add.title = c.solo ? (L.length ? 'Stack another dataset under these: gamma, porosity, the mud log, comments…' : 'Stack gamma, porosity, the mud log, comments… for the well or stage under the pointer, along MD')
+    : c.kinds.length ? 'Stack another dataset under this one: gamma, porosity, the mud log, comments…' : 'Stack the well’s gamma, porosity, mud log, comments… under this stage’s chart, along MD';
   c.root.classList.toggle('has', show);
-  draw(c);
+  if (!reading) draw(c);
+  else { c.note.hidden = false; c.note.textContent = 'Reading this well’s logs…'; }
 }
 
 function draw(c) {
@@ -355,7 +463,9 @@ function draw(c) {
     c.note.textContent = c.m && !c.m.ok ? c.m.err : 'Reading this well’s logs…';
     return;
   }
-  const W = c.W = C.windowFor(c.win, c.m, c.label, c.kinds);
+  // (no stage: a solo stack pointed at a well shows its lateral)
+  const win = c.label == null && c.win === 'stage' ? 'lateral' : c.win;
+  const W = c.W = C.windowFor(win, c.m, c.label, c.kinds);
   c.note.hidden = !W.note; c.note.textContent = W.note;
   c.bar.querySelector('.sd-range').textContent = `${fmt(W.lo)}–${fmt(W.hi)} m MD`;
   const ax = canvas(c.axis, HEIGHT.axis);
@@ -677,12 +787,12 @@ function fill() {
 addEventListener('storage', e => { if (e.key === DEF_KEY) { DEF = readDefault(); fill(); refreshSave(); } });
 
 // ---------- redraws ----------
-const ro = 'ResizeObserver' in window ? new ResizeObserver(es => { for (const e of es) { const c = ctls.find(x => x.list === e.target); if (c) schedule(c); } }) : null;
-const repaint = () => { INK = null; for (const c of ctls) { for (const p of c.panels.values()) p.wkey = ''; schedule(c); } };
+const ro = 'ResizeObserver' in window ? new ResizeObserver(es => { for (const e of es) { const c = every().find(x => x.list === e.target); if (c) schedule(c); } }) : null;
+const repaint = () => { INK = null; for (const c of every()) { for (const p of c.panels.values()) p.wkey = ''; schedule(c); } };
 addEventListener('stratum:theme', repaint);
 addEventListener('stratum:gammapalette', repaint);
 addEventListener('stratum:textsize', repaint);
-if (!ro) addEventListener('resize', () => ctls.forEach(schedule));
+if (!ro) addEventListener('resize', () => every().forEach(schedule));
 
 window.StageDatasets = { attach, DEF_KEY, CARDS_KEY, get default() { return DEF; } };
 })();

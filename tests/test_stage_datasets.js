@@ -165,5 +165,34 @@ const range = (a, b, step) => { const out = []; for (let x = a; x <= b + 1e-9; x
   const bad = C.emptyModel('1', 'gone');
   assert.equal(bad.ok, false); assert.deepEqual(plain(C.catalogue(bad)), []); assert.deepEqual(plain(C.resolve(['gamma'], bad)), []);
 
-  console.log('PASS: stage datasets: what a well has, its stage, the window, comments and the default stack');
+  // ---------- rock type from the written descriptions: said so ----------
+  {
+    const row2 = { well: { wa: 'SK2' }, logs: { md0: 1000, bin: 2, src: [{ log: 'printout', lith: false }, { log: 'descriptions', lith: true }],
+      types: { rock: [0, 0, 1], gamma: [80, 90, 100] } } };
+    const m2 = C.buildModel('SK2', { well: { wa: 'SK2' } }, row2, null, S);
+    assert.equal(m2.sets.get('rock').src, 'the written sample descriptions', 'rock from descriptions');
+    assert.equal(m2.sets.get('gamma').src, 'mud log, read off its printout', 'the curves from the printout');
+  }
+
+  // ---------- the stages on the map: placed by MD along the trajectory ----------
+  {
+    const traj = { md: [0, 1000, 2000, 3000], lat: [55, 55, 55.01, 55.02], lon: [-120, -120, -120, -120] };
+    assert.deepEqual(plain(C.along(traj, 2500)), [-120, 55.015], 'half way between stations');
+    assert.deepEqual(plain(C.along(traj, 3020)), [-120, 55.02], 'a port just past the last station sits at the toe');
+    assert.equal(C.along(traj, 3100), null, 'well past TD: off the well');
+    assert.equal(C.along({ md: [0, 10] }, 5), null, 'no positions');
+    const w = { trajectory: traj,
+      stages: [{ n: 1, label: '1', top_m: null, base_m: null, proppant_t: 40, date: '2020-01-02' }, { n: 2, label: '2', top_m: null, base_m: null }],
+      depth_intervals: [{ n: 1, top_m: 2900, base_m: 2900.2, date: '20200102', completion_type: 'OHB' }, { n: 2, top_m: 2600, base_m: 2600.2 }] };
+    const pts = C.stagePoints(w);
+    assert.deepEqual(plain(pts.map(p => p.label)), ['1', '2'], 'labels from the list that places them');
+    assert.ok(Math.abs(pts[0].at[1] - 55.019) < 1e-5 && Math.abs(pts[1].at[1] - 55.016) < 1e-5, 'each where its MD is');
+    const facts = Object.fromEntries(C.stageFacts(w, '1'));
+    assert.equal(facts.Date, '2020-01-02', "the treatment summary's date wins over the filing's");
+    assert.equal(facts.Completion, 'OHB'); assert.equal(facts.Proppant, '40 t');
+    assert.deepEqual(plain(C.stageFacts(w, '9')), [], 'a stage not on file');
+    assert.deepEqual(plain(C.stagePoints({ stages: [{ label: '1', top_m: 100, base_m: 100 }] })), [], 'no trajectory: not placed');
+  }
+
+  console.log('PASS: stage datasets: what a well has, its stage, the window, comments and the default stack; stages on the map');
 })().catch(e => { console.error(e); process.exitCode = 1; });

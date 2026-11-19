@@ -11,6 +11,8 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
 <link rel="stylesheet" href="grids.css">
+<link rel="stylesheet" href="stage-datasets.css">
+<link rel="stylesheet" href="data-window.css">
 <script src="session.js"></script>
 <script src="quake-filter.js"></script>
 <script src="account.js"></script>
@@ -148,7 +150,7 @@
   </header>
   <div class="demo" id="demo" hidden></div>
   <div class="body" id="pads"></div>
-  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D, or its wine rack in a window beside this one; zoom to 12+ and <b>Change View</b> opens 3D for what you see.<br><small>Contains information licensed under the BC Energy Regulator Open Data Licence; earthquakes also from Natural Resources Canada and the BC Seismic Research Consortium.</small></footer>
+  <footer>The list follows the map: pads in view, nearest the centre first. Click a pad for 3D, or its wine rack in a window beside this one; zoom to 12+ and <b>Change View</b> opens 3D for what you see, and to 13+ to see each stage. The <b>Data window</b> stacks the datasets of the well or stage under the pointer.<br><small>Contains information licensed under the BC Energy Regulator Open Data Licence; earthquakes also from Natural Resources Canada and the BC Seismic Research Consortium.</small></footer>
 </div>
 <div class="legend">
   <div class="row"><span class="l"></span> lateral with stage data loaded</div>
@@ -391,9 +393,13 @@ function render() {
       const hit = pickAt(e.point), gm = window.stratumGroupMode && stratumGroupMode.active();
       map.getCanvas().style.cursor = hit ? "pointer" : "";
       // in Group mode a well stands for its pad
-      if (gm) { hoverWell(null); hoverPad(hit ? (hit.layer.id === "pads" ? hit.properties.id : padOfWell(hit.properties.wa)) : null); rackOffer(null); return; }
+      if (gm) { hoverWell(null); hoverPad(hit ? (hit.layer.id === "pads" ? hit.properties.id : padOfWell(hit.properties.wa)) : null); rackOffer(null); if (window.stratumStages) stratumStages.hover(null); return; }
+      const stage = hit && hit.layer.id === "stages" ? hit.properties : null;
       hoverWell(hit && hit.layer.id !== "pads" ? hit.properties.wa : null);
       hoverPad(hit && hit.layer.id === "pads" ? hit.properties.id : null);
+      if (window.stratumStages) stratumStages.hover(stage, e.point);
+      // the Data window follows the well or stage under the pointer (data-window.js)
+      if (window.stratumDataWindow && hit && hit.layer.id !== "pads") stratumDataWindow.point(hit.properties.wa, stage ? stage.label : null);
       rackOffer(e.point);
     });
     map.getCanvas().addEventListener("mouseleave", () => { hoverWell(null); hoverPad(null); rackOffer(null); });
@@ -402,7 +408,11 @@ function render() {
       if (!hit) return;
       if (window.stratumGroupMode && stratumGroupMode.active()) { stratumGroupMode.pick(hit.layer.id === "pads" ? hit.properties.id : padOfWell(hit.properties.wa)); return; }
       if (hit.layer.id === "pads") openPad(PAD_BY_ID[hit.properties.id], e.lngLat);
-      else openWell(hit.properties, e.lngLat);
+      else if (hit.layer.id === "stages" && window.stratumStages) stratumStages.open(hit.properties, e.lngLat);
+      else {
+        openWell(hit.properties, e.lngLat);
+        if (window.stratumDataWindow && stratumDataWindow.shown) stratumDataWindow.hold(hit.properties.wa, null);
+      }
     });
     layersReady = true; whenLayers.forEach(f => f()); whenLayers.length = 0;
     // earthquakes: Natural Resources Canada's catalog, off until asked for
@@ -539,12 +549,12 @@ window.stratumArea = () => {
 };
 
 // what is under the pointer: a pad first (its circle sits where its wells
-// start), then a toe, then the nearest well's stroke
+// start), then a stage (zoomed in, map-stages.js), then a toe, then the nearest well's stroke
 function pickAt(pt) {
-  const layers = ["pads", "toes", "laterals-hit"].filter(l => map.getLayer(l));
+  const layers = ["pads", "stages", "toes", "laterals-hit"].filter(l => map.getLayer(l));
   if (!layers.length) return null;
   const f = map.queryRenderedFeatures(pt, { layers });
-  return f.find(x => x.layer.id === "pads") || f.find(x => x.layer.id === "toes") || f[0] || null;
+  return f.find(x => x.layer.id === "pads") || f.find(x => x.layer.id === "stages") || f.find(x => x.layer.id === "toes") || f[0] || null;
 }
 let hoveredWa = null, hoveredPad = null;
 function hoverWell(wa) {
@@ -768,7 +778,11 @@ function sidebar() {
     if (p) { map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 12.5) }); openPad(p); }
   }));
   el.querySelectorAll(".pad li a").forEach(a => {
-    a.addEventListener("mouseenter", () => hoverWell(WELL_BY_WA[a.dataset.wa] ? WELL_BY_WA[a.dataset.wa].wa : null));
+    a.addEventListener("mouseenter", () => {
+      const w = WELL_BY_WA[a.dataset.wa];
+      hoverWell(w ? w.wa : null);
+      if (w && window.stratumDataWindow) stratumDataWindow.point(w.wa, null);
+    });
     a.addEventListener("mouseleave", () => hoverWell(null));
   });
   el.querySelectorAll(".pad > button").forEach(b => {
@@ -802,5 +816,9 @@ if (new URLSearchParams(location.search).get("show") === "1") {
 <script src="groupmode.js"></script>
 <script src="map-extras.js"></script>
 <script src="drop.js"></script>
+<script src="stage-datasets-core.js"></script>
+<script src="stage-datasets.js"></script>
+<script src="data-window.js"></script>
+<script src="map-stages.js"></script>
 </body>
 </html>

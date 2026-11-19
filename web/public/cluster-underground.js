@@ -24,8 +24,9 @@ const isDark=()=>typeof document!=='undefined'&&!!document.documentElement&&!!do
 let UK=UGK[isDark()?'dark':'light'];
 const padColor=i=>typeof window!=='undefined'&&window.StratumTheme?StratumTheme.padColor(i):PAD_COLORS[i%PAD_COLORS.length];
 let GAMMA_INK=SG.steps(GAMMA_N);
-function positionButton(){const r=document.querySelector('.legend').getBoundingClientRect();button.style.top=(r.bottom+10)+'px';button.style.width=r.width+'px';button.style.height=r.height+'px';const on=map.getZoom()>=12;button.classList.toggle('visible',on);if(on&&region&&!button.disabled&&!active){const n=areaIds().length;button.textContent=n?'Change View · '+n+' pad'+(n>1?'s':''):'Change View';}}
-map.on('zoom',positionButton);map.on('moveend',positionButton);new ResizeObserver(positionButton).observe(document.querySelector('.legend'));positionButton();
+// (at the bottom of the map, in the middle: cluster-underground.css)
+function positionButton(){const on=map.getZoom()>=12;button.classList.toggle('visible',on);if(on&&region&&!button.disabled&&!active){const n=areaIds().length;button.textContent=n?'Change View · '+n+' pad'+(n>1?'s':''):'Change View';}}
+map.on('zoom',positionButton);map.on('moveend',positionButton);positionButton();
 // The region: every pad's position, so the 3D view can take whichever pads the
 // map is showing. A pad's wells are fetched only when an area containing it opens.
 let region=null,areaTitle='Below the surface',areaName='';

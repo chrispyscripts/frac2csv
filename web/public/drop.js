@@ -28,7 +28,7 @@ css.textContent = `
   .dr-over div { border:2px dashed var(--hov); border-radius:16px; padding:28px 34px; background:var(--panel); color:var(--ink);
                  font:600 16px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; text-align:center; box-shadow:0 0 0 6px var(--glow); max-width:min(440px, 86vw); }
   .dr-over small { display:block; margin-top:6px; color:var(--mut); font-weight:400; font-size:12.5px; }
-  .dr-toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:30; max-width:min(560px, calc(100vw - 24px));
+  .dr-toast { position:fixed; left:50%; bottom:80px; transform:translateX(-50%); z-index:30; max-width:min(560px, calc(100vw - 24px));
               background:var(--panel); color:var(--ink); border:1px solid var(--hov); border-radius:12px; box-shadow:0 10px 30px var(--shadow), 0 0 0 3px var(--glow);
               padding:10px 12px 10px 14px; font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; display:flex; gap:10px; align-items:center; }
   .dr-toast[hidden] { display:none; }
@@ -38,7 +38,7 @@ css.textContent = `
   .dr-toast .dr-bar i { display:block; height:100%; width:0; background:var(--hov); transition:width .2s; }
   .dr-toast button { background:var(--btn); color:var(--ink); border:1px solid var(--btn-line); border-radius:7px; padding:5px 10px; font:600 12.5px sans-serif; cursor:pointer; }
   .dr-toast button:hover { border-color:var(--hov); }
-  body.ws-docked .dr-toast { bottom:calc(var(--ws-h, 42vh) + 16px); }`;
+  body.ws-docked .dr-toast { bottom:calc(var(--ws-h, 42vh) + 68px); }`;
 document.head.append(css);
 
 // ---------- the legend's button and list ----------

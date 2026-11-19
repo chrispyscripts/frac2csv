@@ -226,14 +226,16 @@ function buildModel(wa, file, row, gj, S) {
     for (const n of LAS_COMMON) if (!sets.has('las:' + n)) offer.push({ kind: 'las:' + n, t: n, u: LAS_UNITS[n] || '', group: 'log', ds: null });
   } else {
     // a Saskatchewan or dropped well: its mud log, through logs.js
-    const L = row && row.logs, from = L && Array.isArray(L.src) && L.src.length && L.src.every(x => x && x.log === 'printout')
-      ? 'mud log, read off its printout' : 'WellSight mud log';
+    // where its log came from: a WellSight log, a printout read by the Lab, or (rock type) the geologist's written descriptions
+    const L = row && row.logs, src = L && Array.isArray(L.src) ? L.src.filter(Boolean) : [];
+    const said = list => [...new Set(list.map(x => (x.log === 'printout' ? 'mud log, read off its printout' : x.log === 'descriptions' ? 'the written sample descriptions' : 'WellSight mud log')))].join(' and ') || 'WellSight mud log';
+    const from = said(src.filter(x => x.log !== 'descriptions')), fromRock = said(src.filter(x => x.lith).length ? src.filter(x => x.lith) : src);
     const kinds = L && S ? S.available([row]).map(t => t.k) : [];
     for (const k of kinds) {
       const t = S.track(row, k);
       if (!t) continue;
       const d = S.def(k), r = binned(+t.md0, +t.bin, t.v);
-      const base = { t: d.t, u: d.u || '', group: MUD.includes(k) ? 'mud' : 'log', src: from, md0: +t.md0, bin: +t.bin, raw: t.v };
+      const base = { t: d.t, u: d.u || '', group: MUD.includes(k) ? 'mud' : 'log', src: k === 'rock' ? fromRock : from, md0: +t.md0, bin: +t.bin, raw: t.v };
       if (k === 'rock' || k === 'show') put(k, { ...base, style: 'cat', md: r.md, v: r.v });
       else if (k === 'por') put(k, { ...base, style: 'bars', md: r.md, v: r.v, gap: +t.bin * 1.5, scale: { lo: 0, hi: 24 }, scaleAll: { lo: 0, hi: 24 } });
       else put(k, line(r, { ...base, palette: k === 'gamma', cscale: S.scale(k) || null }));
@@ -350,7 +352,56 @@ function slice(md, lo, hi) {
   return [Math.max(0, a - 1), Math.min(md.length - 1, b + 1)];
 }
 
-window.StageDatasetsCore = { HALF, WINS, WIN_NAMES, BC_GAMMA, LAS_COMMON, NO_FILE, NO_COMMENTS, unitName, depthOf, stageLists, depthIn, stagesIn,
+// ---------- a well's stages on the map (map-stages.js) ----------
+// the point at `md` along a trajectory {md, lat, lon}: [lon, lat], or null off
+// it. A port a little past the last station (at TD) still sits at the toe.
+function along(t, md) {
+  if (!t || !Array.isArray(t.md) || !Array.isArray(t.lat) || !Array.isArray(t.lon) || !isFinite(md)) return null;
+  const pts = [];
+  for (let i = 0; i < t.md.length; i++) {
+    const m = num(t.md[i]), la = num(t.lat[i]), lo = num(t.lon[i]);
+    if (isFinite(m) && isFinite(la) && isFinite(lo) && (!pts.length || m >= pts[pts.length - 1][0])) pts.push([m, lo, la]);
+  }
+  if (pts.length < 2 || md < pts[0][0] - 1 || md > pts[pts.length - 1][0] + 30) return null;
+  if (md >= pts[pts.length - 1][0]) return [pts[pts.length - 1][1], pts[pts.length - 1][2]];
+  if (md <= pts[0][0]) return [pts[0][1], pts[0][2]];
+  let lo = 0, hi = pts.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (pts[mid][0] <= md) lo = mid; else hi = mid; }
+  const a = pts[lo], b = pts[hi], f = b[0] > a[0] ? (md - a[0]) / (b[0] - a[0]) : 0;
+  return [+(a[1] + f * (b[1] - a[1])).toFixed(6), +(a[2] + f * (b[2] - a[2])).toFixed(6)];
+}
+// a pad file's well {well, trajectory, stages, depth_intervals}: its stages
+// where they sit on the map, [{label, top, base, md, at: [lon, lat]}], placed
+// as the datasets under a stage chart place them (stagesIn)
+function stagePoints(w) {
+  if (!w) return [];
+  const out = [];
+  for (const s of stagesIn(stageLists(w, null))) {
+    const md = (s.top + s.base) / 2, at = along(w.trajectory, md);
+    if (at) out.push({ label: s.label, top: s.top, base: s.base, md, at });
+  }
+  return out;
+}
+// what was filed for a stage, in words: [[name, value], ...] (the treatment
+// summary where the well's stages carry one, else the depth interval's filing)
+const FACTS = [['date', 'Date'], ['completion_type', 'Completion'], ['proppant_t', 'Proppant', 't'], ['fluid_m3', 'Fluid', 'm³'],
+  ['avg_rate_m3_min', 'Average rate', 'm³/min'], ['avg_pressure_mpa', 'Average pressure', 'MPa'], ['max_pressure_mpa', 'Max pressure', 'MPa'],
+  ['breakdown_mpa', 'Breakdown', 'MPa'], ['isip_mpa', 'ISIP', 'MPa']];
+function stageFacts(w, label) {
+  label = String(label);
+  const find = l => (Array.isArray(l) ? l.find(s => s && labelOf(s) === label) : null);
+  const merged = { ...(find(w && w.depth_intervals) || {}), ...(find(w && w.stages) || {}) };
+  const out = [];
+  for (const [k, name, u] of FACTS) {
+    const v = merged[k];
+    if (v == null || v === '') continue;
+    if (u) { const x = num(v); if (isFinite(x)) out.push([name, `${x.toLocaleString('en-US', { maximumFractionDigits: x >= 100 ? 0 : 1 })} ${u}`]); }
+    else out.push([name, k === 'date' && /^\d{8}$/.test(String(v)) ? `${String(v).slice(0, 4)}-${String(v).slice(4, 6)}-${String(v).slice(6)}` : String(v)]);
+  }
+  return out;
+}
+
+window.StageDatasetsCore = { HALF, WINS, WIN_NAMES, BC_GAMMA, LAS_COMMON, LAS_UNITS, NO_FILE, NO_COMMENTS, unitName, depthOf, stageLists, depthIn, stagesIn,
   run, binned, extent, cover, spacing, niceStep, robust, robustIn, cleanComments, commentsIn, lanes, gammaEntry, needsGammaFile, buildModel, emptyModel,
-  catalogue, about, resolve, sanitizeStack, sameStack, expected, windowFor, ticks, valueAt, slice, fmtM };
+  catalogue, about, resolve, sanitizeStack, sameStack, expected, windowFor, ticks, valueAt, slice, fmtM, along, stagePoints, stageFacts };
 })();
