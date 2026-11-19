@@ -5,12 +5,13 @@
 // is legible; MapLibre overzooms past an archive's max, so a level stays drawn
 // once it switches on.
 //
-// The Saskatchewan DLS (sk_*) is ISC's SaskGrid, whose licence does not allow it
-// to be published: it is never in this repo or on the live site. A local copy
-// builds it outside the repo (scripts/grids/build_skgrid.sh) and the local
-// server mounts it at data/skgrid/ (scripts/serve.py --mount). Where it is not
-// there the levels simply don't load and the map goes on without them; where it
-// is, they draw as part of the DLS, under ISC's source notice.
+// The Saskatchewan DLS (sk_*) is ISC's SaskGrid, licensed to its holder for
+// their own use and not to be published: it is never in this (public) repo.
+// scripts/grids/build_skgrid.sh builds it outside the repo; the local server
+// mounts it at data/skgrid/ (scripts/serve.py --mount) and the private,
+// signed-in site is deployed with it there. Where it is not there the levels
+// simply don't load and the map goes on without them; where it is, they draw
+// as part of the DLS, under ISC's source notice.
 
 // MapLibre 4 wants a promise-returning protocol handler. pmtiles 3 still exposes
 // `.tile`, but that is the v3 callback shim (it returns {cancel}, not a promise)
