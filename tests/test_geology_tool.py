@@ -183,6 +183,26 @@ class OtherLayouts(unittest.TestCase):
                          [("Upper Shale", 501.8, 496.6, 203.1), ("Marker Silt", 630.9, 582.8, 117.0)])
         self.assertEqual([s["formation"] for s in r["samples"]], ["Upper Shale", "Upper Shale / Marker Silt"])
 
+    def test_tops_from_a_geological_markers_table(self):
+        # the columns' names written out, stacked over two lines
+        table = [(71, 80, "GEOLOGICAL MARKERS"), (71, 96, "K.B. ELEVATION: 712.45 m"),
+                 (90, 196, "FORMATION"), (210, 190, "MEASURED"), (210, 200, "DEPTH (m)"),
+                 (300, 190, "TRUE VERTICAL"), (300, 200, "DEPTH (m)"), (400, 190, "MEAN SEA"),
+                 (400, 200, "LEVEL (m)")]
+        y = 228
+        for name, a, b, c in [("Upper Shale", 501.8, 496.6, 215.9), ("KOP", 520.0, 514.0, 198.5),
+                              ("Marker Silt", 630.9, 582.8, 129.7)]:
+            table.append((90, y, name))
+            for x, v in zip((230, 330, 420), (a, b, c)):
+                table.append((x, y, f"{v:.1f}"))
+            y += 14
+        desc = [(206, 90, "Sample Descriptions"),
+                (68, 130, "600-620m: SHALE (100%): gray."), (68, 160, "620-650m: SHALE (90%): gray.")]
+        r = gt.read(_pdf([table, desc]), "e.pdf")
+        self.assertEqual(r["tops_from"], "table")
+        self.assertEqual([(t["name"], t["md"], t["tvd"], t["ss"]) for t in r["tops"]],
+                         [("Upper Shale", 501.8, 496.6, 215.9), ("Marker Silt", 630.9, 582.8, 129.7)])
+
     def test_no_samples(self):
         lines = [(206, 79, "Sample Descriptions w/ Formation Tops"),
                  (205, 111, "Upper Shale: 528.10m MD, 522.6m TVD, 174.3m SS."),

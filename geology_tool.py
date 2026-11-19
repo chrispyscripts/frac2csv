@@ -342,7 +342,7 @@ def _tops_table(doc):
     for p in doc:
         h = p.rect.height
         top = " ".join(w[4] for w in p.get_text("words") if w[1] < 0.3 * h)
-        if not re.search(r"formation\s+tops?|tops?\s+summary|geological\s+tops", top, re.I):
+        if not re.search(r"formation\s+tops?|tops?\s+summary|geological\s+(?:tops|markers)", top, re.I):
             continue
         if _TOC.search(p.get_text()) or "....." in p.get_text():
             continue
@@ -365,11 +365,20 @@ def _tops_table(doc):
             k = min(range(len(cols)), key=lambda k: abs(xc - (cols[k]["x0"] + cols[k]["x1max"]) / 2))
             if cols[k]["x0"] - 14 <= xc <= cols[k]["x1max"] + 14:
                 labels[k].append(w[4].lower())
+        def heads(want, lab):
+            """a column's label names it (MD, or written out: Measured Depth,
+            True Vertical Depth, Mean Sea Level)"""
+            w = set(re.findall(r"[a-z]+", lab))
+            if want == "md":
+                return "md" in w or "measured" in w
+            if want == "tvd":
+                return "tvd" in w or ("vertical" in w and "section" not in w)
+            return "ss" in w or "msl" in w or "subsea" in w or "sea" in w
         def pick(want):
             best = None
             for k, ws in labels.items():
                 lab = " ".join(ws)
-                if want not in lab.split() and not (want == "ss" and ("msl" in lab or "subsea" in lab)):
+                if not heads(want, lab):
                     continue
                 score = 2 if "actual" in lab else 0 if "prog" in lab else 1
                 if best is None or score > best[0]:
