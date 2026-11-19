@@ -1175,8 +1175,11 @@ def write(out, wells, skipped, name="Saskatchewan (WellSight logs)",
         dump("pads/%s.json" % p["id"], {"id": p["id"], "name": p["name"], "lat": round(p["lat"], 6), "lon": round(p["lon"], 6), "set": "sk",
                                          "wells": [compact_well(w) for w in p["wells"]]})
         for w in p["wells"]:
-            dump("wells/%s.json" % w["well"]["wa"], {"well": w["well"], "pad": {"id": p["id"], "name": p["name"]}, "stages": [], "units": {},
-                                                    "log_notes": w["notes"]})
+            wf = {"well": w["well"], "pad": {"id": p["id"], "name": p["name"]}, "stages": [], "units": {},
+                  "log_notes": w["notes"]}
+            if w.get("comments"):
+                wf["comments"] = w["comments"]           # the wellsite geologist's, by MD (viking_geo.py)
+            dump("wells/%s.json" % w["well"]["wa"], wf)
     def plan_path(w):
         t = w["trajectory"]
         n = len(t["md"])
@@ -1190,7 +1193,7 @@ def write(out, wells, skipped, name="Saskatchewan (WellSight logs)",
             {"wa": w["well"]["wa"], "name": w["well"]["name"], "uwi": w["well"]["uwi"], "td": w["well"]["td_m"], "tvd": w["well"]["tvd_m"],
              "lateral": w["well"]["lateral_m"], "lat": w["well"]["lat"], "lon": w["well"]["lon"], "stations": len(w["trajectory"]["md"]),
              "path": plan_path(w), "stages": len(w["stages"]), "ports": 0, "logs": 1 if w["logs"] else 0, "ws": 1 if w["logs"] else 0,
-             "depth_intervals": len(w["depth_intervals"]), "summaries": 0, "file": None}
+             "depth_intervals": len(w["depth_intervals"]), "summaries": 0, "file": None, "comments": len(w.get("comments") or [])}
             for w in p["wells"]]} for p in pads]})
     dump("index.json", {
         "v": 1, "set": "sk", "name": name, "center": [round(lat_c, 4), round(lon_c, 4)],

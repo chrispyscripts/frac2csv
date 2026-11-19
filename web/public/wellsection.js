@@ -115,6 +115,7 @@ function attachMetrics(rows) {
 
 function assemble(d, row) {
   const w = { ...((row && row.well) || {}), ...(d.well || {}) };
+  COMMENTS = Array.isArray(d.comments) ? d.comments.filter(c => isFinite(c.top)) : [];
   const t = row && row.trajectory;
   const traj = t && t.md && t.md.length > 1
     ? t.md.map((m, i) => ({ md: m, tvd: t.tvd[i], ns: t.ns[i], ew: t.ew[i] })).filter(p => [p.md, p.tvd, p.ns, p.ew].every(Number.isFinite))
@@ -193,6 +194,64 @@ function at(md) {
   return { md, tvd: a.tvd + (b.tvd - a.tvd) * f, vs: a.vs + (b.vs - a.vs) * f };
 }
 const stageAt = md => W.stages.find(s => md >= s.z0 && md <= s.z1) || null;
+
+// ---------- the wellsite geologist's comments ----------
+// A well file's `comments` (viking_geo.py): sample descriptions and remarks by
+// MD, from its geologist's report and its mud-log printouts.
+let COMMENTS = [], comOpen = false, comOn = -1;
+try { comOpen = localStorage.getItem('stratum.wsComments') === '1'; } catch (e) { /* private mode */ }
+const comFrom = c => c.from === 'report' ? "geologist's report" : 'mud-log printout';
+const comDepth = c => c.base > c.top + 0.05 ? `${fmt(c.top, 1)}–${fmt(c.base, 1)} m` : `${fmt(c.top, 1)} m`;
+const comRocks = c => Object.entries(c.rocks || {}).map(([r, v]) => r.charAt(0).toUpperCase() + r.slice(1) + (v != null ? ` ${Math.round(v)}%` : ''));
+// the comment at a depth: a description over it (the narrowest), else a remark within 3 m
+function commentAt(md) {
+  let best = -1, bw = Infinity;
+  COMMENTS.forEach((c, i) => {
+    const w = c.base - c.top;
+    if (c.kind === 'description' && md >= c.top - 0.5 && md <= c.base + 0.5 && w < bw) { best = i; bw = w; }
+  });
+  if (best >= 0) return best;
+  let near = -1, nd = 3;
+  COMMENTS.forEach((c, i) => { const d = Math.min(Math.abs(md - c.top), Math.abs(md - c.base)); if (d < nd) { near = i; nd = d; } });
+  return near;
+}
+function renderComments() {
+  const b = $('ws-comments'), n = COMMENTS.length;
+  b.hidden = !n;
+  b.textContent = n ? `Comments (${n})` : 'Comments';
+  b.setAttribute('aria-pressed', String(comOpen && !!n));
+  $('ws-com').hidden = !(comOpen && n);
+  if (!n) return;
+  const des = COMMENTS.filter(c => c.kind === 'description').length;
+  $('ws-com-n').textContent = `${des} description${des === 1 ? '' : 's'} · ${n - des} remark${n - des === 1 ? '' : 's'}`;
+  const ol = $('ws-com-list');
+  ol.replaceChildren();
+  COMMENTS.forEach((c, i) => {
+    const li = document.createElement('li');
+    li.className = c.kind === 'note' ? 'note' : '';
+    li.tabIndex = 0;
+    li.dataset.i = i;
+    const d = document.createElement('div'); d.className = 'd';
+    const b = document.createElement('b'); b.textContent = comDepth(c) + ' MD';
+    d.append(b, document.createTextNode(` · ${c.kind === 'note' ? 'remark' : 'description'} · ${comFrom(c)}`));
+    for (const r of comRocks(c)) { const sp = document.createElement('span'); sp.className = 'r'; sp.textContent = r; d.append(sp); }
+    const t = document.createElement('div'); t.className = 't'; t.textContent = c.text;
+    li.append(d, t);
+    const go = () => { markComment(i, false); cursorTo(WA, (c.top + c.base) / 2); };
+    li.addEventListener('click', go);
+    li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    ol.append(li);
+  });
+  markComment(comOn, false);
+}
+function markComment(i, scroll) {
+  comOn = i;
+  const ol = $('ws-com-list');
+  if (!ol || $('ws-com').hidden) return;
+  ol.querySelectorAll('li.on').forEach(li => li.classList.remove('on'));
+  const li = i >= 0 ? ol.querySelector(`li[data-i="${i}"]`) : null;
+  if (li) { li.classList.add('on'); if (scroll) li.scrollIntoView({ block: 'nearest' }); }
+}
 // the rack's line as a hover point, in this render's geometry
 function extHover() {
   if (!EXT || EXT.wa !== WA || !W || !G || !W.traj.length) return null;
@@ -611,6 +670,13 @@ function drawHover() {
       said.slice(0, 7).forEach((x, i) => lines.push(i === 0 ? `<b>${esc(SL.words(x.t.k, x.v))}</b>` : esc(SL.words(x.t.k, x.v))));
       if (!said.length) lines.push('<span class="m">nothing logged at this depth</span>');
     } else if (gr != null) lines.push(`Gamma ${fmt(gr)} API${W.gamma.estimated ? ' <span class="m">(estimated)</span>' : ''}`);
+    const ci = COMMENTS.length ? commentAt(hover.md) : -1;
+    if (ci >= 0) {
+      const c = COMMENTS[ci], txt = c.text.length > 170 ? c.text.slice(0, 167) + '…' : c.text;
+      lines.push(`<b>${c.kind === 'note' ? 'Remark' : 'Description'}</b> <span class="m">${esc(comDepth(c))} · ${esc(comFrom(c))}</span>`);
+      lines.push(`<span class="ws-tip-com">${esc(txt)}</span>`);
+    }
+    markComment(ci, true);
     if (s) {
       lines.push(`<b>Stage ${esc(s.label)}</b> · ${fmt(s.top, 1)}${s.base !== s.top ? '–' + fmt(s.base, 1) : ''} m MD`);
       const bits = [s.date && `${s.date}${s.start ? ' ' + s.start : ''}`, s.proppant != null && `${fmt(s.proppant, 1)} t`,
@@ -799,6 +865,14 @@ addEventListener('stratum:logtype', () => { if (W) { header(); render(); } });
 addEventListener('stratum:theme', () => { cardFor = null; render(); });
 
 // ---------- header and controls ----------
+// where a well's log came from, in a few words
+function logSource(src) {
+  const kinds = new Set(src.map(x => x.log));
+  if (!kinds.size) return 'WellSight mud log';
+  if ([...kinds].every(k => k === 'descriptions')) return 'rock type from its sample descriptions';
+  if ([...kinds].every(k => k === 'printout' || k === 'descriptions')) return 'mud log read off its printout' + (kinds.has('descriptions') ? ', rock type from its descriptions' : '');
+  return 'WellSight mud log';
+}
 function header() {
   const w = W.well;
   $('ws-name').textContent = w.name || `WA ${WA}`;
@@ -806,9 +880,10 @@ function header() {
   const n = W.stages.length;
   $('ws-sub').textContent = [SL ? SL.wellId(w) : `WA ${WA}`, w.uwi, w.surface_loc && W.logs ? 'surface ' + w.surface_loc : null, w.operator, w.formation, W.td ? `TD ${fmt(W.td)} m MD` : null,
     w.tvd_m ? `${fmt(w.tvd_m)} m TVD` : null, w.lateral_m ? `lateral ${fmt(w.lateral_m)} m` : null,
-    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : W.logs ? ((W.logs.src || []).every(x => x.log === 'printout') ? 'mud log read off its printout' : 'WellSight mud log') : null,
-    w.path_estimated ? 'path estimated from the depths its log states (no survey)' : null].filter(Boolean).join(' · ');
+    n ? `${n} stages${W.nCurves ? `, ${W.nCurves} with curves` : ''}` : W.logs ? logSource(W.logs.src || []) : null,
+    w.path_estimated ? (/estimated from the export/.test(w.path_from || '') ? 'path estimated from its surface and bottom hole (no survey)' : 'path estimated from the depths its log states (no survey)') : null].filter(Boolean).join(' · ');
   $('ws-sub').title = $('ws-sub').textContent;
+  renderComments();
   const gb = document.querySelector('[data-color=gamma]');
   gb.disabled = !W.gamma && !W.logs;
   gb.textContent = SL && W.logs ? SL.def(logType()).short : 'Gamma';
@@ -868,6 +943,13 @@ $('ws-report').onclick = () => {
 };
 $('ws-png').onclick = () => savePng().catch(() => note('The picture could not be made in this browser.'));
 $('ws-curves').onclick = () => { curvesOn = !curvesOn; savePrefs(); hover = null; render(); };
+const toggleComments = open => {
+  comOpen = open;
+  try { localStorage.setItem('stratum.wsComments', comOpen ? '1' : '0'); } catch (e) { /* private mode */ }
+  renderComments();
+};
+$('ws-comments').onclick = () => toggleComments(!comOpen);
+$('ws-com-x').onclick = () => { toggleComments(false); $('ws-comments').focus(); };
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; savePrefs(); setPressed(); render(); });
 document.querySelectorAll('[data-color]').forEach(b => b.onclick = () => { colorBy = b.dataset.color; savePrefs(); setPressed(); render(); });
 

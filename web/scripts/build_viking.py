@@ -54,6 +54,10 @@ DEFAULTS = {
     "pha": "",
     "frac": "",
     "printouts": "",
+    "newpha": "",          # an export of the newest wells, with no surveys of their own
+    "surveys": "",         # their survey reports, read by the Directional Survey tool (JSON per report)
+    "reports": "",         # geologist's reports, read by the Geology tool (JSON per report)
+    "descriptions": "",    # printouts' descriptions, read by mudlog_pdf parts={"descriptions"} (JSON per printout)
     "out": os.path.join(HOME, "dev", "fracview-sk"),
 }
 
@@ -363,6 +367,15 @@ def main(argv=None):
     wells, skipped = load_set(args.sk)
     print("WellSight set: %d wells" % len(wells), file=sys.stderr)
     wells, skipped, rep = merge(wells, skipped, args.pha, args.frac, args.printouts or None)
+    if args.newpha or args.reports or args.descriptions:
+        import viking_geo
+        if args.newpha and args.surveys:
+            viking_geo.add_new_wells(wells, args.newpha, args.surveys, rep)
+        viking_geo.attach_comments(wells, args.reports or None, args.descriptions or None, rep)
+        viking_geo.rocks_from_comments(wells, rep)
+        for k, v in rep.items():
+            if "left out" in k and k.startswith("new export"):
+                skipped["Photon export (newest wells): " + k.replace(" (left out)", "")] = v
     for k, v in sorted(rep.items()):
         print("  %6d  %s" % (v, k), file=sys.stderr)
     for sub in ("pads", "wells"):                 # a fresh set: no pad left over from the last build

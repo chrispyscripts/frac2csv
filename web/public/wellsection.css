@@ -122,3 +122,21 @@ body.embedded .ws-theme{display:none}
 /* the kind of log data (logs.js), in the toolbar */
 .ws-logtype .lg-menu { margin: 0; }
 .ws-logtype .lg-menu select { max-width: 190px; }
+
+/* the wellsite geologist's comments along the well (viking_geo.py: well file `comments`) */
+.ws-com{position:absolute;top:8px;right:8px;bottom:8px;width:min(380px,calc(100% - 16px));display:flex;flex-direction:column;background:var(--pop);
+  border:1px solid var(--pop-line);border-radius:10px;box-shadow:0 8px 24px var(--shadow);z-index:3;font:12.5px/1.45 -apple-system,Segoe UI,Roboto,sans-serif}
+.ws-com[hidden]{display:none}
+.ws-com-h{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.ws-com-h span{color:var(--mut);font-family:var(--mono,ui-monospace,Menlo,monospace);font-size:11.5px;flex:1}
+.ws-com-h button{background:none;border:1px solid transparent;color:var(--mut);border-radius:6px;font:600 15px/1 sans-serif;padding:2px 6px;cursor:pointer}
+.ws-com-h button:hover,.ws-com-h button:focus-visible{border-color:var(--line);color:var(--ink)}
+.ws-com ol{list-style:none;margin:0;padding:4px 0;overflow:auto;flex:1}
+.ws-com li{padding:7px 10px;border-left:3px solid transparent;cursor:pointer}
+.ws-com li:hover,.ws-com li:focus-visible{background:var(--row,rgba(127,127,127,.08));outline:none}
+.ws-com li.on{border-left-color:var(--hov,#0d8577);background:var(--row,rgba(127,127,127,.1))}
+.ws-com li .d{font-family:var(--mono,ui-monospace,Menlo,monospace);font-size:11.5px;color:var(--mut)}
+.ws-com li .d b{color:var(--ink);font-weight:650}
+.ws-com li .r{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid var(--line);font-size:11px;color:var(--ink)}
+.ws-com li.note .t{color:var(--mut)}
+.ws-com li .t{margin-top:2px;white-space:pre-wrap;word-break:break-word}

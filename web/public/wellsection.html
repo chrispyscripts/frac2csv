@@ -28,6 +28,7 @@
       <select id="ws-palette" aria-label="Gamma colours" hidden></select>
       <button type="button" id="ws-curves" aria-pressed="true" title="Each stage's pressure and rate, above the well">Curves</button>
       <select id="ws-metric" aria-label="Colour stages by" title="Colour each stage by a number from its treatment curves (or its filing)" hidden></select>
+      <button type="button" id="ws-comments" hidden aria-pressed="false" aria-controls="ws-com" title="What the wellsite geologist wrote along this well: sample descriptions and remarks, from its geologist's report and mud-log printouts">Comments</button>
       <button type="button" id="ws-charts">Charts →</button>
       <button type="button" id="ws-report" title="This well's stage report: every stage's numbers, flags and curves, printable">Stage report ↗</button>
       <button type="button" id="ws-png" title="Save this section as a PNG picture" aria-label="Save the section as a PNG picture">PNG</button>
@@ -42,6 +43,7 @@
     <div class="ws-tip" id="ws-tip" hidden></div>
     <div class="ws-empty" id="ws-empty" hidden></div>
     <div class="ws-note" id="ws-note" role="status" hidden></div>
+    <aside class="ws-com" id="ws-com" hidden aria-label="The wellsite geologist's comments along this well"><div class="ws-com-h"><b>Comments</b><span id="ws-com-n"></span><button type="button" id="ws-com-x" aria-label="Close the comments">×</button></div><ol id="ws-com-list"></ol></aside>
   </main>
   <footer class="ws-foot" id="ws-foot"></footer>
 </div>
