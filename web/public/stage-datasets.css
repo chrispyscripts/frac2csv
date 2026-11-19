@@ -80,3 +80,9 @@
 
 .sd-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 @media(max-width:640px){.sd{padding:8px 10px 10px}.sd-lbl{display:none}.sd-pt{flex-basis:0}.sd-scale{display:none}.sd-read{margin-left:0;flex-basis:100%;order:3}.sd-opts{grid-template-columns:1fr}}
+
+/* a solo stack (the Data window): while the next well is read, the last one's strips stay, faded;
+   a dataset the well in view lacks shows its name and why, with no strip */
+.sd-busy .sd-list,.sd-busy .sd-axis{opacity:.45;transition:opacity .15s}
+.sd-missing{background:transparent;border-style:dashed}
+.sd-missing .sd-src{color:var(--mut)}

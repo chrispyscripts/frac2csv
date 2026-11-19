@@ -11,7 +11,6 @@
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
 <link rel="stylesheet" href="grids.css">
-<link rel="stylesheet" href="stage-datasets.css">
 <link rel="stylesheet" href="data-window.css">
 <script src="session.js"></script>
 <script src="quake-filter.js"></script>
@@ -399,7 +398,7 @@ function render() {
       hoverPad(hit && hit.layer.id === "pads" ? hit.properties.id : null);
       if (window.stratumStages) stratumStages.hover(stage, e.point);
       // the Data window follows the well or stage under the pointer (data-window.js)
-      if (window.stratumDataWindow && hit && hit.layer.id !== "pads") stratumDataWindow.point(hit.properties.wa, stage ? stage.label : null);
+      if (window.stratumDataWindow && hit && hit.layer.id !== "pads") stratumDataWindow.point(hit.properties.wa, stage ? stage.label : null, hit.properties.name);
       rackOffer(e.point);
     });
     map.getCanvas().addEventListener("mouseleave", () => { hoverWell(null); hoverPad(null); rackOffer(null); });
@@ -411,7 +410,6 @@ function render() {
       else if (hit.layer.id === "stages" && window.stratumStages) stratumStages.open(hit.properties, e.lngLat);
       else {
         openWell(hit.properties, e.lngLat);
-        if (window.stratumDataWindow && stratumDataWindow.shown) stratumDataWindow.hold(hit.properties.wa, null);
       }
     });
     layersReady = true; whenLayers.forEach(f => f()); whenLayers.length = 0;
@@ -683,7 +681,7 @@ function openWell(p, lngLat) {
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" })
     .setLngLat(lngLat)
     .setHTML(`<div class="pop"><b></b><div class="facts">${p.uwi ? p.uwi + " · " : ""}${id}<br>${facts.join(" · ")}</div>
-              <div class="acts"><button type="button" class="view">View well</button>
+              <div class="acts"><button type="button" class="view">View well</button><button type="button" data-act="dw">Data window ↗</button>
               ${sk ? "" : `<a href="wellview.html?wa=${encodeURIComponent(p.wa)}">Charts →</a>`}</div></div>`)
     .addTo(map);
   popup.getElement().querySelector(".pop > b").textContent = p.name;
@@ -697,6 +695,7 @@ function openWell(p, lngLat) {
     if (pt.y > h - 70) map.panBy([0, pt.y - h * 0.55], { duration: 350 });
   };
   popup.getElement().querySelector(".view").addEventListener("click", view);
+  dataWindowButton(p, popup.getElement());
   if (window.stratumMapExtras) stratumMapExtras.wellPopup(p, popup.getElement());
   view();
   document.querySelectorAll(".pad li a.on").forEach(a => a.classList.remove("on"));
@@ -710,7 +709,7 @@ function openDropped(p, lngLat) {
     p.est ? "path estimated from the surface and bottom hole (no survey in the file)" : p.stations ? `${p.stations} survey stations` : null,
     p.stages ? `${p.stages} frac stages` : null].filter(Boolean);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: "320px" }).setLngLat(lngLat)
-    .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts"><button type="button" class="view">View well</button></div></div>`).addTo(map);
+    .setHTML(`<div class="pop"><b></b><div class="facts"></div><div class="acts"><button type="button" class="view">View well</button><button type="button" data-act="dw">Data window ↗</button></div></div>`).addTo(map);
   const el = popup.getElement();
   el.querySelector(".pop > b").textContent = p.name;
   el.querySelector(".facts").textContent = (p.uwi ? p.uwi + " · " : "") + facts.join(" · ");
@@ -721,7 +720,18 @@ function openDropped(p, lngLat) {
     if (pt.y > h - 70) map.panBy([0, pt.y - h * 0.55], { duration: 350 });
   };
   el.querySelector(".view").addEventListener("click", view);
+  dataWindowButton(p, el);
   view();
+}
+// a well clicked: stacked in the Data window when one is open (data-window.js); the button opens one on it
+function dataWindowButton(p, el) {
+  const DW = window.stratumDataWindow, b = el.querySelector("[data-act=dw]");
+  if (!b) return;
+  if (!DW) { b.remove(); return; }
+  const stacked = DW.shown && DW.pick(p.wa, null, p.name);
+  if (stacked) b.textContent = "In the Data window ↗";
+  b.title = stacked ? "Stacked in the Data window: bring it forward" : "Open the Data window on this well: its datasets along the lateral, and each well or stage you click after it";
+  b.addEventListener("click", () => DW.pick(p.wa, null, p.name, true));
 }
 
 // the demo's prepared areas: each opens straight into its pads in 3D
@@ -781,7 +791,7 @@ function sidebar() {
     a.addEventListener("mouseenter", () => {
       const w = WELL_BY_WA[a.dataset.wa];
       hoverWell(w ? w.wa : null);
-      if (w && window.stratumDataWindow) stratumDataWindow.point(w.wa, null);
+      if (w && window.stratumDataWindow) stratumDataWindow.point(w.wa, null, w.name);
     });
     a.addEventListener("mouseleave", () => hoverWell(null));
   });
@@ -817,7 +827,6 @@ if (new URLSearchParams(location.search).get("show") === "1") {
 <script src="map-extras.js"></script>
 <script src="drop.js"></script>
 <script src="stage-datasets-core.js"></script>
-<script src="stage-datasets.js"></script>
 <script src="data-window.js"></script>
 <script src="map-stages.js"></script>
 </body>

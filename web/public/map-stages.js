@@ -6,8 +6,10 @@
 //
 // Pointing at a stage picks it out, names it by the pointer and shows it in the
 // Data window (data-window.js). Clicking one opens its popup: what was filed
-// for it, its chart (where the Lab has read its curves), the well section on
-// that stage, and the Data window held on it.
+// for it, its chart (where the Lab has read its curves) and the well section on
+// that stage; with the Data window open the stage is stacked there too (the
+// popup's button opens one on it). The wells and stages stacked in the Data
+// window are ringed on the map.
 //
 //   stratumStages.hover(props | null, point)   from map.html's pointer
 //   stratumStages.open(props, lngLat)          from map.html's click
@@ -39,6 +41,12 @@ function addLayers() {
              'circle-stroke-width': r(0.6, 1.2, 1.6), 'circle-opacity': ['interpolate', ['linear'], ['zoom'], MINZ, 0, MINZ + 0.4, 1] } }, before);
   map.addLayer({ id: 'stages-sel', type: 'circle', source: 'stages', minzoom: MINZ, filter: NONE,
     paint: { 'circle-radius': r(6, 8, 12), 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': k.sel, 'circle-stroke-width': 3 } }, before);
+  // the ones stacked in the Data window
+  map.addLayer({ id: 'stages-picked', type: 'circle', source: 'stages', minzoom: MINZ, filter: NONE,
+    paint: { 'circle-radius': r(5, 7, 11), 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': k.sel, 'circle-stroke-width': 2, 'circle-stroke-opacity': .85 } }, before);
+  if (map.getSource('laterals')) map.addLayer({ id: 'laterals-picked', type: 'line', source: 'laterals', filter: ['in', ['get', 'wa'], ['literal', []]],
+    paint: { 'line-color': k.sel, 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 3, 12, 7], 'line-opacity': .35 },
+    layout: { 'line-cap': 'round', 'line-join': 'round' } }, map.getLayer('laterals') ? 'laterals' : undefined);
   map.addLayer({ id: 'stages-hl', type: 'circle', source: 'stages', minzoom: MINZ, filter: NONE,
     paint: { 'circle-radius': r(4.5, 6.5, 10), 'circle-color': ['get', 'color'], 'circle-stroke-color': k.hl, 'circle-stroke-width': 2 } }, before);
   map.on('moveend', update);
@@ -47,12 +55,22 @@ function addLayers() {
     if (map.getLayer('stages')) map.setPaintProperty('stages', 'circle-stroke-color', m.toeRing);
     if (map.getLayer('stages-hl')) map.setPaintProperty('stages-hl', 'circle-stroke-color', m.hl);
     if (map.getLayer('stages-sel')) map.setPaintProperty('stages-sel', 'circle-stroke-color', m.sel);
+    if (map.getLayer('stages-picked')) map.setPaintProperty('stages-picked', 'circle-stroke-color', m.sel);
+    if (map.getLayer('laterals-picked')) map.setPaintProperty('laterals-picked', 'line-color', m.sel);
     update();
   });
   // the wells shown change (the legend's filter, a dropped file): so do their stages
   document.getElementById('charted').addEventListener('change', () => setTimeout(update, 0));
   addEventListener('stratum:dropped', () => { for (const id of [...padFiles.keys()]) if (/^drop-/.test(id)) padFiles.delete(id); setTimeout(update, 0); });
+  addEventListener('stratum:datapicks', marks);
+  marks();
   update();
+}
+// the Data window's picks: a stage ringed, a well (picked whole) drawn over in a wash
+function marks() {
+  const P = (window.stratumDataWindow && stratumDataWindow.picks) || [];
+  if (map.getLayer('stages-picked')) map.setFilter('stages-picked', ['in', ['get', 'id'], ['literal', P.filter(p => p.label != null).map(p => p.wa + '|' + p.label)]]);
+  if (map.getLayer('laterals-picked')) map.setFilter('laterals-picked', ['in', ['get', 'wa'], ['literal', P.filter(p => p.label == null).map(p => p.wa)]]);
 }
 
 // ---------- the stages in view ----------
@@ -117,17 +135,19 @@ async function open(p, lngLat) {
   select(p.id);
   popup = new maplibregl.Popup({ closeButton: true, maxWidth: '330px' }).setLngLat(lngLat)
     .setHTML(`<div class="pop"><b></b><div class="facts"></div><dl class="stg-facts"></dl><div class="acts">
-      <button type="button" class="go" data-act="dw">Data window</button><button type="button" data-act="ws">View well</button></div></div>`).addTo(map);
+      <button type="button" class="go" data-act="dw"></button><button type="button" data-act="ws">View well</button></div></div>`).addTo(map);
   const el = popup.getElement(), me = popup;
   me.on('close', () => select(null));
   el.querySelector('.pop > b').textContent = `Stage ${p.label} · ${p.name}`;
   el.querySelector('.facts').textContent = `${p.top === p.base ? fmt(p.top, 1) : fmt(p.top, 1) + '–' + fmt(p.base, 1)} m MD · ${p.padName}`;
-  el.querySelector('[data-act=dw]').title = 'Hold the Data window on this stage: its well’s datasets around it, along MD';
-  el.querySelector('[data-act=dw]').addEventListener('click', () => { if (window.stratumDataWindow) stratumDataWindow.hold(p.wa, p.label, true); });
+  // with the Data window open, the stage is stacked there; the button brings the window forward (or opens one on it)
+  const DW = window.stratumDataWindow, dwb = el.querySelector('[data-act=dw]');
+  const stacked = !!(DW && DW.shown && DW.pick(p.wa, p.label, p.name));
+  dwb.textContent = stacked ? 'In the Data window ↗' : 'Data window ↗';
+  dwb.title = stacked ? 'Stacked in the Data window: bring it forward' : 'Open the Data window on this stage: its well’s datasets around it, along MD';
+  dwb.addEventListener('click', () => { if (DW) DW.pick(p.wa, p.label, p.name, true); });
   el.querySelector('[data-act=ws]').title = 'The well in 2D, docked below, with this stage picked out';
   el.querySelector('[data-act=ws]').addEventListener('click', () => { if (window.stratumSection) stratumSection.view(p.wa, p.label); });
-  // the Data window, when it is open, holds on the stage picked
-  if (window.stratumDataWindow && stratumDataWindow.shown) stratumDataWindow.hold(p.wa, p.label);
   // what was filed for it, from its pad file
   const f = await padFile(p.pad), fw = f && (f.wells || []).find(w => w.well && String(w.well.wa) === String(p.wa));
   if (popup !== me) return;

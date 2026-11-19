@@ -20,7 +20,7 @@
 // FracView was Stratum: files saved under the old name still open
 const KIND = 'fracview-session', KINDS = [KIND, 'stratum-session'];
 const LIST_KEY = 'stratum.sessions', HAND = 'stratum.handoff.', PENDING = 'stratum.pendingWindows';
-const PAGES = /^(map|wellview|wellsection|compare|pad|winerack|stages|report)\.html(\?[^#]*)?$/;
+const PAGES = /^(map|wellview|wellsection|compare|pad|winerack|stages|report|datawindow)\.html(\?[^#]*)?$/;
 const TOP = window.top === window;
 const ME = Math.random().toString(36).slice(2);
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

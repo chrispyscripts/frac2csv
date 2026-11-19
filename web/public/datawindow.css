@@ -1,0 +1,9 @@
+/* the Data window (datawindow.html): stages.css's page and cards, stage-datasets.css's stacks */
+.dw-how{margin:0;color:var(--mut);font-size:13px;line-height:1.5;max-width:80ch}
+.dw-how[hidden]{display:none}
+.dw-card .sg-card-h{padding-bottom:2px}
+.dw-card .sd{border-top:0;padding-top:4px}
+.dw-live{border-color:var(--accent);border-style:dashed}
+.sg-title .dw-tag,.dw-tag{display:inline-block;margin-right:8px;padding:1px 8px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-size:11.5px;font-weight:650;vertical-align:1px}
+.dw-x{font-size:17px;line-height:1;padding:3px 10px}
+#dw-follow[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}

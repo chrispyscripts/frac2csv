@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="theme.js"></script>
+<title>FracView — Data window</title>
+<link rel="stylesheet" href="stages.css">
+<link rel="stylesheet" href="stage-datasets.css">
+<link rel="stylesheet" href="datawindow.css">
+<script src="session.js"></script>
+<script src="account.js"></script>
+</head>
+<body>
+<header class="sg-head">
+  <div>
+    <h1>Data window</h1>
+    <div class="sg-sub" id="dw-sub">Waiting for the map…</div>
+  </div>
+  <div class="sg-tools">
+    <button type="button" id="dw-follow" aria-pressed="true" title="Show the well or stage under the pointer on the map or in the 3D view, at the top">Follow the pointer</button>
+    <button type="button" id="dw-clear" hidden title="Take every picked well and stage out of this window">Clear picks</button>
+    <button type="button" data-menu title="Main menu: home, sessions, groups, Discover, settings">☰ Menu</button>
+    <button type="button" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
+    <span data-theme-toggle></span>
+    <span data-account></span>
+  </div>
+</header>
+<main id="dw-list">
+  <p class="dw-how" id="dw-how">Point at a well on the map or in the 3D view, or at a stage once the map is zoomed in, and its datasets show here. Click wells or stages to stack each one below. <b>Add Dataset</b> on any card adds it to them all.</p>
+  <p class="sg-empty" id="dw-empty" hidden>Nothing here yet. Turn on <b>Follow the pointer</b>, or click a well or a stage on the map or in the 3D view to stack it here.</p>
+</main>
+<script src="drop-store.js"></script>
+<script src="logs.js"></script>
+<script src="gamma-palettes.js"></script>
+<script src="stage-datasets-core.js"></script>
+<script src="stage-datasets.js"></script>
+<script src="datawindow.js"></script>
+<script src="quake-filter.js"></script>
+<script src="menu.js"></script>
+</body>
+</html>

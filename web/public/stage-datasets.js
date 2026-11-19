@@ -111,7 +111,7 @@ function attach(o) {
   const solo = !!o.solo;
   const c = { id: 'sd' + (++uid), wa: o.wa == null ? '' : String(o.wa), label: o.label == null ? null : String(o.label), kinds: [], win: 'stage', pending: null, m: null, mP: null,
               cursor: null, hot: -1, panels: new Map(), open: false, W: null, raf: 0, liveT: 0,
-              solo, want: [], names: {}, onChange: o.onChange || null };
+              solo, want: [], names: {}, onChange: o.onChange || null, onLoad: o.onLoad || null };
   if (solo) {
     const s = C.sanitizeStack(o.stack);
     if (s) { c.want = s.kinds; c.win = s.win; }
@@ -153,7 +153,7 @@ function attach(o) {
   if (ro) ro.observe(c.list);
 
   (solo ? solos : ctls).push(c);
-  if (c.wa && (c.kinds.length || c.pending || c.want.length)) ensure(c);
+  if (c.wa && (c.kinds.length || c.pending || c.want.length || c.onLoad)) ensure(c);
   render(c);
   if (!solo) later(() => { persist(); refreshSave(); });
   return {
@@ -163,11 +163,23 @@ function attach(o) {
       wa = wa == null ? '' : String(wa); label = label == null ? null : String(label);
       if (wa === c.wa) { this.setStage(label); return; }
       c.wa = wa; c.label = label; c.m = null; c.mP = null; c.cursor = null; c.hot = -1;
-      if (c.wa && (c.want.length || c.open)) ensure(c);
+      if (c.wa && (c.want.length || c.open || c.onLoad)) ensure(c);
       if (c.open) renderPick(c, false);
       render(c);
     },
     get target() { return { wa: c.wa, label: c.label, name: c.m && c.m.ok ? c.m.name : '' }; },
+    // (solo) another card's stack, taken as this one's: the Data window's cards share one
+    setStack(st) {
+      const s = C.sanitizeStack(st);
+      if (!s) return;
+      c.want = s.kinds; c.win = s.win;
+      const n = (st && st.names) || {};
+      c.names = {};
+      for (const k of c.want) if (n[k] && typeof n[k].t === 'string') c.names[k] = { t: n[k].t.slice(0, 80), u: String(n[k].u || '').slice(0, 20) };
+      if (c.wa && c.want.length) ensure(c);
+      settle(c); render(c);
+      if (c.open) renderPick(c, false);
+    },
     destroy() {
       for (const l of [ctls, solos]) { const k = l.indexOf(c); if (k >= 0) l.splice(k, 1); }
       if (lastEdited === c) lastEdited = null;
@@ -186,6 +198,7 @@ function ensure(c) {
   c.mP = model(wa).then(m => {
     if (c.wa !== wa) return;                 // (a solo stack moved on to another well meanwhile)
     c.m = m; settle(c);
+    if (c.onLoad) c.onLoad(m);
     if (c.open) renderPick(c, c.pick.contains(document.activeElement) || document.activeElement === c.add);
     render(c);
     if (!c.solo) { persist(); refreshSave(); }

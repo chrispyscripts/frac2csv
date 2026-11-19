@@ -1,154 +1,100 @@
-// FracView — the map's Data window: the datasets of the well or stage under
-// the pointer, stacked along MD (stage-datasets.js, as a solo stack). Its
-// button sits under the legend. The stack is built with Add Dataset as on the
-// stage charts page (gamma, porosity, the mud log, curves, comments) and kept
-// in this browser; it stays as the pointer moves from well to well, and a
-// dataset a well lacks shows as "not on file" in its place.
+// FracView — the map's Data window button. It sits under the legend and opens
+// the Data window in a window of its own (datawindow.html), then tells it over
+// BroadcastChannel 'stratum-data' which well or stage the pointer is on, here
+// and in the 3D view (cluster-underground.js), and which were clicked: those
+// are stacked there, a card each.
 //
-// Pointing at a well shows its lateral; at a stage (zoomed in, map-stages.js)
-// the stretch around it. Clicking a well or a stage holds the window on it
-// until "Follow the pointer". The window can be dragged by its title.
-//
-//   localStorage stratum.dataWindow   {v, open, stack: {kinds, win, names}, last: {wa, label}, pos: {x, y}}
-//
-//   stratumDataWindow.point(wa, label)        the pointer is over this well (label null) or stage
-//   stratumDataWindow.hold(wa, label, open)   a click: the window stays on it (open: and opens)
+//   stratumDataWindow.point(wa, label, name)        the pointer is over this well (label null) or stage
+//   stratumDataWindow.pick(wa, label, name, open)   a click: stacked in the Data window when one is open
+//                                                    (open: opened on it when none is)
+//   stratumDataWindow.open()                         the button
+//   stratumDataWindow.shown                          a Data window is open
+//   stratumDataWindow.picks                          [{wa, label}] stacked in the open Data windows
+//   'stratum:datapicks' (window event)               the picks changed
 (() => {
 'use strict';
-if (!window.StageDatasets || typeof map === 'undefined') return;
-const KEY = 'stratum.dataWindow';
-let saved = {};
-try { saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { saved = {}; }
-const keep = () => { try { localStorage.setItem(KEY, JSON.stringify({ ...saved, v: 1 })); } catch (e) { /* private mode: this page only */ } };
-const wellOf = wa => { try { return (typeof WELL_BY_WA !== 'undefined' && WELL_BY_WA[wa]) || null; } catch (e) { return null; } };
+const NAME = 'stratum-data', PAGE = 'datawindow.html', FEATURES = 'popup,width=900,height=960';
+let chan = null;
+try { chan = new BroadcastChannel(NAME); } catch (e) { /* an old browser: the window opens, but does not follow */ }
+const wins = new Map();          // id -> {picks, follow}
+let PICKS = [];
+const alive = () => wins.size > 0;
+const changed = () => {
+  const seen = new Set();
+  PICKS = [...wins.values()].flatMap(w => w.picks || []).filter(p => { const k = p.wa + ':' + p.label; if (seen.has(k)) return false; seen.add(k); return true; });
+  btnWords();
+  dispatchEvent(new CustomEvent('stratum:datapicks', { detail: PICKS }));
+};
+if (chan) {
+  chan.onmessage = e => {
+    const m = e.data || {};
+    if (m.type === 'here' && m.id) { wins.set(m.id, m); changed(); }
+    else if (m.type === 'bye') { wins.delete(m.id); changed(); }
+  };
+  chan.postMessage({ type: 'ping' });
+  addEventListener('focus', () => chan.postMessage({ type: 'ping' }));
+}
 
-// ---------- the button, under the legend ----------
+// ---------- the button, under the legend (where Change View was) ----------
 const btn = document.createElement('button');
 btn.type = 'button'; btn.id = 'dw-open'; btn.className = 'dw-btn';
-btn.setAttribute('aria-controls', 'dw'); btn.setAttribute('aria-expanded', 'false');
-btn.title = 'The datasets of the well or stage under the pointer, stacked along the well: gamma, porosity, the mud log, comments…';
-btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 9.5l3-2 3 2.5 3-4 3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg><span>Data window</span>';
+btn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6 9.5l3-2 3 2.5 3-4 3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></svg><span>Data window</span><small></small>';
 document.body.append(btn);
-
-// ---------- the window ----------
-const box = document.createElement('section');
-box.id = 'dw'; box.className = 'dw'; box.hidden = true;
-box.setAttribute('role', 'region'); box.setAttribute('aria-label', 'Data window');
-box.innerHTML = `<header class="dw-h" title="Drag to move the window">
-    <div class="dw-id"><b class="dw-t">Data window</b><span class="dw-s"></span></div>
-    <button type="button" class="dw-follow" hidden title="Show whichever well or stage the pointer is over again">Follow the pointer</button>
-    <button type="button" class="dw-x" aria-label="Close the Data window" title="Close">×</button></header>
-  <p class="dw-hint"></p>
-  <div class="dw-body"></div>`;
-document.body.append(box);
-const sub = box.querySelector('.dw-s'), hint = box.querySelector('.dw-hint'), follow = box.querySelector('.dw-follow');
-const ctl = StageDatasets.attach({ solo: true, mount: box.querySelector('.dw-body'), stack: saved.stack,
-  onChange: s => { saved.stack = s; keep(); words(); } });
-
-let held = false, cur = null, pendT = 0;
-function words() {
-  const w = cur && wellOf(cur.wa), n = (saved.stack && saved.stack.kinds.length) || 0;
-  sub.textContent = !cur ? '' : [w ? w.name : cur.wa, cur.label != null ? `stage ${cur.label}` : 'lateral'].join(' · ') + (held ? ' · held' : '');
-  follow.hidden = !held;
-  hint.textContent = !cur ? (n ? 'Point at a well on the map, or at a stage once zoomed in.' : 'Point at a well on the map, or at a stage once zoomed in, then Add Dataset to stack its gamma, porosity, mud log, comments…')
-    : !n ? 'Add Dataset to stack this well’s gamma, porosity, mud log, comments… They stay as you move from well to well.' : '';
-  hint.hidden = !hint.textContent;
+const note = document.createElement('div');
+note.className = 'dw-note'; note.hidden = true; note.setAttribute('role', 'status');
+document.body.append(note);
+function btnWords() {
+  btn.querySelector('small').textContent = alive() ? (PICKS.length ? `open · ${PICKS.length} picked` : 'open') : '';
+  btn.title = alive() ? 'Bring the Data window forward. Click wells or stages on the map or in the 3D view to stack them there.'
+    : 'Open the Data window: the datasets of the well or stage under the pointer, and of each one you click, stacked along the well (gamma, porosity, the mud log, comments…)';
 }
-function show(wa, label) {
-  if (wa == null) return;
-  cur = { wa: String(wa), label: label == null ? null : String(label) };
-  ctl.setTarget(cur.wa, cur.label);
-  saved.last = cur; keep();
-  words();
-}
-// the pointer: shown once it rests a moment, so sweeping across the map reads no wells on the way
-function point(wa, label) {
-  if (held || wa == null) return;
-  if (cur && cur.wa === String(wa) && cur.label === (label == null ? null : String(label))) { clearTimeout(pendT); return; }
-  clearTimeout(pendT);
-  if (box.hidden) { cur = { wa: String(wa), label: label == null ? null : String(label) }; saved.last = cur; return; }
-  pendT = setTimeout(() => show(wa, label), 140);
-}
-function hold(wa, label, open) {
-  if (open && box.hidden) setOpen(true);
-  if (box.hidden) return;
-  clearTimeout(pendT);
-  held = true;
-  show(wa, label);
-}
-follow.addEventListener('click', () => { held = false; words(); box.querySelector('.dw-x').focus(); });
-
-function setOpen(on) {
-  box.hidden = !on; btn.hidden = on;
-  btn.setAttribute('aria-expanded', String(on));
-  saved.open = on; keep();
-  document.body.classList.toggle('dw-on', on);
-  if (on) {
-    place();
-    words();
-    // the last well shown, once the map has its own data in (it is read after the map's, not beside it)
-    const go = () => { const last = cur || saved.last; if (!box.hidden && last && last.wa && !(cur && ctl.target.wa === cur.wa)) show(last.wa, last.label); };
-    if (typeof afterLayers === 'function') afterLayers(go); else go();
-  }
-}
-btn.addEventListener('click', () => { setOpen(true); box.querySelector('.dw-x').focus(); });
-box.querySelector('.dw-x').addEventListener('click', () => { setOpen(false); held = false; btn.focus(); });
-box.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.target.closest('.sd-pick, canvas')) { setOpen(false); held = false; btn.focus(); } });
-
-// ---------- where it sits ----------
-// the button: under the legend, as wide as it. The window: where it was
-// dragged to, else beside the legend (or under it, on a narrow screen)
+btnWords();
 const legend = document.querySelector('.legend');
 function placeBtn() {
   if (!legend) return;
   const r = legend.getBoundingClientRect();
-  btn.style.top = (r.bottom + 10) + 'px';
-  btn.style.width = Math.max(150, r.width) + 'px';
+  btn.style.top = (r.bottom + 10) + 'px'; btn.style.width = Math.max(150, r.width) + 'px';
+  note.style.top = (r.bottom + 56) + 'px'; note.style.width = Math.max(150, r.width) + 'px';
 }
-function place() {
-  if (box.hidden) return;
-  const W = innerWidth, H = innerHeight, phone = W <= 640;
-  box.classList.toggle('dw-sheet', phone);
-  if (phone) { box.style.left = box.style.top = box.style.right = ''; return; }
-  const w = Math.min(500, W - 24);
-  box.style.width = w + 'px';
-  let x, y;
-  if (saved.pos && isFinite(saved.pos.x) && isFinite(saved.pos.y)) { x = saved.pos.x; y = saved.pos.y; }
-  else {
-    const r = legend ? legend.getBoundingClientRect() : { left: W - 12, bottom: 12, width: 0 };
-    const side = document.querySelector('.side'), sr = side ? side.getBoundingClientRect().right : 0;
-    if (r.left - 12 - w >= sr + 12) { x = r.left - 12 - w; y = 12; }       // beside the legend
-    else { x = W - 12 - w; y = Math.min(r.bottom + 10, H - 360); }          // under it
-  }
-  x = Math.max(8, Math.min(W - w - 8, x)); y = Math.max(8, Math.min(H - 120, y));
-  box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.right = 'auto';
-  box.style.setProperty('--dw-top', y + 'px');
-}
-placeBtn(); addEventListener('resize', () => { placeBtn(); place(); });
+placeBtn(); addEventListener('resize', placeBtn);
 if (legend && 'ResizeObserver' in window) new ResizeObserver(placeBtn).observe(legend);
 
-// dragged by its title
-{
-  const h = box.querySelector('.dw-h');
-  let drag = null;
-  h.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.target.closest('button') || box.classList.contains('dw-sheet')) return;
-    const r = box.getBoundingClientRect();
-    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    h.setPointerCapture(e.pointerId); box.classList.add('dw-drag');
-  });
-  h.addEventListener('pointermove', e => {
-    if (!drag) return;
-    const w = box.offsetWidth;
-    const x = Math.max(8, Math.min(innerWidth - w - 8, e.clientX - drag.dx)), y = Math.max(8, Math.min(innerHeight - 120, e.clientY - drag.dy));
-    box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.setProperty('--dw-top', y + 'px');
-  });
-  const end = () => { if (!drag) return; drag = null; box.classList.remove('dw-drag'); saved.pos = { x: parseFloat(box.style.left), y: parseFloat(box.style.top) }; keep(); };
-  h.addEventListener('pointerup', end); h.addEventListener('pointercancel', end);
-  // a double-click puts it back where it starts
-  h.addEventListener('dblclick', e => { if (e.target.closest('button')) return; delete saved.pos; keep(); place(); });
+// ---------- the window ----------
+const urlFor = p => PAGE + (p ? '?p=' + encodeURIComponent(p.wa) + ':' + (p.label == null ? '' : encodeURIComponent(p.label)) : '');
+function openWin(p) {
+  let w = null;
+  try {
+    if (alive()) {
+      // the open one, found by its name: brought forward (and told of the pick)
+      w = window.open('', NAME, FEATURES);
+      if (w && /^about:blank/.test(w.location.href)) w.location.href = urlFor(p);
+      else if (p && chan) chan.postMessage({ type: 'pick', ...p });
+    } else w = window.open(urlFor(p), NAME, FEATURES);
+  } catch (e) { w = null; }
+  if (w) { try { w.focus(); } catch (e) { /* the browser decides */ } note.hidden = true; return; }
+  note.replaceChildren();
+  const a = document.createElement('a'); a.href = urlFor(p); a.target = NAME; a.textContent = 'Open it';
+  const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss'); x.onclick = () => { note.hidden = true; };
+  note.append('Your browser blocked the Data window. ', a, x);
+  note.hidden = false;
 }
+btn.addEventListener('click', () => openWin(null));
 
-if (saved.open) setOpen(true); else words();
-window.stratumDataWindow = { point, hold, open: () => setOpen(true), get shown() { return !box.hidden; } };
+let lastPoint = '';
+function point(wa, label, name) {
+  if (!chan || !alive() || wa == null) return;
+  const k = wa + ':' + (label == null ? '' : label);
+  if (k === lastPoint) return;
+  lastPoint = k;
+  chan.postMessage({ type: 'point', wa: String(wa), label: label == null ? null : String(label), name: name || '' });
+}
+function pick(wa, label, name, open) {
+  if (wa == null) return false;
+  const p = { wa: String(wa), label: label == null ? null : String(label), name: name || '' };
+  if (open) { openWin(p); return true; }
+  if (!chan || !alive()) return false;
+  chan.postMessage({ type: 'pick', ...p });
+  return true;
+}
+window.stratumDataWindow = { point, pick, open: () => openWin(null), get shown() { return alive(); }, get picks() { return PICKS; } };
 })();
