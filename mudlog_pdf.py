@@ -386,6 +386,197 @@ def read_text(doc, pages):
     return text
 
 
+# ---------------------------------------------------------------- descriptions
+# What the wellsite geologist wrote along the log: the sample descriptions
+# ("972 - 1000m Shale (70%): lt - m gy ...; SS (30%): ...", or a description
+# placed at its depth: "SH med-dk gy, sbblky ...") and other remarks ("Landing
+# point reached @ 6:15 hrs", "Drill out: 147.0m MD"). A description's depths
+# are the range it starts with, else where it sits along the log.
+
+DESC_RANGE = re.compile(r"^\s*(\d{2,5}(?:\.\d+)?)\s*(?:m\b\.?)?\s*(?:-|–|—|to)\s*(\d{2,5}(?:\.\d+)?)\s*(?:m\b\.?)?[\s:,]*", re.I)
+# a rock as wellsite geologists write it; the first word of a description or
+# of one of its parts ("...; SS (30%): ...")
+LITH_WORDS = [
+    (r"sh(?:ale)?|shl", "shale"), (r"ss|sst|s(?:and)?st(?:one)?|sandstone", "sandstone"),
+    (r"slt?st(?:one)?|siltstone|silt", "siltstone"), (r"ls|lst|l(?:ime)?st(?:one)?|limestone", "limestone"),
+    (r"dol(?:o|omite)?", "dolomite"), (r"cly(?:st)?|clst|clay(?:stone)?", "claystone"),
+    (r"mdst|mudst(?:one)?|mudstone", "mudstone"), (r"anhy(?:d|drite)?", "anhydrite"), (r"coal", "coal"),
+    (r"bent(?:onite)?", "bentonite"), (r"cgl|congl(?:omerate)?", "conglomerate"), (r"salt", "salt"),
+    (r"chert|cht", "chert"), (r"marl(?:stone)?", "marlstone"), (r"gyp(?:sum)?", "gypsum"),
+]
+# (not a depth by it: "SS -27.3m" is sub-sea, "TVD 740.2m" a depth)
+_LITH = re.compile(r"^\s*(?:\d+\s*%\s*)?(" + "|".join(w for w, _r in LITH_WORDS) + r")\b(?!\s*:?\s*[-+]?\d+(?:\.\d+)?\s*m\b)(?!\s*:?\s*[-+]\s*\d)\.?\s*:?\s*(?:\(\s*~?\s*(\d{1,3})\s*%\s*\)|~?\s*(\d{1,3})\s*%)?", re.I)
+_CAPTIONS = re.compile(r"\((?:API|gAPI|units?|min/m|m/hr|m/h|cps|kdaN|kPa|%|ppm)\)", re.I)
+_SURVEY_NOTE = re.compile(r"\b(?:DS|INC|INCL|AZ|AZI|AZM)\s*:?\s*[\d.]+\s*°?|\bMD\s*:?\s*[\d.]+\s*m?\s*(?:TVD|INC)|\bTVD\s*:?\s*[\d.]+\s*m?\s*(?:SSL|SS|VS)\b", re.I)
+
+
+def _rock_of(word):
+    for w, r in LITH_WORDS:
+        if re.fullmatch(w, word, re.I):
+            return r
+    return None
+
+
+def lith_mix(text):
+    """the rocks a description names, each with its share: {rock: %}. Parts
+    ("; SS (30%): ...") each start with a rock; one rock named with no share
+    is all of it. Rocks named with no shares besides others get None: what
+    each is of the rest is not said (the first named is taken as the main)"""
+    t = DESC_RANGE.sub("", text, count=1)
+    parts = [x for x in re.split(r";|(?<=\.)\s+(?=[A-Z])|\s{3,}", t) if x.strip()]
+    got, loose = {}, []
+    for part in parts:
+        m = _LITH.match(part)
+        if not m:
+            continue
+        r = _rock_of(m.group(1))
+        pct = m.group(2) or m.group(3)
+        if not r:
+            continue
+        if pct and 0 < int(pct) <= 100:
+            got[r] = got.get(r, 0) + int(pct)
+        elif r not in got and r not in loose:
+            loose.append(r)
+    loose = [r for r in loose if r not in got]
+    if len(loose) == 1 and sum(got.values()) < 100:
+        got[loose[0]] = 100 - sum(got.values())          # the one rock left: the rest of it
+    else:
+        for r in loose:
+            got[r] = None
+    return got
+
+
+def main_rock(mix):
+    """the rock a description is mostly: the largest share, else the first named"""
+    if not mix:
+        return None
+    shared = [(v, r) for r, v in mix.items() if v is not None]
+    return max(shared)[1] if shared else next(iter(mix))
+
+
+def _lines_on(doc, pages):
+    """the log pages' lines of text: {page, text, d0, d1, a, h, step},
+    depths along the log, the place across it, the line's height, and the
+    step across to the next line of its block in the PDF (0: none)"""
+    out = []
+    for P in pages:
+        pg = doc[P.page - 1]
+        for b in pg.get_text("dict")["blocks"]:
+            ls = []
+            for ln in b.get("lines", []):
+                t = "".join(sp["text"] for sp in ln["spans"]).strip()
+                if not t:
+                    continue
+                x0, y0, x1, y1 = ln["bbox"]
+                d0, d1 = sorted((P.depth(x0, y0), P.depth(x1, y1)))
+                a0, a1 = sorted((P.across(x0, y0), P.across(x1, y1)))
+                ls.append({"page": P.page, "text": re.sub(r"\s{2,}", "   ", t), "d0": d0, "d1": d1,
+                           "a": (a0 + a1) / 2, "h": a1 - a0, "step": 0.0, "on": P.on(d0, 0.5)})
+            for k in range(len(ls) - 1):
+                ls[k]["step"] = ls[k + 1]["a"] - ls[k]["a"]
+            out += [l for l in ls if l["on"]]
+    return out
+
+
+def _starts(t):
+    return bool(DESC_RANGE.match(t) and re.search(r"[A-Za-z]", t[:40])) or bool(_LITH.match(t))
+
+
+def _paragraphs(lines):
+    """lines one paragraph's: they start at one depth (set flush along the
+    log) and lie a line apart across it. Read from the end whose line starts
+    a description (a range, a rock), else the way the PDF's own blocks go"""
+    if not lines:
+        return []
+    steps = [l["step"] for l in lines if l["step"] and len(l["text"]) > 20]
+    doc_sign = 1.0 if sum(1 for x in steps if x > 0) >= sum(1 for x in steps if x < 0) else -1.0
+    lines = sorted(lines, key=lambda l: (l["page"], l["d0"]))
+    groups, cur = [], []
+    for l in lines:                                    # lines starting at one depth
+        if cur and (l["page"] != cur[0]["page"] or l["d0"] - cur[0]["d0"] > 0.6):
+            groups.append(cur)
+            cur = []
+        cur.append(l)
+    if cur:
+        groups.append(cur)
+    paras = []
+    for g in groups:
+        g.sort(key=lambda l: l["a"])
+        run = [g[0]]
+        for l in g[1:]:
+            if l["a"] - run[-1]["a"] <= 1.6 * max(l["h"], run[-1]["h"], 1.0):
+                run.append(l)
+            else:
+                paras.append(run)
+                run = [l]
+        paras.append(run)
+    out = []
+    for run in paras:
+        lo, hi = _starts(run[0]["text"]), _starts(run[-1]["text"])
+        if hi and not lo:
+            run = run[::-1]
+        elif not (lo and not hi):
+            inner = [l["step"] for l in run if l["step"]]
+            sign = (1.0 if sum(inner) > 0 else -1.0) if inner else doc_sign
+            if sign < 0:
+                run = run[::-1]
+        out.append({"page": run[0]["page"], "d0": min(l["d0"] for l in run), "d1": max(l["d1"] for l in run),
+                    "lines": [l["text"] for l in run]})
+    return out
+
+
+def _join_lines(ls):
+    t = ""
+    for l in ls:
+        t = t[:-1] + l if t.endswith("-") and not t.endswith(" -") else (t + " " + l if t else l)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
+_SPLIT_AT = re.compile(r"(?:(?<=[.;])|(?<=^))\s*(?=\d{2,5}(?:\.\d+)?\s*(?:m\b\.?)?\s*(?:-|–|—|to)\s*\d{2,5}(?:\.\d+)?\s*(?:m\b\.?)?[\s:,]+[A-Za-z])")
+
+
+def read_descriptions(doc, pages, top=None, bottom=None):
+    """-> [{top, base, text, kind, rocks, at}]: kind "description" (it names a
+    rock) or "note"; at "range" (its depths written at its start) or
+    "position" (where it sits along the log)"""
+    out = []
+    lo = (top if top is not None else min(P.lo for P in pages)) - 50
+    hi = (bottom if bottom is not None else max(P.hi for P in pages)) + 50
+    for para in _paragraphs(_lines_on(doc, pages)):
+        whole = _join_lines(para["lines"])
+        # a paragraph that holds several ranged descriptions, one after another
+        pieces = [x.strip() for x in _SPLIT_AT.split(whole) if x and x.strip()]
+        for t in pieces:
+            if len(t) < 20 or not re.search(r"[A-Za-z]{3}", t):
+                continue
+            rocks = lith_mix(t)
+            m = DESC_RANGE.match(t)
+            if m:
+                a, z = float(m.group(1)), float(m.group(2))
+                if not (lo <= a < z <= hi and z - a <= 500):
+                    m = None
+            if m:
+                at, td, bd = "range", a, z
+            else:
+                at, td, bd = "position", round(para["d0"], 2), round(max(para["d1"], para["d0"] + 0.1), 2)
+            if rocks and _SURVEY_NOTE.search(t) and len(t) < 80:
+                rocks = {}                     # "SS +3.75 INC 90.48 AZ 90.44 MD ...": a station's label
+            if not rocks and (_SURVEY_NOTE.search(t) or len(re.findall(r"[A-Za-z]", t)) < 12
+                              or len(_CAPTIONS.findall(t)) >= 2 or (_CAPTIONS.search(t) and len(t) < 40)):
+                continue      # a survey station's label, curves' captions, a scale: not a remark
+            out.append({"top": td, "base": bd, "text": t, "kind": "description" if rocks else "note",
+                        "rocks": rocks, "at": at})
+    out.sort(key=lambda d: (d["top"], d["base"]))
+    # one text read twice (a page's overlap with the next): kept once
+    seen, keep = set(), []
+    for d in out:
+        k = (d["text"], round(d["top"]))
+        if k not in seen:
+            seen.add(k)
+            keep.append(d)
+    return keep
+
+
 # ---------------------------------------------------------------- pictures
 
 def legend_of(doc, pages):
@@ -2668,6 +2859,8 @@ def read(pdf, parts=None, library=None):
         out["header"] = read_header([doc[i] for i in range(first_log)] + [above])
     if "text" in parts:
         out["text"] = read_text(doc, pages)
+    if "descriptions" in parts:
+        out["descriptions"] = read_descriptions(doc, pages, top, bottom)
     sw = legend_of(doc, pages) if parts & {"rocks", "symbols", "intervals", "tracks"} else []
     if "tracks" in parts:
         out["tracks"] = read_tracks(doc, pages, info.get("lines_pt") or [], sw, row=row)
