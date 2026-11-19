@@ -2696,6 +2696,14 @@ def read(pdf, parts=None, library=None):
         dropped = []
         out["curves"] = read_curves(doc, pages, info.get("lines_pt") or [], top, bottom, dropped=dropped)
         if not out["curves"]:
+            # a geosteering printout's captions ("150 Gamma (API)" at one
+            # edge of the curves' band, its other end across it)
+            import geosteer_pdf as GS
+            out["curves"] = GS.read_curves(doc, top, bottom)
+            if out["curves"]:
+                out["notes"].append("curves read as a geosteering printout's: each scale from its caption "
+                                    "and the number across the band from it")
+        if not out["curves"]:
             out["notes"].append("no curve captions found")
         for name, why in dropped:
             out["notes"].append("%s is captioned but not read: %s" % (name, why))
