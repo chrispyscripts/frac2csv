@@ -92,10 +92,14 @@ class _Frame:
         return y0, y1, x0, x1
 
 
-def _frame(pg):
+def _frame(pg, top=None, bottom=None):
+    """the page's depths, from its MD labels; None on a page with none (or,
+    given the log's range, with none in it)"""
     import wellsight_print as wp
     ax = wp.page_axis(pg, 1, 99999, whole=True)
     if not ax or len(ax[3]) < 5:
+        return None
+    if top is not None and not any(top - 20 <= d <= bottom + 20 for _c, d in ax[3]):
         return None
     return _Frame(ax[0], ax[1], ax[2])
 
@@ -447,8 +451,11 @@ def read_curves(doc, top, bottom, step=STEP):
     n = int(math.floor((bottom - top) / step + 1e-6)) + 1
     curves = {}                 # kind -> {curve, values, past}
     last = []                   # the scales a page goes on with when it prints none
-    frames = [_frame(pg) for pg in doc]
-    axis = next((f.axis for f in frames if f), None)
+    # a page's depths are the log's (not a cross-section's TVD scale: a
+    # header page's numbers can make a line of their own)
+    frames = [_frame(pg, top, bottom) for pg in doc]
+    axes = [f.axis for f in frames if f]
+    axis = max(set(axes), key=axes.count) if axes else None
     for pg, f in zip(doc, frames):
         if f is None:
             # a page of the log's header can print the scales (a page with
