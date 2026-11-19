@@ -94,6 +94,31 @@ def printout(top, bottom, landscape=False, start_y=560.0, second_column=True,
 
 
 @unittest.skipUnless(fitz, "needs PyMuPDF")
+class Scale(unittest.TestCase):
+    """which row of numbers is the depth line, and the printout's scale"""
+
+    def test_most_labels_not_most_pages(self):
+        # two header pages each print a plot's axis (5 numbers, 3.16 m/pt);
+        # the log itself is one long page of 151 labels at 0.085 m/pt
+        self.assertAlmostEqual(wp.common_scale([(-3.156, 5), (-3.156, 5), (-0.0847, 151)]), -0.0847)
+        # a paged log: its pages agree, one header page does not
+        self.assertAlmostEqual(wp.common_scale([(0.085, 12)] * 5 + [(3.1, 5)]), 0.085)
+        # pages a hair apart: their median, as before
+        self.assertAlmostEqual(wp.common_scale([(0.0850, 12), (0.0851, 12), (0.0852, 12)]), 0.0851)
+
+    def test_a_row_of_five_labels_before_a_track_scale(self):
+        # 250 500 750 1000 (a track's scale) cover more depth than a short
+        # log's 140 labels do; the row of five or more is the depth line
+        scale_row = [(9885.0, 250.0), (9896.0, 500.0), (9907.0, 750.0), (9918.0, 1000.0)]
+        depth_row = [(12610.0 + i * 8.15, 830.0 + 5 * i) for i in range(139)]
+        self.assertGreater(wp._axis_key(depth_row), wp._axis_key(scale_row))
+        # among rows of five or more, the one covering more depth (a
+        # cross-section's TVD scale covers twenty metres)
+        tvd = [(100.0 + i * 40, 1000.0 + 2 * i) for i in range(10)]
+        self.assertGreater(wp._axis_key(depth_row), wp._axis_key(tvd))
+
+
+@unittest.skipUnless(fitz, "needs PyMuPDF")
 class Stitch(unittest.TestCase):
     def check(self, top, bottom, **kw):
         pdf, starts = printout(top, bottom, **kw)

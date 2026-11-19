@@ -118,19 +118,44 @@ def page_lines(pg, lo, hi):
     return out
 
 
+AXIS_MIN_LABELS = 5     # a row of fewer numbers is a track's scale before it is a depth line
+
+
+def _axis_key(on):
+    """how likely a row of numbers is the depth line: one of five or more
+    labels first, then the depth its labels cover, then how many. A track's
+    scale (250 500 750 1000) can cover more depth than a short log's labels
+    do; on a paged printout the other pages outvote the one that prints it,
+    but a printout stitched into one page has that page alone."""
+    span = max(p[1] for p in on) - min(p[1] for p in on)
+    return (len(on) >= AXIS_MIN_LABELS, round(span, 1), len(on))
+
+
 def page_axis(pg, lo, hi):
     """The page's depth line on its own: of its rows and columns of numbers,
     the one whose labels cover the most depth (the cross-section's TVD scale
     on a horizontal log can fall inside the log's MD range and hold as many
-    labels, but covers twenty metres where the depth track covers the page).
+    labels, but covers twenty metres where the depth track covers the page),
+    a row of five or more labels before a shorter one (_axis_key).
     -> (axis, a, b, on) or None. stitch() chooses across all the pages."""
     best = None
     for axis, key, a, b, on in page_lines(pg, lo, hi):
-        span = max(p[1] for p in on) - min(p[1] for p in on)
-        k = (round(span, 1), len(on))
+        k = _axis_key(on)
         if best is None or k > best[0]:
             best = (k, axis, a, b, on)
     return None if best is None else best[1:]
+
+
+def common_scale(scales):
+    """the printout's scale from its pages' depth lines, [(a, labels)]: the
+    one that holds the most labels (within 2 %), the median of its pages.
+    Not the median page: a log stitched into one long page behind header
+    pages that each print a plot's axis (250 500 ... 1250) has more pages
+    on that axis's scale than on its own."""
+    def near(a):
+        return [(b, n) for b, n in scales if abs(b - a) <= 0.02 * abs(a)]
+    best = max(scales, key=lambda s: (sum(n for _b, n in near(s[0])), s[1]))
+    return _median([b for b, _n in near(best[0])])
 
 
 def _edges(pg, axis):
@@ -162,10 +187,10 @@ def stitch(pdf, top, bottom):
     # widest-spanning line votes. LogViewer prints at one scale throughout.
     votes = {}
     for pno, ls in cands.items():
-        axis_, _k, a_, _b, on = max(ls, key=lambda l: (max(p[1] for p in l[4]) - min(p[1] for p in l[4]), len(l[4])))
-        votes[pno] = (axis_, a_)
+        axis_, _k, a_, _b, on = max(ls, key=lambda l: _axis_key(l[4]))
+        votes[pno] = (axis_, a_, len(on))
     axis = collections.Counter(v[0] for v in votes.values()).most_common(1)[0][0]
-    a = _median([v[1] for v in votes.values() if v[0] == axis])
+    a = common_scale([(v[1], v[2]) for v in votes.values() if v[0] == axis])
     ppm = 1.0 / abs(a)
 
     # The depth track. A log can print more than one column of depths (a

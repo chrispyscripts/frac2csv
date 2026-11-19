@@ -451,6 +451,12 @@ class Legend(unittest.TestCase):
 
 @unittest.skipUnless(fitz, "PyMuPDF not installed")
 class Lines(unittest.TestCase):
+    def test_a_scale_of_no_width_gives_no_readings(self):
+        # a scale section whose ends were read alike (100 - 100): nothing to
+        # place the line on, so no readings, and the rest of the log is read
+        self.assertEqual(M.read_line([[0.5], [0.25]], [[], []], 100, 100), [None, None])
+        self.assertEqual(M.read_one_line([[0.5], [0.9], [0.95]], 100, 100), [None, None, None])
+
     def test_main_line_inside_the_scale(self):
         got = M.read_line([[0.5], [0.25]], [[-0.5], []], 0, 100)
         self.assertEqual(got, [(50.0, True), (25.0, True)])

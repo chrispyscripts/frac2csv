@@ -73,8 +73,10 @@ def _depth_range(doc):
             lines.append((abs(ax[1]), [d for _c, d in ax[3]]))
     if not lines:
         return None
-    # the log's pages share one scale; a header page's numbers do not
-    scale = sorted(s for s, _ in lines)[len(lines) // 2]
+    # the log's pages share one scale; a header page's numbers do not (the
+    # scale most labels are on: a log stitched into one long page has a
+    # page of its own labels and maybe more header pages than that)
+    scale = wp.common_scale([(s, len(on)) for s, on in lines])
     ds = sorted({d for s, on in lines if abs(s - scale) <= 0.02 * scale for d in on})
     if not ds:
         return None
@@ -1221,6 +1223,8 @@ def read_line(main, wrap, left, right):
     reading above is taken. Elsewhere the main line inside the track is the
     reading; one along an end of the scale says only that the reading is
     past it (not exact)."""
+    if right == left:
+        return [None] * len(main)                 # a scale of no width (its ends read alike): no readings
     lo, hi = min(left, right), max(left, right)
     span = hi - lo
     tol = wscale.EDGE * span
@@ -1477,6 +1481,8 @@ def read_one_line(series, left, right, moves=None, under=False, nulls=(), dives=
     edge is below the scale where the line just was there. At nulls (the
     log's null drawn as a reading, _null_dips) there is no reading, and the
     line starts afresh after it."""
+    if right == left:
+        return [None] * len(series)                 # a scale of no width (its ends read alike): no readings
     lo, hi = min(left, right), max(left, right)
     e = wscale.EDGE
     out, k, last = [], k0, None                  # k: scale widths the line in the track is off the reading
