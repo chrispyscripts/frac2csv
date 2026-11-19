@@ -224,11 +224,11 @@ function rocksIn(wells) {
 }
 // what a type is, for the key's foot
 function about(k) {
-  if (k === 'gamma') return 'Gamma ray: the BC wells’ LAS logs (BCER eLibrary), and the gamma curve of a WellSight log.';
-  if (k === 'rock') return 'Rock type: the WellSight log’s lithology column, the rock at each depth (a horizontal log’s from its cross-section where the well crosses it).';
-  if (k === 'por') return 'Porosity: the WellSight log’s Porosity cells, where the bar ends (0–24 %, a cell every 3 %).';
-  if (k === 'show') return 'Oil show: the WellSight log’s Oil Show symbols, dead to strong, each reaching down to the next sample.';
-  return def(k).t + ': the WellSight log’s curve, averaged every ' + ((SK && SK.bin_m) || 2) + ' m of MD; the scale spans every Saskatchewan log (P2–P98).';
+  if (k === 'gamma') return 'Gamma ray: the BC wells’ LAS logs (BCER eLibrary), and the gamma curve of a Saskatchewan mud log.';
+  if (k === 'rock') return 'Rock type: the mud log’s lithology column, the rock at each depth (a horizontal log’s from its cross-section where the well crosses it).';
+  if (k === 'por') return 'Porosity: the mud log’s Porosity cells, where the bar ends (0–24 %, a cell every 3 %).';
+  if (k === 'show') return 'Oil show: the mud log’s Oil Show symbols, dead to strong, each reaching down to the next sample.';
+  return def(k).t + ': the mud log’s curve, averaged every ' + ((SK && SK.bin_m) || 2) + ' m of MD; the scale spans every Saskatchewan log (P2–P98).';
 }
 
 if (!document.getElementById('lg-style')) {

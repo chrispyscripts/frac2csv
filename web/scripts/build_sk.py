@@ -2,8 +2,10 @@
 """Saskatchewan wells for FracView, from the WellSight mud logs.
 
 The logs are not public data, so nothing this writes belongs in the repo or on
-the live site: it writes to a folder outside both (default ~/dev/fracview-sk),
-and the local server mounts it at /data/sk/ (scripts/serve.py --mount). The
+the live site: it writes to a folder outside both (default
+~/dev/fracview-sk-wellsight). build_viking.py then adds the Viking wells and
+writes the set the pages use (~/dev/fracview-sk), which the local server
+mounts at /data/sk/ (scripts/serve.py --mount). The
 pages find it there and add a Saskatchewan set; where it is missing (the live
 site) they carry on without it.
 
@@ -63,7 +65,7 @@ DEFAULTS = {
     "raw": "/Volumes/CnC-2TB-ssd/SK-VIKING/WellSight/s-h-sl",
     "grid": "/Volumes/CnC-2TB-ssd/SK-VIKING/SaskGrid_2015_SECTION/SaskGrid_2015_SECTION-Nad83-ESPG-4269",
     "lab": os.path.join(HOME, "dev", "frac-wt", "wellsight"),
-    "out": os.path.join(HOME, "dev", "fracview-sk"),
+    "out": os.path.join(HOME, "dev", "fracview-sk-wellsight"),    # build_viking.py adds the Viking wells -> ~/dev/fracview-sk
 }
 
 LAB = None          # the modules, once --lab is on the path
@@ -1074,17 +1076,49 @@ def pct(vals, q):
     return s[min(len(s) - 1, max(0, int(round(q * (len(s) - 1)))))] if s else None
 
 
-def write(out, wells, skipped):
-    # pads: surface holes within PAD_M of each other
+SIG = 4     # significant figures a log's binned values keep in a pad file (they colour wells; the LAS keeps the rest)
+
+
+def sig(v, n=SIG):
+    """v to n significant figures (None, ints and zero as they are)"""
+    if not isinstance(v, float) or v == 0 or not math.isfinite(v):
+        return v
+    r = round(v, n - 1 - int(math.floor(math.log10(abs(v)))))
+    return int(r) if r == int(r) and abs(r) < 1e15 else r
+
+
+def compact_well(w):
+    """a well as a pad file holds it: log values to SIG figures, and a
+    stage's or interval's empty fields left out (the pages read a missing
+    field as they read null)"""
+    logs = w["logs"]
+    if logs:
+        logs = dict(logs, types={k: (arr if k in ("rock", "show") else [sig(v) for v in arr])
+                                 for k, arr in logs["types"].items()})
+    drop = lambda rows: [{k: v for k, v in r.items() if v is not None} for r in rows]
+    return {"well": w["well"], "trajectory": w["trajectory"], "stages": drop(w["stages"]),
+            "depth_intervals": drop(w["depth_intervals"]), "logs": logs}
+
+
+def write(out, wells, skipped, name="Saskatchewan (WellSight logs)",
+          source="WellSight mud logs (private, local only); placed on SaskGrid 2015 sections"):
+    """a well's "logs" may be None: a well with a path and no log"""
+    # pads: surface holes within PAD_M of each other (the first pad made that is
+    # near enough; pads looked up by a grid of PAD_M cells)
     wells.sort(key=lambda w: (w["lat"], w["lon"]))
-    pads = []
+    pads, cells = [], defaultdict(list)
+    cell = lambda lat, lon: (int(math.floor(lat * 111320 / PAD_M)), int(math.floor(lon * 111320 * 0.62 / PAD_M)))
     for w in wells:
         k = math.cos(math.radians(w["lat"]))
-        near = next((p for p in pads if math.hypot((p["lat"] - w["lat"]) * 111320, (p["lon"] - w["lon"]) * 111320 * k) <= PAD_M), None)
+        cy, cx = cell(w["lat"], w["lon"])
+        near = [p for dy in (-1, 0, 1) for dx in (-2, -1, 0, 1, 2) for p in cells.get((cy + dy, cx + dx), ())
+                if math.hypot((p["lat"] - w["lat"]) * 111320, (p["lon"] - w["lon"]) * 111320 * k) <= PAD_M]
         if near:
-            near["wells"].append(w)
+            min(near, key=lambda p: p["i"])["wells"].append(w)
         else:
-            pads.append({"lat": w["lat"], "lon": w["lon"], "wells": [w]})
+            p = {"lat": w["lat"], "lon": w["lon"], "wells": [w], "i": len(pads)}
+            pads.append(p)
+            cells[(cy, cx)].append(p)
     # ids: SK + licence (a well), sk-<lowest licence> (a pad)
     seen = Counter()
     for p in pads:
@@ -1109,7 +1143,7 @@ def write(out, wells, skipped):
             for k, t in w["types"].items():
                 types.setdefault(k, {"t": t["t"], "u": t["u"], "wells": 0})
             rock_names.update(w["rock_names"])
-            for k, arr in w["logs"]["types"].items():
+            for k, arr in ((w["logs"] or {}).get("types") or {}).items():
                 if k in types:
                     types[k]["wells"] += 1
                 if k == "rock":
@@ -1117,7 +1151,7 @@ def write(out, wells, skipped):
                 elif k not in ("show",):
                     values[k].extend(v for v in arr if v is not None)
     for k in ("rock", "por", "show"):
-        n = sum(1 for p in pads for w in p["wells"] if k in w["logs"]["types"])
+        n = sum(1 for p in pads for w in p["wells"] if k in ((w["logs"] or {}).get("types") or {}))
         if n:
             types[k] = {"t": {"rock": "Rock type", "por": "Porosity", "show": "Oil show"}[k], "u": "%" if k == "por" else "", "wells": n}
     scales = {}
@@ -1131,7 +1165,7 @@ def write(out, wells, skipped):
     rix = {r: i for i, r in enumerate(rocks)}
     for p in pads:
         for w in p["wells"]:
-            arr = w["logs"]["types"].get("rock")
+            arr = ((w["logs"] or {}).get("types") or {}).get("rock")
             if arr:
                 w["logs"]["types"]["rock"] = [rix[x] if x else None for x in arr]
     os.makedirs(os.path.join(out, "pads"), exist_ok=True)
@@ -1139,7 +1173,7 @@ def write(out, wells, skipped):
     dump = lambda path, obj: json.dump(obj, open(os.path.join(out, path), "w"), separators=(",", ":"))
     for p in pads:
         dump("pads/%s.json" % p["id"], {"id": p["id"], "name": p["name"], "lat": round(p["lat"], 6), "lon": round(p["lon"], 6), "set": "sk",
-                                         "wells": [{k: w[k] for k in ("well", "trajectory", "stages", "depth_intervals", "logs")} for w in p["wells"]]})
+                                         "wells": [compact_well(w) for w in p["wells"]]})
         for w in p["wells"]:
             dump("wells/%s.json" % w["well"]["wa"], {"well": w["well"], "pad": {"id": p["id"], "name": p["name"]}, "stages": [], "units": {},
                                                     "log_notes": w["notes"]})
@@ -1155,17 +1189,20 @@ def write(out, wells, skipped):
         {"id": p["id"], "name": p["name"], "lat": round(p["lat"], 6), "lon": round(p["lon"], 6), "wells": [
             {"wa": w["well"]["wa"], "name": w["well"]["name"], "uwi": w["well"]["uwi"], "td": w["well"]["td_m"], "tvd": w["well"]["tvd_m"],
              "lateral": w["well"]["lateral_m"], "lat": w["well"]["lat"], "lon": w["well"]["lon"], "stations": len(w["trajectory"]["md"]),
-             "path": plan_path(w), "stages": 0, "ports": 0, "logs": 1, "ws": 1, "depth_intervals": 0, "summaries": 0, "file": None}
+             "path": plan_path(w), "stages": len(w["stages"]), "ports": 0, "logs": 1 if w["logs"] else 0, "ws": 1 if w["logs"] else 0,
+             "depth_intervals": len(w["depth_intervals"]), "summaries": 0, "file": None}
             for w in p["wells"]]} for p in pads]})
     dump("index.json", {
-        "v": 1, "set": "sk", "name": "Saskatchewan (WellSight logs)", "center": [round(lat_c, 4), round(lon_c, 4)],
+        "v": 1, "set": "sk", "name": name, "center": [round(lat_c, 4), round(lon_c, 4)],
         "wells": sum(len(p["wells"]) for p in pads), "bin_m": BIN,
-        "source": "WellSight mud logs (private, local only); placed on SaskGrid 2015 sections",
+        "source": source,
         "left_out": dict(skipped), "types": types, "scales": scales,
         "rocks": [[r, rock_names.get(r) or r] for r in rocks],
         "pads": [{"id": p["id"], "name": p["name"], "set": "sk", "lat": round(p["lat"], 6), "lon": round(p["lon"], 6), "wells": len(p["wells"]),
-                  "field": "", "operator": Counter(w["well"]["operator"] for w in p["wells"]).most_common(1)[0][0],
-                  "years": [min(years(p)), max(years(p))] if years(p) else None, "curves": 0, "logs": len(p["wells"])} for p in pads]})
+                  "field": Counter(w["well"].get("pool") or "" for w in p["wells"]).most_common(1)[0][0],
+                  "operator": Counter(w["well"]["operator"] for w in p["wells"]).most_common(1)[0][0],
+                  "years": [min(years(p)), max(years(p))] if years(p) else None, "curves": 0,
+                  "logs": sum(1 for w in p["wells"] if w["logs"]), "stages": sum(len(w["stages"]) for w in p["wells"])} for p in pads]})
     print("wrote %d pads, %d wells to %s" % (len(pads), sum(len(p["wells"]) for p in pads), out), file=sys.stderr)
 
 
