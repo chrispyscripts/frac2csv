@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Directional Survey</title>
+<!-- The Directional Survey tool: a window of its own, opened from the Lab's
+     menu. Survey report PDFs or plain survey tables (MD, Inc, Azi[, TVD])
+     are read by the desktop app (/api/survey, survey_tool.py): the path is
+     worked out again by minimum curvature, shown from above (plan) and from
+     the side (section), and saved as CSV. -->
+<style>
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34; --warn:#9a6700;
+    --grid:#eceef1; --path:#a31631; --rep:#2563eb;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { background:var(--bg); color:var(--ink);
+         font:13.5px/1.45 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  button, input, select { font:inherit; color:inherit; }
+  .app { display:flex; height:100vh; overflow:hidden; }
+  .side { width:300px; flex:none; display:flex; flex-direction:column; background:var(--panel);
+          border-right:1px solid var(--line); }
+  .sidehead { padding:14px 14px 10px; border-bottom:1px solid var(--line); }
+  .wordmark { font-weight:700; letter-spacing:-0.02em; font-size:16px; }
+  .wordmark span { color:var(--carmine); }
+  .sub { color:var(--mut); font-size:12px; margin-top:2px; }
+  .drop { margin:12px; padding:16px 12px; border:1.5px dashed var(--line); border-radius:10px;
+          color:var(--mut); text-align:center; font-size:12.5px; cursor:pointer; }
+  .drop.on { border-color:var(--carmine); color:var(--carmine); background:rgba(163,22,49,.05); }
+  .drop b { color:var(--ink); }
+  .list { flex:1; overflow-y:auto; border-top:1px solid var(--line); }
+  .item { display:flex; gap:8px; align-items:flex-start; padding:8px 12px;
+          border-bottom:1px solid var(--line); cursor:pointer; }
+  .item:hover { background:var(--panel2); }
+  .item.sel { background:rgba(163,22,49,.07); box-shadow:inset 3px 0 0 var(--carmine); }
+  .item input { margin-top:3px; }
+  .item .w { font-weight:600; font-family:var(--mono); font-size:12.5px;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .item .m { color:var(--mut); font-size:11.5px; white-space:nowrap; overflow:hidden;
+             text-overflow:ellipsis; }
+  .item .bad { color:var(--carmine); }
+  .sidefoot { border-top:1px solid var(--line); padding:10px 12px; display:grid; gap:6px; }
+  .sidefoot .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .btn { border:1px solid var(--line); background:var(--panel); border-radius:7px; padding:5px 10px;
+         cursor:pointer; white-space:nowrap; }
+  .btn:hover { border-color:var(--carmine); }
+  .btn.primary { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn.primary:hover { background:var(--carmine-dk); }
+  .btn:disabled { opacity:.5; cursor:default; border-color:var(--line); }
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+  .bar { display:flex; gap:10px 16px; align-items:center; flex-wrap:wrap; padding:12px 16px;
+         background:var(--panel); border-bottom:1px solid var(--line); }
+  .title { flex:1 1 320px; min-width:0; }
+  .title h1 { font-size:16px; font-family:var(--mono); white-space:nowrap; overflow:hidden;
+              text-overflow:ellipsis; }
+  .title .sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .facts { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px 0; color:var(--mut);
+           font-size:12.5px; }
+  .facts b { color:var(--ink); font-weight:600; }
+  .check { font-weight:600; }
+  .check.ok { color:var(--ok); } .check.off { color:var(--warn); }
+  .warns { padding:8px 16px 0; }
+  .warns div { color:var(--warn); font-size:12.5px; }
+  .body { flex:1; overflow:auto; padding:12px 16px 20px; }
+  .views { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+  @media (max-width:900px) { .views { grid-template-columns:minmax(0, 1fr); } }
+  .view { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px;
+          min-width:0; }
+  .view h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut);
+             margin-bottom:6px; display:flex; gap:8px; align-items:baseline; }
+  .view h2 span { text-transform:none; letter-spacing:0; font-weight:400; }
+  .view svg { width:100%; height:360px; display:block; }
+  .view svg text { font:10.5px -apple-system,"Segoe UI",system-ui,sans-serif; fill:var(--mut); }
+  .readout { font-family:var(--mono); font-size:11.5px; color:var(--mut); min-height:16px;
+             margin-top:4px; }
+  .legend { display:flex; gap:12px; font-size:11.5px; color:var(--mut); margin-top:2px; }
+  .legend i { display:inline-block; width:16px; height:0; border-top:2px solid var(--path);
+              vertical-align:middle; margin-right:4px; }
+  .legend i.rep { border-top:2px dashed var(--rep); }
+  .tablewrap { margin-top:12px; background:var(--panel); border:1px solid var(--line);
+               border-radius:10px; overflow:auto; max-height:460px; }
+  table { border-collapse:collapse; width:100%; font-family:var(--mono); font-size:12px; }
+  th, td { padding:4px 10px; text-align:right; border-bottom:1px solid var(--line);
+           white-space:nowrap; }
+  th { position:sticky; top:0; background:var(--panel2); font-family:-apple-system,"Segoe UI",
+       system-ui,sans-serif; font-weight:600; color:var(--mut); font-size:11.5px; z-index:1; }
+  td.note { text-align:left; color:var(--mut); }
+  tr:hover td, tr.hi td { background:rgba(163,22,49,.06); }
+  td.d.off { color:var(--warn); }
+  .empty { margin:auto; max-width:520px; text-align:center; color:var(--mut); padding:40px 20px; }
+  .empty h2 { color:var(--ink); font-size:18px; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="sidehead">
+      <div class="wordmark">Directional <span>Survey</span></div>
+      <div class="sub">MD, inclination, azimuth → minimum curvature → CSV</div>
+    </div>
+    <div class="drop" id="drop" tabindex="0" role="button"
+         aria-label="Open survey report PDFs or survey tables">
+      Drop survey report PDFs or CSV / TXT tables here <b>or click</b>
+    </div>
+    <input type="file" id="file" multiple accept=".pdf,.csv,.txt,.tsv" hidden>
+    <div class="list" id="list"></div>
+    <div class="sidefoot">
+      <div class="row">
+        <label><input type="checkbox" id="all"> All</label>
+        <span class="sub" id="count"></span>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="saveone" disabled
+                title="All the checked wells in one CSV">Save checked as one CSV</button>
+        <button type="button" class="btn" id="saveeach" disabled
+                title="A CSV for each checked well">Save each</button>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="bar" id="bar" hidden>
+      <div class="title">
+        <h1 id="t_uwi"></h1>
+        <div class="sub" id="t_sub"></div>
+      </div>
+      <button type="button" class="btn primary" id="savecur">⬇ Save CSV</button>
+    </div>
+    <div class="facts" id="facts" hidden></div>
+    <div class="warns" id="warns"></div>
+    <div class="body" id="body">
+      <div class="empty" id="empty">
+        <h2>Drop a directional survey</h2>
+        <p>A survey report PDF, or a CSV / TXT table with MD, inclination and azimuth columns
+          (TVD too, if it has it). Each well's path is worked out by minimum curvature and
+          shown from above and from the side before you save it as CSV.</p>
+        <p id="weboff" hidden style="margin-top:10px">Surveys are read by the desktop app:
+          open this tool from the Lab in Frac2CSV on your computer.</p>
+      </div>
+      <div id="content" hidden>
+        <div class="views">
+          <div class="view">
+            <h2>Plan <span>(from above: E/W across, N/S up)</span></h2>
+            <svg id="plan" role="img" aria-label="Plan view of the well path"></svg>
+            <div class="legend"><span><i></i>minimum curvature</span>
+              <span id="lg_rep"><i class="rep"></i>the report's own</span></div>
+            <div class="readout" id="ro_plan"></div>
+          </div>
+          <div class="view">
+            <h2>Section <span id="vsname">(vertical section along the closure azimuth, TVD down)</span></h2>
+            <svg id="section" role="img" aria-label="Section view of the well path"></svg>
+            <div class="legend"><span><i></i>minimum curvature</span>
+              <span id="lg_rep2"><i class="rep"></i>the report's TVD</span></div>
+            <div class="readout" id="ro_sec"></div>
+          </div>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>MD (m)</th><th>Inc (°)</th><th>Azi (°)</th><th>TVD (m)</th>
+              <th title="the report's own TVD">Report TVD (m)</th><th title="ours − the report's">ΔTVD</th>
+              <th>N/S (m)</th><th>E/W (m)</th><th>DLS (°/30 m)</th><th>VS (m)</th>
+              <th style="text-align:left">Note</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const wells = [];          // {key, file, res | null, err | null, checked}
+let sel = -1;
+let local = true;
+
+// ---------- pure helpers (lifted by tests/test_tool_windows.js) ----------
+// Round numbers for an axis: about n steps of 1, 2 or 5 x 10^k from lo to hi.
+function niceTicks(lo, hi, n) {
+  if (!(hi > lo)) { hi = lo + 1; }
+  const raw = (hi - lo) / Math.max(1, n || 5);
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const f = raw / p;
+  const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
+  const out = [];
+  for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + step * 1e-9; v += step) {
+    out.push(Math.abs(v) < step * 1e-9 ? 0 : +v.toFixed(10));
+  }
+  return out;
+}
+// Several CSVs with the same header as one: the header once, then each
+// file's rows.
+function joinCsv(texts) {
+  let head = null;
+  const rows = [];
+  for (const t of texts) {
+    const lines = String(t || "").split(/\r?\n/).filter(l => l.length);
+    if (!lines.length) continue;
+    if (head === null) head = lines[0];
+    rows.push(...lines.slice(1));
+  }
+  return head === null ? "" : [head, ...rows].join("\r\n") + "\r\n";
+}
+// A file name from a UWI: 100/01-02-003-04W5/00 -> 100_01-02-003-04W5_00
+function csvName(uwi, file, suffix) {
+  const base = uwi || String(file || "survey").replace(/\.[^.]+$/, "");
+  return base.replace(/[\/\\:*?"<>|]+/g, "_").replace(/\s+/g, "_") + (suffix || "") + ".csv";
+}
+// The station nearest a point (x, y in data units) on a view: along the
+// path's projection given by fx / fy.
+function nearestStation(stations, x, y, fx, fy) {
+  let best = -1, bd = Infinity;
+  stations.forEach((s, i) => {
+    const d = Math.hypot(fx(s) - x, fy(s) - y);
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+
+// ---------- reading ----------
+function b64(buf) {
+  const a = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function readOne(file) {
+  const w = { key: file.name + ":" + file.size + ":" + (file.lastModified || 0), file: file.name,
+              res: null, err: null, checked: true, busy: true };
+  const have = wells.findIndex(x => x.key === w.key);
+  if (have >= 0) { pick(have); return; }
+  wells.push(w);
+  renderList();
+  try {
+    const data = b64(await file.arrayBuffer());
+    const r = await fetch("/api/survey", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ data, filename: file.name }) });
+    const j = await r.json().catch(() => ({ error: "No answer from the desktop app." }));
+    if (r.ok) w.res = j; else w.err = j.error || ("Not read (" + r.status + ")");
+  } catch (e) {
+    w.err = local ? "Not read: " + e.message : "Surveys are read by the desktop app.";
+  }
+  w.busy = false;
+  if (w.err) w.checked = false;
+  renderList();
+  if (sel < 0 || !wells[sel] || !wells[sel].res) pick(wells.indexOf(w));
+}
+async function readAll(files) {
+  for (const f of files) await readOne(f);
+}
+
+// ---------- the list ----------
+function renderList() {
+  const L = $("list");
+  L.innerHTML = "";
+  wells.forEach((w, i) => {
+    const d = document.createElement("div");
+    d.className = "item" + (i === sel ? " sel" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = w.checked; cb.disabled = !w.res;
+    cb.title = "Include in Save checked";
+    cb.addEventListener("click", e => { e.stopPropagation(); w.checked = cb.checked; updateFoot(); });
+    const t = document.createElement("div");
+    t.style.minWidth = "0";
+    const nm = document.createElement("div");
+    nm.className = "w";
+    nm.textContent = (w.res && w.res.uwi) || w.file;
+    const m = document.createElement("div");
+    m.className = "m";
+    if (w.busy) m.textContent = "Reading…";
+    else if (w.err) { m.className = "m bad"; m.textContent = w.err; m.title = w.err; }
+    else {
+      const r = w.res, c = r.check;
+      m.textContent = `${r.stations.length} stations · ${r.md_range[1].toFixed(0)} m MD` +
+        (c ? ` · ΔTVD ${c.tvd_max < 0.1 ? "≤ 0.1" : c.tvd_max.toFixed(1)} m` : "");
+      m.title = w.file;
+    }
+    t.append(nm, m);
+    d.append(cb, t);
+    d.addEventListener("click", () => pick(i));
+    L.append(d);
+  });
+  updateFoot();
+}
+function checked() { return wells.filter(w => w.res && w.checked); }
+function updateFoot() {
+  const n = checked().length, ok = wells.filter(w => w.res).length;
+  $("count").textContent = wells.length ? `${n} of ${ok} checked` + (wells.length > ok ?
+    ` · ${wells.length - ok} not read` : "") : "";
+  $("saveone").disabled = $("saveeach").disabled = !n;
+  $("all").checked = ok > 0 && n === ok;
+}
+$("all").addEventListener("change", () => {
+  wells.forEach(w => { if (w.res) w.checked = $("all").checked; });
+  renderList();
+});
+
+// ---------- one well ----------
+function fmt(v, nd) {
+  if (v === undefined || v === null) return "";
+  const t = (+v).toFixed(nd);
+  return /^-0\.?0*$/.test(t) ? t.slice(1) : t;        // no "-0.00"
+}
+function pick(i) {
+  sel = i;
+  renderList();
+  const w = wells[i];
+  if (!w || !w.res) {
+    $("bar").hidden = $("facts").hidden = true;
+    $("content").hidden = true;
+    $("empty").hidden = false;
+    $("warns").innerHTML = w && w.err ? `<div>${esc(w.file)}: ${esc(w.err)}</div>` : "";
+    return;
+  }
+  const r = w.res;
+  $("empty").hidden = true;
+  $("bar").hidden = $("facts").hidden = $("content").hidden = false;
+  $("t_uwi").textContent = r.uwi || r.file;
+  $("t_sub").textContent = [r.well, r.file].filter(Boolean).join(" · ");
+  const c = r.check;
+  const ok = c && c.tvd_max <= 0.1;
+  $("facts").innerHTML =
+    `<span><b>${r.stations.length}</b> stations</span>` +
+    `<span>MD <b>${fmt(r.md_range[0], 1)}–${fmt(r.md_range[1], 1)} m</b></span>` +
+    `<span>TD at TVD <b>${fmt(r.stations[r.stations.length - 1].tvd, 1)} m</b></span>` +
+    `<span>reach <b>${fmt(r.reach, 0)} m</b> toward <b>${fmt(r.closure_azimuth, 1)}°</b></span>` +
+    `<span>tie-in: <b>${r.tie === "report" ? "the report's first station" : "vertical from surface"}</b></span>` +
+    (c ? `<span class="check ${ok ? "ok" : "off"}" title="Our minimum-curvature TVD against the report's own TVD at its ${c.n} stations">` +
+         `report TVD vs ours: max ${c.tvd_max < 0.005 ? "0.00" : c.tvd_max.toFixed(2)} m` +
+         (c.offset_max !== null && c.offset_max !== undefined ? `, N/E max ${c.offset_max.toFixed(2)} m` : "") +
+         `</span>` : `<span>no TVD in the file to check against</span>`) +
+    (r.report_vs_azimuth !== null && r.report_vs_azimuth !== undefined ?
+      `<span>report's VS azimuth ${fmt(r.report_vs_azimuth, 2)}°</span>` : "");
+  $("warns").innerHTML = (r.warnings || []).map(x => `<div>${esc(x)}</div>`).join("");
+  $("vsname").textContent = `(vertical section along ${fmt(r.closure_azimuth, 1)}°, the closure azimuth; TVD down)`;
+  const hasRep = r.stations.some(s => s.rep && s.rep.ns !== undefined && s.rep.ew !== undefined);
+  $("lg_rep").hidden = !hasRep;
+  $("lg_rep2").hidden = !r.stations.some(s => s.rep && s.rep.tvd !== undefined);
+  drawAll(-1);
+  const tb = $("rows");
+  tb.innerHTML = "";
+  r.stations.forEach((s, k) => {
+    const tr = document.createElement("tr");
+    const rt = s.rep && s.rep.tvd !== undefined ? s.rep.tvd : null;
+    const d = rt === null ? null : s.tvd - rt;
+    tr.innerHTML = `<td>${fmt(s.md, 2)}</td><td>${fmt(s.inc, 2)}</td><td>${fmt(s.azi, 2)}</td>` +
+      `<td>${fmt(s.tvd, 2)}</td><td>${rt === null ? "" : fmt(rt, 2)}</td>` +
+      `<td class="d${d !== null && Math.abs(d) > 0.1 ? " off" : ""}">${d === null ? "" : fmt(d, 2)}</td>` +
+      `<td>${fmt(s.ns, 2)}</td><td>${fmt(s.ew, 2)}</td><td>${fmt(s.dls, 2)}</td><td>${fmt(s.vs, 2)}</td>` +
+      `<td class="note">${esc(s.note || "")}</td>`;
+    tr.addEventListener("mouseenter", () => drawAll(k));
+    tr.addEventListener("mouseleave", () => drawAll(-1));
+    tb.append(tr);
+  });
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
+// ---------- the views ----------
+const NS = "http://www.w3.org/2000/svg";
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.append(e);
+  return e;
+}
+// draw one view: fx, fy pick the across / down values; yDown: values grow down
+function view(svg, stations, fx, fy, opts) {
+  svg.innerHTML = "";
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 360;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const pad = { l: 56, r: 14, t: 12, b: 34 };
+  const xs = stations.map(fx), ys = stations.map(fy);
+  const extra = opts.rep ? opts.rep.filter(p => p) : [];
+  let x0 = Math.min(...xs, ...extra.map(p => p[0])), x1 = Math.max(...xs, ...extra.map(p => p[0]));
+  let y0 = Math.min(...ys, ...extra.map(p => p[1])), y1 = Math.max(...ys, ...extra.map(p => p[1]));
+  if (opts.zero) { x0 = Math.min(x0, 0); x1 = Math.max(x1, 0); y0 = Math.min(y0, 0); y1 = Math.max(y1, 0); }
+  const span = Math.max(x1 - x0, y1 - y0, 10);
+  if (x1 - x0 < 10) { const m = (x0 + x1) / 2; x0 = m - 5; x1 = m + 5; }
+  if (y1 - y0 < 10) { const m = (y0 + y1) / 2; y0 = m - 5; y1 = m + 5; }
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  let sx = iw / (x1 - x0), sy = ih / (y1 - y0);
+  if (opts.equal) {
+    // the same metres per pixel both ways, so the path's shape is true
+    const s = Math.min(iw / span, ih / span, sx, sy);
+    sx = sy = s;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    x0 = cx - iw / s / 2; x1 = cx + iw / s / 2; y0 = cy - ih / s / 2; y1 = cy + ih / s / 2;
+  } else {
+    const mx = (x1 - x0) * 0.04, my = (y1 - y0) * 0.06;
+    x0 -= mx; x1 += mx; y0 -= my; y1 += my;
+    sx = iw / (x1 - x0); sy = ih / (y1 - y0);
+  }
+  const X = v => pad.l + (v - x0) * sx;
+  const Y = v => opts.yDown ? pad.t + (v - y0) * sy : pad.t + ih - (v - y0) * sy;
+  const g = el("g", {}, svg);
+  for (const t of niceTicks(x0, x1, 6)) {
+    el("line", { x1: X(t), x2: X(t), y1: pad.t, y2: pad.t + ih, stroke: "var(--grid)" }, g);
+    const tx = el("text", { x: X(t), y: H - 18, "text-anchor": "middle" }, g);
+    tx.textContent = Math.round(t);
+  }
+  for (const t of niceTicks(y0, y1, 6)) {
+    el("line", { x1: pad.l, x2: pad.l + iw, y1: Y(t), y2: Y(t), stroke: "var(--grid)" }, g);
+    const ty = el("text", { x: pad.l - 6, y: Y(t) + 3.5, "text-anchor": "end" }, g);
+    ty.textContent = Math.round(t);
+  }
+  el("rect", { x: pad.l, y: pad.t, width: iw, height: ih, fill: "none", stroke: "var(--line)" }, g);
+  const xl = el("text", { x: pad.l + iw / 2, y: H - 3, "text-anchor": "middle" }, g);
+  xl.textContent = opts.xlabel;
+  const yl = el("text", { x: 12, y: pad.t + ih / 2, "text-anchor": "middle",
+                          transform: `rotate(-90 12 ${pad.t + ih / 2})` }, g);
+  yl.textContent = opts.ylabel;
+  if (extra.length > 1) {
+    el("polyline", { points: opts.rep.filter(p => p).map(p => `${X(p[0])},${Y(p[1])}`).join(" "),
+                     fill: "none", stroke: "var(--rep)", "stroke-width": 1.5, "stroke-dasharray": "5 4" }, g);
+  }
+  el("polyline", { points: stations.map(s => `${X(fx(s))},${Y(fy(s))}`).join(" "), fill: "none",
+                   stroke: "var(--path)", "stroke-width": 2, "stroke-linejoin": "round" }, g);
+  el("circle", { cx: X(fx(stations[0])), cy: Y(fy(stations[0])), r: 3.5, fill: "var(--ink)" }, g);
+  const last = stations[stations.length - 1];
+  el("circle", { cx: X(fx(last)), cy: Y(fy(last)), r: 3.5, fill: "var(--path)" }, g);
+  if (opts.hi >= 0) {
+    const s = stations[opts.hi];
+    el("circle", { cx: X(fx(s)), cy: Y(fy(s)), r: 5.5, fill: "none", stroke: "var(--ink)", "stroke-width": 1.5 }, g);
+  }
+  svg._inv = { x: px => x0 + (px - pad.l) / sx,
+               y: py => opts.yDown ? y0 + (py - pad.t) / sy : y0 + (pad.t + ih - py) / sy, fx, fy };
+}
+function drawAll(hi) {
+  const w = wells[sel];
+  if (!w || !w.res) return;
+  const S = w.res.stations;
+  const repPlan = S.map(s => s.rep && s.rep.ns !== undefined && s.rep.ew !== undefined ? [s.rep.ew, s.rep.ns] : null);
+  const repSec = S.map(s => s.rep && s.rep.tvd !== undefined ? [s.vs, s.rep.tvd] : null);
+  view($("plan"), S, s => s.ew, s => s.ns,
+       { equal: true, zero: true, xlabel: "E/W (m, east +)", ylabel: "N/S (m, north +)", hi,
+         rep: repPlan.some(p => p) ? repPlan : null });
+  view($("section"), S, s => s.vs, s => s.tvd,
+       { yDown: true, zero: true, xlabel: "vertical section (m)", ylabel: "TVD (m)", hi,
+         rep: repSec.some(p => p) ? repSec : null });
+  const s = hi >= 0 ? S[hi] : null;
+  const ro = s ? `MD ${fmt(s.md, 1)}  Inc ${fmt(s.inc, 2)}°  Azi ${fmt(s.azi, 2)}°  TVD ${fmt(s.tvd, 2)}  ` +
+    `N/S ${fmt(s.ns, 1)}  E/W ${fmt(s.ew, 1)}  VS ${fmt(s.vs, 1)}  DLS ${fmt(s.dls, 2)}` : "";
+  $("ro_plan").textContent = $("ro_sec").textContent = ro;
+}
+for (const id of ["plan", "section"]) {
+  const svg = $(id);
+  svg.addEventListener("mousemove", e => {
+    const w = wells[sel];
+    if (!w || !w.res || !svg._inv) return;
+    const b = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    const px = (e.clientX - b.left) * vb.width / b.width, py = (e.clientY - b.top) * vb.height / b.height;
+    const k = nearestStation(w.res.stations, svg._inv.x(px), svg._inv.y(py), svg._inv.fx, svg._inv.fy);
+    drawAll(k);
+    const rows = $("rows").children;
+    for (const r of rows) r.classList.remove("hi");
+    if (rows[k]) rows[k].classList.add("hi");
+  });
+  svg.addEventListener("mouseleave", () => {
+    drawAll(-1);
+    for (const r of $("rows").children) r.classList.remove("hi");
+  });
+}
+window.addEventListener("resize", () => drawAll(-1));
+
+// ---------- saving ----------
+function save(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+$("savecur").addEventListener("click", () => {
+  const w = wells[sel];
+  if (w && w.res) save(csvName(w.res.uwi, w.file, "_survey"), w.res.csv);
+});
+$("saveone").addEventListener("click", () => {
+  const list = checked();
+  if (!list.length) return;
+  save(list.length === 1 ? csvName(list[0].res.uwi, list[0].file, "_survey") :
+       `surveys_${list.length}_wells.csv`, joinCsv(list.map(w => w.res.csv)));
+});
+$("saveeach").addEventListener("click", () => {
+  checked().forEach((w, i) => setTimeout(() => save(csvName(w.res.uwi, w.file, "_survey"), w.res.csv), i * 250));
+});
+
+// ---------- opening files ----------
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", e => { readAll([...e.target.files]); e.target.value = ""; });
+for (const t of [drop, document.body]) {
+  t.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("on"); });
+  t.addEventListener("dragleave", e => { if (!e.relatedTarget) drop.classList.remove("on"); });
+  t.addEventListener("drop", e => {
+    e.preventDefault(); e.stopPropagation();
+    drop.classList.remove("on");
+    readAll([...e.dataTransfer.files]);
+  });
+}
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const ok = wells.map((w, i) => i);
+  if (!ok.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    pick(Math.max(0, Math.min(wells.length - 1, sel + (e.key === "ArrowDown" ? 1 : -1))));
+  }
+});
+// files dropped on the menu's card come from the Lab window
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== "tool-files") return;
+  readAll(e.data.files || []);
+});
+fetch("/api/local-info").then(r => r.ok ? r.json() : null).then(j => {
+  local = !!(j && j.local);
+  $("weboff").hidden = local;
+}).catch(() => { local = false; $("weboff").hidden = false; });
+if (window.opener) {
+  try { window.opener.postMessage({ type: "tool-ready", tool: "survey" }, location.origin); } catch (e) { /* closed */ }
+}
+</script>
+</body>
+</html>

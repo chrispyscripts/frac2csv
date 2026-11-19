@@ -613,6 +613,7 @@
 <div class="app">
   <!-- The menu the app opens on: which tool. Frac2CSV reads frac reports;
        LAS extraction reads WellSight logs, or a log's printout PDF, to LAS.
+       Directional Survey and Geology open in windows of their own.
        Files dropped on a card open that tool with them. -->
   <div class="home" id="home" role="dialog" aria-modal="true" aria-label="Choose a tool">
     <div class="homehead">
@@ -634,12 +635,28 @@
           read to LAS: its curves shown over the printout, then saved as a .las file.</span>
         <span class="hx">Drop .sl6 .slg .hl6 .hlg logs or printout PDFs</span>
       </button>
+      <button type="button" class="homecard" id="homesurvey" data-tool="survey">
+        <span class="hk">Surveys → CSV · own window ↗</span>
+        <span class="ht">Directional Survey</span>
+        <span class="hd" id="homesurveyd">A well's survey stations (MD, inclination, azimuth, TVD) read from
+          a survey report PDF or a table, its path worked out by minimum curvature and shown
+          from above and from the side, then saved as CSV.</span>
+        <span class="hx">Drop survey report PDFs or CSV / TXT tables</span>
+      </button>
+      <button type="button" class="homecard" id="homegeology" data-tool="geology">
+        <span class="hk">Geo reports → CSV · own window ↗</span>
+        <span class="ht">Geology</span>
+        <span class="hd" id="homegeologyd">A geologist's report read for its sample descriptions
+          with the formation tops: each depth interval, the formation it lies in and its
+          description, shown and then saved as CSV.</span>
+        <span class="hx">Drop geologist's report PDFs</span>
+      </button>
     </div>
     <div class="homenote">Files dropped on a card open in that tool.</div>
   </div>
   <div class="top">
     <button type="button" class="btn" id="homebtn"
-            title="Back to the menu: Frac2CSV or LAS extraction">☰ Menu</button>
+            title="Back to the menu: Frac2CSV, LAS extraction, Directional Survey, Geology">☰ Menu</button>
     <div class="wordmark">Carmine's Lab</div>
     <span class="verbadge" id="verbadge" hidden></span>
     <span class="modename" id="modename">Frac2CSV</span>
@@ -3196,7 +3213,51 @@ function showHome() {
   const b = $(mode === "las" && !$("homelas").disabled ? "homelas" : "homefrac");
   b.focus();
 }
-for (const card of document.querySelectorAll(".homecard")) {
+// The Directional Survey and Geology tools open in windows of their own
+// (survey.html, geology.html), like the LAS viewer; files dropped on their
+// card are handed to the window once it says it is ready.
+const TOOLS = {
+  survey: { page: "survey.html", size: "popup,width=1440,height=920" },
+  geology: { page: "geology.html", size: "popup,width=1440,height=920" },
+};
+const toolWins = {}, toolFiles = {};
+function openTool(tool, files) {
+  const T = TOOLS[tool];
+  let w = toolWins[tool];
+  if (w && !w.closed) {
+    w.focus();
+    if (files && files.length) w.postMessage({ type: "tool-files", files }, location.origin);
+    return w;
+  }
+  if (files && files.length) toolFiles[tool] = files;
+  w = window.open(T.page, winName(tool), T.size);
+  toolWins[tool] = w;
+  return w;
+}
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== "tool-ready") return;
+  const tool = e.data.tool, files = toolFiles[tool];
+  if (files && files.length && e.source) {
+    e.source.postMessage({ type: "tool-files", files }, location.origin);
+    delete toolFiles[tool];
+  }
+});
+for (const card of document.querySelectorAll(".homecard[data-tool]")) {
+  card.addEventListener("click", () => openTool(card.dataset.tool));
+  card.addEventListener("dragenter", e => { if (dragging(e) && !card.disabled) card.classList.add("hot"); });
+  card.addEventListener("dragover", e => {
+    if (!dragging(e) || card.disabled) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "copy";
+  });
+  card.addEventListener("dragleave", e => { if (!card.contains(e.relatedTarget)) card.classList.remove("hot"); });
+  card.addEventListener("drop", e => {
+    e.preventDefault();
+    card.classList.remove("hot");
+    if (card.disabled) return;
+    openTool(card.dataset.tool, [...e.dataTransfer.files]);
+  });
+}
+for (const card of document.querySelectorAll(".homecard[data-mode]")) {
   card.addEventListener("click", () => setMode(card.dataset.mode));
   // files dropped on a card open its tool with them
   card.addEventListener("dragenter", e => { if (dragging(e) && !card.disabled) card.classList.add("hot"); });
@@ -3225,6 +3286,16 @@ function homeLocal(local) {
   b.title = local ? "" : "WellSight logs and log printouts are read in the desktop app";
   if (!local) $("homelasd").textContent = "In the desktop app: a WellSight log from LogViewer, "
     + "or a log's printout PDF, read to LAS.";
+  // the survey and geology tools read their files with the desktop app too
+  for (const [id, text] of [["homesurvey", "In the desktop app: a well's survey read from a "
+      + "survey report PDF or a table, worked out by minimum curvature and saved as CSV."],
+      ["homegeology", "In the desktop app: a geologist's report read for its sample "
+      + "descriptions and formation tops, saved as CSV."]]) {
+    const c = $(id);
+    c.disabled = !local;
+    c.title = local ? "" : "Survey and geology reports are read in the desktop app";
+    if (!local) $(id + "d").textContent = text;
+  }
 }
 applyMode("frac");
 $("homefrac").focus();

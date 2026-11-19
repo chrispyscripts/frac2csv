@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Geology</title>
+<!-- The Geology tool: a window of its own, opened from the Lab's menu. A
+     geologist's well report PDF is read by the desktop app (/api/geology,
+     geology_tool.py) for its sample descriptions and formation tops; each
+     interval gets the formation it lies in. Shown as tables, then saved as
+     CSV: UWI, Depth Range, Formation, "Description" (and a tops CSV). -->
+<style>
+  :root {
+    --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
+    --line:#e3e5e8; --carmine:#a31631; --carmine-dk:#821126; --ok:#1e7a34; --warn:#9a6700;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; margin:0; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { background:var(--bg); color:var(--ink);
+         font:13.5px/1.45 -apple-system,"Segoe UI",system-ui,sans-serif; }
+  button, input { font:inherit; color:inherit; }
+  .app { display:flex; height:100vh; overflow:hidden; }
+  .side { width:300px; flex:none; display:flex; flex-direction:column; background:var(--panel);
+          border-right:1px solid var(--line); }
+  .sidehead { padding:14px 14px 10px; border-bottom:1px solid var(--line); }
+  .wordmark { font-weight:700; letter-spacing:-0.02em; font-size:16px; }
+  .wordmark span { color:var(--carmine); }
+  .sub { color:var(--mut); font-size:12px; margin-top:2px; }
+  .drop { margin:12px; padding:16px 12px; border:1.5px dashed var(--line); border-radius:10px;
+          color:var(--mut); text-align:center; font-size:12.5px; cursor:pointer; }
+  .drop.on { border-color:var(--carmine); color:var(--carmine); background:rgba(163,22,49,.05); }
+  .drop b { color:var(--ink); }
+  .list { flex:1; overflow-y:auto; border-top:1px solid var(--line); }
+  .item { display:flex; gap:8px; align-items:flex-start; padding:8px 12px;
+          border-bottom:1px solid var(--line); cursor:pointer; }
+  .item:hover { background:var(--panel2); }
+  .item.sel { background:rgba(163,22,49,.07); box-shadow:inset 3px 0 0 var(--carmine); }
+  .item input { margin-top:3px; }
+  .item .w { font-weight:600; font-family:var(--mono); font-size:12.5px;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .item .m { color:var(--mut); font-size:11.5px; white-space:nowrap; overflow:hidden;
+             text-overflow:ellipsis; }
+  .item .bad { color:var(--carmine); }
+  .sidefoot { border-top:1px solid var(--line); padding:10px 12px; display:grid; gap:6px; }
+  .sidefoot .row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .btn { border:1px solid var(--line); background:var(--panel); border-radius:7px; padding:5px 10px;
+         cursor:pointer; white-space:nowrap; }
+  .btn:hover { border-color:var(--carmine); }
+  .btn.primary { background:var(--carmine); border-color:var(--carmine); color:#fff; }
+  .btn.primary:hover { background:var(--carmine-dk); }
+  .btn:disabled { opacity:.5; cursor:default; border-color:var(--line); }
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; }
+  .bar { display:flex; gap:10px 12px; align-items:center; flex-wrap:wrap; padding:12px 16px;
+         background:var(--panel); border-bottom:1px solid var(--line); }
+  .title { flex:1 1 320px; min-width:0; }
+  .title h1 { font-size:16px; font-family:var(--mono); white-space:nowrap; overflow:hidden;
+              text-overflow:ellipsis; }
+  .title .sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .facts { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px 0; color:var(--mut);
+           font-size:12.5px; }
+  .facts b { color:var(--ink); font-weight:600; }
+  .warns { padding:8px 16px 0; }
+  .warns div { color:var(--warn); font-size:12.5px; }
+  .body { flex:1; overflow:auto; padding:12px 16px 20px; }
+  .grid { display:grid; grid-template-columns:minmax(260px, 360px) minmax(0, 1fr); gap:12px;
+          align-items:start; }
+  @media (max-width:980px) { .grid { grid-template-columns:minmax(0, 1fr); } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut);
+             padding:9px 12px; border-bottom:1px solid var(--line); display:flex; gap:8px;
+             align-items:baseline; }
+  .card h2 span { text-transform:none; letter-spacing:0; font-weight:400; }
+  .scroll { overflow:auto; max-height:calc(100vh - 210px); }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { padding:5px 10px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { position:sticky; top:0; background:var(--panel2); font-weight:600; color:var(--mut);
+       font-size:11.5px; z-index:1; white-space:nowrap; }
+  td.n { text-align:right; font-family:var(--mono); white-space:nowrap; }
+  td.r { font-family:var(--mono); white-space:nowrap; }
+  td.f { white-space:nowrap; color:var(--carmine-dk); font-weight:500; }
+  tr.mk td { color:var(--mut); font-style:italic; }
+  tr.top td { background:rgba(163,22,49,.05); }
+  td.desc { line-height:1.45; overflow-wrap:anywhere; }
+  table.samples { table-layout:fixed; }
+  table.samples col.c1 { width:134px; } table.samples col.c2 { width:180px; }
+  table.samples td.f { white-space:normal; }
+  .empty { margin:auto; max-width:540px; text-align:center; color:var(--mut); padding:40px 20px; }
+  .empty h2 { color:var(--ink); font-size:18px; margin-bottom:8px; }
+  .none { color:var(--mut); padding:14px 12px; font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="sidehead">
+      <div class="wordmark"><span>Geology</span></div>
+      <div class="sub">Sample descriptions w/ formation tops → CSV</div>
+    </div>
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Open geologist's report PDFs">
+      Drop geologist's report PDFs here <b>or click</b>
+    </div>
+    <input type="file" id="file" multiple accept=".pdf" hidden>
+    <div class="list" id="list"></div>
+    <div class="sidefoot">
+      <div class="row">
+        <label><input type="checkbox" id="all"> All</label>
+        <span class="sub" id="count"></span>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="savesamples" disabled
+                title="The checked reports' sample descriptions in one CSV">Save samples CSV</button>
+        <button type="button" class="btn" id="savetops" disabled
+                title="The checked reports' formation tops in one CSV">Save tops CSV</button>
+      </div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="bar" id="bar" hidden>
+      <div class="title">
+        <h1 id="t_uwi"></h1>
+        <div class="sub" id="t_sub"></div>
+      </div>
+      <button type="button" class="btn primary" id="savecur">⬇ Samples CSV</button>
+      <button type="button" class="btn" id="savecurtops">⬇ Tops CSV</button>
+    </div>
+    <div class="facts" id="facts" hidden></div>
+    <div class="warns" id="warns"></div>
+    <div class="body">
+      <div class="empty" id="empty">
+        <h2>Drop a geologist's report</h2>
+        <p>A well's geological report PDF. Its sample descriptions are read with the formation
+          tops between them, each depth interval given the formation it lies in, and shown
+          here before you save them as CSV: UWI, depth range, formation and the description
+          in quotes. The tops save as a CSV of their own.</p>
+        <p id="weboff" hidden style="margin-top:10px">Reports are read by the desktop app:
+          open this tool from the Lab in Frac2CSV on your computer.</p>
+      </div>
+      <div class="grid" id="content" hidden>
+        <div class="card">
+          <h2>Formation tops <span id="topsfrom"></span></h2>
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Formation</th><th style="text-align:right">MD (m)</th>
+                <th style="text-align:right">TVD (m)</th><th style="text-align:right">SS (m)</th></tr></thead>
+              <tbody id="tops"></tbody>
+            </table>
+            <div class="none" id="notops" hidden>No formation tops found in this report.</div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Sample descriptions <span id="nsamples"></span></h2>
+          <div class="scroll">
+            <table class="samples">
+              <colgroup><col class="c1"><col class="c2"><col></colgroup>
+              <thead><tr><th>Depth range (m MD)</th><th>Formation</th><th>Description</th></tr></thead>
+              <tbody id="samples"></tbody>
+            </table>
+            <div class="none" id="nosamples" hidden></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const reports = [];        // {key, file, res | null, err | null, checked}
+let sel = -1;
+let local = true;
+
+// ---------- pure helpers (lifted by tests/test_tool_windows.js) ----------
+function joinCsv(texts) {
+  let head = null;
+  const rows = [];
+  for (const t of texts) {
+    const lines = String(t || "").split(/\r?\n/).filter(l => l.length);
+    if (!lines.length) continue;
+    if (head === null) head = lines[0];
+    rows.push(...lines.slice(1));
+  }
+  return head === null ? "" : [head, ...rows].join("\r\n") + "\r\n";
+}
+function csvName(uwi, file, suffix) {
+  const base = uwi || String(file || "report").replace(/\.[^.]+$/, "");
+  return base.replace(/[\/\\:*?"<>|]+/g, "_").replace(/\s+/g, "_") + (suffix || "") + ".csv";
+}
+// The tops and the samples in one list by depth, for the table: each top
+// sits above the first interval at or below it.
+function interleave(samples, tops) {
+  const out = [];
+  const t = [...tops].sort((a, b) => a.md - b.md);
+  let k = 0;
+  for (const s of samples) {
+    while (k < t.length && t[k].md <= s.top + 0.01) out.push({ top: t[k++] });
+    out.push({ sample: s });
+  }
+  while (k < t.length) out.push({ top: t[k++] });
+  return out;
+}
+
+function b64(buf) {
+  const a = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function readOne(file) {
+  const r0 = { key: file.name + ":" + file.size + ":" + (file.lastModified || 0), file: file.name,
+               res: null, err: null, checked: true, busy: true };
+  const have = reports.findIndex(x => x.key === r0.key);
+  if (have >= 0) { pick(have); return; }
+  reports.push(r0);
+  renderList();
+  try {
+    const data = b64(await file.arrayBuffer());
+    const r = await fetch("/api/geology", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ data, filename: file.name }) });
+    const j = await r.json().catch(() => ({ error: "No answer from the desktop app." }));
+    if (r.ok) r0.res = j; else r0.err = j.error || ("Not read (" + r.status + ")");
+  } catch (e) {
+    r0.err = local ? "Not read: " + e.message : "Reports are read by the desktop app.";
+  }
+  r0.busy = false;
+  if (r0.err) r0.checked = false;
+  renderList();
+  if (sel < 0 || !reports[sel] || !reports[sel].res) pick(reports.indexOf(r0));
+}
+async function readAll(files) { for (const f of files) await readOne(f); }
+
+function renderList() {
+  const L = $("list");
+  L.innerHTML = "";
+  reports.forEach((w, i) => {
+    const d = document.createElement("div");
+    d.className = "item" + (i === sel ? " sel" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = w.checked; cb.disabled = !w.res;
+    cb.title = "Include in Save";
+    cb.addEventListener("click", e => { e.stopPropagation(); w.checked = cb.checked; updateFoot(); });
+    const t = document.createElement("div");
+    t.style.minWidth = "0";
+    const nm = document.createElement("div");
+    nm.className = "w";
+    nm.textContent = (w.res && w.res.uwi) || w.file;
+    const m = document.createElement("div");
+    m.className = "m";
+    if (w.busy) m.textContent = "Reading…";
+    else if (w.err) { m.className = "m bad"; m.textContent = w.err; m.title = w.err; }
+    else {
+      m.textContent = `${w.res.samples.length} samples · ${w.res.tops.length} tops`;
+      m.title = w.file;
+      if (!w.res.samples.length) m.className = "m bad";
+    }
+    t.append(nm, m);
+    d.append(cb, t);
+    d.addEventListener("click", () => pick(i));
+    L.append(d);
+  });
+  updateFoot();
+}
+function checked() { return reports.filter(w => w.res && w.checked); }
+function updateFoot() {
+  const n = checked().length, ok = reports.filter(w => w.res).length;
+  $("count").textContent = reports.length ? `${n} of ${ok} checked` + (reports.length > ok ?
+    ` · ${reports.length - ok} not read` : "") : "";
+  $("savesamples").disabled = $("savetops").disabled = !n;
+  $("all").checked = ok > 0 && n === ok;
+}
+$("all").addEventListener("change", () => {
+  reports.forEach(w => { if (w.res) w.checked = $("all").checked; });
+  renderList();
+});
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+function num(v) { return v === null || v === undefined ? "" : (+v).toFixed(2); }
+function rng(s) { return `${(+s.top).toFixed(s.top % 1 ? 2 : 1)}–${(+s.base).toFixed(s.base % 1 ? 2 : 1)}`; }
+function pick(i) {
+  sel = i;
+  renderList();
+  const w = reports[i];
+  if (!w || !w.res) {
+    $("bar").hidden = $("facts").hidden = $("content").hidden = true;
+    $("empty").hidden = false;
+    $("warns").innerHTML = w && w.err ? `<div>${esc(w.file)}: ${esc(w.err)}</div>` : "";
+    return;
+  }
+  const r = w.res;
+  $("empty").hidden = true;
+  $("bar").hidden = $("facts").hidden = $("content").hidden = false;
+  $("t_uwi").textContent = r.uwi || r.file;
+  $("t_sub").textContent = r.file;
+  const forms = new Set(r.samples.map(s => s.formation).filter(Boolean));
+  $("facts").innerHTML =
+    `<span><b>${r.samples.length}</b> sample intervals</span>` +
+    (r.samples.length ? `<span>from <b>${num(r.samples[0].top)}</b> to <b>${num(Math.max(...r.samples.map(s => s.base)))} m MD</b></span>` : "") +
+    `<span><b>${r.tops.length}</b> formation tops</span>` +
+    (r.markers && r.markers.length ? `<span><b>${r.markers.length}</b> other depths (KOP, landing point …)</span>` : "") +
+    (r.pages && r.pages.length ? `<span>report pages <b>${r.pages[0]}–${r.pages[r.pages.length - 1]}</b></span>` : "") +
+    `<span><b>${forms.size}</b> formations in the samples</span>`;
+  $("warns").innerHTML = (r.warnings || []).map(x => `<div>${esc(x)}</div>`).join("");
+  $("topsfrom").textContent = r.tops_from === "table" ? "(from the report's tops table)" :
+    r.tops_from === "section" ? "(from the sample descriptions)" : "";
+  const T = $("tops");
+  T.innerHTML = "";
+  const all = [...r.tops.map(t => ({ ...t, mk: false })), ...(r.markers || []).map(t => ({ ...t, mk: true }))]
+    .sort((a, b) => a.md - b.md);
+  for (const t of all) {
+    const tr = document.createElement("tr");
+    if (t.mk) { tr.className = "mk"; tr.title = "Not a formation: not in the tops CSV"; }
+    tr.innerHTML = `<td>${esc(t.name)}</td><td class="n">${num(t.md)}</td><td class="n">${num(t.tvd)}</td><td class="n">${num(t.ss)}</td>`;
+    T.append(tr);
+  }
+  $("notops").hidden = all.length > 0;
+  $("nsamples").textContent = r.samples.length ? `(${r.samples.length}, with the tops between them)` : "";
+  const S = $("samples");
+  S.innerHTML = "";
+  for (const row of interleave(r.samples, r.tops)) {
+    const tr = document.createElement("tr");
+    if (row.top) {
+      tr.className = "top";
+      tr.innerHTML = `<td class="r">${num(row.top.md)}</td><td class="f">${esc(row.top.name)}</td>` +
+        `<td style="color:var(--mut)">formation top${row.top.tvd !== null && row.top.tvd !== undefined ? ` · ${num(row.top.tvd)} m TVD` : ""}</td>`;
+    } else {
+      const s = row.sample;
+      tr.innerHTML = `<td class="r">${rng(s)}</td><td class="f">${esc(s.formation || "")}</td><td class="desc">${esc(s.text)}</td>`;
+    }
+    S.append(tr);
+  }
+  $("nosamples").hidden = r.samples.length > 0;
+  $("nosamples").textContent = (r.warnings && r.warnings[0]) || "No sample descriptions in this report.";
+  $("savecur").disabled = !r.samples.length;
+  $("savecurtops").disabled = !r.tops.length;
+}
+
+function save(name, text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+$("savecur").addEventListener("click", () => {
+  const w = reports[sel];
+  if (w && w.res) save(csvName(w.res.uwi, w.file, "_samples"), w.res.samples_csv);
+});
+$("savecurtops").addEventListener("click", () => {
+  const w = reports[sel];
+  if (w && w.res) save(csvName(w.res.uwi, w.file, "_tops"), w.res.tops_csv);
+});
+$("savesamples").addEventListener("click", () => {
+  const l = checked();
+  if (l.length) save(l.length === 1 ? csvName(l[0].res.uwi, l[0].file, "_samples") : `samples_${l.length}_reports.csv`,
+                     joinCsv(l.map(w => w.res.samples_csv)));
+});
+$("savetops").addEventListener("click", () => {
+  const l = checked();
+  if (l.length) save(l.length === 1 ? csvName(l[0].res.uwi, l[0].file, "_tops") : `tops_${l.length}_reports.csv`,
+                     joinCsv(l.map(w => w.res.tops_csv)));
+});
+
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", e => { readAll([...e.target.files]); e.target.value = ""; });
+for (const t of [drop, document.body]) {
+  t.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("on"); });
+  t.addEventListener("dragleave", e => { if (!e.relatedTarget) drop.classList.remove("on"); });
+  t.addEventListener("drop", e => {
+    e.preventDefault(); e.stopPropagation();
+    drop.classList.remove("on");
+    readAll([...e.dataTransfer.files]);
+  });
+}
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || !reports.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    pick(Math.max(0, Math.min(reports.length - 1, sel + (e.key === "ArrowDown" ? 1 : -1))));
+  }
+});
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== "tool-files") return;
+  readAll(e.data.files || []);
+});
+fetch("/api/local-info").then(r => r.ok ? r.json() : null).then(j => {
+  local = !!(j && j.local);
+  $("weboff").hidden = local;
+}).catch(() => { local = false; $("weboff").hidden = false; });
+if (window.opener) {
+  try { window.opener.postMessage({ type: "tool-ready", tool: "geology" }, location.origin); } catch (e) { /* closed */ }
+}
+</script>
+</body>
+</html>

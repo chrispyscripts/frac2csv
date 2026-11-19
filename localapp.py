@@ -42,6 +42,8 @@ from version import VERSION     # noqa: E402
 import pipeline                 # noqa: E402
 import pipeline_export as pe    # noqa: E402
 import wellsight_server as wss  # noqa: E402  WellSight logs -> LAS + printout
+import survey_tool                # noqa: E402  Directional Survey tool
+import geology_tool               # noqa: E402  Geology tool
 
 PALETTE = ["#1d5bd8", "#b02e2e", "#1e7a34", "#7a3b9b", "#b0731f", "#0f7d7d",
            "#5a5f6e", "#8a2f5e"]
@@ -911,6 +913,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(*wss.logviewer(req))
             if self.path == "/api/wellsight-save":
                 return self._json(*wss.save(req, export_folder))
+            # the Directional Survey and Geology tools (their own windows,
+            # opened from the menu): a survey report / table, or a
+            # geologist's report, read -> stations / samples and tops + CSV
+            if self.path == "/api/survey":
+                with _READ_GATE:
+                    return self._json(*survey_tool.api(req))
+            if self.path == "/api/geology":
+                with _READ_GATE:
+                    return self._json(*geology_tool.api(req))
             if self.path == "/api/wellsight-library":
                 with _READ_GATE:
                     return self._json(*wss.library(req))
