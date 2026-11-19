@@ -6,9 +6,8 @@
 <title>Geology</title>
 <!-- The Geology tool: a window of its own, opened from the Lab's menu. A
      geologist's well report PDF is read by the desktop app (/api/geology,
-     geology_tool.py) for its sample descriptions and formation tops; each
-     interval gets the formation it lies in. Shown as tables, then saved as
-     CSV: UWI, Depth Range, Formation, "Description" (and a tops CSV). -->
+     geology_tool.py) for its sample descriptions. Shown as a table, then
+     saved as CSV: UWI, Depth Range, "Description". -->
 <style>
   :root {
     --bg:#fbfbfa; --panel:#ffffff; --panel2:#f3f4f6; --ink:#14181d; --mut:#697077;
@@ -64,7 +63,7 @@
   .warns { padding:8px 16px 0; }
   .warns div { color:var(--warn); font-size:12.5px; }
   .body { flex:1; overflow:auto; padding:12px 16px 20px; }
-  .grid { display:grid; grid-template-columns:minmax(260px, 360px) minmax(0, 1fr); gap:12px;
+  .grid { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px;
           align-items:start; }
   @media (max-width:980px) { .grid { grid-template-columns:minmax(0, 1fr); } }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
@@ -79,13 +78,9 @@
        font-size:11.5px; z-index:1; white-space:nowrap; }
   td.n { text-align:right; font-family:var(--mono); white-space:nowrap; }
   td.r { font-family:var(--mono); white-space:nowrap; }
-  td.f { white-space:nowrap; color:var(--carmine-dk); font-weight:500; }
-  tr.mk td { color:var(--mut); font-style:italic; }
-  tr.top td { background:rgba(163,22,49,.05); }
   td.desc { line-height:1.45; overflow-wrap:anywhere; }
   table.samples { table-layout:fixed; }
-  table.samples col.c1 { width:134px; } table.samples col.c2 { width:180px; }
-  table.samples td.f { white-space:normal; }
+  table.samples col.c1 { width:134px; }
   .empty { margin:auto; max-width:540px; text-align:center; color:var(--mut); padding:40px 20px; }
   .empty h2 { color:var(--ink); font-size:18px; margin-bottom:8px; }
   .none { color:var(--mut); padding:14px 12px; font-size:12.5px; }
@@ -96,7 +91,7 @@
   <aside class="side">
     <div class="sidehead">
       <div class="wordmark"><span>Geology</span></div>
-      <div class="sub">Sample descriptions w/ formation tops → CSV</div>
+      <div class="sub">Sample descriptions → CSV</div>
     </div>
     <div class="drop" id="drop" tabindex="0" role="button" aria-label="Open geologist's report PDFs">
       Drop geologist's report PDFs here <b>or click</b>
@@ -111,8 +106,6 @@
       <div class="row">
         <button type="button" class="btn" id="savesamples" disabled
                 title="The checked reports' sample descriptions in one CSV">Save samples CSV</button>
-        <button type="button" class="btn" id="savetops" disabled
-                title="The checked reports' formation tops in one CSV">Save tops CSV</button>
       </div>
     </div>
   </aside>
@@ -123,38 +116,25 @@
         <div class="sub" id="t_sub"></div>
       </div>
       <button type="button" class="btn primary" id="savecur">⬇ Samples CSV</button>
-      <button type="button" class="btn" id="savecurtops">⬇ Tops CSV</button>
     </div>
     <div class="facts" id="facts" hidden></div>
     <div class="warns" id="warns"></div>
     <div class="body">
       <div class="empty" id="empty">
         <h2>Drop a geologist's report</h2>
-        <p>A well's geological report PDF. Its sample descriptions are read with the formation
-          tops between them, each depth interval given the formation it lies in, and shown
-          here before you save them as CSV: UWI, depth range, formation and the description
-          in quotes. The tops save as a CSV of their own.</p>
+        <p>A well's geological report PDF. Its sample descriptions are read, each depth
+          interval with its description, and shown here before you save them as CSV: UWI,
+          depth range and the description in quotes.</p>
         <p id="weboff" hidden style="margin-top:10px">Reports are read by the desktop app:
           open this tool from the Lab in Frac2CSV on your computer.</p>
       </div>
       <div class="grid" id="content" hidden>
         <div class="card">
-          <h2>Formation tops <span id="topsfrom"></span></h2>
-          <div class="scroll">
-            <table>
-              <thead><tr><th>Formation</th><th style="text-align:right">MD (m)</th>
-                <th style="text-align:right">TVD (m)</th><th style="text-align:right">SS (m)</th></tr></thead>
-              <tbody id="tops"></tbody>
-            </table>
-            <div class="none" id="notops" hidden>No formation tops found in this report.</div>
-          </div>
-        </div>
-        <div class="card">
           <h2>Sample descriptions <span id="nsamples"></span></h2>
           <div class="scroll">
             <table class="samples">
-              <colgroup><col class="c1"><col class="c2"><col></colgroup>
-              <thead><tr><th>Depth range (m MD)</th><th>Formation</th><th>Description</th></tr></thead>
+              <colgroup><col class="c1"><col></colgroup>
+              <thead><tr><th>Depth range (m MD)</th><th>Description</th></tr></thead>
               <tbody id="samples"></tbody>
             </table>
             <div class="none" id="nosamples" hidden></div>
@@ -186,19 +166,6 @@ function joinCsv(texts) {
 function csvName(uwi, file, suffix) {
   const base = uwi || String(file || "report").replace(/\.[^.]+$/, "");
   return base.replace(/[\/\\:*?"<>|]+/g, "_").replace(/\s+/g, "_") + (suffix || "") + ".csv";
-}
-// The tops and the samples in one list by depth, for the table: each top
-// sits above the first interval at or below it.
-function interleave(samples, tops) {
-  const out = [];
-  const t = [...tops].sort((a, b) => a.md - b.md);
-  let k = 0;
-  for (const s of samples) {
-    while (k < t.length && t[k].md <= s.top + 0.01) out.push({ top: t[k++] });
-    out.push({ sample: s });
-  }
-  while (k < t.length) out.push({ top: t[k++] });
-  return out;
 }
 
 function b64(buf) {
@@ -250,7 +217,7 @@ function renderList() {
     if (w.busy) m.textContent = "Reading…";
     else if (w.err) { m.className = "m bad"; m.textContent = w.err; m.title = w.err; }
     else {
-      m.textContent = `${w.res.samples.length} samples · ${w.res.tops.length} tops`;
+      m.textContent = `${w.res.samples.length} samples`;
       m.title = w.file;
       if (!w.res.samples.length) m.className = "m bad";
     }
@@ -266,7 +233,7 @@ function updateFoot() {
   const n = checked().length, ok = reports.filter(w => w.res).length;
   $("count").textContent = reports.length ? `${n} of ${ok} checked` + (reports.length > ok ?
     ` · ${reports.length - ok} not read` : "") : "";
-  $("savesamples").disabled = $("savetops").disabled = !n;
+  $("savesamples").disabled = !n;
   $("all").checked = ok > 0 && n === ok;
 }
 $("all").addEventListener("change", () => {
@@ -294,47 +261,23 @@ function pick(i) {
   $("bar").hidden = $("facts").hidden = $("content").hidden = false;
   $("t_uwi").textContent = r.uwi || r.file;
   $("t_sub").textContent = r.file;
-  const forms = new Set(r.samples.map(s => s.formation).filter(Boolean));
   $("facts").innerHTML =
     `<span><b>${r.samples.length}</b> sample intervals</span>` +
     (r.samples.length ? `<span>from <b>${num(r.samples[0].top)}</b> to <b>${num(Math.max(...r.samples.map(s => s.base)))} m MD</b></span>` : "") +
-    `<span><b>${r.tops.length}</b> formation tops</span>` +
-    (r.markers && r.markers.length ? `<span><b>${r.markers.length}</b> other depths (KOP, landing point …)</span>` : "") +
-    (r.pages && r.pages.length ? `<span>report pages <b>${r.pages[0]}–${r.pages[r.pages.length - 1]}</b></span>` : "") +
-    `<span><b>${forms.size}</b> formations in the samples</span>`;
-  $("warns").innerHTML = (r.warnings || []).map(x => `<div>${esc(x)}</div>`).join("");
-  $("topsfrom").textContent = r.tops_from === "table" ? "(from the report's tops table)" :
-    r.tops_from === "section" ? "(from the sample descriptions)" : "";
-  const T = $("tops");
-  T.innerHTML = "";
-  const all = [...r.tops.map(t => ({ ...t, mk: false })), ...(r.markers || []).map(t => ({ ...t, mk: true }))]
-    .sort((a, b) => a.md - b.md);
-  for (const t of all) {
-    const tr = document.createElement("tr");
-    if (t.mk) { tr.className = "mk"; tr.title = "Not a formation: not in the tops CSV"; }
-    tr.innerHTML = `<td>${esc(t.name)}</td><td class="n">${num(t.md)}</td><td class="n">${num(t.tvd)}</td><td class="n">${num(t.ss)}</td>`;
-    T.append(tr);
-  }
-  $("notops").hidden = all.length > 0;
-  $("nsamples").textContent = r.samples.length ? `(${r.samples.length}, with the tops between them)` : "";
+    (r.pages && r.pages.length ? `<span>report pages <b>${r.pages[0]}–${r.pages[r.pages.length - 1]}</b></span>` : "");
+  $("warns").innerHTML = (r.warnings || []).filter(x => !/formation tops/i.test(x))
+    .map(x => `<div>${esc(x)}</div>`).join("");
+  $("nsamples").textContent = r.samples.length ? `(${r.samples.length})` : "";
   const S = $("samples");
   S.innerHTML = "";
-  for (const row of interleave(r.samples, r.tops)) {
+  for (const s of r.samples) {
     const tr = document.createElement("tr");
-    if (row.top) {
-      tr.className = "top";
-      tr.innerHTML = `<td class="r">${num(row.top.md)}</td><td class="f">${esc(row.top.name)}</td>` +
-        `<td style="color:var(--mut)">formation top${row.top.tvd !== null && row.top.tvd !== undefined ? ` · ${num(row.top.tvd)} m TVD` : ""}</td>`;
-    } else {
-      const s = row.sample;
-      tr.innerHTML = `<td class="r">${rng(s)}</td><td class="f">${esc(s.formation || "")}</td><td class="desc">${esc(s.text)}</td>`;
-    }
+    tr.innerHTML = `<td class="r">${rng(s)}</td><td class="desc">${esc(s.text)}</td>`;
     S.append(tr);
   }
   $("nosamples").hidden = r.samples.length > 0;
   $("nosamples").textContent = (r.warnings && r.warnings[0]) || "No sample descriptions in this report.";
   $("savecur").disabled = !r.samples.length;
-  $("savecurtops").disabled = !r.tops.length;
 }
 
 function save(name, text) {
@@ -349,19 +292,10 @@ $("savecur").addEventListener("click", () => {
   const w = reports[sel];
   if (w && w.res) save(csvName(w.res.uwi, w.file, "_samples"), w.res.samples_csv);
 });
-$("savecurtops").addEventListener("click", () => {
-  const w = reports[sel];
-  if (w && w.res) save(csvName(w.res.uwi, w.file, "_tops"), w.res.tops_csv);
-});
 $("savesamples").addEventListener("click", () => {
   const l = checked();
   if (l.length) save(l.length === 1 ? csvName(l[0].res.uwi, l[0].file, "_samples") : `samples_${l.length}_reports.csv`,
                      joinCsv(l.map(w => w.res.samples_csv)));
-});
-$("savetops").addEventListener("click", () => {
-  const l = checked();
-  if (l.length) save(l.length === 1 ? csvName(l[0].res.uwi, l[0].file, "_tops") : `tops_${l.length}_reports.csv`,
-                     joinCsv(l.map(w => w.res.tops_csv)));
 });
 
 const drop = $("drop");

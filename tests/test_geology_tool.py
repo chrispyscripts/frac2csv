@@ -93,14 +93,15 @@ class TopsThenIntervals(unittest.TestCase):
         r = gt.read(self.report(), "made-up.pdf")
         text = r["samples_csv"]
         lines = text.split("\r\n")
-        self.assertEqual(lines[0], "UWI,Depth Range,Formation,Description")
+        # UWI, depth range and the description: no formation
+        self.assertEqual(lines[0], "UWI,Depth Range,Description")
         # the description is always in quotes, a quote inside it doubled
-        self.assertTrue(lines[1].startswith(f'{UWI},540.0-560.0,Upper Shale,"SHALE (90%)'))
+        self.assertTrue(lines[1].startswith(f'{UWI},540.0-560.0,"SHALE (90%)'))
         self.assertIn('""waxy""', lines[1])
         self.assertTrue(all(l.endswith('"') for l in lines[1:] if l))
         rows = list(csv.reader(io.StringIO(text)))
-        self.assertEqual(rows[1][3], 'SHALE (90%): dark gray, "waxy" in part; SILTSTONE (10%).')
-        self.assertEqual(rows[2][2], "Upper Shale / Marker Silt")
+        self.assertEqual(rows[1], [UWI, "540.0-560.0", 'SHALE (90%): dark gray, "waxy" in part; SILTSTONE (10%).'])
+        self.assertTrue(all(len(r) == 3 for r in rows))
         tops = list(csv.reader(io.StringIO(r["tops_csv"])))
         self.assertEqual(tops[0], ["UWI", "Formation", "MD (m)", "TVD (m)", "SS (m)"])
         self.assertEqual(tops[2], [UWI, "Marker Silt", "560.25", "548.0", "107.0"])
@@ -211,7 +212,7 @@ class OtherLayouts(unittest.TestCase):
         self.assertEqual(r["samples"], [])
         self.assertEqual(r["warnings"], ["No samples were collected from this well."])
         self.assertEqual(len(r["tops"]), 1)
-        self.assertEqual(r["samples_csv"], "UWI,Depth Range,Formation,Description\r\n")
+        self.assertEqual(r["samples_csv"], "UWI,Depth Range,Description\r\n")
 
     def test_section_ends_at_the_next_heading(self):
         desc = [(206, 90, "Sample Descriptions"), (68, 130, "600-620m: SHALE (100%): gray.")]

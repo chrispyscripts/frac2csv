@@ -646,9 +646,9 @@
       <button type="button" class="homecard" id="homegeology" data-tool="geology">
         <span class="hk">Geo reports → CSV · own window ↗</span>
         <span class="ht">Geology</span>
-        <span class="hd" id="homegeologyd">A geologist's report read for its sample descriptions
-          with the formation tops: each depth interval, the formation it lies in and its
-          description, shown and then saved as CSV.</span>
+        <span class="hd" id="homegeologyd">A geologist's report read for its sample descriptions:
+          each depth interval and its description, shown and then saved as CSV (UWI, depth
+          range, description).</span>
         <span class="hx">Drop geologist's report PDFs</span>
       </button>
     </div>
@@ -3290,7 +3290,7 @@ function homeLocal(local) {
   for (const [id, text] of [["homesurvey", "In the desktop app: a well's survey read from a "
       + "survey report PDF or a table, worked out by minimum curvature and saved as CSV."],
       ["homegeology", "In the desktop app: a geologist's report read for its sample "
-      + "descriptions and formation tops, saved as CSV."]]) {
+      + "descriptions, saved as CSV."]]) {
     const c = $(id);
     c.disabled = !local;
     c.title = local ? "" : "Survey and geology reports are read in the desktop app";

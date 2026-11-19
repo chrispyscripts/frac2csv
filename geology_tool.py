@@ -59,7 +59,7 @@ _MARKERS = re.compile(
     r"start\s+of\s+lateral|lateral|build|curve|spud|drill\s*out|re-?entry|"
     r"ghost\s+hole|sidetrack(\s+point)?|whipstock|window|kick\s*off)\b", re.I)
 
-CSV_SAMPLES = ["UWI", "Depth Range", "Formation", "Description"]
+CSV_SAMPLES = ["UWI", "Depth Range", "Description"]
 CSV_TOPS = ["UWI", "Formation", "MD (m)", "TVD (m)", "SS (m)"]
 
 
@@ -419,8 +419,8 @@ def _q(s):
 
 
 def samples_csv(reports):
-    """UWI, Depth Range, Formation, Description; the description always in
-    double quotes (a quote inside it doubled)."""
+    """UWI, Depth Range, Description; the description always in double
+    quotes (a quote inside it doubled)."""
     buf = io.StringIO()
     buf.write(",".join(CSV_SAMPLES) + "\r\n")
     cw = io.StringIO()
@@ -430,7 +430,7 @@ def samples_csv(reports):
         for s in r["samples"]:
             cw.seek(0)
             cw.truncate()
-            w.writerow([uwi, f"{_fmt(s['top'])}-{_fmt(s['base'])}", s.get("formation") or ""])
+            w.writerow([uwi, f"{_fmt(s['top'])}-{_fmt(s['base'])}"])
             buf.write(cw.getvalue() + "," + _q(s["text"]) + "\r\n")
     return buf.getvalue()
 

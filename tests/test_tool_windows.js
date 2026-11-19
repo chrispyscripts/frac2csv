@@ -20,8 +20,8 @@ function lift(src, name, where) {
 }
 const S = new Function(["niceTicks", "joinCsv", "csvName", "nearestStation"].map(n => lift(survey, n, "survey.html")).join("\n")
   + "\nreturn { niceTicks, joinCsv, csvName, nearestStation };")();
-const G = new Function(["joinCsv", "csvName", "interleave"].map(n => lift(geology, n, "geology.html")).join("\n")
-  + "\nreturn { joinCsv, csvName, interleave };")();
+const G = new Function(["joinCsv", "csvName"].map(n => lift(geology, n, "geology.html")).join("\n")
+  + "\nreturn { joinCsv, csvName };")();
 
 // the menu: two more cards, each opening its own window
 for (const [tool, page] of [["survey", "survey.html"], ["geology", "geology.html"]]) {
@@ -34,6 +34,7 @@ assert.match(lab, /\.homecard\[data-mode\]/, "the mode cards keep their own hand
 // each window posts its files to the desktop app's own endpoint
 assert.match(survey, /fetch\("\/api\/survey"/);
 assert.match(geology, /fetch\("\/api\/geology"/);
+assert.doesNotMatch(geology, /Formation|tops_csv|savetops/);
 const server = fs.readFileSync(path.join(__dirname, "..", "localapp.py"), "utf8");
 assert.match(server, /self\.path == "\/api\/survey"/);
 assert.match(server, /self\.path == "\/api\/geology"/);
@@ -52,16 +53,12 @@ for (const J of [S.joinCsv, G.joinCsv]) {
 }
 // a UWI's slashes are not in a file name
 assert.equal(S.csvName("100/01-02-003-04W5/00", "x.pdf", "_survey"), "100_01-02-003-04W5_00_survey.csv");
-assert.equal(G.csvName(null, "my report.pdf", "_tops"), "my_report_tops.csv");
+assert.equal(G.csvName(null, "my report.pdf", "_samples"), "my_report_samples.csv");
 
 // the station nearest the pointer on a view
 const st = [{ ew: 0, ns: 0 }, { ew: 100, ns: 5 }, { ew: 200, ns: 9 }];
 assert.equal(S.nearestStation(st, 120, 0, s => s.ew, s => s.ns), 1);
 assert.equal(S.nearestStation(st, 999, 0, s => s.ew, s => s.ns), 2);
 
-// tops sit above the first interval at or below them
-const rows = G.interleave([{ top: 500, base: 520 }, { top: 520, base: 540 }],
-                          [{ md: 520, name: "B" }, { md: 400, name: "A" }, { md: 900, name: "C" }]);
-assert.deepEqual(rows.map(r => r.top ? r.top.name : r.sample.top), ["A", 500, "B", 520, "C"]);
 
 console.log("PASS: survey and geology tool windows, menu cards and helpers");
