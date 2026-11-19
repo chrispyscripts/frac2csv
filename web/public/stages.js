@@ -4,6 +4,10 @@
 // the well charts page's stage chart (wellview.html?solo=1), so it zooms,
 // pans, hides curves and follows the theme exactly as it does there.
 //
+// Under each chart, a stack of the well's datasets along MD around the stage
+// (gamma, porosity, the mud log, comments...) and an Add Dataset button:
+// stage-datasets.js, which keeps each card's stack and the default.
+//
 // The stages are in the address (stages.html?s=WA:stage,WA:stage), so a reload
 // or a saved session brings them back. The window says what it holds over
 // BroadcastChannel 'stratum-stages', so a page choosing where a stage goes
@@ -13,7 +17,7 @@ const ORIGIN = location.origin;
 const $ = id => document.getElementById(id);
 const ME = Math.random().toString(36).slice(2);
 const MAX = 16;
-const cards = [];        // {wa, label, el, frame, name, stages}
+const cards = [];        // {wa, label, el, frame, name, stages, ds}
 let used = Date.now();   // when this window was last added to or looked at
 
 // a name another page can find this window by (window.open('', name))
@@ -46,6 +50,8 @@ function make(wa, label) {
   const step = d => { const i = c.stages.indexOf(c.label), j = i + d; if (i >= 0 && j >= 0 && j < c.stages.length) c.frame.contentWindow.postMessage({ type: 'ws:select-stage', wa: c.wa, label: c.stages[j] }, ORIGIN); };
   el.querySelector('.sg-prev').onclick = () => step(-1);
   el.querySelector('.sg-next').onclick = () => step(1);
+  // the datasets stacked under the chart, and the Add Dataset button (stage-datasets.js)
+  c.ds = window.StageDatasets ? StageDatasets.attach({ wa: c.wa, label: c.label, mount: el }) : null;
   head(c);
   return c;
 }
@@ -70,6 +76,7 @@ addEventListener('message', e => {
   if (!c) return;
   if (m.label != null) c.label = String(m.label);
   Object.assign(c, { name: m.name || '', pad: m.pad || '', date: m.date || '', stages: Array.isArray(m.stages) ? m.stages.map(String) : [] });
+  if (c.ds) c.ds.setStage(c.label);   // the datasets re-centre on the stage now shown
   head(c); save();
 });
 
@@ -83,7 +90,7 @@ function add(wa, label, quiet) {
   used = Date.now();
   const here = cards.find(c => key(c.wa, c.label) === key(wa, label));
   if (here) { if (!quiet) flash(here); announce(); return; }
-  if (cards.length >= MAX) { const old = cards.shift(); old.el.remove(); }
+  if (cards.length >= MAX) { const old = cards.shift(); old.el.remove(); if (old.ds) old.ds.destroy(); }
   const c = make(wa, label);
   cards.push(c);
   place();
@@ -96,7 +103,7 @@ function flash(c) {
 function remove(c) {
   const k = cards.indexOf(c);
   if (k < 0) return;
-  cards.splice(k, 1); c.el.remove(); place();
+  cards.splice(k, 1); c.el.remove(); if (c.ds) c.ds.destroy(); place();
 }
 
 function save() {
