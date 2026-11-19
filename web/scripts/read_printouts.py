@@ -18,7 +18,12 @@ writes outside the repo.
            WellSight log's.
 
 Usage:
-  python3 -I web/scripts/read_printouts.py read --out ~/dev/viking-printouts DIR [DIR ...]
+  python3 web/scripts/read_printouts.py read --out ~/dev/viking-printouts [--library LIB.json] DIR [DIR ...]
+
+A legend library (the Lab's validation-tools/pdf_legend_library.py run over
+the same printouts) names the pictures of printouts whose own legend is
+missing or leaves them out: on the Viking set, 12 of 20 such printouts
+gained rocks.
 """
 import argparse
 import json
@@ -45,14 +50,14 @@ def parse_name(fn):
             "date": m.group(6), "maker": m.group(7).upper(), "stitched": bool(m.group(8))}
 
 
-def _read_one(path, out):
+def _read_one(path, out, library=None):
     sys.path.insert(0, LAB)
     import mudlog_pdf_app as mpa
     t0 = time.time()
     stem = os.path.splitext(os.path.basename(path))[0]
     rec = {"file": os.path.basename(path), **(parse_name(path) or {})}
     try:
-        res = mpa.read(open(path, "rb").read(), os.path.basename(path))
+        res = mpa.read(open(path, "rb").read(), os.path.basename(path), library=library)
     except Exception as e:  # noqa: BLE001
         rec.update(ok=False, error="%s: %s" % (type(e).__name__, str(e)[:300]), seconds=round(time.time() - t0, 1))
         json.dump(rec, open(os.path.join(out, stem + ".json"), "w"))
@@ -75,7 +80,7 @@ def _read_one(path, out):
     return rec["file"], True
 
 
-def read_all(dirs, out, jobs=6, redo=False):
+def read_all(dirs, out, jobs=6, redo=False, library=None):
     os.makedirs(out, exist_ok=True)
     files = {}
     for d in dirs:
@@ -91,7 +96,7 @@ def read_all(dirs, out, jobs=6, redo=False):
     print("%d logs, %d to read" % (len(files), len(todo)), file=sys.stderr)
     done = Counter()
     with ProcessPoolExecutor(jobs) as ex:
-        futs = [ex.submit(_read_one, p, out) for p in todo]
+        futs = [ex.submit(_read_one, p, out, library) for p in todo]
         for i, f in enumerate(as_completed(futs), 1):
             try:
                 _, ok = f.result()
@@ -190,9 +195,12 @@ def main(argv=None):
     r.add_argument("--out", default=os.path.join(HOME, "dev", "viking-printouts"))
     r.add_argument("--jobs", type=int, default=6)
     r.add_argument("--redo", action="store_true")
+    r.add_argument("--library", help="a legend library (validation-tools/pdf_legend_library.py, built from the "
+                   "printouts themselves, kept outside the repo): names pictures a printout's own legend leaves out")
     args = ap.parse_args(argv)
     if args.cmd == "read":
-        read_all([os.path.expanduser(d) for d in args.dirs], os.path.expanduser(args.out), args.jobs, args.redo)
+        read_all([os.path.expanduser(d) for d in args.dirs], os.path.expanduser(args.out), args.jobs, args.redo,
+                 os.path.expanduser(args.library) if args.library else None)
 
 
 if __name__ == "__main__":
