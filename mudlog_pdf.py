@@ -2605,6 +2605,7 @@ NUMERIC = re.compile(r"^[-+]?\d+(\.\d+)?$")
 # ---------------------------------------------------------------- reading
 
 PARTS = ("header", "text", "rocks", "symbols", "intervals", "curves", "tracks")
+ONE_PAGE_PAD_M = 50.0      # a one-page printout's strip reaches this far past its depth labels
 
 
 def read(pdf, parts=None, library=None):
@@ -2624,6 +2625,12 @@ def read(pdf, parts=None, library=None):
     # (too few labels of their own) are mapped; then cut to the labels'
     # range, counting the labels on those pages too
     page_m = max(doc[0].rect.width, doc[0].rect.height) * dr[2]
+    if len(doc) == 1:
+        # one page holds the whole log (a printout stitched into one page):
+        # no page before or after it to map, and a page's length each way
+        # would make the strip about three logs long, the log's own lines too
+        # short a share of it to be found as its tracks' edges
+        page_m = min(page_m, ONE_PAGE_PAD_M)
     _strip, info = wp.stitch(src, dr[0] - page_m, dr[1] + page_m)
     every = [Page(pl) for pl in info["placed"]]
     rng = _labelled_range(doc, every, dr[:2])

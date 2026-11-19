@@ -582,5 +582,42 @@ class Reading(unittest.TestCase):
         self.assertGreater(marks["rocks"]["score"], 0.97)
 
 
+
+def one_page(pdf):
+    """the printout stitched into one page, its pages one below the other
+    (header and legend too), as a stitching tool does it"""
+    src = fitz.open(stream=pdf, filetype="pdf")
+    out = fitz.open()
+    pg = out.new_page(width=W, height=H * len(src))
+    for i in range(len(src)):
+        pg.show_pdf_page(fitz.Rect(0, H * i, W, H * (i + 1)), src, i)
+    return out.tobytes()
+
+
+@unittest.skipUnless(fitz, "PyMuPDF not installed")
+class OnePage(unittest.TestCase):
+    """a printout stitched into one page longer than its log reads as the
+    paged printout does: its tracks' edges found, its curves on their scales"""
+    @classmethod
+    def setUpClass(cls):
+        cls.r = M.read(one_page(printout()))
+        cls.marks = K.score(key(), cls.r)
+
+    def test_one_page(self):
+        self.assertEqual(self.r["printout"]["pages"], 1)
+
+    def test_depth(self):
+        self.assertAlmostEqual(self.r["depth"]["top"], TOP, delta=0.01)
+        self.assertAlmostEqual(self.r["depth"]["bottom"], BOTTOM, delta=5.01)
+
+    def test_curves_on_the_track_not_the_page(self):
+        by = {c["name"]: c for c in self.marks["curves"]["curves"]}
+        self.assertGreater(by["ROP"]["score"], 0.97)
+        self.assertGreater(by["Gamma"]["score"], 0.97)
+        g = next(c for c in self.r["curves"] if c["kind"] == "gamma")
+        self.assertAlmostEqual(g["track_pt"][0], CURVE[0], delta=1.0)
+        self.assertAlmostEqual(g["track_pt"][1], CURVE[1], delta=1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
