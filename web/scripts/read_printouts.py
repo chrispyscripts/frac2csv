@@ -126,9 +126,15 @@ def attach(wells, folder, rep, bin_m=2.0):
         binned = defaultdict(dict)      # type -> {bin: [values]}
         types, srcs, names = {}, [], {}
         for r in rs:
-            for c in r["curves"]:
+            # one curve of each kind from a printout: a log can print three
+            # gammas (Gamma, Gamma Up, Gamma Down in CPS); the plainest name
+            mine = {}
+            for c in sorted(r["curves"], key=lambda c: len(c.get("name") or "")):
                 k, title, unit = build_sk.curve_kind(c.get("name"), c.get("kind"))
-                if not k or c.get("top") is None or not c.get("step"):
+                if k and k not in mine:
+                    mine[k] = (c, title, unit)
+            for k, (c, title, unit) in mine.items():
+                if c.get("top") is None or not c.get("step"):
                     continue
                 types.setdefault(k, {"t": title, "u": unit or c.get("unit") or ""})
                 for i, v in enumerate(c["values"]):

@@ -257,6 +257,19 @@ class Printouts(unittest.TestCase):
             self.assertEqual(new["rock_names"]["shale"], "Shale")
             self.assertEqual(rep["wells given logs read off their printouts"], 1)
 
+    def test_one_gamma_of_three(self):
+        # a geosteering printout's Gamma, Gamma Up and Gamma Down (in CPS):
+        # the plain Gamma, not the three averaged
+        with tempfile.TemporaryDirectory() as d:
+            cv = lambda name, unit, v: {"name": name, "kind": "gamma", "unit": unit, "top": 1000.0, "step": 1.0, "values": [v] * 4}
+            json.dump({"ok": True, "file": "y.PDF", "licence": "777002", "maker": "GEO", "depth": {"top": 1000.0, "bottom": 1004.0},
+                       "curves": [cv("Gamma Down", "CPS", 20.0), cv("Gamma", "API", 80.0), cv("Gamma Up", "API", 95.0)],
+                       "rocks": [], "shows": [], "notes": []}, open(os.path.join(d, "y.json"), "w"))
+            w = {"key": "777002", "logs": None, "well": {"logs": 0}}
+            from collections import Counter
+            RP.attach([w], d, Counter())
+            self.assertEqual(w["logs"]["types"]["gamma"][0], 80.0)
+
 
 class Compact(unittest.TestCase):
     """a pad file keeps a log's values to 4 figures and leaves empty fields out"""
