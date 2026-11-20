@@ -808,6 +808,25 @@ function drawThumb(cv, legend, s) {
     + shown.map(c => `<span${c.hidden ? ' class="off" title="Hidden on the stage chart"' : ''}><i style="background:${curveInk(c)}"></i>${c.short} ${fmt(c.max, c.max < 100 ? 1 : 0)} ${unit(c.k)}</span>`).join('');
 }
 
+// ---------- the Data window (data-link.js) ----------
+// The stage under the pointer (else the well) shows there; each stage clicked,
+// or the well where no stage is, is stacked there while one is open; the
+// header's Data window button opens one.
+const DL = window.StratumDataLink || null;
+const dwName = () => $('ws-name').textContent;
+function dwStage(h) {
+  if (!h || !W) return null;
+  const s = h.strip || h.rib || (h.md != null && G && h.md >= G.heel - 1 ? stageAt(h.md) : null);
+  return s ? s.label : null;
+}
+function dwPoint() { if (DL && W && hover) DL.point(WA, dwStage(hover), dwName()); }
+function dwPick(label) { if (DL && W && DL.shown) DL.pick(WA, label, dwName()); }
+if (DL) $('ws-dw').hidden = false;
+$('ws-dw').onclick = () => {
+  if (!DL || !W) return;
+  if (DL.pick(WA, HI, dwName(), true) === 'blocked') note(`Your browser blocked the Data window. <a href="${DL.url({ wa: WA, label: HI })}" target="stratum-data">Open it</a>`);
+};
+
 const svg = $('ws-svg');
 svg.setAttribute('tabindex', '0');
 svg.addEventListener('pointermove', e => {
@@ -818,14 +837,14 @@ svg.addEventListener('pointermove', e => {
     // the ribbon: the stage whose stretch is under the pointer
     const s = W.stages.find(q => q.rx0 != null && mx >= q.rx0 && mx <= q.rx1);
     best = s ? { rib: s, md: s.mid, x: mx } : null;
-    if (best ? !hover || hover.rib !== s : hover) { hover = best; drawHover(); }
+    if (best ? !hover || hover.rib !== s : hover) { hover = best; drawHover(); dwPoint(); }
     return;
   }
   if (G.strip && my <= G.sy1 + (G.rib ? 2 : 6)) {
     // the curves strip: the stage under the pointer, and how far through it
     const s = W.stages.find(q => q.sx0 != null && mx >= q.sx0 && mx <= q.sx1);
     best = s ? { strip: s, md: s.mid, x: mx, frac: (mx - s.sx0) / Math.max(1, s.sx1 - s.sx0) } : null;
-    if (best || hover) { hover = best; drawHover(); }
+    if (best || hover) { hover = best; drawHover(); dwPoint(); }
     return;
   }
   if (G.track && my >= G.ty0 - 4) {
@@ -835,17 +854,19 @@ svg.addEventListener('pointermove', e => {
     for (const s of G.samples) { const d = Math.hypot(s.x - mx, s.y - my); if (d < bd) { bd = d; best = s; } }
     if (bd > 34) best = null;
   }
-  if (best !== hover) { hover = best; drawHover(); }
+  if (best !== hover) { hover = best; drawHover(); dwPoint(); }
 });
 svg.addEventListener('pointerenter', () => { pointerIn = true; });
 svg.addEventListener('pointerleave', () => { pointerIn = false; hover = extHover(); drawHover(); });
 svg.addEventListener('blur', () => { if (!hover) hideCard(); });
 svg.addEventListener('click', () => {
   const picked = hover && (hover.strip || hover.rib);
-  if (picked) { HI = picked.label; syncUrl(); render(); openStage(picked); return; }
-  if (!hover || hover.md < G.heel - 1) return;
+  if (picked) { HI = picked.label; syncUrl(); render(); dwPick(picked.label); openStage(picked); return; }
+  if (!hover) return;
+  if (hover.md < G.heel - 1) { dwPick(null); return; }
   const s = stageAt(hover.md);
-  if (s) { HI = s.label; syncUrl(); render(); openStage(s); }
+  if (s) { HI = s.label; syncUrl(); render(); dwPick(s.label); openStage(s); }
+  else dwPick(null);
 });
 svg.addEventListener('keydown', e => {
   if (W && SL && W.logs && SL.stepKey(e, SL.available([W.lw]), () => { if (colorBy !== 'gamma') { colorBy = 'gamma'; savePrefs(); } })) { e.preventDefault(); return; }
@@ -856,7 +877,8 @@ svg.addEventListener('keydown', e => {
     const j = i < 0 ? 0 : Math.max(0, Math.min(W.stages.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
     hover = null;                       // the keys take over from the pointer
     HI = W.stages[j].label; syncUrl(); render();
-  } else if (e.key === 'Enter' && i >= 0) openStage(W.stages[i]);
+    if (DL) DL.point(WA, HI, dwName());
+  } else if (e.key === 'Enter' && i >= 0) { dwPick(W.stages[i].label); openStage(W.stages[i]); }
 });
 new ResizeObserver(() => render()).observe($('ws-main'));
 addEventListener('stratum:gammapalette', () => { setPressed(); render(); });

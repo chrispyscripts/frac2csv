@@ -29,6 +29,7 @@
       <button type="button" id="ws-curves" aria-pressed="true" title="Each stage's pressure and rate, above the well">Curves</button>
       <select id="ws-metric" aria-label="Colour stages by" title="Colour each stage by a number from its treatment curves (or its filing)" hidden></select>
       <button type="button" id="ws-comments" hidden aria-pressed="false" aria-controls="ws-com" title="What the wellsite geologist wrote along this well: sample descriptions and remarks, from its geologist's report and mud-log printouts">Comments</button>
+      <button type="button" id="ws-dw" hidden title="Stack this well, or the stage picked out, in the Data window: its datasets along MD, in a window of its own">Data window ↗</button>
       <button type="button" id="ws-charts">Charts →</button>
       <button type="button" id="ws-report" title="This well's stage report: every stage's numbers, flags and curves, printable">Stage report ↗</button>
       <button type="button" id="ws-png" title="Save this section as a PNG picture" aria-label="Save the section as a PNG picture">PNG</button>
@@ -61,6 +62,7 @@
 <script src="drop-store.js"></script>
 <script src="logs.js"></script>
 <script src="metrics.js"></script>
+<script src="data-link.js"></script>
 <script src="wellsection.js"></script>
 </body>
 </html>

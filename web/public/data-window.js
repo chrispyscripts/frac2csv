@@ -1,8 +1,8 @@
 // FracView — the map's Data window button. It sits under the legend and opens
-// the Data window in a window of its own (datawindow.html), then tells it over
-// BroadcastChannel 'stratum-data' which well or stage the pointer is on, here
-// and in the 3D view (cluster-underground.js), and which were clicked: those
-// are stacked there, a card each.
+// the Data window in a window of its own (datawindow.html); data-link.js tells
+// it which well or stage the pointer is on, here and in the 3D view
+// (cluster-underground.js), and which were clicked: those are stacked there,
+// a card each. The well section (wellsection.js) talks to it the same way.
 //
 //   stratumDataWindow.point(wa, label, name)        the pointer is over this well (label null) or stage
 //   stratumDataWindow.pick(wa, label, name, open)   a click: stacked in the Data window when one is open
@@ -13,27 +13,8 @@
 //   'stratum:datapicks' (window event)               the picks changed
 (() => {
 'use strict';
-const NAME = 'stratum-data', PAGE = 'datawindow.html', FEATURES = 'popup,width=900,height=960';
-let chan = null;
-try { chan = new BroadcastChannel(NAME); } catch (e) { /* an old browser: the window opens, but does not follow */ }
-const wins = new Map();          // id -> {picks, follow}
-let PICKS = [];
-const alive = () => wins.size > 0;
-const changed = () => {
-  const seen = new Set();
-  PICKS = [...wins.values()].flatMap(w => w.picks || []).filter(p => { const k = p.wa + ':' + p.label; if (seen.has(k)) return false; seen.add(k); return true; });
-  btnWords();
-  dispatchEvent(new CustomEvent('stratum:datapicks', { detail: PICKS }));
-};
-if (chan) {
-  chan.onmessage = e => {
-    const m = e.data || {};
-    if (m.type === 'here' && m.id) { wins.set(m.id, m); changed(); }
-    else if (m.type === 'bye') { wins.delete(m.id); changed(); }
-  };
-  chan.postMessage({ type: 'ping' });
-  addEventListener('focus', () => chan.postMessage({ type: 'ping' }));
-}
+const DL = window.StratumDataLink;
+if (!DL) return;
 
 // ---------- the button, under the legend (where Change View was) ----------
 const btn = document.createElement('button');
@@ -44,11 +25,13 @@ const note = document.createElement('div');
 note.className = 'dw-note'; note.hidden = true; note.setAttribute('role', 'status');
 document.body.append(note);
 function btnWords() {
-  btn.querySelector('small').textContent = alive() ? (PICKS.length ? `open · ${PICKS.length} picked` : 'open') : '';
-  btn.title = alive() ? 'Bring the Data window forward. Click wells or stages on the map or in the 3D view to stack them there.'
+  const n = DL.picks.length;
+  btn.querySelector('small').textContent = DL.shown ? (n ? `open · ${n} picked` : 'open') : '';
+  btn.title = DL.shown ? 'Bring the Data window forward. Click wells or stages on the map, in the 3D view or in the well section to stack them there.'
     : 'Open the Data window: the datasets of the well or stage under the pointer, and of each one you click, stacked along the well (gamma, porosity, the mud log, comments…)';
 }
 btnWords();
+addEventListener('stratum:datapicks', btnWords);
 const legend = document.querySelector('.legend');
 function placeBtn() {
   if (!legend) return;
@@ -59,42 +42,22 @@ function placeBtn() {
 placeBtn(); addEventListener('resize', placeBtn);
 if (legend && 'ResizeObserver' in window) new ResizeObserver(placeBtn).observe(legend);
 
-// ---------- the window ----------
-const urlFor = p => PAGE + (p ? '?p=' + encodeURIComponent(p.wa) + ':' + (p.label == null ? '' : encodeURIComponent(p.label)) : '');
-function openWin(p) {
-  let w = null;
-  try {
-    if (alive()) {
-      // the open one, found by its name: brought forward (and told of the pick)
-      w = window.open('', NAME, FEATURES);
-      if (w && /^about:blank/.test(w.location.href)) w.location.href = urlFor(p);
-      else if (p && chan) chan.postMessage({ type: 'pick', ...p });
-    } else w = window.open(urlFor(p), NAME, FEATURES);
-  } catch (e) { w = null; }
-  if (w) { try { w.focus(); } catch (e) { /* the browser decides */ } note.hidden = true; return; }
+// a pop-up blocker: a link to open it instead
+function blocked(p) {
   note.replaceChildren();
-  const a = document.createElement('a'); a.href = urlFor(p); a.target = NAME; a.textContent = 'Open it';
+  const a = document.createElement('a'); a.href = DL.url(p); a.target = 'stratum-data'; a.textContent = 'Open it';
   const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss'); x.onclick = () => { note.hidden = true; };
   note.append('Your browser blocked the Data window. ', a, x);
   note.hidden = false;
 }
+function openWin(p) { if (DL.open(p) === 'blocked') blocked(p); else note.hidden = true; }
 btn.addEventListener('click', () => openWin(null));
 
-let lastPoint = '';
-function point(wa, label, name) {
-  if (!chan || !alive() || wa == null) return;
-  const k = wa + ':' + (label == null ? '' : label);
-  if (k === lastPoint) return;
-  lastPoint = k;
-  chan.postMessage({ type: 'point', wa: String(wa), label: label == null ? null : String(label), name: name || '' });
-}
 function pick(wa, label, name, open) {
-  if (wa == null) return false;
-  const p = { wa: String(wa), label: label == null ? null : String(label), name: name || '' };
-  if (open) { openWin(p); return true; }
-  if (!chan || !alive()) return false;
-  chan.postMessage({ type: 'pick', ...p });
-  return true;
+  const r = DL.pick(wa, label, name, open);
+  if (r === 'blocked') { blocked({ wa: String(wa), label: label == null ? null : String(label) }); return false; }
+  if (open) note.hidden = true;
+  return r;
 }
-window.stratumDataWindow = { point, pick, open: () => openWin(null), get shown() { return alive(); }, get picks() { return PICKS; } };
+window.stratumDataWindow = { point: DL.point, pick, open: () => openWin(null), get shown() { return DL.shown; }, get picks() { return DL.picks; } };
 })();
