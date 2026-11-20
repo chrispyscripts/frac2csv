@@ -88,6 +88,12 @@ main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
 .rk-end:hover .rk-dot,.rk-end:focus-visible .rk-dot{r:14px;stroke:var(--accent);stroke-width:2.5}
 .rk-end.on .rk-dot{stroke:var(--pick);stroke-width:3}
 .rk-end.fut text{opacity:.55}
+/* stacked in the Data window (the stage at the line, or the whole well) */
+.rk-dwring{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-dasharray:3 2.5;pointer-events:none}
+.wr-note{position:fixed;z-index:21;bottom:20px;right:20px;max-width:min(420px,calc(100vw - 32px));display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  background:var(--panel);color:var(--ink);border:1px solid var(--accent);border-radius:10px;padding:7px 8px 7px 12px;font-size:12.5px;box-shadow:0 8px 22px var(--shadow)}
+.wr-note a{color:var(--accent);font-weight:600}
+.wr-note button{margin-left:auto;background:none;border:0;padding:0 4px;color:var(--mut);font-size:16px}
 /* parent/child: a letter on the marker, or a chip at its shoulder */
 .rk-rel{font:700 11px system-ui,sans-serif;pointer-events:none}.rk-rel.sm{font-size:9px}
 .rk-chip{stroke:var(--hole);stroke-width:1.5}
@@ -105,7 +111,7 @@ main{padding:14px 20px 24px;display:flex;flex-direction:column;gap:16px}
 .wr-tip i{display:block;font-style:normal;color:var(--mut);margin-top:3px}
 
 @media(max-width:900px){.rk-body{grid-template-columns:1fr;grid-template-rows:minmax(150px,38%) 1fr;height:clamp(420px,80vh,720px)}}
-@media(max-width:640px){.wr-head{padding:10px 16px}main{padding:12px 16px 20px}.rk-where{display:none}.wr-key i{width:60px}
+@media(max-width:640px){.wr-head{padding:10px 16px}.wr-note{right:16px;left:16px;bottom:16px}main{padding:12px 16px 20px}.rk-where{display:none}.wr-key i{width:60px}
   .wr-seg button{padding:6px 7px;font-size:12px}
   .rk-end:hover .rk-dot,.rk-end:focus-visible .rk-dot{r:11px}.rk-when{min-width:0}}
 

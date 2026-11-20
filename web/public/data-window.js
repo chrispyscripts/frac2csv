@@ -2,7 +2,8 @@
 // the Data window in a window of its own (datawindow.html); data-link.js tells
 // it which well or stage the pointer is on, here and in the 3D view
 // (cluster-underground.js), and which were clicked: those are stacked there,
-// a card each. The well section (wellsection.js) talks to it the same way.
+// a card each. The well section (wellsection.js) and the wine racks (winerack.js)
+// talk to it the same way.
 //
 //   stratumDataWindow.point(wa, label, name)        the pointer is over this well (label null) or stage
 //   stratumDataWindow.pick(wa, label, name, open)   a click: stacked in the Data window when one is open
@@ -27,7 +28,7 @@ document.body.append(note);
 function btnWords() {
   const n = DL.picks.length;
   btn.querySelector('small').textContent = DL.shown ? (n ? `open · ${n} picked` : 'open') : '';
-  btn.title = DL.shown ? 'Bring the Data window forward. Click wells or stages on the map, in the 3D view or in the well section to stack them there.'
+  btn.title = DL.shown ? 'Bring the Data window forward. Click wells or stages on the map, in the 3D view, the well section or a wine rack to stack them there.'
     : 'Open the Data window: the datasets of the well or stage under the pointer, and of each one you click, stacked along the well (gamma, porosity, the mud log, comments…)';
 }
 btnWords();

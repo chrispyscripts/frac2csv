@@ -11,7 +11,8 @@
 // along the well) on any card changes them all, and they are kept in this
 // browser. A dataset a well lacks shows as "not on file" in its place.
 //
-// The map and the 3D view talk to it over BroadcastChannel 'stratum-data':
+// The map, the 3D view, the well section and the wine racks talk to it over
+// BroadcastChannel 'stratum-data':
 //   in   {type: 'point' | 'pick' | 'unpick', wa, label, name}, {type: 'ping'}
 //   out  {type: 'here', id, picks: [{wa, label}], follow}, {type: 'bye', id}
 // The picks are in the address (datawindow.html?p=WA:stage,WA:), so a reload
@@ -54,7 +55,7 @@ function title(c) {
   const t = c.el.querySelector('.sg-title'), meta = c.el.querySelector('.sg-meta');
   t.replaceChildren();
   if (c.live) { const k = document.createElement('span'); k.className = 'dw-tag'; k.textContent = 'Under the pointer'; t.append(k); }
-  if (!c.wa) { meta.textContent = 'Point at a well on the map or in the 3D view, or at a stage once the map is zoomed in.'; return; }
+  if (!c.wa) { meta.textContent = 'Point at a well on the map, in the 3D view, the well section or a wine rack, or at a stage once the map is zoomed in.'; return; }
   const name = (c.m && c.m.ok && c.m.name) || c.name || idOf(c.wa);
   const b = document.createElement('b'); b.textContent = name;
   const s = document.createElement('span'); s.textContent = c.label != null ? ` · stage ${c.label}` : ' · whole lateral';

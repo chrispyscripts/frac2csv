@@ -18,6 +18,10 @@
 // BroadcastChannel 'stratum-rack' (wellsection-host.js), to the main window that
 // last opened a rack here or said hello.
 //
+// The Data window (datawindow.html) follows it too: a well pointed at here shows
+// there at the stage the line is in, and a well clicked is stacked there while
+// one is open (data-link.js; see "the Data window" below).
+//
 // Other pages add a pad with window.stratumRacks.add(id, owner) (they reach this
 // window by its name, 'stratum-rack': see stratumRack.open in
 // cluster-underground.js).
@@ -79,10 +83,68 @@ function followLine(R) {
   cancelAnimationFrame(cursorRaf);
   cursorRaf = requestAnimationFrame(() => {
     const o = R.g.ws.find(q => String(q.w.well.wa) === picked.wa), x = o ? rackCross(o, R.s) : null, at = x ? Math.round(x.md) : null;
+    if (o && x) dwPoint(o.w, x);
     if (at === lastAt) return;
     lastAt = at; send({ type: 'cursor', wa: picked.wa, at });
   });
 }
+// ---------- the Data window (datawindow.html, over data-link.js) ----------
+// A well pointed at in a rack shows in the Data window's "Under the pointer"
+// card, at the stage the line is in there; clicked, it is stacked there too while
+// one is open. As the line moves, the picked well's stage at the line follows,
+// as the main window's section cursor does.
+const DL = window.StratumDataLink || null;
+const dwLabel = x => (x && x.stage ? String(x.stage.label) : null);
+function dwPoint(w, x) { if (DL) DL.point(w.well.wa, dwLabel(x), w.well.name); }
+function dwPick(w, x) { if (DL && DL.shown) DL.pick(w.well.wa, dwLabel(x), w.well.name); }
+// what of a well is stacked in the open Data windows: its stage labels, and null for the whole well
+const dwStacked = w => (DL ? DL.picks.filter(p => p.wa === String(w.well.wa)).map(p => p.label) : []);
+function dwWords(list) {
+  const st = list.filter(l => l != null), whole = list.length > st.length;
+  if (!list.length) return '';
+  const stages = st.length ? `stage${st.length > 1 ? 's' : ''} ${st.slice(0, 6).join(', ')}${st.length > 6 ? ` +${st.length - 6}` : ''}` : '';
+  return 'In the Data window: ' + [whole ? 'the whole well' : '', stages].filter(Boolean).join(' and ');
+}
+let dwTimer = 0;
+function dwNote(p) {
+  const n = $('wr-note');
+  n.replaceChildren();
+  const a = document.createElement('a'); a.href = DL.url(p); a.target = 'stratum-data'; a.textContent = 'Open it';
+  const x = document.createElement('button'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Dismiss');
+  a.onclick = x.onclick = () => { n.hidden = true; };
+  n.append('Your browser blocked the Data window. ', a, x);
+  n.hidden = false;
+  clearTimeout(dwTimer); dwTimer = setTimeout(() => { n.hidden = true; }, 12000);
+}
+// the header button: open the Data window (or bring it forward) on the picked well, at its stage on the line
+function dwOpen() {
+  if (!DL) return;
+  const R = picked && racks.find(q => q.id === picked.pad), o = R && R.g ? R.g.ws.find(q => String(q.w.well.wa) === picked.wa) : null;
+  const x = o ? rackCross(o, R.s) : null;
+  const r = o ? DL.pick(o.w.well.wa, dwLabel(x), o.w.well.name, true) : DL.open(null);
+  if (r === 'blocked') dwNote(o ? { wa: String(o.w.well.wa), label: dwLabel(x) } : null);
+  else $('wr-note').hidden = true;
+}
+function dwButton() {
+  const b = $('wr-dw');
+  if (!DL) return;
+  b.hidden = false;
+  const n = DL.picks.length;
+  b.textContent = DL.shown ? `Data window${n ? ' · ' + n : ''} ↗` : 'Data window ↗';
+  b.title = DL.shown ? 'Bring the Data window forward. Click wells here to stack them there, at the stage the line is in.'
+    : 'Open the Data window: the datasets of the well you point at here (gamma, porosity, the mud log, comments…), at the stage the line is in; click wells to stack them there';
+}
+if (DL) {
+  $('wr-dw').onclick = dwOpen;
+  // a Data window opened, closed, or stacked something: the button and the rings follow
+  let was = '';
+  addEventListener('stratum:datapicks', () => {
+    dwButton();
+    const now = DL.shown + '|' + DL.picks.map(p => p.wa + ':' + p.label).join(',');
+    if (now !== was) { was = now; renderAll(); }
+  });
+}
+
 // the well a new rack starts on: the one nearest the middle of the pad, on the line
 function centralWell(R) {
   const hits = R.g.ws.map(o => ({ o, x: rackCross(o, R.s) })).filter(h => h.x);
@@ -516,7 +578,10 @@ function renderSection(R, hits) {
     const v = colorBy === 'metric' ? stageValue(o, x, metric) : null, [f0, f1] = fracDays(w);
     const a = svgEl('g', { class: 'rk-end' + (isPicked(R, w) ? ' on' : '') + (x.landing ? ' landing' : '') + (fut ? ' fut' : ''), tabindex: 0, role: 'button',
       'aria-label': `${w.well.name}, ${wellName(w.well)}: ${fmt(x.c)} metres across, ${fmt(x.tvd)} metres TVD${x.stage ? ', stage ' + x.stage.label : ''}`
-        + `${r ? ', ' + FM.REL[r.relation].t.toLowerCase() : ''}${fut ? ', not fracked yet on ' + dayStr(R.asOf) : ''}. Show its section in the main window.` }, ends);
+        + `${r ? ', ' + FM.REL[r.relation].t.toLowerCase() : ''}${fut ? ', not fracked yet on ' + dayStr(R.asOf) : ''}. Show its section in the main window${DL && DL.shown ? ' and stack it in the Data window' : ''}.` }, ends);
+    // stacked in the Data window: the stage at the line, or the whole well, ringed
+    const stacked = dwStacked(w), lab = dwLabel(x), ringed = stacked.includes(null) || (lab != null && stacked.includes(lab));
+    if (ringed) svgEl('circle', { cx, cy, r: Rr + 5, class: 'rk-dwring' }, a);
     svgEl('circle', { cx, cy, r: Rr, fill: fut ? hole() : x.landing ? hole() : ink || hole(), stroke: x.landing || fut ? ink || none : hole(),
       class: 'rk-dot ' + (fut ? 'rk-fut' : ink ? (colorBy === 'gamma' && w.gest ? 'rk-est' : '') : 'rk-none') }, a);
     // parent/child: the letter on the marker when that is the colour, a chip beside it otherwise
@@ -541,11 +606,16 @@ function renderSection(R, hits) {
     // nearest neighbour on this line, in the section's own metres
     let nn = null;
     hits.forEach(k => { if (k === h || future(k.o.w, R.asOf)) return; const d = Math.hypot(k.x.c - x.c, k.x.tvd - x.tvd); if (!nn || d < nn.d) nn = { d, h: Math.abs(k.x.c - x.c), v: k.x.tvd - x.tvd, wa: wellName(k.o.w.well) }; });
-    const open = () => { hideTip(); showWell(R, o, x); };
+    const open = () => { hideTip(); dwPick(w, x); showWell(R, o, x); };
     a.addEventListener('click', open);
     a.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    a.addEventListener('focus', () => dwPoint(w, x));
     a.addEventListener('pointerenter', e => {
-      const st = x.stage, row = stageRow(o, x);
+      dwPoint(w, x);
+      const st = x.stage, row = stageRow(o, x), dwIn = dwWords(stacked);
+      const what = lab != null ? 'stage ' + lab : 'the well', stack = DL && DL.shown && !ringed;
+      const click = isPicked(R, w) ? 'Its section is in the main window' + (stack ? ` · click to stack ${what} in the Data window` : '')
+        : 'Click to show its section in the main window' + (stack ? ` and stack ${what} in the Data window` : '');
       showTip(e, [[w.well.name, 'b'], [`${wellName(w.well)} · MD ${fmt(x.md)} m at the line · ${fmt(x.tvd)} m TVD${x.landing ? ' (landing, before the heel)' : ''}`],
         st ? [`Stage ${st.label}${st.date ? ' · ' + st.date : ''}${st.proppant_t != null ? ' · ' + fmt(st.proppant_t, 1) + ' t' : ''}${st.avg_rate_m3_min != null ? ' · ' + fmt(st.avg_rate_m3_min, 1) + ' m³/min' : ''}`] : null,
         colorBy === 'metric' ? [`${FM.BY[metric].t}: ${v == null ? 'no value for this stage' : FM.fmt(v, metric)}${row && row.src === 'filed' ? ' (as filed)' : ''}`] : null,
@@ -554,7 +624,8 @@ function renderSection(R, hits) {
         [f0 == null ? 'No frac dates on file' : `Fracked ${dayStr(f0)}${f1 > f0 ? ' to ' + dayStr(f1) : ''}${fut ? ', after the as-of date' : ''}`],
         nn ? [`Nearest on this line: ${nn.wa}, ${fmt(nn.h)} m across, ${fmt(Math.abs(nn.v))} m ${nn.v < 0 ? 'shallower' : 'deeper'}`] : null,
         ...relationLines(r),
-        [isPicked(R, w) ? 'Its section is in the main window' : 'Click to show its section in the main window', 'i']]);
+        dwIn ? [dwIn, 'i'] : null,
+        [click, 'i']]);
     });
     a.addEventListener('pointerleave', hideTip);
   });
@@ -706,8 +777,8 @@ window.stratumRacks = { add: (id, from) => add(id, { owner: from }), list: () =>
   const asOfs = new Map(((st && st.pads) || []).map(x => [String(x.id), Number.isFinite(x.asOf) ? x.asOf : null]));
   if (st && st.picked) picked = st.picked;
   if (st && FM && FM.BY[st.metric]) metric = st.metric;
-  limitsNote(); loadRels();
-  const ids = (Q.get('pads') || '').split(',').map(x => x.trim()).filter(Boolean);
+  limitsNote(); loadRels(); dwButton();
+  const ids =(Q.get('pads') || '').split(',').map(x => x.trim()).filter(Boolean);
   // a page that reached this window while it was still loading left its pads here
   const queued = Array.isArray(window.stratumRackQueue) ? window.stratumRackQueue.map(String) : [];
   // opened just now for a pad (not reopened with the page or a session): that pad starts the main window's section
@@ -726,7 +797,7 @@ const INLINE = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity',
 function svgImage(svg) {
   const copy = svg.cloneNode(true), from = svg.querySelectorAll('*'), to = copy.querySelectorAll('*');
   from.forEach((e, i) => { const cs = getComputedStyle(e); to[i].setAttribute('style', INLINE.map(p => `${p}:${cs.getPropertyValue(p)}`).join(';')); });
-  copy.querySelectorAll('title').forEach(t => t.remove());
+  copy.querySelectorAll('title, .rk-dwring').forEach(t => t.remove());
   copy.setAttribute('xmlns', SVGNS); copy.setAttribute('width', svg.clientWidth); copy.setAttribute('height', svg.clientHeight);
   copy.setAttribute('style', `font-family:${getComputedStyle(svg).fontFamily}`);
   return new Promise((res, rej) => {

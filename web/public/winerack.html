@@ -25,6 +25,7 @@
       <button type="button" data-color="date" aria-pressed="false" title="Colour the wells by when they were fracked (first stage)">Frac date</button>
     </div>
     <div class="wr-key" id="wr-key" hidden></div>
+    <button type="button" id="wr-dw" hidden>Data window ↗</button>
     <button type="button" data-menu title="Main menu: home, sessions, groups, Discover, settings">☰ Menu</button>
     <button type="button" data-sessions title="Save every open FracView window and your settings as a session, or open one">Sessions</button>
     <span data-theme-toggle></span>
@@ -32,13 +33,15 @@
   </div>
 </header>
 <main id="wr-list" aria-live="polite">
-  <p class="wr-empty" id="wr-empty" hidden>No wine racks open. Pick <b>Wine rack</b> on a pad, on the map or in the 3D view, and it opens here; each one after it is added underneath.</p>
+  <p class="wr-empty" id="wr-empty" hidden>No wine racks open. Pick <b>Wine rack</b> on a pad, on the map or in the 3D view, and it opens here; each one after it is added underneath. With the <b>Data window</b> open, click a well here to stack it there at the stage the line is in.</p>
 </main>
 <div class="wr-tip" id="wr-tip" hidden></div>
+<div class="wr-note" id="wr-note" role="status" hidden></div>
 <script src="gamma-palettes.js"></script>
 <script src="drop-store.js"></script>
 <script src="logs.js"></script>
 <script src="metrics.js"></script>
+<script src="data-link.js"></script>
 <script src="winerack.js"></script>
 <script src="quake-filter.js"></script>
 <script src="menu.js"></script>

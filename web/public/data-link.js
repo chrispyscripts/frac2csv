@@ -1,7 +1,8 @@
 // FracView — a page's link to the Data window (datawindow.html, a window of its
 // own named 'stratum-data'): which well or stage the pointer is on, and which
 // were clicked, over BroadcastChannel 'stratum-data'. The map (data-window.js,
-// with the 3D view) and the well section (wellsection.js) use it.
+// with the 3D view), the well section (wellsection.js) and the wine racks
+// (winerack.js) use it.
 //
 //   StratumDataLink.point(wa, label, name)        the pointer is over this well (label null) or stage
 //   StratumDataLink.pick(wa, label, name, open)   a click: stacked in the Data window when one is open
