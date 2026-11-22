@@ -11,7 +11,9 @@ the curve track (found on the printout by its coloured strokes, see
 wellsight_print.curve_track) and walking outward through the shown tracks,
 each one's far edge snapped to the line at its width. A horizontal log's
 pages are turned to stitch them, so its tracks run the other way across the
-strip; both ways are tried and the one whose edges land on lines is kept.
+strip. The stitch knows which way it turned the pages (its "turned"); without
+that, both ways are tried and the one whose edges land on lines is kept,
+which picked the wrong way on 3 of 25 horizontal logs tried (#855).
 
 A track whose record cannot be read whole (its title and width are not where
 they are in the others; two of the drive's samples have one each, the
@@ -115,13 +117,17 @@ def _label(track):
     return ", ".join(names[:4]) if names else "Untitled track"
 
 
-def place(tracks, lines, curves_pt, width_pt, curve_title=None):
+def place(tracks, lines, curves_pt, width_pt, curve_title=None, turned=None):
     """Lay the shown tracks on the strip.
 
     tracks: read_tracks() output. lines: x of the long dark lines across the
     strip (wellsight_print.track_lines). curves_pt: (x0, x1) of the curve
     track on the strip. width_pt: the strip's width. curve_title: the title
     of the track the curves are in (the curves' own record says), if known.
+    turned: True when the strip runs the tracks the other way across (its
+    pages were turned so the track's left edge is on the strip's right, as
+    a horizontal log's are: wellsight_print.stitch says), False when not;
+    None tries both ways.
 
     -> [{title, x0, x1, columns, keys, snapped, clipped}] left to right; the
     tracks the printout leaves off its page are not in it."""
@@ -201,7 +207,8 @@ def place(tracks, lines, curves_pt, width_pt, curve_title=None):
         own = curve_title is not None and ct["title"] == curve_title
         after, before = tracks[kc + 1:], tracks[:kc][::-1]
         for scale in mine:
-            for d in (1, -1):          # file order left to right, or turned the other way
+            for d in ((1, -1) if turned is None else (-1,) if turned else (1,)):
+                # file order left to right, or turned the other way
                 placed = walk(after, c1 if d > 0 else c0, d, scale) + walk(before, c0 if d > 0 else c1, -d, scale)
                 hits = sum(1 for p in placed if p[3] and -1 <= p[1] and p[2] <= width_pt + 1)
                 rank = (hits, own, ct["width_in"] is not None, -abs(scale - 1.0))

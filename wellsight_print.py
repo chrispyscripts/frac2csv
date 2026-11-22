@@ -376,7 +376,13 @@ def stitch(pdf, top, bottom):
             "left_out": [i + 1 for i in range(len(doc)) if i not in maps],
             "inferred": [i + 1 for i in sorted(inferred)],
             "placed": placed, "gaps": gaps, "worst_seam_m": round(worst_seam, 3),
-            "over_page_limit": height > PAGE_MAX}
+            "over_page_limit": height > PAGE_MAX,
+            # the pages' across direction ran the other way onto the strip (a
+            # horizontal log's, turned a quarter right): its tracks, and the
+            # curves' scales in them, run right to left. LogViewer prints a
+            # horizontal log's tracks with their left edge at the page's top;
+            # the scale labels say so on every one of the drive's tried (#855)
+            "turned": sum(1 for pl in placed if pl["across"]["sign"] < 0) * 2 > len(placed)}
     info["check"] = check(data, top, bottom, ppm)
     spg = fitz.open(stream=data, filetype="pdf")[0]
     ct = curve_track(spg)

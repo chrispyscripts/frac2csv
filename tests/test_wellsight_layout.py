@@ -69,6 +69,17 @@ class Place(unittest.TestCase):
             ("Oil Shows", 72.5, 81.0), ("Lithology and descriptions", 81.0, 415.5),
             ("Depth", 415.5, 427.0), ("Slide/Rotate", 427.0, 432.0), ("Data Curves", 432.0, 535.5)])
 
+    def test_told_which_way_the_tracks_run(self):
+        # the stitch knows which way it turned the pages (#855): told, only
+        # that way is laid; the samples come out as when both are tried
+        self.assertEqual(wl.place(STRIP, STRIP_LINES, (31.0, 196.5), 581.0, "Curve Track 1", turned=False),
+                         wl.place(STRIP, STRIP_LINES, (31.0, 196.5), 581.0, "Curve Track 1"))
+        self.assertEqual(wl.place(HORIZ, HORIZ_LINES, (432.0, 535.5), 573.7, "Data Curves", turned=True),
+                         wl.place(HORIZ, HORIZ_LINES, (432.0, 535.5), 573.7, "Data Curves"))
+        # told the wrong way, the horizontal log's tracks are laid left to right
+        wrong = wl.place(HORIZ, HORIZ_LINES, (432.0, 535.5), 573.7, "Data Curves", turned=False)
+        self.assertEqual(wrong[0]["title"], "Data Curves")
+
     def test_curve_track_found_by_width_when_its_title_is_not_known(self):
         p = wl.place(STRIP, STRIP_LINES, (31.0, 196.5), 581.0, None)
         self.assertEqual(p[0]["title"], "Curve Track 1")
@@ -145,10 +156,14 @@ class RealPrintouts(unittest.TestCase):
             p = wa.read(raw, os.path.basename(log))["payload"]
             _strip, info = wp.stitch(pdf, p["top"], p["bottom"])
             placed = wl.place(wl.read_tracks(raw), info["lines_pt"], info["curves_pt"],
-                              info["width_pt"], wl.curve_track_title(p["curves"]))
+                              info["width_pt"], wl.curve_track_title(p["curves"]),
+                              turned=info["turned"])
             name = os.path.basename(log)
             self.assertTrue(placed, name)
             self.assertGreaterEqual(sum(t["snapped"] for t in placed), 0.8 * len(placed), name)
+            # a horizontal log's tracks run the other way across its strip, a
+            # strip log's do not (#855)
+            self.assertIs(info["turned"], name.lower().endswith((".hl6", ".hlg")), name)
 
 
 if __name__ == "__main__":

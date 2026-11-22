@@ -236,8 +236,18 @@ const printTiles = WsTiles(() => draw());
 let raf = 0;
 function draw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; drawNow(); }); }
 
+// Which way a curve runs in its band: the way the printout under it draws it
+// (turned a quarter left, its tracks' left edge at the bottom). A printout
+// whose tracks run the other way across (a horizontal log's: P.turned), or a
+// scale printed high to low (ROP often is), turns the curve over, high end
+// down; both together leave it high end up. Same rule as the Lab's chart.
+function down(c) {
+  const sc = (c.scale || []).filter(s => s && s[1] != null && s[2] != null && s[1] !== s[2]);
+  const rev = sc.length > 0 && sc.filter(s => s[1] > s[2]).length * 2 > sc.length;
+  return rev !== !!(P && P.turned);
+}
 function drawCurve(g, k, X, top, h, d0, d1, lw) {
-  const c = D.curves[k], [lo, hi] = ranges[k];
+  const c = D.curves[k], [lo, hi] = ranges[k], dn = down(c);
   const i0 = Math.max(0, Math.floor((d0 - D.depth0) / D.step) - 1);
   const i1 = Math.min(D.rows - 1, Math.ceil((d1 - D.depth0) / D.step) + 1);
   g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = lw; g.beginPath();
@@ -246,7 +256,8 @@ function drawCurve(g, k, X, top, h, d0, d1, lw) {
     const v = c.values[i];
     if (v == null) { pen = false; continue; }
     const x = X(D.depth0 + i * D.step);
-    const y = top + 3 + (h - 6) * (1 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))));
+    const f = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    const y = top + 3 + (h - 6) * (dn ? f : 1 - f);
     if (pen) g.lineTo(x, y); else g.moveTo(x, y);
     pen = true;
   }
@@ -347,8 +358,9 @@ function drawLabel(g, r, top) {
     g.fillStyle = "#697077"; g.font = `11px ${SANS}`;
     g.fillText(fitText(g, c.unit || "", LABEL_W - L - 60), L, top + 30);
     g.font = `10.5px ${MONO}`; g.textAlign = "right";
-    g.fillText(fmt(hi), Rx, top + 10);
-    g.fillText(fmt(lo), Rx, top + r.h - 9);
+    const dn = down(c);
+    g.fillText(fmt(dn ? lo : hi), Rx, top + 10);
+    g.fillText(fmt(dn ? hi : lo), Rx, top + r.h - 9);
     if (hoverDepth != null && r.h >= 52) {
       g.fillStyle = col; g.font = `600 12px ${MONO}`; g.textAlign = "left";
       g.fillText(fmt(valueAt(r.i)), L, top + 48);

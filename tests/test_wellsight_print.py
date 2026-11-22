@@ -148,7 +148,8 @@ class Stitch(unittest.TestCase):
         return data, info
 
     def test_strip_log_runs_on_page_to_page(self):
-        self.check(575, 815)
+        _, info = self.check(575, 815)
+        self.assertIs(info["turned"], False)
 
     def test_log_starting_low_on_the_legend_page_is_placed_from_the_next(self):
         _, info = self.check(575, 815, start_y=740.0)
@@ -170,6 +171,8 @@ class Stitch(unittest.TestCase):
         self.assertEqual(info["depth_axis_on_page"], "across")
         pg = fitz.open(stream=data, filetype="pdf")[0]
         self.assertGreater(pg.rect.height, pg.rect.width)
+        # turned a quarter right, its tracks run the other way across (#855)
+        self.assertIs(info["turned"], True)
 
     def test_not_the_printout_of_this_log(self):
         with self.assertRaises(wp.NoDepthScale):

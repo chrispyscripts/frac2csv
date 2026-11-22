@@ -80,11 +80,14 @@ def _stitch(rec, pdf_bytes, source):
     # Every track's place across the strip, from the log's own layout, so a
     # view can show the column of the printout a data set is drawn in (a
     # printout read on its own brings the columns it read off itself).
+    # (info["turned"], from the stitch, says which way the tracks run across
+    # the strip: the layout is laid that way, and the views draw each curve
+    # the way the printout does, #855)
     try:
         info["tracks"] = rec["tracks"] if rec.get("tracks") is not None else \
             wl.place(wl.read_tracks(rec["native"]), info.get("lines_pt") or [],
                      info.get("curves_pt"), info["full_width_pt"],
-                     wl.curve_track_title(p.get("curves")))
+                     wl.curve_track_title(p.get("curves")), turned=info.get("turned"))
     except Exception:  # noqa: BLE001 -- the layout is extra; the curve track still shows
         info["tracks"] = []
     info.pop("lines_pt", None)
