@@ -217,6 +217,21 @@ def _most_common_column(items):
     return max(c, key=c.get) if c else None
 
 
+def readings(c, top):
+    """A curve's own readings, {depth0, step, values}, when it is recorded on
+    another step than the payload's, so the views can draw it as the printout
+    does: a line from one reading to the next (or, a curve drawn in steps,
+    each reading level over its interval). On the payload's step a coarser
+    curve repeats each reading over its interval (nearest reading, as the
+    LAS) and would be drawn as stairs. None when it is recorded on that
+    step."""
+    s = c.get("step")
+    if not s or abs(s - STEP) < 1e-9 or top is None:
+        return None
+    return {"depth0": top, "step": s,
+            "values": [None if v is None else round(v, 4) for v in c["values"][:c["samples"]]]}
+
+
 def _payload(log, data, name, files):
     h = log["header"] or {}
     axis, basis = ws.decide_axis(log.get("axis_votes") or (0, 0), name)
@@ -229,6 +244,11 @@ def _payload(log, data, name, files):
         scales = wscale.scales(data, log["curves"])
     except Exception:  # noqa: BLE001 -- the scales are extra; the curves stand without them
         scales = {}
+    # the curves the printout draws in steps (ROP often), not as lines
+    try:
+        stepped = {log["curves"][i]["offset"] for i in wscale.stepped(data, log["curves"])}
+    except Exception:  # noqa: BLE001 -- extra too: drawn as lines without it
+        stepped = set()
     by_offset = {c["offset"]: i for i, c in enumerate(log["curves"])}
     if exp:
         (grid, step), cols, meta, _notes = exp
@@ -240,7 +260,9 @@ def _payload(log, data, name, files):
                            "scale": [[d, l, r] for d, l, r in secs] if secs else None,
                            "wraps": [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in w.items()}
                                      for w in wscale.wraps(c, secs)] if secs else [],
-                           "values": [None if v is None else round(v, 4) for v in col]})
+                           "values": [None if v is None else round(v, 4) for v in col],
+                           "readings": readings(c, log["top"]),
+                           "steps": c.get("offset") in stepped})
         depth0, nrows = grid[0], len(grid)
     else:
         depth0, nrows = log["top"], 0

@@ -26,6 +26,7 @@ stored. This holds on the drive's printouts: see
 validation-tools/wellsight_scale_check.py and tests/test_wellsight_scales.py.
 
     scales(raw, curves)          {curve index: [(from depth, left, right), ...]}
+    stepped(raw, curves)         the curves drawn in steps, not lines (their indices)
     scale_at(sections, depth)    the (left, right) in force at a depth
     printed(v, left, right)      where a reading lands: (position 0..1, wraps)
     wraps(curve, sections)       the depth runs where the printout wraps it
@@ -167,6 +168,31 @@ def scales(raw, curves):
             if mk in mine:
                 j = mine.index(mk)
                 out[i] = [(d, left[j], right[j]) for d, left, right in secs]
+    return out
+
+
+# after a curve's display mark, the mark (8 bytes) and 56 zero bytes, three
+# int32: at +64 (0 on the drive), at +68 how the curve is drawn (1: in steps),
+# at +72 its line width in hundredths of an inch
+_STYLE_AT = 68
+
+
+def stepped(raw, curves):
+    """The curves LogViewer draws in steps, as indices into curves (as
+    wellsight.read_log gives them). A curve drawn in steps (ROP, drill time,
+    often) holds each reading level over the interval that ends at its depth
+    and jumps to the next; any other is drawn as a line from reading to
+    reading, each half a recorded step shallower than its depth. On 160 of
+    the drive's printouts, the 85 curves drawn in steps all have the flag
+    and 390 of the 391 drawn as lines do not (the odd one is a short ROP)."""
+    body, _ = ws.inflate(raw, [])
+    out = set()
+    for i, c in enumerate(curves):
+        mk = body.rfind(ws._DISPLAY_MARK, max(0, c["offset"] - 260), c["offset"])
+        if mk < 0 or mk + _STYLE_AT + 4 > c["offset"] or body[mk + 8:mk + 64].strip(b"\x00"):
+            continue
+        if struct.unpack_from("<i", body, mk + _STYLE_AT)[0] == 1:
+            out.add(i)
     return out
 
 

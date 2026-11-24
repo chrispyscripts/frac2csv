@@ -45,6 +45,26 @@ class Recognise(unittest.TestCase):
         self.assertIn("oops.sl6", str(cm.exception))
 
 
+class Readings(unittest.TestCase):
+    """A curve recorded on another step than the payload's 0.2 m carries its
+    own readings, so the views draw a line from one to the next as the
+    printout does, not the stairs of each reading repeated over 0.2 m."""
+    def curve(self, step, values):
+        return {"step": step, "samples": len(values), "values": list(values) + [None] * 3}
+
+    def test_a_coarser_curve_sends_its_readings(self):
+        r = wa.readings(self.curve(0.5, [10, 20.123456, None, 40]), 1200.0)
+        self.assertEqual(r, {"depth0": 1200.0, "step": 0.5, "values": [10, 20.1235, None, 40]})
+
+    def test_a_finer_curve_too(self):
+        # thinned to the nearest reading on 0.2 m, the printout draws them all
+        self.assertEqual(wa.readings(self.curve(0.1, [1, 2]), 50.0)["step"], 0.1)
+
+    def test_on_the_payload_step_none(self):
+        self.assertIsNone(wa.readings(self.curve(wa.STEP, [1, 2]), 50.0))
+        self.assertIsNone(wa.readings(self.curve(0.5, [1, 2]), None))
+
+
 @unittest.skipUnless(samples(), "no WellSight sample logs on this machine")
 class Read(unittest.TestCase):
     def test_reads_to_las(self):
@@ -59,6 +79,17 @@ class Read(unittest.TestCase):
             if p["curves"]:
                 self.assertIn(name + wa.CURVE_LAS, files)
                 self.assertEqual(len(p["curves"][0]["values"]), p["rows"])
+                for c in p["curves"]:
+                    self.assertIn(c["steps"], (True, False), name)   # drawn in steps or as a line
+                    r = c["readings"]
+                    # its own readings when recorded on another step, which
+                    # land on the payload's rows as their nearest
+                    self.assertEqual(r is None, abs(c["recorded_step"] - p["step"]) < 1e-9, name)
+                    if r and r["step"] > p["step"]:
+                        for i, v in enumerate(r["values"]):
+                            k = round((r["depth0"] + i * r["step"] - p["depth0"]) / p["step"])
+                            if 0 <= k < p["rows"] and abs(p["depth0"] + k * p["step"] - r["depth0"] - i * r["step"]) < 1e-6:
+                                self.assertEqual(c["values"][k], v, name)
             self.assertIn(p["axis"], ("MD", "TVD"))
             # rock types, accessories and other symbols, read into one vocabulary
             a = p["analysis"]

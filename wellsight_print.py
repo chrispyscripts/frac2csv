@@ -391,6 +391,15 @@ def stitch(pdf, top, bottom):
     return data, info
 
 
+# A track's border is printed in pieces a page long. A black curve held at
+# one reading (ROP at its scale's end) is printed as many short strokes on
+# one line too, a reading's step long; counted, it split the curve track in
+# two and the narrower part was taken for it (on 337 of the drive's
+# horizontal logs). On the drive's 3,349 printouts no such stroke is longer
+# than 12.2 pt, and every border has 30% of the log in pieces of 72 pt or more.
+_BORDER_PIECE = 50.0
+
+
 def _strokes(pg):
     """The long dark lines down a stitched strip (x, merged within 1 pt), and
     its coloured and dark slanting strokes as (x, length)."""
@@ -408,12 +417,13 @@ def _strokes(pg):
                 p, q = it[1], it[2]
                 dx, dy = abs(p.x - q.x), abs(p.y - q.y)
                 if dark and dx < 0.3 and dy > 2:
-                    runs[round(p.x * 2) / 2] += dy
+                    if dy >= _BORDER_PIECE:      # not a curve's short strokes
+                        runs[round(p.x * 2) / 2] += dy
                 elif coloured:
                     curve.append(((p.x + q.x) / 2, min(20.0, math.hypot(dx, dy))))
                 elif dark and dx >= 0.3 and dy >= 0.3:
                     slant.append(((p.x + q.x) / 2, min(20.0, math.hypot(dx, dy))))
-            elif it[0] == "re" and dark:
+            elif it[0] == "re" and dark and it[1].height >= _BORDER_PIECE:
                 r = it[1]
                 runs[round(r.x0 * 2) / 2] += r.height
                 runs[round(r.x1 * 2) / 2] += r.height

@@ -25,10 +25,12 @@ if fitz:
 PPM = 72 / 0.0254 / 240          # points per metre at 1:240
 
 
-def tracks(pg, landscape, run, curve_color=(1, 0, 0)):
+def tracks(pg, landscape, run, curve_color=(1, 0, 0), pinned=False):
     """LogViewer's tracks across a page: the curve track (dark borders, grey
     grid, a red curve in short strokes), then a lithology track (dark
-    borders, no colour). Across = x on a portrait page, y on a landscape one."""
+    borders, no colour). Across = x on a portrait page, y on a landscape one.
+    pinned: a black curve held at one reading in the curve track as well, a
+    short stroke a reading (ROP at its scale's end, say)."""
     def line(a, b, c0, c1, color, width=0.7):
         if landscape:
             pg.draw_line((c0, a), (c1, b), color=color, width=width)
@@ -44,13 +46,17 @@ def tracks(pg, landscape, run, curve_color=(1, 0, 0)):
         x0 = 100 + 40 * _m.sin(i / 23.0)
         x1 = 100 + 40 * _m.sin((i + 4) / 23.0)
         line(x0, x1, i, i + 4, curve_color, 1.0)
+    if pinned:
+        for i in range(0, int(run) - 6, 6):
+            line(PINNED, PINNED, i, i + 5.9, (0, 0, 0), 1.44)
 
 
+PINNED = 70.0                                   # across, inside the curve track
 CURVE, LITH = (40.0, 190.0), (420.0, 480.0)     # across the page, points
 
 
 def printout(top, bottom, landscape=False, start_y=560.0, second_column=True,
-             round_off=True, with_tracks=False, curve_color=(1, 0, 0)):
+             round_off=True, with_tracks=False, curve_color=(1, 0, 0), pinned=False):
     """A fake LogViewer printout, depth down (or across) the pages, and the
     true depth at the start of each of its pages."""
     doc = fitz.open()
@@ -66,7 +72,7 @@ def printout(top, bottom, landscape=False, start_y=560.0, second_column=True,
         pg = doc.new_page(width=W, height=H)
         starts[len(doc)] = d_at                          # 1-based page number
         if with_tracks:
-            tracks(pg, landscape, run, curve_color)
+            tracks(pg, landscape, run, curve_color, pinned)
         if d_at > bottom:
             break
         d_end = d_at + run / PPM
@@ -220,6 +226,16 @@ class CurveTrack(unittest.TestCase):
         data, info = wp.stitch(pdf, 1300, 1400)
         x0, x1 = info["curves_pt"]
         self.assertAlmostEqual(x1 - x0, CURVE[1] - CURVE[0], delta=1.0)
+
+    def test_a_curve_held_at_one_reading_is_not_a_border(self):
+        # its short strokes make one long dark line down the track; taken
+        # for a border, it split the track and the wrong part was shown
+        for landscape in (False, True):
+            pdf, _ = printout(1300, 1400, landscape=landscape, with_tracks=True, pinned=True)
+            data, info = wp.stitch(pdf, 1300, 1400)
+            x0, x1 = info["curves_pt"]
+            self.assertAlmostEqual(x1 - x0, CURVE[1] - CURVE[0], delta=1.0)
+            self.assertFalse(any(x0 + 1 < x < x1 - 1 for x in info["lines_pt"]), info["lines_pt"])
 
     def test_no_coloured_curve_no_track(self):
         pdf, _ = printout(1300, 1400)                    # gridlines and labels only

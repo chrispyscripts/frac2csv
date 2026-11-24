@@ -73,6 +73,32 @@ class Blocks(unittest.TestCase):
         self.assertIsNone(sc._table_at(same, 0))     # a scale of no width
 
 
+class Stepped(unittest.TestCase):
+    """A curve LogViewer draws in steps (ROP, often) says so in the int32
+    68 bytes past its display mark: 1. Records made up in the drive's
+    layout: the mark, 56 zero bytes, then 0 | how it is drawn | line width,
+    and the source mnemonic before the curve's readings."""
+    def record(self, drawn, name=b"Column 2"):
+        import wellsight as ws
+        return (ws._DISPLAY_MARK + bytes(56) + struct.pack("<iii", 0, drawn, 3) + b"\x01\x01"
+                + struct.pack("<i", len(name)) + name)
+
+    def test_steps_and_lines(self):
+        body, curves = b"HORIZONTAL.LOG 6.3.3" + bytes(40), []
+        for drawn in (1, 0, 1):
+            body += b"min/m" + bytes(3) + self.record(drawn)
+            curves.append({"offset": len(body)})
+            body += b"\x01" + bytes(40)                 # the curve record and its readings
+        self.assertEqual(sc.stepped(body, curves), {0, 2})
+
+    def test_not_the_layout_not_steps(self):
+        rec = bytearray(self.record(1))
+        rec[20] = 7                                      # the 56 bytes are not all zero
+        body = b"HORIZONTAL.LOG 6.3.3" + bytes(40) + bytes(rec)
+        self.assertEqual(sc.stepped(body, [{"offset": len(body)}]), set())
+        self.assertEqual(sc.stepped(b"HORIZONTAL.LOG 6.3.3" + bytes(400), [{"offset": 300}]), set())
+
+
 class Printed(unittest.TestCase):
     def test_in_the_scale(self):
         self.assertEqual(sc.printed(500, 0, 1000), (0.5, 0))
